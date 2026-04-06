@@ -1,0 +1,431 @@
+package com.agri_system.application.wallet.service;
+
+import com.agri_system.domain.wallet.model.CustomerWallet;
+import com.agri_system.domain.wallet.model.WalletTransaction;
+import com.agri_system.domain.wallet.repository.CustomerWalletRepository;
+import com.agri_system.domain.wallet.repository.WalletTransactionRepository;
+import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+/**
+ * 钱包应用服务
+ * 负责钱包业务流程编排
+ * 
+ * @author AI Generated
+ */
+@Service
+@RequiredArgsConstructor
+public class WalletApplicationService {
+    private static final Logger logger = LoggerFactory.getLogger(WalletApplicationService.class);
+    
+    private final CustomerWalletRepository walletRepository;
+    private final WalletTransactionRepository transactionRepository;
+    private final JdbcTemplate jdbcTemplate;
+    
+    private static final int AUTH_CODE_LENGTH = 6;
+    
+    /**
+     * 扣减本金余额
+     * 
+     * @param customerId 客户ID
+     * @param amount 扣减金额
+     * @param referenceType 关联类型
+     * @param referenceId 关联ID
+     * @param createdBy 操作人ID
+     * @param remark 备注
+     * @return 扣减后的余额
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal deductBalance(Long customerId, BigDecimal amount, 
+                                   String referenceType, Long referenceId, Long createdBy, String remark) {
+        // 使用悲观锁查询钱包
+        CustomerWallet wallet = walletRepository.findByCustomerIdAndWalletTypeWithLock(customerId, 1)
+                .orElseGet(() -> {
+                    // 如果钱包不存在，创建新钱包
+                    CustomerWallet newWallet = new CustomerWallet();
+                    newWallet.setCustomerId(customerId);
+                    newWallet.setWalletType(1);
+                    newWallet.setBalance(BigDecimal.ZERO);
+                    newWallet.setFrozenBalance(BigDecimal.ZERO);
+                    newWallet.setVersion(0);
+                    return walletRepository.save(newWallet);
+                });
+        
+        BigDecimal balanceBefore = wallet.getBalance();
+        
+        // 扣减余额
+        wallet.deduct(amount);
+        walletRepository.save(wallet);
+        
+        // 记录交易流水
+        recordTransaction(customerId, 1, 2, amount.negate(), 
+                         balanceBefore, wallet.getBalance(), 
+                         referenceType, referenceId, createdBy, remark != null ? remark : "扣减本金余额");
+        
+        return wallet.getBalance();
+    }
+    
+    /**
+     * 扣减专用金余额
+     * 
+     * @param customerId 客户ID
+     * @param amount 扣减金额
+     * @param referenceType 关联类型
+     * @param referenceId 关联ID
+     * @param createdBy 操作人ID
+     * @param remark 备注
+     * @return 扣减后的余额
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal deductSpecialFund(Long customerId, BigDecimal amount, 
+                                       String referenceType, Long referenceId, Long createdBy, String remark) {
+        // 使用悲观锁查询钱包
+        CustomerWallet wallet = walletRepository.findByCustomerIdAndWalletTypeWithLock(customerId, 2)
+                .orElseGet(() -> {
+                    // 如果钱包不存在，创建新钱包
+                    CustomerWallet newWallet = new CustomerWallet();
+                    newWallet.setCustomerId(customerId);
+                    newWallet.setWalletType(2);
+                    newWallet.setBalance(BigDecimal.ZERO);
+                    newWallet.setFrozenBalance(BigDecimal.ZERO);
+                    newWallet.setVersion(0);
+                    return walletRepository.save(newWallet);
+                });
+        
+        BigDecimal balanceBefore = wallet.getBalance();
+        
+        // 扣减余额
+        wallet.deduct(amount);
+        walletRepository.save(wallet);
+        
+        // 记录交易流水
+        recordTransaction(customerId, 2, 2, amount.negate(), 
+                         balanceBefore, wallet.getBalance(), 
+                         referenceType, referenceId, createdBy, remark != null ? remark : "扣减专用金余额");
+        
+        return wallet.getBalance();
+    }
+
+    /**
+     * 扣减积分
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal deductPoints(Long customerId, BigDecimal points,
+                                   String referenceType, Long referenceId, Long createdBy, String remark) {
+        CustomerWallet wallet = walletRepository.findByCustomerIdAndWalletTypeWithLock(customerId, 3)
+                .orElseGet(() -> {
+                    CustomerWallet newWallet = new CustomerWallet();
+                    newWallet.setCustomerId(customerId);
+                    newWallet.setWalletType(3);
+                    newWallet.setBalance(BigDecimal.ZERO);
+                    newWallet.setFrozenBalance(BigDecimal.ZERO);
+                    newWallet.setVersion(0);
+                    return walletRepository.save(newWallet);
+                });
+        ensurePointsNotFrozen(wallet);
+        BigDecimal balanceBefore = wallet.getBalance();
+        wallet.deduct(points);
+        walletRepository.save(wallet);
+        recordTransaction(customerId, 3, 2, points.negate(),
+                balanceBefore, wallet.getBalance(),
+                referenceType, referenceId, createdBy, remark != null ? remark : "积分扣减");
+        return wallet.getBalance();
+    }
+    
+    /**
+     * 退回本金余额（退款）
+     * 
+     * @param customerId 客户ID
+     * @param amount 退回金额
+     * @param referenceType 关联类型
+     * @param referenceId 关联ID
+     * @param createdBy 操作人ID
+     * @return 退回后的余额
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal refundBalance(Long customerId, BigDecimal amount, 
+                                    String referenceType, Long referenceId, Long createdBy) {
+        CustomerWallet wallet = walletRepository.findByCustomerIdAndWalletTypeWithLock(customerId, 1)
+                .orElseGet(() -> {
+                    CustomerWallet newWallet = new CustomerWallet();
+                    newWallet.setCustomerId(customerId);
+                    newWallet.setWalletType(1);
+                    newWallet.setBalance(BigDecimal.ZERO);
+                    newWallet.setVersion(0);
+                    return walletRepository.save(newWallet);
+                });
+        
+        BigDecimal balanceBefore = wallet.getBalance();
+        
+        // 增加余额
+        wallet.add(amount);
+        walletRepository.save(wallet);
+        
+        // 记录交易流水
+        recordTransaction(customerId, 1, 3, amount, 
+                         balanceBefore, wallet.getBalance(), 
+                         referenceType, referenceId, createdBy, "退回本金余额");
+        
+        return wallet.getBalance();
+    }
+    
+    /**
+     * 退回专用金余额（退款）
+     * 
+     * @param customerId 客户ID
+     * @param amount 退回金额
+     * @param referenceType 关联类型
+     * @param referenceId 关联ID
+     * @param createdBy 操作人ID
+     * @return 退回后的余额
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal refundSpecialFund(Long customerId, BigDecimal amount, 
+                                       String referenceType, Long referenceId, Long createdBy) {
+        CustomerWallet wallet = walletRepository.findByCustomerIdAndWalletTypeWithLock(customerId, 2)
+                .orElseGet(() -> {
+                    CustomerWallet newWallet = new CustomerWallet();
+                    newWallet.setCustomerId(customerId);
+                    newWallet.setWalletType(2);
+                    newWallet.setBalance(BigDecimal.ZERO);
+                    newWallet.setVersion(0);
+                    return walletRepository.save(newWallet);
+                });
+        
+        BigDecimal balanceBefore = wallet.getBalance();
+        
+        // 增加余额
+        wallet.add(amount);
+        walletRepository.save(wallet);
+        
+        // 记录交易流水
+        recordTransaction(customerId, 2, 3, amount, 
+                         balanceBefore, wallet.getBalance(), 
+                         referenceType, referenceId, createdBy, "退回专用金余额");
+        
+        return wallet.getBalance();
+    }
+
+    /**
+     * 退回积分
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal refundPoints(Long customerId, BigDecimal points,
+                                   String referenceType, Long referenceId, Long createdBy, String remark) {
+        CustomerWallet wallet = walletRepository.findByCustomerIdAndWalletTypeWithLock(customerId, 3)
+                .orElseGet(() -> {
+                    CustomerWallet newWallet = new CustomerWallet();
+                    newWallet.setCustomerId(customerId);
+                    newWallet.setWalletType(3);
+                    newWallet.setBalance(BigDecimal.ZERO);
+                    newWallet.setFrozenBalance(BigDecimal.ZERO);
+                    newWallet.setVersion(0);
+                    return walletRepository.save(newWallet);
+                });
+        BigDecimal balanceBefore = wallet.getBalance();
+        wallet.add(points);
+        walletRepository.save(wallet);
+        recordTransaction(customerId, 3, 3, points,
+                balanceBefore, wallet.getBalance(),
+                referenceType, referenceId, createdBy, remark != null ? remark : "积分退回");
+        return wallet.getBalance();
+    }
+    
+    /**
+     * 查询本金余额
+     * 
+     * @param customerId 客户ID
+     * @return 余额
+     */
+    public BigDecimal getBalance(Long customerId) {
+        return walletRepository.findByCustomerIdAndWalletType(customerId, 1)
+                .map(CustomerWallet::getBalance)
+                .orElse(BigDecimal.ZERO);
+    }
+    
+    /**
+     * 查询专用金余额
+     * 
+     * @param customerId 客户ID
+     * @return 余额
+     */
+    public BigDecimal getSpecialFundBalance(Long customerId) {
+        return walletRepository.findByCustomerIdAndWalletType(customerId, 2)
+                .map(CustomerWallet::getBalance)
+                .orElse(BigDecimal.ZERO);
+    }
+    
+    /**
+     * 增加本金余额
+     * 
+     * @param customerId 客户ID
+     * @param amount 增加金额
+     * @param referenceType 关联类型
+     * @param referenceId 关联ID
+     * @param createdBy 操作人ID
+     * @param remark 备注
+     * @return 增加后的余额
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal addBalance(Long customerId, BigDecimal amount, 
+                                String referenceType, Long referenceId, Long createdBy, String remark) {
+        CustomerWallet wallet = walletRepository.findByCustomerIdAndWalletTypeWithLock(customerId, 1)
+                .orElseGet(() -> {
+                    CustomerWallet newWallet = new CustomerWallet();
+                    newWallet.setCustomerId(customerId);
+                    newWallet.setWalletType(1);
+                    newWallet.setBalance(BigDecimal.ZERO);
+                    newWallet.setFrozenBalance(BigDecimal.ZERO);
+                    newWallet.setVersion(0);
+                    return walletRepository.save(newWallet);
+                });
+        
+        BigDecimal balanceBefore = wallet.getBalance();
+        wallet.add(amount);
+        walletRepository.save(wallet);
+        
+        recordTransaction(customerId, 1, 4, amount,
+                balanceBefore, wallet.getBalance(),
+                referenceType, referenceId, createdBy, remark != null ? remark : "增加本金余额");
+        
+        return wallet.getBalance();
+    }
+    
+    /**
+     * 增加专用金余额
+     * 
+     * @param customerId 客户ID
+     * @param amount 增加金额
+     * @param referenceType 关联类型
+     * @param referenceId 关联ID
+     * @param createdBy 操作人ID
+     * @param remark 备注
+     * @return 增加后的余额
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal addSpecialFund(Long customerId, BigDecimal amount,
+                                     String referenceType, Long referenceId, Long createdBy, String remark) {
+        CustomerWallet wallet = walletRepository.findByCustomerIdAndWalletTypeWithLock(customerId, 2)
+                .orElseGet(() -> {
+                    CustomerWallet newWallet = new CustomerWallet();
+                    newWallet.setCustomerId(customerId);
+                    newWallet.setWalletType(2);
+                    newWallet.setBalance(BigDecimal.ZERO);
+                    newWallet.setFrozenBalance(BigDecimal.ZERO);
+                    newWallet.setVersion(0);
+                    return walletRepository.save(newWallet);
+                });
+        
+        BigDecimal balanceBefore = wallet.getBalance();
+        wallet.add(amount);
+        walletRepository.save(wallet);
+        
+        recordTransaction(customerId, 2, 4, amount,
+                balanceBefore, wallet.getBalance(),
+                referenceType, referenceId, createdBy, remark != null ? remark : "增加专用金余额");
+        
+        return wallet.getBalance();
+    }
+    
+    /**
+     * 校验钱包验证码（简化实现，实际应该调用验证码服务）
+     * 
+     * @param customerId 客户ID
+     * @param authCode 验证码
+     * @return 是否有效
+     */
+    public boolean validateWalletAuthCode(Long customerId, String authCode) {
+        // TODO: 实际应该调用验证码服务进行校验
+        // 这里简化实现，假设验证码为6位数字
+        if (authCode == null || authCode.length() != 6) {
+            return false;
+        }
+        try {
+            Integer.parseInt(authCode);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    /**
+     * 生成并保存钱包验证码（用于小程序请求发送给客户）
+     *
+     * @param customerId 客户ID
+     * @param orderId    关联订单ID（可选）
+     * @param amount     支付金额（可选，存为参考）
+     * @param expireMinutes 过期分钟
+     * @return 生成的6位验证码（注意：测试环境返回，生产可改为不直接返回）
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public String generateAndStoreWalletAuthCode(Long customerId, Long orderId, java.math.BigDecimal amount, int expireMinutes) {
+        String code = String.format("%0" + AUTH_CODE_LENGTH + "d", (int)(Math.random() * Math.pow(10, AUTH_CODE_LENGTH)));
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        java.time.LocalDateTime expireAt = now.plusMinutes(expireMinutes > 0 ? expireMinutes : 5);
+        String sql = "INSERT INTO wallet_auth_code(customer_id, order_id, auth_code, amount, status, expire_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)";
+        jdbcTemplate.update(sql, customerId, orderId, code, amount != null ? amount : java.math.BigDecimal.ZERO, 1, java.sql.Timestamp.valueOf(expireAt), java.sql.Timestamp.valueOf(now));
+        logger.info("Generated wallet auth code for customerId={} code={} expireAt={}", customerId, code, expireAt);
+        return code;
+    }
+
+
+    /**
+     * @deprecated 废弃，使用 validateAuthCodeOnly + consumeAuthCode 组合
+     */
+    @Deprecated
+    @Transactional(rollbackFor = Exception.class)
+    public boolean validateAndConsumeWalletAuthCode(Long customerId, String authCode, Long orderId, java.math.BigDecimal amount) {
+        throw new UnsupportedOperationException("此方法已废弃，请使用 validateAuthCodeOnly 和 consumeAuthCode 的组合");
+    }
+
+    /**
+     * Associate previously consumed auth code with an orderId (used when consumption occurred before order saved)
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void associateAuthCodeWithOrder(String authCode, Long orderId) {
+        if (authCode == null || orderId == null) return;
+        String sql = "UPDATE wallet_auth_code SET order_id = ? WHERE auth_code = ? AND status = 2 AND (order_id IS NULL OR order_id = '')";
+        int updated = jdbcTemplate.update(sql, orderId, authCode);
+        if (updated > 0) {
+            logger.info("Associated authCode={} with orderId={}", authCode, orderId);
+        } else {
+            logger.warn("Failed to associate authCode={} with orderId={}", authCode, orderId);
+        }
+    }
+    
+    // ==================== 私有方法 ====================
+    
+    private void recordTransaction(Long customerId, Integer walletType, Integer transactionType,
+                                   BigDecimal amount, BigDecimal balanceBefore, BigDecimal balanceAfter,
+                                   String referenceType, Long referenceId, Long createdBy, String remark) {
+        WalletTransaction transaction = new WalletTransaction();
+        transaction.setCustomerId(customerId);
+        transaction.setWalletType(walletType);
+        transaction.setTransactionType(transactionType);
+        transaction.setAmount(amount);
+        transaction.setBalanceBefore(balanceBefore);
+        transaction.setBalanceAfter(balanceAfter);
+        transaction.setReferenceType(referenceType);
+        transaction.setReferenceId(referenceId);
+        transaction.setRemark(remark);
+        transaction.setCreatedAt(LocalDateTime.now());
+        transaction.setCreatedBy(createdBy);
+        transactionRepository.save(transaction);
+    }
+
+    private void ensurePointsNotFrozen(CustomerWallet wallet) {
+        if (wallet.getFrozenBalance() != null && wallet.getFrozenBalance().compareTo(BigDecimal.ZERO) > 0) {
+            throw new IllegalStateException("wallet-3002: 积分账户已冻结，无法操作");
+        }
+    }
+
+}
+
+

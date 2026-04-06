@@ -1,0 +1,44 @@
+-- 初始化数据库脚本
+-- 此脚本在 MySQL 容器首次启动时执行
+
+CREATE DATABASE IF NOT EXISTS agri_system CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

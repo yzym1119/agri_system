@@ -1,0 +1,106 @@
+package com.agri_system.application.product.dto.vo;
+
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Data;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+/**
+ * 商品详情视图对象
+ * 
+ * @author AI Generated
+ */
+@Data
+@Schema(description = "商品详情视图对象")
+public class ProductDetailVO {
+    
+    @Schema(description = "商品ID", example = "1")
+    private Long id;
+    
+    @Schema(description = "商品编码", example = "P001")
+    private String code;
+    
+    @Schema(description = "商品名称", example = "复合肥料")
+    private String name;
+    
+    @Schema(description = "商品分类ID", example = "1")
+    private Long categoryId;
+    
+    @Schema(description = "分类名称", example = "肥料类")
+    private String categoryName;
+    
+    @Schema(description = "规格（如：500g/袋）", example = "500g/袋")
+    private String specification;
+    
+    @Schema(description = "剂型（如：颗粒剂、水剂、粉剂）", example = "颗粒剂")
+    private String dosageForm;
+    
+    @Schema(description = "生产厂家", example = "XX农资有限公司")
+    private String manufacturer;
+    
+    @Schema(description = "主单位（如：袋、瓶、箱）", example = "袋")
+    private String mainUnit;
+    
+    @Schema(description = "辅单位（如：箱、件）", example = "箱")
+    private String auxUnit;
+    
+    @Schema(description = "主辅单位换算比例", example = "20.0000")
+    private BigDecimal mainToAuxRatio;
+    
+    @Schema(description = "建议零售价（元）", example = "50.00")
+    private BigDecimal suggestedRetailPrice;
+    
+    @Schema(description = "VIP价格（元）", example = "45.00")
+    private BigDecimal vipPrice;
+    
+    @Schema(description = "最低限价（元）", example = "40.00")
+    private BigDecimal minPrice;
+    
+    @Schema(description = "移动加权平均成本（元，只读）", example = "30.00")
+    private BigDecimal avgCostPrice;
+    
+    @Schema(description = "主图URL", example = "https://example.com/image.jpg")
+    private String imageUrl;
+    
+    @Schema(description = "详情文字（纯文字详情）", example = "本品为高效复合肥料...")
+    private String detailText;
+    
+    @Schema(description = "是否上架：1-上架，0-下架", example = "1")
+    private Integer isOnline;
+    
+    @Schema(description = "线上价（元）", example = "48.00")
+    private BigDecimal onlinePrice;
+    
+    @Schema(description = "基础运费（元）", example = "5.00")
+    private BigDecimal baseShippingFee;
+    
+    @Schema(description = "允许专用金：1-允许，0-不允许", example = "0")
+    private Integer allowSpecialFund;
+    
+    @Schema(description = "已配置价格策略数量（仅统计启用状态）", example = "2")
+    private Integer strategyCount;
+    
+    @Schema(description = "状态：1-正常，2-停用", example = "1")
+    private Integer status;
+    
+    @Schema(description = "备注", example = "备注信息")
+    private String remark;
+    
+    @Schema(description = "创建时间")
+    private LocalDateTime createdAt;
+    
+    @Schema(description = "更新时间")
+    private LocalDateTime updatedAt;
+}
+
+
+
+
+
+
+
+
+
+
+

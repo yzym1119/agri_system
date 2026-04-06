@@ -1,0 +1,559 @@
+openapi: 3.0.3
+info:
+  title: 套餐模块API
+  description: 套餐/作物解决方案管理接口
+  version: 1.0.0
+
+tags:
+  - name: 套餐管理
+    description: 套餐主档、明细管理、上下架操作
+
+paths:
+  /api/admin/product-packages:
+    post:
+      tags:
+        - 套餐管理
+      summary: 创建套餐
+      description: 创建新套餐，系统自动生成套餐编码
+      operationId: createPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductPackageCreateCommand'
+            example:
+              name: 春季作物解决方案
+              suggestedRetailPrice: 200.00
+              vipPrice: 180.00
+              minPrice: 150.00
+              items:
+                - productId: 1
+                  quantity: 2.0000
+                  unit: 袋
+                  sortOrder: 0
+                - productId: 2
+                  quantity: 3.0000
+                  unit: 袋
+                  sortOrder: 1
+              remark: 备注信息
+      responses:
+        '200':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: "200"
+                message: 创建成功
+                data:
+                  id: 1
+        '400':
+          description: 参数错误或套餐编码重复
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: "400"
+                message: package-1002: 套餐编码重复
+        '404':
+          description: 商品不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    
+    get:
+      tags:
+        - 套餐管理
+      summary: 分页查询套餐
+      description: 支持按编码、名称、状态筛选
+      operationId: queryPackages
+      parameters:
+        - name: code
+          in: query
+          description: 套餐编码（模糊查询）
+          schema:
+            type: string
+          example: PKG20240101
+        - name: name
+          in: query
+          description: 套餐名称（模糊查询）
+          schema:
+            type: string
+          example: 春季
+        - name: status
+          in: query
+          description: 状态：1=上架，0=下架
+          schema:
+            type: integer
+            enum: [0, 1]
+          example: 1
+        - name: pageNum
+          in: query
+          description: 页码（从1开始）
+          schema:
+            type: integer
+            default: 1
+          example: 1
+        - name: pageSize
+          in: query
+          description: 每页大小
+          schema:
+            type: integer
+            default: 10
+          example: 10
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: "200"
+                message: 查询成功
+                data:
+                  pageNumber: 1
+                  pageSize: 10
+                  totalRow: 1
+                  records:
+                    - id: 1
+                      code: PKG202401010001
+                      name: 春季作物解决方案
+                      suggestedRetailPrice: 200.00
+                      vipPrice: 180.00
+                      minPrice: 150.00
+                      status: 1
+                      items:
+                        - id: 1
+                          productId: 1
+                          productName: 复合肥料
+                          quantity: 2.0000
+                          unit: 袋
+                          sortOrder: 0
+
+  /api/admin/product-packages/{id}:
+    get:
+      tags:
+        - 套餐管理
+      summary: 查询套餐详情
+      description: 查询套餐详细信息，包含明细列表
+      operationId: getPackageDetail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 套餐ID
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: "200"
+                message: 查询成功
+                data:
+                  id: 1
+                  code: PKG202401010001
+                  name: 春季作物解决方案
+                  suggestedRetailPrice: 200.00
+                  vipPrice: 180.00
+                  minPrice: 150.00
+                  status: 1
+                  remark: 备注信息
+                  createdAt: "2024-01-01T00:00:00"
+                  updatedAt: "2024-01-01T00:00:00"
+                  items:
+                    - id: 1
+                      productId: 1
+                      productName: 复合肥料
+                      quantity: 2.0000
+                      unit: 袋
+                      sortOrder: 0
+        '404':
+          description: 套餐不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: "404"
+                message: package-1001: 套餐不存在
+    
+    put:
+      tags:
+        - 套餐管理
+      summary: 更新套餐
+      description: 更新套餐信息，采用全量替换明细模式
+      operationId: updatePackage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 套餐ID
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductPackageUpdateCommand'
+            example:
+              name: 更新后的套餐名称
+              suggestedRetailPrice: 250.00
+              vipPrice: 220.00
+              minPrice: 200.00
+              items:
+                - productId: 1
+                  quantity: 3.0000
+                  unit: 袋
+                  sortOrder: 0
+              remark: 更新后的备注
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 套餐不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    
+    delete:
+      tags:
+        - 套餐管理
+      summary: 删除套餐
+      description: 软删除套餐，不校验订单引用
+      operationId: deletePackage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 套餐ID
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: 套餐不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/admin/product-packages/{id}/status:
+    put:
+      tags:
+        - 套餐管理
+      summary: 上架/下架套餐
+      description: 快捷操作：修改套餐上架状态（1=上架，0=下架）
+      operationId: updateStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 套餐ID
+          schema:
+            type: integer
+          example: 1
+        - name: status
+          in: query
+          required: true
+          description: 状态：1=上架，0=下架
+          schema:
+            type: integer
+            enum: [0, 1]
+          example: 1
+      responses:
+        '200':
+          description: 操作成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: 套餐不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    ProductPackageCreateCommand:
+      type: object
+      required:
+        - name
+        - suggestedRetailPrice
+        - items
+      properties:
+        name:
+          type: string
+          description: 套餐名称
+          example: 春季作物解决方案
+        suggestedRetailPrice:
+          type: number
+          format: decimal
+          description: 零售价（必填）
+          example: 200.00
+        vipPrice:
+          type: number
+          format: decimal
+          nullable: true
+          description: VIP价（可空，null=不启用VIP价）
+          example: 180.00
+        minPrice:
+          type: number
+          format: decimal
+          description: 最低售价
+          example: 150.00
+        items:
+          type: array
+          description: 套餐明细列表
+          items:
+            $ref: '#/components/schemas/PackageItemDTO'
+        remark:
+          type: string
+          description: 备注
+          example: 备注信息
+    
+    ProductPackageUpdateCommand:
+      type: object
+      required:
+        - name
+        - suggestedRetailPrice
+        - items
+      properties:
+        name:
+          type: string
+          description: 套餐名称
+          example: 更新后的套餐名称
+        suggestedRetailPrice:
+          type: number
+          format: decimal
+          description: 零售价（必填）
+          example: 250.00
+        vipPrice:
+          type: number
+          format: decimal
+          nullable: true
+          description: VIP价（可空，null=不启用VIP价）
+          example: 220.00
+        minPrice:
+          type: number
+          format: decimal
+          description: 最低售价
+          example: 200.00
+        items:
+          type: array
+          description: 套餐明细列表（全量替换）
+          items:
+            $ref: '#/components/schemas/PackageItemDTO'
+        remark:
+          type: string
+          description: 备注
+          example: 更新后的备注
+    
+    PackageItemDTO:
+      type: object
+      required:
+        - productId
+        - quantity
+        - unit
+      properties:
+        productId:
+          type: integer
+          format: int64
+          description: 商品ID
+          example: 1
+        quantity:
+          type: number
+          format: decimal
+          description: 数量（必须 > 0）
+          example: 2.0000
+        unit:
+          type: string
+          description: 单位
+          example: 袋
+        sortOrder:
+          type: integer
+          description: 排序顺序
+          example: 0
+    
+    ProductPackageDetailVO:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 套餐ID
+          example: 1
+        code:
+          type: string
+          description: 套餐编码
+          example: PKG202401010001
+        name:
+          type: string
+          description: 套餐名称
+          example: 春季作物解决方案
+        suggestedRetailPrice:
+          type: number
+          format: decimal
+          description: 零售价
+          example: 200.00
+        vipPrice:
+          type: number
+          format: decimal
+          nullable: true
+          description: VIP价
+          example: 180.00
+        minPrice:
+          type: number
+          format: decimal
+          description: 最低售价
+          example: 150.00
+        status:
+          type: integer
+          description: 状态：1=上架，0=下架，-1=删除
+          enum: [-1, 0, 1]
+          example: 1
+        remark:
+          type: string
+          description: 备注
+          example: 备注信息
+        createdAt:
+          type: string
+          format: date-time
+          description: 创建时间
+          example: "2024-01-01T00:00:00"
+        updatedAt:
+          type: string
+          format: date-time
+          description: 更新时间
+          example: "2024-01-01T00:00:00"
+        items:
+          type: array
+          description: 套餐明细列表
+          items:
+            $ref: '#/components/schemas/ProductPackageItemVO'
+    
+    ProductPackageItemVO:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 明细ID
+          example: 1
+        productId:
+          type: integer
+          format: int64
+          description: 商品ID
+          example: 1
+        productName:
+          type: string
+          description: 商品名称
+          example: 复合肥料
+        quantity:
+          type: number
+          format: decimal
+          description: 数量
+          example: 2.0000
+        unit:
+          type: string
+          description: 单位
+          example: 袋
+        sortOrder:
+          type: integer
+          description: 排序顺序
+          example: 0
+    
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          description: 响应码
+          example: "200"
+        message:
+          type: string
+          description: 响应消息
+          example: 操作成功
+        data:
+          type: object
+          description: 响应数据
+    
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          description: 错误码
+          example: "400"
+        message:
+          type: string
+          description: 错误消息
+          example: package-1001: 套餐不存在
+
+  responses:
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: "404"
+            message: package-1001: 套餐不存在
+    
+    BadRequest:
+      description: 参数错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: "400"
+            message: package-1004: 套餐必须至少包含一个商品
+
+# 错误码说明
+# package-1001: 套餐不存在
+# package-1002: 套餐编码重复
+# package-1004: 套餐必须至少包含一个商品
+# package-1005: 套餐包含重复商品
+
+
+
+
+
+
+
+
+
+

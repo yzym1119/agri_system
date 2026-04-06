@@ -1,0 +1,301 @@
+@startuml 农资行业进销存系统数据库ER图
+
+!define TABLE(name,desc) class name as "desc" << (T,#FFAAAA) >>
+!define PRIMARY_KEY(x) <b>x</b>
+!define FOREIGN_KEY(x) <i>x</i>
+
+' 基础数据表
+TABLE(STORE, "门店表") {
+  PRIMARY_KEY(id) : BIGINT
+  code : VARCHAR(50) <<UK>>
+  name : VARCHAR(100)
+  address : VARCHAR(500)
+  phone : VARCHAR(20)
+  FOREIGN_KEY(manager_id) : BIGINT
+  status : TINYINT
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+TABLE(STAFF, "员工表") {
+  PRIMARY_KEY(id) : BIGINT
+  code : VARCHAR(50) <<UK>>
+  name : VARCHAR(50)
+  phone : VARCHAR(20) <<UK>>
+  FOREIGN_KEY(store_id) : BIGINT
+  role : VARCHAR(20)
+  status : TINYINT
+  created_at : DATETIME
+}
+
+TABLE(CUSTOMER, "客户表") {
+  PRIMARY_KEY(id) : BIGINT
+  code : VARCHAR(50) <<UK>>
+  name : VARCHAR(100)
+  phone : VARCHAR(20) <<UK>>
+  type : TINYINT
+  vip_level : TINYINT
+  credit_limit : DECIMAL(10,2)
+  status : TINYINT
+  created_at : DATETIME
+}
+
+' 商品相关表
+TABLE(PRODUCT, "商品表") {
+  PRIMARY_KEY(id) : BIGINT
+  code : VARCHAR(50) <<UK>>
+  name : VARCHAR(200)
+  specification : VARCHAR(100)
+  dosage_form : VARCHAR(50)
+  manufacturer : VARCHAR(200)
+  main_unit : VARCHAR(20)
+  aux_unit : VARCHAR(20)
+  suggested_retail_price : DECIMAL(10,2)
+  vip_price : DECIMAL(10,2)
+  min_price : DECIMAL(10,2)
+  purchase_price : DECIMAL(10,2)
+  status : TINYINT
+  created_at : DATETIME
+}
+
+TABLE(PRODUCT_UNIT_CONVERSION, "商品单位换算表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(product_id) : BIGINT
+  from_unit : VARCHAR(20)
+  to_unit : VARCHAR(20)
+  conversion_ratio : DECIMAL(10,4)
+}
+
+TABLE(PRODUCT_PACKAGE, "套餐/配方表") {
+  PRIMARY_KEY(id) : BIGINT
+  code : VARCHAR(50) <<UK>>
+  name : VARCHAR(200)
+  suggested_retail_price : DECIMAL(10,2)
+  vip_price : DECIMAL(10,2)
+  min_price : DECIMAL(10,2)
+  status : TINYINT
+}
+
+TABLE(PRODUCT_PACKAGE_ITEM, "套餐明细表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(package_id) : BIGINT
+  FOREIGN_KEY(product_id) : BIGINT
+  quantity : DECIMAL(10,4)
+  unit : VARCHAR(20)
+}
+
+' 库存相关表
+TABLE(INVENTORY, "库存表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(store_id) : BIGINT
+  FOREIGN_KEY(product_id) : BIGINT
+  quantity : DECIMAL(10,4)
+  unit : VARCHAR(20)
+  expiry_date : DATE
+  batch_no : VARCHAR(50)
+  version : INT
+}
+
+TABLE(INVENTORY_TRANSFER, "库存调拨表") {
+  PRIMARY_KEY(id) : BIGINT
+  transfer_no : VARCHAR(50) <<UK>>
+  FOREIGN_KEY(from_store_id) : BIGINT
+  FOREIGN_KEY(to_store_id) : BIGINT
+  FOREIGN_KEY(product_id) : BIGINT
+  quantity : DECIMAL(10,4)
+  status : TINYINT
+}
+
+TABLE(INVENTORY_ADJUSTMENT, "库存调整表") {
+  PRIMARY_KEY(id) : BIGINT
+  adjustment_no : VARCHAR(50) <<UK>>
+  FOREIGN_KEY(store_id) : BIGINT
+  FOREIGN_KEY(product_id) : BIGINT
+  adjustment_type : TINYINT
+  quantity_before : DECIMAL(10,4)
+  quantity_after : DECIMAL(10,4)
+}
+
+TABLE(INVENTORY_TRANSACTION, "库存流水表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(store_id) : BIGINT
+  FOREIGN_KEY(product_id) : BIGINT
+  transaction_type : TINYINT
+  quantity : DECIMAL(10,4)
+  quantity_after : DECIMAL(10,4)
+  reference_type : VARCHAR(50)
+  reference_id : BIGINT
+}
+
+TABLE(INVENTORY_WARNING, "库存预警表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(store_id) : BIGINT
+  FOREIGN_KEY(product_id) : BIGINT
+  warning_type : TINYINT
+  current_quantity : DECIMAL(10,4)
+  status : TINYINT
+}
+
+' 订单相关表
+TABLE(ORDER, "订单表") {
+  PRIMARY_KEY(id) : BIGINT
+  order_no : VARCHAR(50) <<UK>>
+  FOREIGN_KEY(store_id) : BIGINT
+  FOREIGN_KEY(customer_id) : BIGINT
+  FOREIGN_KEY(staff_id) : BIGINT
+  order_type : TINYINT
+  order_status : TINYINT
+  total_amount : DECIMAL(10,2)
+  pay_amount : DECIMAL(10,2)
+  payment_method : TINYINT
+  created_at : DATETIME
+}
+
+TABLE(ORDER_ITEM, "订单明细表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(order_id) : BIGINT
+  FOREIGN_KEY(product_id) : BIGINT
+  FOREIGN_KEY(package_id) : BIGINT
+  item_type : TINYINT
+  quantity : DECIMAL(10,4)
+  unit_price : DECIMAL(10,2)
+  total_price : DECIMAL(10,2)
+  commission_amount : DECIMAL(10,2)
+}
+
+TABLE(ORDER_DELIVERY, "配送表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(order_id) : BIGINT
+  delivery_no : VARCHAR(50) <<UK>>
+  FOREIGN_KEY(delivery_staff_id) : BIGINT
+  delivery_status : TINYINT
+  audit_status : TINYINT
+  audit_at : DATETIME
+}
+
+' 价格体系表
+TABLE(PRODUCT_PRICE, "商品价格表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(product_id) : BIGINT
+  FOREIGN_KEY(store_id) : BIGINT
+  customer_type : TINYINT
+  price_type : TINYINT
+  price : DECIMAL(10,2)
+  effective_date : DATE
+  expiry_date : DATE
+}
+
+TABLE(COMMISSION_RULE, "提成规则表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(product_id) : BIGINT
+  FOREIGN_KEY(staff_id) : BIGINT
+  rule_type : TINYINT
+  fixed_amount : DECIMAL(10,2)
+  profit_percentage : DECIMAL(5,2)
+  priority : INT
+}
+
+' 钱包相关表
+TABLE(CUSTOMER_WALLET, "客户钱包表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(customer_id) : BIGINT
+  wallet_type : TINYINT
+  balance : DECIMAL(10,2)
+  version : INT
+}
+
+TABLE(WALLET_TRANSACTION, "钱包交易记录表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(customer_id) : BIGINT
+  wallet_type : TINYINT
+  transaction_type : TINYINT
+  amount : DECIMAL(10,2)
+  balance_before : DECIMAL(10,2)
+  balance_after : DECIMAL(10,2)
+}
+
+' 赊销相关表
+TABLE(CREDIT_ACCOUNT, "赊销台账表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(customer_id) : BIGINT
+  FOREIGN_KEY(order_id) : BIGINT
+  credit_amount : DECIMAL(10,2)
+  paid_amount : DECIMAL(10,2)
+  remaining_amount : DECIMAL(10,2)
+  due_date : DATE
+  status : TINYINT
+}
+
+TABLE(CREDIT_STATEMENT, "对账历史表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(customer_id) : BIGINT
+  statement_no : VARCHAR(50) <<UK>>
+  statement_date : DATE
+  total_credit_amount : DECIMAL(10,2)
+  total_paid_amount : DECIMAL(10,2)
+  status : TINYINT
+}
+
+' 绩效相关表
+TABLE(STAFF_PERFORMANCE, "员工绩效记录表") {
+  PRIMARY_KEY(id) : BIGINT
+  FOREIGN_KEY(staff_id) : BIGINT
+  FOREIGN_KEY(order_id) : BIGINT
+  FOREIGN_KEY(customer_id) : BIGINT
+  FOREIGN_KEY(product_id) : BIGINT
+  performance_type : TINYINT
+  commission_amount : DECIMAL(10,2)
+  performance_date : DATE
+}
+
+' 关系定义
+STORE ||--o{ STAFF : "管理"
+STORE ||--o{ INVENTORY : "拥有"
+STORE ||--o{ ORDER : "产生"
+STORE ||--o{ INVENTORY_TRANSFER : "调出/调入"
+STORE ||--o{ PRODUCT_PRICE : "定价"
+
+STAFF ||--o{ ORDER : "销售"
+STAFF ||--o{ ORDER_DELIVERY : "配送"
+STAFF ||--o{ STAFF_PERFORMANCE : "绩效"
+STAFF ||--o{ COMMISSION_RULE : "提成规则"
+
+CUSTOMER ||--o{ ORDER : "下单"
+CUSTOMER ||--o{ CUSTOMER_WALLET : "拥有"
+CUSTOMER ||--o{ WALLET_TRANSACTION : "交易"
+CUSTOMER ||--o{ CREDIT_ACCOUNT : "赊销"
+CUSTOMER ||--o{ CREDIT_STATEMENT : "对账"
+
+PRODUCT ||--o{ PRODUCT_UNIT_CONVERSION : "换算"
+PRODUCT ||--o{ PRODUCT_PACKAGE_ITEM : "组成"
+PRODUCT ||--o{ INVENTORY : "库存"
+PRODUCT ||--o{ INVENTORY_TRANSFER : "调拨"
+PRODUCT ||--o{ INVENTORY_ADJUSTMENT : "调整"
+PRODUCT ||--o{ INVENTORY_TRANSACTION : "流水"
+PRODUCT ||--o{ INVENTORY_WARNING : "预警"
+PRODUCT ||--o{ ORDER_ITEM : "订单明细"
+PRODUCT ||--o{ PRODUCT_PRICE : "价格"
+PRODUCT ||--o{ COMMISSION_RULE : "提成规则"
+
+PRODUCT_PACKAGE ||--o{ PRODUCT_PACKAGE_ITEM : "包含"
+PRODUCT_PACKAGE ||--o{ ORDER_ITEM : "订单明细"
+
+ORDER ||--o{ ORDER_ITEM : "明细"
+ORDER ||--o| ORDER_DELIVERY : "配送"
+ORDER ||--o| CREDIT_ACCOUNT : "赊销"
+ORDER ||--o{ STAFF_PERFORMANCE : "关联"
+
+CUSTOMER_WALLET ||--o{ WALLET_TRANSACTION : "交易"
+
+@enduml
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,511 @@
+openapi: 3.0.3
+info:
+  title: 门店模块API
+  description: 门店建档、状态管控、自提点开关、店长绑定
+  version: 1.0.0
+
+tags:
+  - name: 门店管理
+    description: 门店建档、状态管控、自提点开关、店长绑定（仅限 ADMIN 访问）
+
+paths:
+  /api/admin/stores:
+    post:
+      tags:
+        - 门店管理
+      summary: 创建门店
+      description: 创建新门店，注意：code 唯一，Update 不可改
+      operationId: createStore
+      security:
+        - SaToken: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreCreateCommand'
+            example:
+              code: STORE001
+              name: XX农资店
+              phone: 13800138000
+              address: XX省XX市XX区XX路XX号
+              managerId: 1
+              supportPickup: 1
+              status: 1
+              remark: 备注信息
+      responses:
+        '200':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: "200"
+                message: 创建成功
+                data:
+                  id: 1
+        '400':
+          description: 参数错误或门店编码已存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: "400"
+                message: store-1002: 门店编码已存在
+        '404':
+          description: 店长不存在或已离职
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: "404"
+                message: store-1003: 指定的店长不存在或已离职
+    
+    get:
+      tags:
+        - 门店管理
+      summary: 分页查询门店
+      description: 支持按编码、名称、状态、自提状态筛选
+      operationId: queryStores
+      security:
+        - SaToken: [ADMIN]
+      parameters:
+        - name: code
+          in: query
+          description: 门店编码（模糊查询）
+          schema:
+            type: string
+          example: STORE001
+        - name: name
+          in: query
+          description: 门店名称（模糊查询）
+          schema:
+            type: string
+          example: XX农资店
+        - name: status
+          in: query
+          description: 状态：1-启用，0-停用
+          schema:
+            type: integer
+            enum: [0, 1]
+          example: 1
+        - name: supportPickup
+          in: query
+          description: 是否支持自提：1-支持，0-不支持
+          schema:
+            type: integer
+            enum: [0, 1]
+          example: 1
+        - name: pageNum
+          in: query
+          description: 页码（从1开始）
+          schema:
+            type: integer
+            default: 1
+          example: 1
+        - name: pageSize
+          in: query
+          description: 每页大小
+          schema:
+            type: integer
+            default: 10
+          example: 10
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: "200"
+                message: 查询成功
+                data:
+                  pageNumber: 1
+                  pageSize: 10
+                  totalRow: 1
+                  records:
+                    - id: 1
+                      code: STORE001
+                      name: XX农资店
+                      phone: 13800138000
+                      address: XX省XX市XX区XX路XX号
+                      managerId: 1
+                      managerName: 张三
+                      status: 1
+                      supportPickup: 1
+                      remark: 备注信息
+                      createdAt: "2024-01-01T00:00:00"
+                      updatedAt: "2024-01-01T00:00:00"
+
+  /api/admin/stores/{id}:
+    get:
+      tags:
+        - 门店管理
+      summary: 查询门店详情
+      description: 查询门店详细信息，包含店长信息
+      operationId: getStoreDetail
+      security:
+        - SaToken: [ADMIN]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 门店ID
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                code: "200"
+                message: 查询成功
+                data:
+                  id: 1
+                  code: STORE001
+                  name: XX农资店
+                  phone: 13800138000
+                  address: XX省XX市XX区XX路XX号
+                  managerId: 1
+                  managerName: 张三
+                  status: 1
+                  supportPickup: 1
+                  remark: 备注信息
+                  createdAt: "2024-01-01T00:00:00"
+                  updatedAt: "2024-01-01T00:00:00"
+                  createdBy: 1
+                  updatedBy: 1
+        '404':
+          description: 门店不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: "404"
+                message: store-1001: 门店不存在
+    
+    put:
+      tags:
+        - 门店管理
+      summary: 更新门店
+      description: 更新门店信息，注意：code 不可修改
+      operationId: updateStore
+      security:
+        - SaToken: [ADMIN]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 门店ID
+          schema:
+            type: integer
+          example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreUpdateCommand'
+            example:
+              name: 更新后的门店名称
+              phone: 13900139000
+              address: 更新后的地址
+              managerId: 2
+              supportPickup: 0
+              status: 1
+              remark: 更新后的备注
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '400':
+          description: 参数错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: 门店不存在或店长不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: "404"
+                message: store-1001: 门店不存在
+    
+    delete:
+      tags:
+        - 门店管理
+      summary: 删除门店
+      description: 逻辑删除门店，删除后 code 依然被占用（不允许创建同名新门店），保证历史订单数据的完整性
+      operationId: deleteStore
+      security:
+        - SaToken: [ADMIN]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 门店ID
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+        '404':
+          description: 门店不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: "404"
+                message: store-1001: 门店不存在
+
+components:
+  securitySchemes:
+    SaToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Sa-Token 鉴权，需要 ADMIN 角色
+  
+  schemas:
+    StoreCreateCommand:
+      type: object
+      required:
+        - code
+        - name
+        - phone
+      properties:
+        code:
+          type: string
+          description: 门店编码（唯一）
+          example: STORE001
+        name:
+          type: string
+          description: 门店名称
+          example: XX农资店
+        phone:
+          type: string
+          description: 联系电话（必填）
+          example: 13800138000
+        address:
+          type: string
+          description: 详细地址
+          example: XX省XX市XX区XX路XX号
+        managerId:
+          type: integer
+          format: int64
+          nullable: true
+          description: 店长ID（可空）
+          example: 1
+        supportPickup:
+          type: integer
+          description: 是否支持自提：1-支持，0-不支持
+          enum: [0, 1]
+          default: 1
+          example: 1
+        status:
+          type: integer
+          description: 状态：1-启用，0-停用
+          enum: [0, 1]
+          default: 1
+          example: 1
+        remark:
+          type: string
+          description: 备注
+          example: 备注信息
+    
+    StoreUpdateCommand:
+      type: object
+      required:
+        - name
+        - phone
+      properties:
+        name:
+          type: string
+          description: 门店名称
+          example: 更新后的门店名称
+        phone:
+          type: string
+          description: 联系电话（必填）
+          example: 13900139000
+        address:
+          type: string
+          description: 详细地址
+          example: 更新后的地址
+        managerId:
+          type: integer
+          format: int64
+          nullable: true
+          description: 店长ID（可空）
+          example: 2
+        supportPickup:
+          type: integer
+          description: 是否支持自提：1-支持，0-不支持
+          enum: [0, 1]
+          example: 0
+        status:
+          type: integer
+          description: 状态：1-启用，0-停用
+          enum: [0, 1]
+          example: 1
+        remark:
+          type: string
+          description: 备注
+          example: 更新后的备注
+    
+    StoreDetailVO:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: 门店ID
+          example: 1
+        code:
+          type: string
+          description: 门店编码
+          example: STORE001
+        name:
+          type: string
+          description: 门店名称
+          example: XX农资店
+        phone:
+          type: string
+          description: 联系电话
+          example: 13800138000
+        address:
+          type: string
+          description: 详细地址
+          example: XX省XX市XX区XX路XX号
+        managerId:
+          type: integer
+          format: int64
+          nullable: true
+          description: 店长ID
+          example: 1
+        managerName:
+          type: string
+          nullable: true
+          description: 店长姓名
+          example: 张三
+        status:
+          type: integer
+          description: 状态：1-启用，0-停用
+          enum: [0, 1]
+          example: 1
+        supportPickup:
+          type: integer
+          description: 是否支持自提：1-支持，0-不支持
+          enum: [0, 1]
+          example: 1
+        remark:
+          type: string
+          description: 备注
+          example: 备注信息
+        createdAt:
+          type: string
+          format: date-time
+          description: 创建时间
+          example: "2024-01-01T00:00:00"
+        updatedAt:
+          type: string
+          format: date-time
+          description: 更新时间
+          example: "2024-01-01T00:00:00"
+        createdBy:
+          type: integer
+          format: int64
+          nullable: true
+          description: 创建人ID
+          example: 1
+        updatedBy:
+          type: integer
+          format: int64
+          nullable: true
+          description: 更新人ID
+          example: 1
+    
+    ApiResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          description: 响应码
+          example: "200"
+        message:
+          type: string
+          description: 响应消息
+          example: 操作成功
+        data:
+          type: object
+          description: 响应数据
+    
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          description: 错误码
+          example: "400"
+        message:
+          type: string
+          description: 错误消息
+          example: store-1001: 门店不存在
+
+  responses:
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: "404"
+            message: store-1001: 门店不存在
+    
+    BadRequest:
+      description: 参数错误
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: "400"
+            message: store-1002: 门店编码已存在
+
+# 错误码说明
+# store-1001: 门店不存在
+# store-1002: 门店编码已存在
+# store-1003: 指定的店长不存在或已离职
+# store-1004: 该员工权限不足（需 MANAGER 或 ADMIN 角色）
+# store-1005: 门店已停用，禁止操作
+
+
+
+
+
+
+
+
+
+

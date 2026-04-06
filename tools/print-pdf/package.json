@@ -1,0 +1,23 @@
+{
+  "name": "print-pdf",
+  "version": "1.0.0",
+  "description": "Receipt PDF generator for agri_system (Puppeteer)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "puppeteer": "^20.0.0"
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
