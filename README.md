@@ -1,150 +1,73 @@
-# 农资行业进销存系统
+# agri_system
 
-## 项目简介
-
-基于 DDD-Lite 架构的高性能、可维护、可扩展的农资行业进销存系统。
-
-## 技术栈
-
-- **Java**: 17
-- **Spring Boot**: 3.2.0
-- **MyBatis-Flex**: 数据持久化
-- **MySQL**: 8.x
-- **Redis**: 7.x
-- **Sa-Token**: 权限认证
-- **Flyway**: 数据库迁移
-- **OpenAPI/Swagger**: API 文档
-- **OpenTelemetry**: 链路追踪
+农业行业进销存系统，采用多模块 Maven 结构，包含管理端接口、客户端接口、领域层、应用层与基础设施层。
 
 ## 项目结构
 
-```
-agri-system-parent/
-├── core-domain/          # 核心领域层
-├── core-application/     # 核心应用层
-├── core-infrastructure/  # 核心基础设施层
-├── api-admin/            # 管理端 API
-└── api-client/           # 客户端 API
-```
+- `core-domain`：领域模型与领域服务
+- `core-application`：应用服务与业务编排
+- `core-infrastructure`：持久化、配置、三方集成
+- `api-admin`：管理端 API
+- `api-client`：客户端 API
+- `admin-web`：管理端前端
+- `ddl`：数据库设计与初始化脚本
+- `openapi`：接口契约文件
 
-## 快速开始
+## 技术栈
 
-### 前置条件
+- Java 17
+- Spring Boot 3
+- MyBatis-Flex
+- MySQL 8
+- Redis 7
+- Sa-Token
+- Flyway
+- Vite + Vue 3
+
+## 快速启动
+
+### 依赖
 
 - JDK 17+
 - Maven 3.6+
-- Docker & Docker Compose（用于 MySQL 和 Redis）
+- Docker / Docker Compose
+- Node.js 18+（前端需要）
 
-### 启动步骤
+### 启动基础设施
 
-1. 启动基础设施服务：
 ```bash
 docker-compose up -d mysql redis
 ```
 
-2. 构建项目：
+### 构建后端
+
 ```bash
 mvn clean install -DskipTests
 ```
 
-3. 启动管理端 API：
+### 启动服务
+
 ```bash
 mvn spring-boot:run -pl api-admin
-```
-
-4. 启动客户端 API（新终端）：
-```bash
 mvn spring-boot:run -pl api-client
 ```
 
-### 测试接口
+### 启动前端
 
 ```bash
-# 管理端健康检查
-curl http://localhost:8080/health
-
-# 客户端健康检查
-curl http://localhost:8081/health
-
-# Swagger 文档
-# 管理端: http://localhost:8080/swagger-ui.html
-# 客户端: http://localhost:8081/swagger-ui.html
+cd admin-web
+npm install
+npm run dev
 ```
 
-## 开发规范
+## 文档入口
 
-请参考 [AI_GENERATION_RULES.md](./AI_GENERATION_RULES.md) 了解详细的开发规范和约束。
+- `docs/README.md`：当前文档导航
+- `ddl/README.md`：数据库说明
+- `openapi/`：接口契约
+- `docs/archive/2025/`：历史过程文档归档
 
-### 核心原则
+## 说明
 
-- DDD-Lite 分层架构
-- 高内聚低耦合
-- 无幻觉约束（禁止生成未定义的字段）
-- 所有写操作必须幂等
-- 关键逻辑保持强一致性
-
-## 模块说明
-
-- [core-domain](./core-domain/README.md) - 领域层
-- [core-application](./core-application/README.md) - 应用层
-- [core-infrastructure](./core-infrastructure/README.md) - 基础设施层
-- [api-admin](./api-admin/README.md) - 管理端 API
-- [api-client](./api-client/README.md) - 客户端 API
-
-## CI/CD
-
-项目使用 GitHub Actions 进行持续集成和部署，工作流包括：
-
-- 代码检查（SpotBugs, Checkstyle）
-- 单元测试
-- 构建 Docker 镜像
-- 推送到容器镜像仓库
-
-详见 [.github/workflows/ci-cd.yml](./.github/workflows/ci-cd.yml)
-
-## 部署
-
-### Docker Compose 部署
-
-```bash
-# 启动所有服务（MySQL + Redis + 应用）
-docker-compose up -d
-```
-
-### 单独部署应用
-
-参考各模块的 README 文件。
-
-## 许可证
-
-待定
-
-## 贡献指南
-
-1. Fork 项目
-2. 创建特性分支
-3. 提交更改
-4. 推送到分支
-5. 创建 Pull Request
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+- 仓库已做文档精简，旧的阶段性汇报、交付记录、问题排查材料已迁入归档目录。
+- 归档文档仅用于追溯历史背景，不作为当前开发规范或交付标准。
