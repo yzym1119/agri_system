@@ -21,5 +21,7 @@ public interface StaffPerformanceLogRepository {
     List<StaffPerformanceLog> findByStaffAndMonth(Long staffId, String month, int page, int size);
 
     List<Long> findStaffIdsByMonth(String month);
+
+    List<StaffPerformanceLog> findByStaffAndMonthRange(Long staffId, String month);
 }
 

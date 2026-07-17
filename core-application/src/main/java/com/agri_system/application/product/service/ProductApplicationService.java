@@ -10,6 +10,8 @@ import com.agri_system.application.product.dto.vo.UnitConversionVO;
 import com.agri_system.application.product.exception.ProductErrorCode;
 import com.agri_system.application.storage.dto.FileUploadCommand;
 import com.agri_system.domain.common.service.CodeGenerationService;
+import com.agri_system.domain.inventory.repository.InventoryBatchRepository;
+import com.agri_system.domain.order.repository.OrderItemRepository;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.model.ProductCategory;
 import com.agri_system.domain.product.model.ProductPrice;
@@ -19,6 +21,8 @@ import com.agri_system.domain.product.repository.ProductPriceRepository;
 import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.product.repository.ProductUnitConversionRepository;
 import com.agri_system.domain.product.service.ProductDomainService;
+import com.agri_system.domain.productpackage.repository.ProductPackageItemRepository;
+import com.agri_system.domain.purchase.repository.PurchaseItemRepository;
 import com.agri_system.domain.storage.FileStorageRepository;
 import com.mybatisflex.core.paginate.Page;
 import lombok.RequiredArgsConstructor;
@@ -52,6 +56,10 @@ public class ProductApplicationService {
     private final ProductDomainService domainService;
     private final FileStorageRepository fileStorageRepository;
     private final com.agri_system.application.common.service.CodeGenerationApplicationService codeGenerationService;
+    private final OrderItemRepository orderItemRepository;
+    private final ProductPackageItemRepository productPackageItemRepository;
+    private final PurchaseItemRepository purchaseItemRepository;
+    private final InventoryBatchRepository inventoryBatchRepository;
     
     // ==================== 商品基本档案 ====================
     
@@ -111,6 +119,14 @@ public class ProductApplicationService {
         product.setAllowSpecialFund(command.getAllowSpecialFund() != null ? command.getAllowSpecialFund() : 0);
         product.setStatus(1);
         product.setRemark(command.getRemark());
+        product.setBarcode(command.getBarcode());
+        product.setRegistrationNo(command.getRegistrationNo());
+        product.setStorageConditions(command.getStorageConditions());
+        product.setShelfLifeDays(command.getShelfLifeDays());
+        product.setUsageMethod(command.getUsageMethod());
+        product.setMinStock(command.getMinStock());
+        product.setMaxStock(command.getMaxStock());
+        product.setReorderQuantity(command.getReorderQuantity());
         product.setCreatedAt(LocalDateTime.now());
         product.setUpdatedAt(LocalDateTime.now());
         
@@ -138,18 +154,23 @@ public class ProductApplicationService {
             domainService.validateCategory(category);
         }
         
-        // 校验名称+规格+厂家唯一（排除自身）
+        // 校验名称+规格+厂家唯一（排除自身）—— 仅当名称/规格/厂家有传值时才校验
+        String checkName = command.getName() != null ? command.getName() : product.getName();
+        String checkSpec = command.getSpecification() != null ? command.getSpecification() : product.getSpecification();
+        String checkMfr = command.getManufacturer() != null ? command.getManufacturer() : product.getManufacturer();
         productRepository.findByNameSpecManufacturerExcludeId(
-                        command.getName(),
-                        command.getSpecification(),
-                        command.getManufacturer(),
+                        checkName,
+                        checkSpec,
+                        checkMfr,
                         command.getId())
                 .ifPresent(existing -> {
                     throw new IllegalArgumentException("商品已存在：同名同规格同厂家");
                 });
-        
+
         // 更新商品信息（只更新非空字段，避免清空未传递的字段）
-        product.setName(command.getName());
+        if (command.getName() != null) {
+            product.setName(command.getName());
+        }
         if (command.getCategoryId() != null) {
             product.setCategoryId(command.getCategoryId());
         }
@@ -162,24 +183,22 @@ public class ProductApplicationService {
         if (command.getManufacturer() != null) {
             product.setManufacturer(command.getManufacturer());
         }
-        product.setMainUnit(command.getMainUnit());
-        // 辅单位：如果传递了值（包括空字符串），则更新；如果为null，则清空
-        // 注意：前端清空时会传递 null，需要明确处理
-        // 如果 command.getAuxUnit() 为 null，需要清空数据库中的值
-        String newAuxUnit = command.getAuxUnit() != null && !command.getAuxUnit().trim().isEmpty() 
-                ? command.getAuxUnit() : null;
-        product.setAuxUnit(newAuxUnit);
-        
-        // 主辅单位换算比例：如果辅单位被清空，换算比例也应该清空
-        // 如果辅单位有值，则更新换算比例
-        if (newAuxUnit == null) {
-            // 辅单位被清空，换算比例也应该清空
-            product.setMainToAuxRatio(null);
-        } else {
-            // 辅单位有值，更新换算比例（无论是否为 null，都需要更新）
-            product.setMainToAuxRatio(command.getMainToAuxRatio());
+        if (command.getMainUnit() != null) {
+            product.setMainUnit(command.getMainUnit());
         }
-        product.setSuggestedRetailPrice(command.getSuggestedRetailPrice());
+        // 辅单位：仅在明确传值时更新
+        if (command.getAuxUnit() != null) {
+            String newAuxUnit = command.getAuxUnit().trim().isEmpty() ? null : command.getAuxUnit();
+            product.setAuxUnit(newAuxUnit);
+            if (newAuxUnit == null) {
+                product.setMainToAuxRatio(null);
+            } else if (command.getMainToAuxRatio() != null) {
+                product.setMainToAuxRatio(command.getMainToAuxRatio());
+            }
+        }
+        if (command.getSuggestedRetailPrice() != null) {
+            product.setSuggestedRetailPrice(command.getSuggestedRetailPrice());
+        }
         if (command.getVipPrice() != null) {
             product.setVipPrice(command.getVipPrice());
         }
@@ -211,6 +230,30 @@ public class ProductApplicationService {
         
         if (command.getRemark() != null) {
             product.setRemark(command.getRemark());
+        }
+        if (command.getBarcode() != null) {
+            product.setBarcode(command.getBarcode());
+        }
+        if (command.getRegistrationNo() != null) {
+            product.setRegistrationNo(command.getRegistrationNo());
+        }
+        if (command.getStorageConditions() != null) {
+            product.setStorageConditions(command.getStorageConditions());
+        }
+        if (command.getShelfLifeDays() != null) {
+            product.setShelfLifeDays(command.getShelfLifeDays());
+        }
+        if (command.getUsageMethod() != null) {
+            product.setUsageMethod(command.getUsageMethod());
+        }
+        if (command.getMinStock() != null) {
+            product.setMinStock(command.getMinStock());
+        }
+        if (command.getMaxStock() != null) {
+            product.setMaxStock(command.getMaxStock());
+        }
+        if (command.getReorderQuantity() != null) {
+            product.setReorderQuantity(command.getReorderQuantity());
         }
         product.setUpdatedAt(LocalDateTime.now());
         
@@ -306,9 +349,27 @@ public class ProductApplicationService {
     public void deleteProduct(Long id) {
         productRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException(ProductErrorCode.PRODUCT_NOT_FOUND + ": 商品不存在"));
-        
-        // TODO: 可以添加业务校验，如是否被订单引用等
-        
+
+        long orderRefCount = orderItemRepository.countByProductId(id);
+        if (orderRefCount > 0) {
+            throw new IllegalStateException("该商品已被订单明细引用，无法删除");
+        }
+
+        long packageRefCount = productPackageItemRepository.countByProductId(id);
+        if (packageRefCount > 0) {
+            throw new IllegalStateException("该商品已被套餐明细引用，无法删除");
+        }
+
+        long purchaseRefCount = purchaseItemRepository.countByProductId(id);
+        if (purchaseRefCount > 0) {
+            throw new IllegalStateException("该商品已被采购明细引用，无法删除");
+        }
+
+        java.math.BigDecimal currentStock = inventoryBatchRepository.sumQuantityByProduct(id);
+        if (currentStock != null && currentStock.compareTo(java.math.BigDecimal.ZERO) > 0) {
+            throw new IllegalStateException("该商品当前仍有库存，无法删除");
+        }
+
         productRepository.delete(id);
     }
 
@@ -557,7 +618,7 @@ public class ProductApplicationService {
         price.setPrice(command.getPrice());
         price.setEffectiveDate(command.getEffectiveDate());
         price.setExpiryDate(command.getExpiryDate());
-        price.setStatus(1);
+        price.setStatus(command.getStatus() != null ? command.getStatus() : 1);
         price.setCreatedAt(LocalDateTime.now());
         price.setUpdatedAt(LocalDateTime.now());
         
@@ -573,7 +634,9 @@ public class ProductApplicationService {
         ProductPrice price = priceRepository.findById(command.getId())
                 .orElseThrow(() -> new IllegalArgumentException("价格规则不存在"));
         
-        price.setPrice(command.getPrice());
+        if (command.getPrice() != null) {
+            price.setPrice(command.getPrice());
+        }
         price.setEffectiveDate(command.getEffectiveDate());
         price.setExpiryDate(command.getExpiryDate());
         if (command.getStatus() != null) {
@@ -589,8 +652,11 @@ public class ProductApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void deletePriceRule(Long id) {
-        priceRepository.findById(id)
+        ProductPrice price = priceRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("价格规则不存在"));
+        if (price.getStatus() != null && price.getStatus() == 1) {
+            throw new IllegalArgumentException("启用中的价格规则不能直接删除，请先停用后再删除");
+        }
         priceRepository.delete(id);
     }
     
@@ -630,6 +696,14 @@ public class ProductApplicationService {
         vo.setAllowSpecialFund(product.getAllowSpecialFund());
         vo.setStatus(product.getStatus());
         vo.setRemark(product.getRemark());
+        vo.setBarcode(product.getBarcode());
+        vo.setRegistrationNo(product.getRegistrationNo());
+        vo.setStorageConditions(product.getStorageConditions());
+        vo.setShelfLifeDays(product.getShelfLifeDays());
+        vo.setUsageMethod(product.getUsageMethod());
+        vo.setMinStock(product.getMinStock());
+        vo.setMaxStock(product.getMaxStock());
+        vo.setReorderQuantity(product.getReorderQuantity());
         vo.setCreatedAt(product.getCreatedAt());
         vo.setUpdatedAt(product.getUpdatedAt());
         return vo;
@@ -721,7 +795,4 @@ public class ProductApplicationService {
         return null;
     }
 }
-
-
-
 

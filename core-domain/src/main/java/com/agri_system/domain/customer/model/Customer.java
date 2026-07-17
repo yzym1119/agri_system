@@ -28,7 +28,25 @@ public class Customer {
     
     /** 客户姓名 */
     private String name;
-    
+
+    /** 公司/农场名称 */
+    private String companyName;
+
+    /** 纳税人识别号 */
+    private String taxId;
+
+    /** 发票抬头 */
+    private String invoiceTitle;
+
+    /** 开票银行及账号 */
+    private String invoiceBank;
+
+    /** 开票地址 */
+    private String invoiceAddress;
+
+    /** 开票电话 */
+    private String invoicePhone;
+
     /** 手机号 */
     private String phone;
     
@@ -46,7 +64,13 @@ public class Customer {
     
     /** 地址 */
     private String address;
-    
+
+    /** 种植面积（亩） */
+    private BigDecimal landArea;
+
+    /** 主要种植作物（如：番茄、柑橘、水稻） */
+    private String cropType;
+
     /** 身份证号 */
     private String idCard;
     
@@ -98,6 +122,13 @@ public class Customer {
     public boolean isVip() {
         return type != null && type == 2;
     }
+
+    /**
+     * 检查客户是否正常可用
+     */
+    public boolean isActive() {
+        return status != null && status == 1;
+    }
     
     /**
      * 升级为VIP
@@ -142,7 +173,6 @@ public class Customer {
         this.vipEndDate = null;
     }
 }
-
 
 
 

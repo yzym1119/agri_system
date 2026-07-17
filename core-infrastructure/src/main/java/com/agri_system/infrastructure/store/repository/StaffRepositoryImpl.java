@@ -100,8 +100,18 @@ public class StaffRepositoryImpl implements StaffRepository {
         
         return staffMapper.paginate(pageNum, pageSize, queryWrapper);
     }
-}
 
+    @Override
+    public long countByStoreId(Long storeId) {
+        if (storeId == null) {
+            return 0;
+        }
+        QueryWrapper queryWrapper = QueryWrapper.create()
+                .where("store_id = ?", storeId)
+                .and("deleted = 0");
+        return staffMapper.selectCountByQuery(queryWrapper);
+    }
+}
 
 
 

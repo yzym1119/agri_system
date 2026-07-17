@@ -6,12 +6,14 @@ import com.aliyun.oss.OSS;
 import com.aliyun.oss.model.ObjectMetadata;
 import com.aliyun.oss.model.PutObjectRequest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
 
 @Component
 @RequiredArgsConstructor
+@ConditionalOnBean(OSS.class)
 public class AliyunOssFileStorageRepository implements FileStorageRepository {
 
     private final OSS ossClient;

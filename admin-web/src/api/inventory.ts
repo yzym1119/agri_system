@@ -1,15 +1,17 @@
 import request from '@/utils/request'
 import type {
-    BatchDetailVO,
     InventoryAdjustRequest,
     InventoryDetailVO,
     InventoryPageVO,
     InventoryQuery,
+    InventoryTransferRecordQuery,
+    InventoryTransferRecordVO,
     InventoryTransactionQuery,
     InventoryTransactionVO,
-    InventoryTransferRequest,
-    PageResponse
+    InventoryTransferResult,
+    InventoryTransferRequest
 } from '@/types/inventory'
+import type { PageResponse } from '@/types/store'
 
 /**
  * 库存管理 API
@@ -51,21 +53,8 @@ export function getInventoryDetail(storeId: number, productId: number): Promise<
   })
 }
 
-// 批次详情
-export function getBatchDetail(batchId: number): Promise<BatchDetailVO> {
-  return request({
-    url: `/api/admin/inventory/batch/${batchId}`,
-    method: 'get'
-  }).then((response: any) => {
-    if (response && response.data) {
-      return response.data
-    }
-    return response
-  })
-}
-
 // 调拨
-export function transferInventory(data: InventoryTransferRequest): Promise<any> {
+export function transferInventory(data: InventoryTransferRequest): Promise<InventoryTransferResult> {
   return request({
     url: '/api/admin/inventory/transfer',
     method: 'post',
@@ -104,4 +93,36 @@ export function getInventoryTransactions(params: InventoryTransactionQuery): Pro
   })
 }
 
+export function getInventoryTransferRecords(params: InventoryTransferRecordQuery): Promise<PageResponse<InventoryTransferRecordVO>> {
+  return request({
+    url: '/api/admin/inventory/transfers',
+    method: 'get',
+    params
+  }).then((response: any) => {
+    const page =
+      (response && response.records ? response : null) ||
+      (response && response.data && response.data.records ? response.data : null)
+    if (page) {
+      return {
+        records: page.records || [],
+        total: page.total ?? page.totalRow ?? 0,
+        pageNum: page.pageNum ?? page.current ?? params.pageNum ?? 1,
+        pageSize: page.pageSize ?? page.size ?? params.pageSize ?? 10
+      }
+    }
+    return { records: [], total: 0, pageNum: params.pageNum || 1, pageSize: params.pageSize || 10 }
+  })
+}
+
+/** 智能库存阈值推荐 */
+export function getSmartThresholdRecommendations(params?: {
+  storeId?: number
+  days?: number
+}): Promise<any[]> {
+  return request({
+    url: '/api/admin/inventory/warning/smart-threshold',
+    method: 'get',
+    params
+  })
+}
 

@@ -50,8 +50,8 @@
         <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="handleViewBatches(row)">查看批次</el-button>
-            <el-button link type="success" @click="handleTransfer(row)">调拨</el-button>
-            <el-button link type="warning" @click="handleAdjust(row)">盘点</el-button>
+            <el-button v-permission="'inventory:transfer'" link type="success" @click="handleTransfer(row)">调拨</el-button>
+            <el-button v-permission="'inventory:adjust'" link type="warning" @click="handleAdjust(row)">盘点</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -123,7 +123,7 @@
       </el-form>
       <template #footer>
         <el-button @click="transferVisible = false">取消</el-button>
-        <el-button type="primary" :loading="transferLoading" @click="handleTransferSubmit">提交调拨</el-button>
+        <el-button v-permission="'inventory:transfer'" type="primary" :loading="transferLoading" @click="handleTransferSubmit">提交调拨</el-button>
       </template>
     </el-dialog>
 
@@ -159,7 +159,7 @@
       </el-form>
       <template #footer>
         <el-button @click="adjustVisible = false">取消</el-button>
-        <el-button type="primary" :loading="adjustLoading" @click="handleAdjustSubmit">提交盘点</el-button>
+        <el-button v-permission="'inventory:adjust'" type="primary" :loading="adjustLoading" @click="handleAdjustSubmit">提交盘点</el-button>
       </template>
     </el-dialog>
   </div>
@@ -181,7 +181,7 @@ import type {StoreDetailVO} from '@/types/store'
 import type {FormInstance, FormRules} from 'element-plus'
 import {ElMessage} from 'element-plus'
 
-const queryParams = reactive<InventoryQuery & { onlyHasStock?: boolean }>({
+const queryParams = reactive<InventoryQuery>({
   pageNum: 1,
   pageSize: 10,
   onlyHasStock: true
@@ -226,14 +226,16 @@ const adjustForm = reactive<{
   productName?: string
   systemQuantity?: number
   actualQuantity?: number
-  quantityDiff?: number
+  quantityDiff: number
   type?: number
   remark?: string
   productMainUnit?: string
   productAuxUnit?: string
   productMainToAuxRatio?: number
   unit?: string
-}>({})
+}>({
+  quantityDiff: 0
+})
 const adjustRules: FormRules = {
   actualQuantity: [{ required: true, message: '请输入实际库存', trigger: 'blur' }]
 }
@@ -250,12 +252,8 @@ const loadTable = async () => {
   loading.value = true
   try {
     const res = await getInventoryList(queryParams)
-    let records = res.records || []
-    if (queryParams.onlyHasStock) {
-      records = records.filter(r => (r.totalQuantity ?? 0) > 0)
-    }
-    tableData.value = records
-    total.value = (queryParams.onlyHasStock ? records.length : res.total || 0) || 0
+    tableData.value = res.records || []
+    total.value = res.total || 0
   } finally {
     loading.value = false
   }
@@ -404,5 +402,3 @@ loadOptions().then(loadTable)
   justify-content: flex-end;
 }
 </style>
-
-

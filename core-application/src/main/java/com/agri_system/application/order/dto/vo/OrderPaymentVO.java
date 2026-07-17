@@ -18,8 +18,11 @@ public class OrderPaymentVO {
     @Schema(description = "支付明细ID", example = "1")
     private Long id;
     
-    @Schema(description = "支付类型：1-微信, 2-支付宝, 3-本金余额, 4-专用金余额, 5-红包/优惠券, 6-赊销", example = "3")
+    @Schema(description = "支付类型：1-现金, 2-微信, 3-支付宝, 4-本金余额, 5-红包/优惠券, 6-赊销, 8-专用金余额, 10-混合支付", example = "4")
     private Integer paymentType;
+
+    @Schema(description = "支付方式展示名称", example = "本金余额")
+    private String paymentTypeName;
     
     @Schema(description = "支付金额", example = "50.00")
     private BigDecimal amount;
@@ -33,8 +36,6 @@ public class OrderPaymentVO {
     @Schema(description = "创建时间")
     private LocalDateTime createdAt;
 }
-
-
 
 
 

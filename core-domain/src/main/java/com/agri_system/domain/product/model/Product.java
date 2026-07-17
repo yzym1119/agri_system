@@ -1,5 +1,6 @@
 package com.agri_system.domain.product.model;
 
+import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
 import com.mybatisflex.annotation.Table;
@@ -23,7 +24,10 @@ public class Product {
     
     /** 商品编码 */
     private String code;
-    
+
+    /** 条形码（EAN-13/Code128） */
+    private String barcode;
+
     /** 商品名称 */
     private String name;
     
@@ -38,6 +42,9 @@ public class Product {
     
     /** 生产厂家 */
     private String manufacturer;
+
+    /** 农药/肥料登记证号 */
+    private String registrationNo;
     
     /** 主单位（如：袋、瓶、箱） */
     private String mainUnit;
@@ -80,10 +87,32 @@ public class Product {
     
     /** 状态：1-正常，2-停用 */
     private Integer status;
-    
+
+    /** 逻辑删除：1-已删，0-未删 */
+    @Column(isLogicDelete = true)
+    private Integer deleted;
+
     /** 备注 */
     private String remark;
-    
+
+    /** 存储条件（如：阴凉干燥处、避光保存） */
+    private String storageConditions;
+
+    /** 保质期（天） */
+    private Integer shelfLifeDays;
+
+    /** 使用方法/稀释比例 */
+    private String usageMethod;
+
+    /** 最低库存预警值 */
+    private BigDecimal minStock;
+
+    /** 最高库存预警值 */
+    private BigDecimal maxStock;
+
+    /** 建议补货数量 */
+    private BigDecimal reorderQuantity;
+
     /** 创建时间 */
     private LocalDateTime createdAt;
     

@@ -1,6 +1,14 @@
 import {defineStore} from 'pinia'
 import {ref} from 'vue'
 import type {RouteRecordRaw} from 'vue-router'
+import { getCurrentMenuTree } from '@/api/menu'
+import type { MenuTreeNode } from '@/types/role'
+
+const legacyMenuPathMap: Record<string, string> = {
+  '/inventory': '/inventory/list',
+  '/purchase': '/inventory/purchase/order',
+  '/customer/list': '/marketing/customer/list'
+}
 
 export const usePermissionStore = defineStore(
   'permission',
@@ -9,10 +17,16 @@ export const usePermissionStore = defineStore(
     const routes = ref<RouteRecordRaw[]>([])
     // 权限列表（预留，用于动态路由）
     const permissions = ref<string[]>([])
+    const menuTree = ref<MenuTreeNode[]>([])
+    const routesLoaded = ref(false)
 
     // 设置路由
     const setRoutes = (newRoutes: RouteRecordRaw[]) => {
       routes.value = newRoutes
+    }
+
+    const setRoutesLoaded = (loaded: boolean) => {
+      routesLoaded.value = loaded
     }
 
     // 设置权限
@@ -20,17 +34,34 @@ export const usePermissionStore = defineStore(
       permissions.value = newPermissions
     }
 
+    const setMenuTree = (menus: MenuTreeNode[]) => {
+      menuTree.value = normalizeMenuTree(menus || [])
+    }
+
+    const loadCurrentMenus = async () => {
+      const menus = await getCurrentMenuTree()
+      setMenuTree(menus || [])
+      return menuTree.value
+    }
+
     // 重置
     const reset = () => {
       routes.value = []
       permissions.value = []
+      menuTree.value = []
+      routesLoaded.value = false
     }
 
     return {
       routes,
       permissions,
+      menuTree,
+      routesLoaded,
       setRoutes,
+      setRoutesLoaded,
       setPermissions,
+      setMenuTree,
+      loadCurrentMenus,
       reset
     }
   },
@@ -39,5 +70,17 @@ export const usePermissionStore = defineStore(
   }
 )
 
+function normalizeMenuTree(nodes: MenuTreeNode[]): MenuTreeNode[] {
+  return nodes.map(node => ({
+    ...node,
+    path: normalizeMenuPath(node.path),
+    children: normalizeMenuTree(node.children || [])
+  }))
+}
 
-
+function normalizeMenuPath(path?: string): string | undefined {
+  if (!path) {
+    return path
+  }
+  return legacyMenuPathMap[path] || path
+}

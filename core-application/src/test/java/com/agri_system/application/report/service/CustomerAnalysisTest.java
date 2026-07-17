@@ -3,6 +3,7 @@ package com.agri_system.application.report.service;
 import com.agri_system.application.report.dto.ChurnRiskVO;
 import com.agri_system.application.report.dto.CustomerRankVO;
 import com.agri_system.domain.customer.model.Customer;
+import com.agri_system.infrastructure.after_sales.mapper.AfterSalesMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditAccountMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditRepaymentLogMapper;
 import com.agri_system.infrastructure.customer.mapper.CustomerMapper;
@@ -45,6 +46,8 @@ class CustomerAnalysisTest {
     private CustomerMapper customerMapper;
     @Mock
     private ProductMapper productMapper;
+    @Mock
+    private AfterSalesMapper afterSalesMapper;
 
     private ReportAnalysisService reportAnalysisService;
 
@@ -52,11 +55,19 @@ class CustomerAnalysisTest {
     void setUp() {
         reportAnalysisService = new ReportAnalysisService(
                 orderMapper, orderItemMapper, inventoryBatchMapper,
-                creditAccountMapper, repaymentLogMapper, customerMapper, productMapper);
+                creditAccountMapper, repaymentLogMapper, customerMapper, productMapper, afterSalesMapper);
     }
 
     @Test
     void topCustomersRankedByTotalOrderAmount() {
+        // 数据库已按 total_order_amount DESC 排序（SQL ORDER BY）
+        Customer c3 = new Customer();
+        c3.setId(3L);
+        c3.setName("大户C");
+        c3.setPhone("13800000003");
+        c3.setTotalOrderAmount(new BigDecimal("80000.00"));
+        c3.setLastOrderTime(LocalDateTime.now().minusDays(1));
+
         Customer c1 = new Customer();
         c1.setId(1L);
         c1.setName("大户A");
@@ -71,20 +82,13 @@ class CustomerAnalysisTest {
         c2.setTotalOrderAmount(new BigDecimal("30000.00"));
         c2.setLastOrderTime(LocalDateTime.now().minusDays(5));
 
-        Customer c3 = new Customer();
-        c3.setId(3L);
-        c3.setName("大户C");
-        c3.setPhone("13800000003");
-        c3.setTotalOrderAmount(new BigDecimal("80000.00"));
-        c3.setLastOrderTime(LocalDateTime.now().minusDays(1));
+        when(customerMapper.selectListByQuery(any())).thenReturn(List.of(c3, c1, c2));
 
-        when(customerMapper.selectListByQuery(any())).thenReturn(List.of(c1, c2, c3));
-
-        List<CustomerRankVO> result = reportAnalysisService.topCustomers(20);
+        List<CustomerRankVO> result = reportAnalysisService.topCustomers(20, null);
 
         assertNotNull(result);
         assertEquals(3, result.size());
-        // 应该按totalOrderAmount降序：C(80000) > A(50000) > B(30000)
+        // SQL 已排序：C(80000) > A(50000) > B(30000)
         assertEquals(3L, result.get(0).getCustomerId());
         assertEquals(1L, result.get(1).getCustomerId());
         assertEquals(2L, result.get(2).getCustomerId());
@@ -93,45 +97,31 @@ class CustomerAnalysisTest {
     @Test
     void churnRisksFilteredByLastOrderTimeAndAmount() {
         LocalDateTime now = LocalDateTime.now();
-        
-        // 流失客户：lastOrderTime < 90天前 且 totalOrderAmount > 1000
+
+        // SQL WHERE clause filters: last_order_time < 90天前 AND total_order_amount > 1000
+        // 只有 churn1 和 churn2 符合 SQL 筛选条件
         Customer churn1 = new Customer();
         churn1.setId(101L);
         churn1.setName("流失客户1");
         churn1.setPhone("13900000001");
         churn1.setTotalOrderAmount(new BigDecimal("5000.00"));
-        churn1.setLastOrderTime(now.minusDays(120)); // 120天前
+        churn1.setLastOrderTime(now.minusDays(120)); // 120天前 < 90天 ✓, 5000 > 1000 ✓
 
         Customer churn2 = new Customer();
         churn2.setId(102L);
         churn2.setName("流失客户2");
         churn2.setPhone("13900000002");
         churn2.setTotalOrderAmount(new BigDecimal("2000.00"));
-        churn2.setLastOrderTime(now.minusDays(100)); // 100天前
+        churn2.setLastOrderTime(now.minusDays(100)); // 100天前 < 90天 ✓, 2000 > 1000 ✓
 
-        // 不应被筛选：最近有订单
-        Customer active = new Customer();
-        active.setId(201L);
-        active.setName("活跃客户");
-        active.setPhone("13900000003");
-        active.setTotalOrderAmount(new BigDecimal("3000.00"));
-        active.setLastOrderTime(now.minusDays(30)); // 30天前
+        // SQL 已筛选：只返回符合 WHERE 条件的数据
+        when(customerMapper.selectListByQuery(any())).thenReturn(List.of(churn1, churn2));
 
-        // 不应被筛选：金额不足
-        Customer small = new Customer();
-        small.setId(301L);
-        small.setName("小客户");
-        small.setPhone("13900000004");
-        small.setTotalOrderAmount(new BigDecimal("500.00")); // < 1000
-        small.setLastOrderTime(now.minusDays(120));
-
-        when(customerMapper.selectListByQuery(any())).thenReturn(List.of(churn1, churn2, active, small));
-
-        List<ChurnRiskVO> result = reportAnalysisService.churnRisks();
+        List<ChurnRiskVO> result = reportAnalysisService.churnRisks(null);
 
         assertNotNull(result);
-        assertEquals(2, result.size()); // 只筛选出churn1和churn2
-        
+        assertEquals(2, result.size());
+
         // 应该按流失天数降序：churn1(120天) > churn2(100天)
         assertEquals(101L, result.get(0).getCustomerId());
         assertEquals(120L, result.get(0).getDaysSinceLastOrder());
@@ -139,7 +129,6 @@ class CustomerAnalysisTest {
         assertEquals(100L, result.get(1).getDaysSinceLastOrder());
     }
 }
-
 
 
 

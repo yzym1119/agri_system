@@ -1,8 +1,6 @@
 package com.agri_system.application.product.dto.command;
 
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
 import lombok.Data;
 
@@ -17,11 +15,9 @@ import java.math.BigDecimal;
 @Schema(description = "更新商品命令")
 public class ProductUpdateCommand {
     
-    @NotNull(message = "商品ID不能为空")
-    @Schema(description = "商品ID", example = "1")
+    @Schema(description = "商品ID（从路径参数获取）", example = "1")
     private Long id;
-    
-    @NotBlank(message = "商品名称不能为空")
+
     @Schema(description = "商品名称", example = "复合肥料")
     private String name;
     
@@ -37,7 +33,6 @@ public class ProductUpdateCommand {
     @Schema(description = "生产厂家", example = "XX农资有限公司")
     private String manufacturer;
     
-    @NotBlank(message = "主单位不能为空")
     @Schema(description = "主单位（如：袋、瓶、箱）", example = "袋")
     private String mainUnit;
     
@@ -81,6 +76,33 @@ public class ProductUpdateCommand {
     
     @Schema(description = "备注", example = "备注信息")
     private String remark;
+
+    @Schema(description = "条形码（EAN-13/Code128）", example = "6901234567890")
+    private String barcode;
+
+    @Schema(description = "农药/肥料登记证号", example = "PD20080001")
+    private String registrationNo;
+
+    @Schema(description = "存储条件（如：阴凉干燥处、避光保存）", example = "阴凉干燥处")
+    private String storageConditions;
+
+    @Schema(description = "保质期（天）", example = "730")
+    private Integer shelfLifeDays;
+
+    @Schema(description = "使用方法/稀释比例", example = "兑水1:500喷雾")
+    private String usageMethod;
+
+    @PositiveOrZero(message = "最低库存必须大于等于0")
+    @Schema(description = "最低库存预警值", example = "10.00")
+    private BigDecimal minStock;
+
+    @PositiveOrZero(message = "最高库存必须大于等于0")
+    @Schema(description = "最高库存预警值", example = "500.00")
+    private BigDecimal maxStock;
+
+    @PositiveOrZero(message = "建议补货量必须大于等于0")
+    @Schema(description = "建议补货数量", example = "100.00")
+    private BigDecimal reorderQuantity;
 }
 
 

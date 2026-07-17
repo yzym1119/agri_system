@@ -10,7 +10,6 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
-
 /**
  * 测试专用的内存版仓储实现，避免引入真实数据库依赖。
  */
@@ -154,6 +153,26 @@ public final class InMemoryPointsRepositorySupport {
             return storage.values().stream()
                     .filter(order -> customerId == null || java.util.Objects.equals(order.getCustomerId(), customerId))
                     .filter(order -> status == null || java.util.Objects.equals(order.getStatus(), status))
+                    .count();
+        }
+
+        @Override
+        public synchronized long countByGoodsId(Long goodsId) {
+            return storage.values().stream()
+                    .filter(order -> java.util.Objects.equals(order.getPointsGoodsId(), goodsId))
+                    .count();
+        }
+
+        @Override
+        public synchronized long countActiveByCustomerId(Long customerId) {
+            if (customerId == null) {
+                return 0;
+            }
+            // 活跃状态: 10-待审核, 20-备货中, 30-待自提
+            Set<Integer> activeStatuses = Set.of(10, 20, 30);
+            return storage.values().stream()
+                    .filter(order -> java.util.Objects.equals(order.getCustomerId(), customerId))
+                    .filter(order -> order.getStatus() != null && activeStatuses.contains(order.getStatus()))
                     .count();
         }
 

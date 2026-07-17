@@ -1,5 +1,6 @@
 package com.agri_system.api.admin.controller;
 
+import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.agri_system.application.productpackage.dto.command.ProductPackageCreateCommand;
 import com.agri_system.application.productpackage.dto.command.ProductPackageUpdateCommand;
 import com.agri_system.application.productpackage.dto.query.ProductPackageQuery;
@@ -43,7 +44,7 @@ public class ProductPackageController {
         @ApiResponse(responseCode = "400", description = "参数错误或套餐编码重复", content = @Content(schema = @Schema(implementation = Map.class))),
         @ApiResponse(responseCode = "404", description = "商品不存在", content = @Content(schema = @Schema(implementation = Map.class)))
     })
-    // TODO: 添加Sa-Token鉴权注解 @SaCheckRole("STAFF") 或 @SaCheckPermission("package:create")
+    @SaCheckPermission("package:create")
     public ResponseEntity<Map<String, Object>> createPackage(@Valid @RequestBody ProductPackageCreateCommand command) {
         Long packageId = packageService.createPackage(command);
         Map<String, Object> result = new HashMap<>();
@@ -60,7 +61,7 @@ public class ProductPackageController {
         @ApiResponse(responseCode = "400", description = "参数错误", content = @Content(schema = @Schema(implementation = Map.class))),
         @ApiResponse(responseCode = "404", description = "套餐不存在", content = @Content(schema = @Schema(implementation = Map.class)))
     })
-    // TODO: 添加Sa-Token鉴权注解
+    @SaCheckPermission("package:update")
     public ResponseEntity<Map<String, Object>> updatePackage(
             @Parameter(description = "套餐ID", required = true) @PathVariable Long id,
             @Valid @RequestBody ProductPackageUpdateCommand command) {
@@ -78,7 +79,7 @@ public class ProductPackageController {
         @ApiResponse(responseCode = "200", description = "删除成功"),
         @ApiResponse(responseCode = "404", description = "套餐不存在", content = @Content(schema = @Schema(implementation = Map.class)))
     })
-    // TODO: 添加Sa-Token鉴权注解
+    @SaCheckPermission("package:delete")
     public ResponseEntity<Map<String, Object>> deletePackage(
             @Parameter(description = "套餐ID", required = true) @PathVariable Long id) {
         packageService.deletePackage(id);
@@ -94,7 +95,7 @@ public class ProductPackageController {
         @ApiResponse(responseCode = "200", description = "查询成功"),
         @ApiResponse(responseCode = "404", description = "套餐不存在", content = @Content(schema = @Schema(implementation = Map.class)))
     })
-    // TODO: 添加Sa-Token鉴权注解
+    @SaCheckPermission("package:query")
     public ResponseEntity<Map<String, Object>> getPackageDetail(
             @Parameter(description = "套餐ID", required = true) @PathVariable Long id) {
         ProductPackageDetailVO vo = packageService.getPackageDetail(id);
@@ -110,7 +111,7 @@ public class ProductPackageController {
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "查询成功")
     })
-    // TODO: 添加Sa-Token鉴权注解
+    @SaCheckPermission("package:query")
     public ResponseEntity<Map<String, Object>> queryPackages(@Valid ProductPackageQuery query) {
         Page<ProductPackageDetailVO> page = packageService.queryPackages(query);
         Map<String, Object> result = new HashMap<>();
@@ -126,7 +127,7 @@ public class ProductPackageController {
         @ApiResponse(responseCode = "200", description = "操作成功"),
         @ApiResponse(responseCode = "404", description = "套餐不存在", content = @Content(schema = @Schema(implementation = Map.class)))
     })
-    // TODO: 添加Sa-Token鉴权注解
+    @SaCheckPermission("package:update")
     public ResponseEntity<Map<String, Object>> updateStatus(
             @Parameter(description = "套餐ID", required = true) @PathVariable Long id,
             @Parameter(description = "状态：1=上架，0=下架", required = true) @RequestParam Integer status) {
@@ -137,7 +138,6 @@ public class ProductPackageController {
         return ResponseEntity.ok(result);
     }
 }
-
 
 
 

@@ -7,9 +7,11 @@ import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.dto.command.InventoryOutCommand;
 import com.agri_system.application.inventory.dto.command.InventoryTransferCommand;
 import com.agri_system.application.inventory.dto.query.InventoryQuery;
+import com.agri_system.application.inventory.dto.query.InventoryTransferRecordQuery;
 import com.agri_system.application.inventory.dto.query.InventoryTransactionQuery;
 import com.agri_system.application.inventory.dto.vo.BatchDetailVO;
 import com.agri_system.application.inventory.dto.vo.InventoryDetailVO;
+import com.agri_system.application.inventory.dto.vo.InventoryTransferRecordVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransactionVO;
 import com.agri_system.application.inventory.service.InventoryApplicationService;
 import com.agri_system.domain.inventory.vo.InventoryPageVO;
@@ -191,6 +193,18 @@ public class InventoryController {
         result.put("data", page);
         return ResponseEntity.ok(result);
     }
+
+    @GetMapping("/transfers")
+    @Operation(summary = "分页查询调拨记录", description = "按调拨单号聚合查询门店调拨记录")
+    @SaCheckPermission("inventory:transfer")
+    public ResponseEntity<Map<String, Object>> queryTransfers(@Valid InventoryTransferRecordQuery query) {
+        Page<InventoryTransferRecordVO> page = inventoryService.queryTransferPage(query);
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", "200");
+        result.put("message", "查询成功");
+        result.put("data", page);
+        return ResponseEntity.ok(result);
+    }
     
     // ==================== 私有方法 ====================
     
@@ -208,7 +222,6 @@ public class InventoryController {
         throw new IllegalArgumentException("无法获取用户ID");
     }
 }
-
 
 
 

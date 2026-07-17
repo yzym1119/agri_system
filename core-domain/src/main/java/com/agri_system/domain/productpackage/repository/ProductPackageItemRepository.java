@@ -35,8 +35,12 @@ public interface ProductPackageItemRepository {
      * 删除明细
      */
     void delete(Long id);
-}
 
+    /**
+     * 统计商品被套餐明细引用次数
+     */
+    long countByProductId(Long productId);
+}
 
 
 

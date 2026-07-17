@@ -1,5 +1,6 @@
 package com.agri_system.domain.customer.model;
 
+import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
 import com.mybatisflex.annotation.Table;
@@ -56,6 +57,10 @@ public class CouponTemplate {
     
     /** 状态：1-启用，0-停用 */
     private Integer status;
+
+    /** 逻辑删除：1-已删，0-未删 */
+    @Column(isLogicDelete = true)
+    private Integer deleted;
     
     /** 备注 */
     private String remark;

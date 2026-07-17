@@ -42,7 +42,7 @@
 
       <!-- 操作栏 -->
       <div class="toolbar">
-        <el-button type="primary" :icon="Plus" @click="handleAdd">新增套餐</el-button>
+        <el-button v-permission="'package:create'" type="primary" :icon="Plus" @click="handleAdd">新增套餐</el-button>
       </div>
 
       <!-- 表格 -->
@@ -97,8 +97,9 @@
         </el-table-column>
         <el-table-column label="操作" width="250" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
+            <el-button v-permission="'package:update'" type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
             <el-button
+              v-permission="'package:update'"
               type="warning"
               link
               :icon="row.status === 1 ? 'Bottom' : 'Top'"
@@ -106,7 +107,7 @@
             >
               {{ row.status === 1 ? '下架' : '上架' }}
             </el-button>
-            <el-button type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'package:delete'" type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -188,7 +189,7 @@
         <!-- 明细表格 -->
         <el-divider content-position="left">套餐明细</el-divider>
         <div class="item-table-toolbar">
-          <el-button type="primary" :icon="Plus" @click="handleAddItem">添加商品</el-button>
+          <el-button v-permission="isEdit ? 'package:update' : 'package:create'" type="primary" :icon="Plus" @click="handleAddItem">添加商品</el-button>
         </div>
         <el-table
           :data="formData.items"
@@ -250,6 +251,7 @@
           <el-table-column label="操作" width="100" align="center">
             <template #default="{ $index }">
               <el-button
+                v-permission="isEdit ? 'package:update' : 'package:create'"
                 type="danger"
                 link
                 :icon="Delete"
@@ -272,7 +274,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
+        <el-button v-permission="isEdit ? 'package:update' : 'package:create'" type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
 
@@ -371,10 +373,12 @@ const loadPackageList = async () => {
   loading.value = true
   try {
     const response: PageResponse<ProductPackageDetailVO> = await getPackageList(queryParams)
-    packageList.value = response.records
-    total.value = response.total
+    packageList.value = response.records || []
+    total.value = response.total || 0
   } catch (error) {
     console.error('加载套餐列表失败:', error)
+    packageList.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -431,7 +435,6 @@ const handleEdit = async (row: ProductPackageDetailVO) => {
       quantity: item.quantity,
       unit: item.unit || '',
       sortOrder: item.sortOrder,
-      // 这些字段需要从商品详情获取，暂时留空
       productMainUnit: undefined,
       productAuxUnit: undefined,
       productMainToAuxRatio: undefined,
@@ -451,22 +454,26 @@ const handleEdit = async (row: ProductPackageDetailVO) => {
 
 // 加载商品详情（用于编辑时获取价格信息）
 const loadProductDetailsForItems = async () => {
-  for (const item of formData.items) {
+  const failedProducts: string[] = []
+  await Promise.allSettled(formData.items.map(async item => {
     try {
       const productDetail = await getProductDetail(item.productId)
-      // 填充商品详细信息
       item.productMainUnit = productDetail.mainUnit
       item.productAuxUnit = productDetail.auxUnit || undefined
       item.productMainToAuxRatio = productDetail.mainToAuxRatio || undefined
       item.productSuggestedRetailPrice = productDetail.suggestedRetailPrice || 0
-      // 更新价格
       updateItemPrice(item)
     } catch (error) {
       console.error(`加载商品 ${item.productId} 详情失败:`, error)
+      failedProducts.push(item.productName || `商品#${item.productId}`)
     }
-  }
+  }))
   // 更新总价
   updateAllPrices()
+
+  if (failedProducts.length > 0) {
+    ElMessage.warning(`部分商品详情加载失败，价格可能不完整：${failedProducts.join('、')}`)
+  }
 }
 
 // 总价手动修改
@@ -478,7 +485,7 @@ const handleTotalPriceChange = () => {
 // 删除
 const handleDelete = async (row: ProductPackageDetailVO) => {
   try {
-    await ElMessageBox.confirm(`确定要删除套餐"${row.name}"吗？`, '提示', {
+    await ElMessageBox.confirm(`确定要删除套餐"${row.name}"吗？上架中的套餐需先下架，已被历史订单或启用中套餐提成规则引用的套餐不能删除。`, '提示', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       type: 'warning'
@@ -490,6 +497,7 @@ const handleDelete = async (row: ProductPackageDetailVO) => {
   } catch (error: any) {
     if (error !== 'cancel') {
       console.error('删除失败:', error)
+      ElMessage.error(error?.response?.data?.message || error?.message || '删除失败，请稍后再试')
     }
   }
 }
@@ -501,8 +509,9 @@ const handleToggleStatus = async (row: ProductPackageDetailVO) => {
     await updatePackageStatus(row.id, newStatus)
     ElMessage.success('操作成功')
     await loadPackageList()
-  } catch (error) {
+  } catch (error: any) {
     console.error('操作失败:', error)
+    ElMessage.error(error?.response?.data?.message || error?.message || '操作失败，请稍后再试')
   }
 }
 
@@ -692,8 +701,9 @@ const handleSubmit = async () => {
       }
       dialogVisible.value = false
       await loadPackageList()
-    } catch (error) {
+    } catch (error: any) {
       console.error('提交失败:', error)
+      ElMessage.error(error?.response?.data?.message || error?.message || '提交失败，请稍后再试')
     } finally {
       submitLoading.value = false
     }
@@ -760,42 +770,11 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
-.package-container {
-  padding: 20px;
-}
-
-.search-bar {
-  margin-bottom: 20px;
-}
-
-.search-form {
-  .el-form-item {
-    margin-bottom: 0;
-  }
-}
-
-.toolbar {
-  margin-bottom: 20px;
-}
-
-.pagination {
-  margin-top: 20px;
-  display: flex;
-  justify-content: flex-end;
-}
-
 .item-table-toolbar {
   margin-bottom: 10px;
 }
 
 .text-gray {
-  color: #999;
-}
-
-.form-tip {
-  font-size: 12px;
-  color: #909399;
-  margin-left: 10px;
+  color: #9ca3af;
 }
 </style>
-

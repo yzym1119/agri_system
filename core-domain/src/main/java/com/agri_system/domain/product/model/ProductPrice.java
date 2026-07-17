@@ -2,6 +2,7 @@ package com.agri_system.domain.product.model;
 
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
+import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Table;
 import lombok.Data;
 
@@ -26,6 +27,7 @@ public class ProductPrice {
     private Long productId;
     
     /** 门店ID（为空表示全局价格） */
+    @Column(tenantId = true)
     private Long storeId;
     
     /** 客户类型：1-普通客户，2-VIP客户（为空表示通用价格） */
@@ -46,7 +48,7 @@ public class ProductPrice {
     /** 失效日期 */
     private LocalDate expiryDate;
     
-    /** 状态：1-有效，2-无效 */
+    /** 状态：1-启用，0-停用 */
     private Integer status;
     
     /** 创建时间 */
@@ -75,4 +77,3 @@ public class ProductPrice {
         return true;
     }
 }
-

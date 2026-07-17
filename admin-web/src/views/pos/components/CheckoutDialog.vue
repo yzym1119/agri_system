@@ -23,7 +23,8 @@
           <div class="customer-info-box">
             <div class="customer-name">{{ customer.name }}</div>
             <div class="customer-phone" v-if="customer.phone">电话：{{ customer.phone }}</div>
-            <div class="customer-detail">
+            <!-- 钱包余额信息仅在使用余额/专用金/赊销/混合支付时展示 -->
+            <div class="customer-detail" v-if="paymentType === 4 || paymentType === 6 || paymentType === 10">
               <div class="detail-row">
                 <span class="detail-label">本金余额：</span>
                 <span class="detail-value balance">¥{{ customer.balance.toFixed(2) }}</span>
@@ -40,7 +41,8 @@
           </div>
         </div>
 
-        <div class="change-section">
+        <!-- 找零仅对现金支付有意义 -->
+        <div class="change-section" v-if="paymentType === 1">
           <div class="change-label">找零</div>
           <div class="change-value">¥{{ changeAmount.toFixed(2) }}</div>
         </div>
@@ -125,6 +127,28 @@
           </div>
         </div>
 
+        <div
+          v-if="paymentType !== 10 && shouldShowWalletPreview"
+          class="wallet-preview-card"
+          :class="{ 'is-warning': walletPaymentPreview.overflow > 0 }"
+        >
+          <div class="wallet-preview-title">钱包支付预估</div>
+          <div class="wallet-preview-row">
+            <span>专用金抵扣</span>
+            <strong>¥{{ walletPaymentPreview.specialFund.toFixed(2) }}</strong>
+          </div>
+          <div class="wallet-preview-row">
+            <span>本金余额抵扣</span>
+            <strong>¥{{ walletPaymentPreview.balance.toFixed(2) }}</strong>
+          </div>
+          <div class="wallet-preview-tip" v-if="walletPaymentPreview.specialFund > 0">
+            专用金仅覆盖允许使用专用金的商品金额。
+          </div>
+          <div class="wallet-preview-tip is-warning" v-if="walletPaymentPreview.overflow > 0">
+            当前钱包最多可支付 ¥{{ walletPayableLimit.toFixed(2) }}，仍差 ¥{{ walletPaymentPreview.overflow.toFixed(2) }}
+          </div>
+        </div>
+
         <!-- 混合支付列表 (混合模式时显示) -->
         <div class="mixed-panel" v-else>
           <div class="mixed-desc">请分配支付金额：</div>
@@ -152,7 +176,7 @@
                 <el-input-number 
                   v-model="mixedDetails[item.key]" 
                   :min="0" 
-                  :max="9999999"
+                  :max="getMixedMaxAmount(item.key)"
                   :precision="2"
                   :controls="false"
                   :disabled="item.disabled"
@@ -177,6 +201,28 @@
                >
                  <template #prefix><el-icon><Lock /></el-icon></template>
                </el-input>
+            </div>
+
+            <div
+              v-if="shouldShowWalletPreview"
+              class="wallet-preview-card"
+              :class="{ 'is-warning': walletPaymentPreview.overflow > 0 }"
+            >
+              <div class="wallet-preview-title">钱包部分预计拆分</div>
+              <div class="wallet-preview-row">
+                <span>专用金抵扣</span>
+                <strong>¥{{ walletPaymentPreview.specialFund.toFixed(2) }}</strong>
+              </div>
+              <div class="wallet-preview-row">
+                <span>本金余额抵扣</span>
+                <strong>¥{{ walletPaymentPreview.balance.toFixed(2) }}</strong>
+              </div>
+              <div class="wallet-preview-tip" v-if="walletPaymentPreview.specialFund > 0">
+                订单落库后会拆成“专用金 + 本金余额”两条支付流水。
+              </div>
+              <div class="wallet-preview-tip is-warning" v-if="walletPaymentPreview.overflow > 0">
+                当前输入已超出钱包上限 ¥{{ walletPayableLimit.toFixed(2) }}，超出 ¥{{ walletPaymentPreview.overflow.toFixed(2) }}
+              </div>
             </div>
           </div>
 
@@ -244,7 +290,7 @@ import {
   ArrowLeft, CircleCloseFilled, Lock
 } from '@element-plus/icons-vue'
 import { getCustomerCoupons } from '@/api/customer'
-import type { CartItem, POSCustomerInfo } from '@/types/pos'
+import type { CartItem, POSCustomerInfo, POSPaymentDetail } from '@/types/pos'
 import type { CustomerCouponVO } from '@/types/customer'
 
 const props = defineProps<{
@@ -297,6 +343,15 @@ const confirmForm = ref({
   remark: '' 
 })
 
+interface WalletPaymentPreview {
+  requested: number
+  specialFund: number
+  balance: number
+  overflow: number
+}
+
+const roundCurrency = (value: number) => Number((value || 0).toFixed(2))
+
 // ==========================================
 // 混合支付逻辑重构
 // ==========================================
@@ -323,12 +378,14 @@ const mixedDetails = reactive<Record<string, number>>({
 const mixedOptions = computed(() => [
   { 
     key: 'balance', 
-    label: '余额', 
-    subLabel: `可用: ¥${(props.customer?.balance || 0).toFixed(2)}`,
+    label: specialFundUsableAmount.value > 0 ? '钱包余额' : '余额', 
+    subLabel: props.customer
+      ? `本金 ¥${(props.customer.balance || 0).toFixed(2)} + 专用金 ¥${(props.customer.specialFund || 0).toFixed(2)}`
+      : undefined,
     icon: Wallet, 
     color: '#409eff', 
     bgColor: '#ecf5ff',
-    disabled: !props.customer || (props.customer.balance || 0) <= 0
+    disabled: !props.customer || walletPayableLimit.value <= 0
   },
   { key: 'wechat', label: '微信', icon: ChatLineRound, color: '#07c160', bgColor: '#e8f8f0' },
   { key: 'alipay', label: '支付宝', icon: CreditCard, color: '#1677ff', bgColor: '#e6f4ff' },
@@ -336,7 +393,7 @@ const mixedOptions = computed(() => [
   { 
     key: 'credit', 
     label: '赊销/挂账', 
-    subLabel: `剩余额度: ¥${((props.customer?.creditLimit || 0) - (props.customer?.totalDebt || 0)).toFixed(2)}`,
+    subLabel: `剩余额度: ¥${creditAvailableAmount.value.toFixed(2)}`,
     icon: Document, 
     color: '#f56c6c', 
     bgColor: '#fef0f0',
@@ -368,16 +425,14 @@ const needsAuthCodeInMixed = computed(() => {
 // 自动填充混合支付输入框
 const autoFillMixed = (key: string) => {
   if (mixedDetails[key] === 0 && remainingAmount.value > 0) {
-    // 如果是余额或专用金，不能超过可用余额
     let fillAmount = remainingAmount.value
-    if (key === 'special') {
-      fillAmount = Math.min(fillAmount, props.customer?.specialFund || 0)
-    } else if (key === 'balance') {
-      fillAmount = Math.min(fillAmount, props.customer?.balance || 0)
+    if (key === 'balance') {
+      fillAmount = Math.min(fillAmount, walletPayableLimit.value)
+    } else if (key === 'credit') {
+      fillAmount = Math.min(fillAmount, creditAvailableAmount.value)
     }
-    // 如果是赊销，校验额度（可选）
-    
-    mixedDetails[key] = Number(fillAmount.toFixed(2))
+
+    mixedDetails[key] = roundCurrency(fillAmount)
   }
 }
 
@@ -431,6 +486,72 @@ const hasSpecialFundProducts = computed(() => {
   return props.cartItems.some((item) => item.itemType === 1 && item.allowSpecialFund === 1)
 })
 
+const specialFundEligibleAmount = computed(() => {
+  if (!hasSpecialFundProducts.value) return 0
+  const eligibleAmount = props.cartItems.reduce((sum, item) => {
+    if (item.allowSpecialFund === 1) {
+      return sum + item.subtotal
+    }
+    return sum
+  }, 0)
+  return roundCurrency(Math.min(actualAmount.value, eligibleAmount))
+})
+
+const specialFundUsableAmount = computed(() => {
+  if (!props.customer || !hasSpecialFundProducts.value) return 0
+  return roundCurrency(Math.min(specialFundEligibleAmount.value, props.customer.specialFund || 0))
+})
+
+const walletPayableLimit = computed(() => {
+  if (!props.customer) return 0
+  return roundCurrency((props.customer.balance || 0) + specialFundUsableAmount.value)
+})
+
+const creditAvailableAmount = computed(() => {
+  return roundCurrency(Math.max(0, (props.customer?.creditLimit || 0) - (props.customer?.totalDebt || 0)))
+})
+
+const buildWalletPaymentPreview = (requested: number): WalletPaymentPreview => {
+  const normalizedRequested = roundCurrency(requested)
+  if (!props.customer || normalizedRequested <= 0) {
+    return {
+      requested: normalizedRequested,
+      specialFund: 0,
+      balance: 0,
+      overflow: 0
+    }
+  }
+
+  const specialFund = roundCurrency(Math.min(normalizedRequested, specialFundUsableAmount.value))
+  const balance = roundCurrency(
+    Math.min(Math.max(0, normalizedRequested - specialFund), props.customer.balance || 0)
+  )
+  const covered = roundCurrency(specialFund + balance)
+
+  return {
+    requested: normalizedRequested,
+    specialFund,
+    balance,
+    overflow: roundCurrency(Math.max(0, normalizedRequested - covered))
+  }
+}
+
+const currentWalletRequestedAmount = computed(() => {
+  if (paymentType.value === PAYMENT_TYPE_MAP.BALANCE) {
+    return actualAmount.value
+  }
+  if (paymentType.value === PAYMENT_TYPE_MAP.MIXED) {
+    return mixedDetails.balance
+  }
+  return 0
+})
+
+const walletPaymentPreview = computed(() => buildWalletPaymentPreview(currentWalletRequestedAmount.value))
+
+const shouldShowWalletPreview = computed(() => {
+  return !!props.customer && currentWalletRequestedAmount.value > 0
+})
+
 // 当前优惠券是否满足使用门槛
 const isCouponUsable = (coupon: CustomerCouponVO) => {
   return baseOrderAmount.value >= (coupon.minOrderAmount || 0)
@@ -438,12 +559,7 @@ const isCouponUsable = (coupon: CustomerCouponVO) => {
 
 // 是否可以赊销
 const canCredit = computed(() => {
-  if (!props.customer) return false
-  const creditLimit = props.customer.creditLimit || 0
-  const totalDebt = props.customer.totalDebt || 0
-  // 简单校验：额度 >= 当前欠款 + 本单金额
-  // 实际后端会有更严格校验，前端做基础拦截
-  return creditLimit >= totalDebt
+  return !!props.customer && creditAvailableAmount.value > 0
 })
 
 // 支付方式选项 (网格显示)
@@ -451,10 +567,20 @@ const paymentOptions = computed(() => [
   { value: 1, label: '现金', icon: Money, disabled: false },
   { value: 2, label: '微信', icon: ChatLineRound, disabled: false },
   { value: 3, label: '支付宝', icon: CreditCard, disabled: false },
-  { value: 4, label: '余额', icon: Wallet, disabled: !props.customer },
+  { value: 4, label: specialFundUsableAmount.value > 0 ? '余额/专用金' : '余额', icon: Wallet, disabled: !props.customer || walletPayableLimit.value <= 0 },
   { value: 6, label: '赊销', icon: Document, disabled: !canCredit.value },
   { value: 10, label: '组合/混合支付', icon: Document, disabled: false }
 ])
+
+const getMixedMaxAmount = (key: string) => {
+  if (key === 'balance') {
+    return walletPayableLimit.value
+  }
+  if (key === 'credit') {
+    return creditAvailableAmount.value
+  }
+  return actualAmount.value
+}
 
 // 是否可以确认
 const canConfirm = computed(() => {
@@ -465,6 +591,8 @@ const canConfirm = computed(() => {
   if (paymentType.value === PAYMENT_TYPE_MAP.MIXED) {
     // 分配金额必须等于应收金额
     if (Math.abs(allocatedAmount.value - actualAmount.value) > 0.01) return false
+    if (walletPaymentPreview.value.overflow > 0) return false
+    if (mixedDetails.credit - creditAvailableAmount.value > 0.01) return false
     // 如果用了余额，必须有验证码
     if (needsAuthCodeInMixed.value && (!walletAuthCode.value || walletAuthCode.value.length !== 6)) return false
     return true
@@ -472,6 +600,10 @@ const canConfirm = computed(() => {
 
   // 3. 单一余额支付校验
   if (paymentType.value === 4 && (!walletAuthCode.value || walletAuthCode.value.length !== 6)) {
+    return false
+  }
+
+  if (paymentType.value === PAYMENT_TYPE_MAP.BALANCE && walletPaymentPreview.value.overflow > 0) {
     return false
   }
 
@@ -583,9 +715,17 @@ const handleConfirm = () => {
       if (Math.abs(allocatedAmount.value - actualAmount.value) > 0.01) {
         return ElMessage.warning(`分配金额与应收不符，差额: ¥${(actualAmount.value - allocatedAmount.value).toFixed(2)}`)
       }
+      if (walletPaymentPreview.value.overflow > 0) {
+        return ElMessage.warning(`钱包支付金额超出上限，当前最多可付 ¥${walletPayableLimit.value.toFixed(2)}`)
+      }
+      if (mixedDetails.credit - creditAvailableAmount.value > 0.01) {
+        return ElMessage.warning(`赊销金额超出可用额度，当前剩余额度 ¥${creditAvailableAmount.value.toFixed(2)}`)
+      }
       if (needsAuthCodeInMixed.value && !walletAuthCode.value) {
         return ElMessage.warning('使用了余额，请输入验证码')
       }
+    } else if (paymentType.value === PAYMENT_TYPE_MAP.BALANCE && walletPaymentPreview.value.overflow > 0) {
+      return ElMessage.warning(`钱包余额不足，当前最多可支付 ¥${walletPayableLimit.value.toFixed(2)}`)
     }
     return ElMessage.warning('请检查输入信息')
   }
@@ -625,7 +765,7 @@ const handleConfirm = () => {
     orderData.walletAuthCode = needsAuthCodeInMixed.value ? walletAuthCode.value : undefined
     
     // 构造 payments 列表
-    const paymentsList = []
+    const paymentsList: POSPaymentDetail[] = []
     if (mixedDetails.cash > 0) paymentsList.push({ paymentType: 1, amount: mixedDetails.cash })
     if (mixedDetails.wechat > 0) paymentsList.push({ paymentType: 2, amount: mixedDetails.wechat })
     if (mixedDetails.alipay > 0) paymentsList.push({ paymentType: 3, amount: mixedDetails.alipay })
@@ -814,6 +954,54 @@ const handleClose = () => {
       }
 
       .payment-name { font-size: 14px; font-weight: 500; }
+    }
+  }
+
+  .wallet-preview-card {
+    margin-top: 14px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid #d9ecff;
+    background: linear-gradient(180deg, #f7fbff 0%, #eef6ff 100%);
+
+    &.is-warning {
+      border-color: #f3d19e;
+      background: linear-gradient(180deg, #fff9f0 0%, #fff4e5 100%);
+    }
+
+    .wallet-preview-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #303133;
+      margin-bottom: 8px;
+    }
+
+    .wallet-preview-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      color: #606266;
+
+      strong {
+        font-size: 14px;
+        color: #303133;
+      }
+    }
+
+    .wallet-preview-row + .wallet-preview-row {
+      margin-top: 6px;
+    }
+
+    .wallet-preview-tip {
+      margin-top: 8px;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #909399;
+
+      &.is-warning {
+        color: #e6a23c;
+      }
     }
   }
 

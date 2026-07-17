@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 订单支付明细仓储实现
@@ -44,5 +45,14 @@ public class OrderPaymentRepositoryImpl implements OrderPaymentRepository {
                         .orderBy("created_at", true)
         );
     }
-}
 
+    @Override
+    public Optional<OrderPayment> findByOrderIdAndOuterTransNo(Long orderId, String outerTransNo) {
+        OrderPayment payment = mapper.selectOneByQuery(
+                com.mybatisflex.core.query.QueryWrapper.create()
+                        .where("order_id = ?", orderId)
+                        .and("outer_trans_no = ?", outerTransNo)
+        );
+        return Optional.ofNullable(payment);
+    }
+}

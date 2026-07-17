@@ -140,6 +140,11 @@ public class PointsFulfillmentService {
 
     @Transactional
     public void deleteGoods(Long id) {
+        long orderCount = orderRepository.countByGoodsId(id);
+        if (orderCount > 0) {
+            throw new BizException(SystemErrorCode.DATA_CONFLICT, "该积分商品已产生兑换记录，不能删除");
+        }
+
         goodsRepository.deleteById(id);
     }
 
@@ -233,4 +238,3 @@ public class PointsFulfillmentService {
         return vo;
     }
 }
-

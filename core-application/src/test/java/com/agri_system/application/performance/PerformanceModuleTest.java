@@ -6,7 +6,9 @@ import com.agri_system.application.performance.event.CustomerRechargeEvent;
 import com.agri_system.application.performance.event.OrderRefundedEvent;
 import com.agri_system.application.performance.job.PerformanceSettlementJob;
 import com.agri_system.application.performance.listener.PerformanceEventListener;
+import com.agri_system.application.customer.service.CustomerSettlementService;
 import com.agri_system.domain.order.model.Order;
+import com.agri_system.domain.order.model.OrderItem;
 import com.agri_system.domain.order.repository.OrderItemRepository;
 import com.agri_system.domain.order.repository.OrderRepository;
 import com.agri_system.domain.performance.model.CommissionRule;
@@ -85,7 +87,8 @@ class PerformanceModuleTest {
                 mock(OrderItemRepository.class),
                 mock(ProductRepository.class),
                 relationRepository,
-                mock(ApplicationEventPublisher.class)
+                mock(ApplicationEventPublisher.class),
+                mock(CustomerSettlementService.class)
         );
         listener.onCustomerFirstEffective(new CustomerFirstEffectiveEvent(3L, 8L, 11L));
         verify(logRepository).save(any(StaffPerformanceLog.class));
@@ -98,12 +101,18 @@ class PerformanceModuleTest {
         log.setAmount(new BigDecimal("50"));
         log.setStaffId(1L);
         log.setStoreId(1L);
+        log.setOrderItemId(101L);
         when(logRepository.findByOrderId(9L)).thenReturn(List.of(log));
         OrderRepository orderRepository = mock(OrderRepository.class);
         Order order = new Order();
         order.setId(9L);
         order.setPayAmount(new BigDecimal("100"));
         when(orderRepository.findById(9L)).thenReturn(Optional.of(order));
+        OrderItemRepository orderItemRepository = mock(OrderItemRepository.class);
+        OrderItem orderItem = new OrderItem();
+        orderItem.setId(101L);
+        orderItem.setQuantity(new BigDecimal("4"));
+        when(orderItemRepository.findByOrderId(9L)).thenReturn(List.of(orderItem));
         PerformanceEventListener listener = new PerformanceEventListener(
                 new PerformanceProperties(),
                 new PerformanceDomainService(),
@@ -111,11 +120,16 @@ class PerformanceModuleTest {
                 logRepository,
                 prepareEventRepo(),
                 orderRepository,
-                mock(OrderItemRepository.class),
+                orderItemRepository,
                 mock(ProductRepository.class),
                 mock(StaffCustomerRelationRepository.class),
-                mock(ApplicationEventPublisher.class));
-        listener.onOrderRefunded(new OrderRefundedEvent(9L, new BigDecimal("50"), Map.of()));
+                mock(ApplicationEventPublisher.class),
+                mock(CustomerSettlementService.class));
+        listener.onOrderRefunded(new OrderRefundedEvent(
+                9L,
+                new BigDecimal("50"),
+                Map.of(101L, new BigDecimal("2")),
+                "AFTER_SALES:88"));
         verify(logRepository).saveBatch(any());
     }
 
@@ -149,7 +163,8 @@ class PerformanceModuleTest {
                 mock(OrderItemRepository.class),
                 mock(ProductRepository.class),
                 mock(StaffCustomerRelationRepository.class),
-                mock(ApplicationEventPublisher.class)
+                mock(ApplicationEventPublisher.class),
+                mock(CustomerSettlementService.class)
         );
     }
 
@@ -160,4 +175,3 @@ class PerformanceModuleTest {
         return repository;
     }
 }
-

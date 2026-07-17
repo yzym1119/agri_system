@@ -6,6 +6,7 @@ import com.agri_system.application.purchase.dto.command.SupplierUpdateCommand;
 import com.agri_system.application.purchase.dto.query.SupplierQuery;
 import com.agri_system.application.purchase.dto.vo.SupplierDetailVO;
 import com.agri_system.domain.common.service.CodeGenerationService;
+import com.agri_system.domain.purchase.repository.PurchaseRepository;
 import com.agri_system.domain.purchase.model.Supplier;
 import com.agri_system.domain.purchase.repository.SupplierRepository;
 import com.mybatisflex.core.paginate.Page;
@@ -26,6 +27,7 @@ import java.util.stream.Collectors;
 public class SupplierApplicationService {
     
     private final SupplierRepository supplierRepository;
+    private final PurchaseRepository purchaseRepository;
     private final CodeGenerationApplicationService codeGenerationService;
     
     /**
@@ -127,6 +129,12 @@ public class SupplierApplicationService {
         // 检查供应商是否存在
         supplierRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("供应商不存在"));
+
+        long purchaseCount = purchaseRepository.countBySupplierId(id);
+        if (purchaseCount > 0) {
+            throw new IllegalArgumentException("该供应商已被采购单引用，不能删除");
+        }
+
         supplierRepository.delete(id);
     }
     
@@ -150,4 +158,3 @@ public class SupplierApplicationService {
         return vo;
     }
 }
-

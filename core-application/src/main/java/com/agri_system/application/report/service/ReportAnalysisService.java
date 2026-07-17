@@ -46,9 +46,10 @@ public class ReportAnalysisService {
 
     /**
      * 今日经营驾驶舱
+     * @param storeId 门店ID（可选，为null时查询全部门店）
      */
     @Transactional(readOnly = true)
-    public DashboardVO dashboardToday() {
+    public DashboardVO dashboardToday(Long storeId) {
         LocalDate today = LocalDate.now();
         LocalDateTime start = today.atStartOfDay();
         LocalDateTime end = today.atTime(LocalTime.MAX);
@@ -57,6 +58,9 @@ public class ReportAnalysisService {
         QueryWrapper orderQ = QueryWrapper.create()
                 .where("created_at between ? and ?", start, end)
                 .and("order_status in (2,3,4,5,6,9)");
+        if (storeId != null) {
+            orderQ.and("store_id = ?", storeId);
+        }
         BigDecimal gmv = orderMapper.selectOneByQueryAs(
                 orderQ.clone().select("COALESCE(SUM(total_amount),0) AS total"), BigDecimal.class);
         BigDecimal netSales = orderMapper.selectOneByQueryAs(
@@ -64,37 +68,45 @@ public class ReportAnalysisService {
         Long orderCount = orderMapper.selectOneByQueryAs(
                 orderQ.clone().select("COUNT(1) AS cnt"), Long.class);
 
-        // 今日新增赊销额（来自 credit_account）
+        // 今日新增赊销额（来自 credit_account，该表无 store_id 字段）
         QueryWrapper creditQ = QueryWrapper.create()
                 .where("created_at between ? and ?", start, end);
         BigDecimal newCreditAmount = creditAccountMapper.selectOneByQueryAs(
                 creditQ.select("COALESCE(SUM(credit_amount),0) AS total"), BigDecimal.class);
 
-        // 今日新增客户数
+        // 今日新增客户数（customer 表无 store_id 字段）
         QueryWrapper customerQ = QueryWrapper.create()
                 .where("created_at between ? and ?", start, end);
         Long newCustomerCount = customerMapper.selectOneByQueryAs(
                 customerQ.select("COUNT(1) AS cnt"), Long.class);
 
         // 待审核售后数（after_sales.status = 10 STATUS_APPLIED）
-        Long pendingAfterSales = afterSalesMapper.selectCountByQuery(
-                QueryWrapper.create()
-                        .where("status = ?", 10));
+        QueryWrapper afterSalesQ = QueryWrapper.create()
+                .where("status = ?", 10);
+        if (storeId != null) {
+            afterSalesQ.and("store_id = ?", storeId);
+        }
+        Long pendingAfterSales = afterSalesMapper.selectCountByQuery(afterSalesQ);
 
         // 待审核同城配送数（order.delivery_status=1 WAIT_AUDIT）
-        Long pendingDelivery = orderMapper.selectOneByQueryAs(
-                QueryWrapper.create()
-                        .where("order_type = 3")
-                        .and("delivery_status = 1"),
-                Long.class);
+        QueryWrapper deliveryQ = QueryWrapper.create()
+                .where("order_type = 3")
+                .and("delivery_status = 1");
+        if (storeId != null) {
+            deliveryQ.and("store_id = ?", storeId);
+        }
+        Long pendingDelivery = orderMapper.selectOneByQueryAs(deliveryQ, Long.class);
 
         // 库存预警数（简单用库龄 > 180 天的批次数量代表）
         LocalDate threshold = today.minusDays(180);
-        Long inventoryAlertCount = inventoryBatchMapper.selectCountByQuery(
-                QueryWrapper.create()
-                        .where("is_active = 1")
-                        .and("production_date is not null")
-                        .and("production_date <= ?", threshold));
+        QueryWrapper inventoryAlertQ = QueryWrapper.create()
+                .where("is_active = 1")
+                .and("production_date is not null")
+                .and("production_date <= ?", threshold);
+        if (storeId != null) {
+            inventoryAlertQ.and("store_id = ?", storeId);
+        }
+        Long inventoryAlertCount = inventoryBatchMapper.selectCountByQuery(inventoryAlertQ);
 
         DashboardVO vo = new DashboardVO();
         vo.setGmv(defaultZero(gmv));
@@ -109,14 +121,24 @@ public class ReportAnalysisService {
     }
 
     /**
-     * 客户价值分析：大户排行榜 + 流失预警
+     * 大户排行榜
+     * @param limit 返回条数
+     * @param storeId 门店ID（可选，按门店下单记录筛选客户）
      */
     @Transactional(readOnly = true)
-    public List<CustomerRankVO> topCustomers(int limit) {
+    public List<CustomerRankVO> topCustomers(int limit, Long storeId) {
         QueryWrapper qw = QueryWrapper.create()
-                .where("total_order_amount is not null")
-                .orderBy("total_order_amount desc")
-                .limit(limit);
+                .where("total_order_amount is not null");
+
+        if (storeId != null) {
+            List<Long> customerIds = getCustomerIdsByStore(storeId);
+            if (customerIds.isEmpty()) {
+                return List.of();
+            }
+            qw.and(buildInPlaceholders("id", customerIds), customerIds.toArray());
+        }
+
+        qw.orderBy("total_order_amount desc").limit(limit);
         List<Customer> customers = customerMapper.selectListByQuery(qw);
         return customers.stream()
                 .map(c -> {
@@ -126,19 +148,32 @@ public class ReportAnalysisService {
                     vo.setPhone(c.getPhone());
                     vo.setTotalOrderAmount(defaultZero(c.getTotalOrderAmount()));
                     vo.setLastOrderTime(c.getLastOrderTime());
-                    vo.setStaffName(null); // 如需展示员工姓名，可联表 staff 表做一次 join
+                    vo.setStaffName(null);
                     return vo;
                 })
                 .collect(Collectors.toList());
     }
 
+    /**
+     * 流失预警：90天未下单且历史消费>1000的客户
+     * @param storeId 门店ID（可选，按门店下单记录筛选客户）
+     */
     @Transactional(readOnly = true)
-    public List<ChurnRiskVO> churnRisks() {
+    public List<ChurnRiskVO> churnRisks(Long storeId) {
         LocalDateTime deadline = LocalDateTime.now().minusDays(90);
         QueryWrapper qw = QueryWrapper.create()
                 .where("last_order_time is not null")
                 .and("last_order_time < ?", deadline)
                 .and("total_order_amount > 1000");
+
+        if (storeId != null) {
+            List<Long> customerIds = getCustomerIdsByStore(storeId);
+            if (customerIds.isEmpty()) {
+                return List.of();
+            }
+            qw.and(buildInPlaceholders("id", customerIds), customerIds.toArray());
+        }
+
         List<Customer> customers = customerMapper.selectListByQuery(qw);
         LocalDateTime now = LocalDateTime.now();
         return customers.stream()
@@ -163,12 +198,16 @@ public class ReportAnalysisService {
 
     /**
      * 库存资金占用
+     * @param storeId 门店ID（可选）
      */
     @Transactional(readOnly = true)
-    public InventoryValueVO inventoryValue() {
+    public InventoryValueVO inventoryValue(Long storeId) {
         // 有效批次资金占用
-        List<InventoryBatch> batches = inventoryBatchMapper.selectListByQuery(
-                QueryWrapper.create().where("is_active = 1"));
+        QueryWrapper batchQ = QueryWrapper.create().where("is_active = 1");
+        if (storeId != null) {
+            batchQ.and("store_id = ?", storeId);
+        }
+        List<InventoryBatch> batches = inventoryBatchMapper.selectListByQuery(batchQ);
         BigDecimal total = batches.stream()
                 .map(b -> defaultZero(b.getQuantity()).multiply(defaultZero(b.getCostPrice())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -208,7 +247,6 @@ public class ReportAnalysisService {
     public List<SalesTrendVO> salesTrend(LocalDateTime startTime, LocalDateTime endTime, Long storeId) {
         // 先查询订单ID列表（用于关联订单明细）
         QueryWrapper orderQw = QueryWrapper.create()
-                .select("id")
                 .where("created_at between ? and ?", startTime, endTime)
                 .and("order_status in (2,3,4,5,6,9)"); // 已支付及之后状态
         if (storeId != null) {
@@ -222,9 +260,14 @@ public class ReportAnalysisService {
 
         // 简化实现：直接查询所有明细，在内存中按日期聚合
         // （MyBatis-Flex的QueryWrapper对复杂聚合支持有限，如需高性能可改用@Select注解的SQL）
-        List<OrderItem> items = orderItemMapper.selectListByQuery(
-                QueryWrapper.create()
-                        .where("order_id in (?)", orderIds));
+        QueryWrapper itemQw = QueryWrapper.create();
+        if (orderIds.size() == 1) {
+            itemQw.where("order_id = ?", orderIds.get(0));
+        } else {
+            String placeholders = orderIds.stream().map(id -> "?").collect(Collectors.joining(","));
+            itemQw.where("order_id in (" + placeholders + ")", orderIds.toArray());
+        }
+        List<OrderItem> items = orderItemMapper.selectListByQuery(itemQw);
         
         // 获取订单创建时间映射
         Map<Long, LocalDateTime> orderTimeMap = orders.stream()
@@ -270,16 +313,20 @@ public class ReportAnalysisService {
 
     /**
      * 滞销商品列表（库龄 > 180天）
+     * @param storeId 门店ID（可选）
      */
     @Transactional(readOnly = true)
-    public List<SlowMovingInventoryVO> slowMovingInventory() {
+    public List<SlowMovingInventoryVO> slowMovingInventory(Long storeId) {
         LocalDate threshold = LocalDate.now().minusDays(180);
-        List<InventoryBatch> batches = inventoryBatchMapper.selectListByQuery(
-                QueryWrapper.create()
-                        .where("is_active = 1")
-                        .and("quantity > 0")
-                        .and("production_date is not null")
-                        .and("production_date <= ?", threshold));
+        QueryWrapper batchQ = QueryWrapper.create()
+                .where("is_active = 1")
+                .and("quantity > 0")
+                .and("production_date is not null")
+                .and("production_date <= ?", threshold);
+        if (storeId != null) {
+            batchQ.and("store_id = ?", storeId);
+        }
+        List<InventoryBatch> batches = inventoryBatchMapper.selectListByQuery(batchQ);
         
         // 获取商品ID集合，批量查询商品名称
         List<Long> productIds = batches.stream()
@@ -320,9 +367,10 @@ public class ReportAnalysisService {
 
     /**
      * 财务风控分析
+     * @param storeId 门店ID（可选，仅影响还款记录筛选；赊销账户无门店字段）
      */
     @Transactional(readOnly = true)
-    public CreditRiskVO creditRisk() {
+    public CreditRiskVO creditRisk(Long storeId) {
         // 总欠款
         BigDecimal totalDebt = creditAccountMapper.selectOneByQueryAs(
                 QueryWrapper.create()
@@ -355,11 +403,14 @@ public class ReportAnalysisService {
         monthlyNewCredit = defaultZero(monthlyNewCredit);
         
         // 本月实收还款额（credit_repayment_log.created_at在本月）
+        QueryWrapper repaymentQ = QueryWrapper.create()
+                .select("COALESCE(SUM(amount),0) AS total")
+                .where("created_at between ? and ?", monthStartTime, monthEndTime);
+        if (storeId != null) {
+            repaymentQ.and("store_id = ?", storeId);
+        }
         BigDecimal monthlyRepayment = repaymentLogMapper.selectOneByQueryAs(
-                QueryWrapper.create()
-                        .select("COALESCE(SUM(amount),0) AS total")
-                        .where("created_at between ? and ?", monthStartTime, monthEndTime),
-                BigDecimal.class);
+                repaymentQ, BigDecimal.class);
         monthlyRepayment = defaultZero(monthlyRepayment);
         
         // 回款率 = 本月实收 / (本月实收 + 本月新增) * 100
@@ -380,6 +431,30 @@ public class ReportAnalysisService {
         vo.setMonthlyNewCredit(monthlyNewCredit);
         vo.setMonthlyRepayment(monthlyRepayment);
         return vo;
+    }
+
+    /**
+     * 查询在某门店下过单的客户ID列表
+     */
+    private List<Long> getCustomerIdsByStore(Long storeId) {
+        QueryWrapper orderQ = QueryWrapper.create()
+                .select("DISTINCT customer_id")
+                .where("store_id = ?", storeId)
+                .and("customer_id is not null");
+        List<Order> orders = orderMapper.selectListByQuery(orderQ);
+        return orders.stream()
+                .map(Order::getCustomerId)
+                .filter(id -> id != null)
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 构造 IN 子句条件字符串（占位符形式）
+     */
+    private String buildInPlaceholders(String column, List<Long> ids) {
+        String placeholders = ids.stream().map(id -> "?").collect(Collectors.joining(","));
+        return column + " in (" + placeholders + ")";
     }
 }
 

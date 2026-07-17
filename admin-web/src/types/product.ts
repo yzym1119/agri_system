@@ -70,6 +70,14 @@ export interface ProductDetailVO {
   hasStrategy?: boolean // 是否存在价格策略
   status: number
   remark?: string
+  barcode?: string
+  registrationNo?: string
+  storageConditions?: string
+  shelfLifeDays?: number
+  usageMethod?: string
+  minStock?: number
+  maxStock?: number
+  reorderQuantity?: number
   createdAt?: string
   updatedAt?: string
 }
@@ -97,22 +105,30 @@ export interface ProductCreateRequest {
   baseShippingFee?: number
   allowSpecialFund?: number
   remark?: string
+  barcode?: string
+  registrationNo?: string
+  storageConditions?: string
+  shelfLifeDays?: number
+  usageMethod?: string
+  minStock?: number
+  maxStock?: number
+  reorderQuantity?: number
 }
 
 /**
  * 更新商品请求
  */
 export interface ProductUpdateRequest {
-  id: number
-  name: string
+  id?: number
+  name?: string
   categoryId?: number
   specification?: string
   dosageForm?: string
   manufacturer?: string
-  mainUnit: string
+  mainUnit?: string
   auxUnit?: string
   mainToAuxRatio?: number
-  suggestedRetailPrice: number
+  suggestedRetailPrice?: number
   vipPrice?: number
   minPrice?: number
   imageUrl?: string
@@ -122,6 +138,14 @@ export interface ProductUpdateRequest {
   baseShippingFee?: number
   allowSpecialFund?: number
   remark?: string
+  barcode?: string
+  registrationNo?: string
+  storageConditions?: string
+  shelfLifeDays?: number
+  usageMethod?: string
+  minStock?: number
+  maxStock?: number
+  reorderQuantity?: number
 }
 
 /**
@@ -179,6 +203,7 @@ export interface ProductPriceRuleCreateRequest {
   price: number
   effectiveDate?: string
   expiryDate?: string
+  status?: number
 }
 
 /**
@@ -191,4 +216,3 @@ export interface ProductPriceRuleUpdateRequest {
   expiryDate?: string
   status?: number
 }
-

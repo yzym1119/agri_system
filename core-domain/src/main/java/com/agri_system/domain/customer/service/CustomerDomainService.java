@@ -1,8 +1,11 @@
 package com.agri_system.domain.customer.service;
 
 import com.agri_system.domain.coupon.model.CustomerCoupon;
+import com.agri_system.domain.after_sales.repository.AfterSalesRepository;
 import com.agri_system.domain.credit.repository.CreditAccountRepository;
 import com.agri_system.domain.customer.model.CouponTemplate;
+import com.agri_system.domain.marketing.points.repository.PointsExchangeOrderRepository;
+import com.agri_system.domain.order.repository.OrderRepository;
 import com.agri_system.domain.wallet.repository.CustomerWalletRepository;
 
 import java.math.BigDecimal;
@@ -18,11 +21,20 @@ public class CustomerDomainService {
     
     private final CustomerWalletRepository walletRepository;
     private final CreditAccountRepository creditAccountRepository;
+    private final OrderRepository orderRepository;
+    private final AfterSalesRepository afterSalesRepository;
+    private final PointsExchangeOrderRepository pointsExchangeOrderRepository;
     
     public CustomerDomainService(CustomerWalletRepository walletRepository, 
-                                 CreditAccountRepository creditAccountRepository) {
+                                 CreditAccountRepository creditAccountRepository,
+                                 OrderRepository orderRepository,
+                                 AfterSalesRepository afterSalesRepository,
+                                 PointsExchangeOrderRepository pointsExchangeOrderRepository) {
         this.walletRepository = walletRepository;
         this.creditAccountRepository = creditAccountRepository;
+        this.orderRepository = orderRepository;
+        this.afterSalesRepository = afterSalesRepository;
+        this.pointsExchangeOrderRepository = pointsExchangeOrderRepository;
     }
     
     /**
@@ -41,6 +53,7 @@ public class CustomerDomainService {
         coupon.setCustomerId(customerId);
         coupon.setTemplateId(template.getId());
         coupon.setName(template.getName());
+        coupon.setType(template.getType());
         coupon.setAmount(template.getAmount());
         coupon.setMinOrderAmount(template.getMinOrderAmount());
         coupon.setLimitCategoryId(template.getLimitCategoryId());
@@ -117,6 +130,20 @@ public class CustomerDomainService {
                 throw new IllegalArgumentException("customer-2002: 客户存在未结赊销款，禁止删除");
             }
         }
+
+        long activeOrderCount = orderRepository.countActiveOrdersByCustomerId(customerId);
+        if (activeOrderCount > 0) {
+            throw new IllegalArgumentException("customer-2003: 客户存在进行中的订单，禁止删除");
+        }
+
+        long activeAfterSalesCount = afterSalesRepository.countActiveByCustomerId(customerId);
+        if (activeAfterSalesCount > 0) {
+            throw new IllegalArgumentException("customer-2004: 客户存在处理中的售后单，禁止删除");
+        }
+
+        long activePointsExchangeCount = pointsExchangeOrderRepository.countActiveByCustomerId(customerId);
+        if (activePointsExchangeCount > 0) {
+            throw new IllegalArgumentException("customer-2005: 客户存在未完成的积分兑换单，禁止删除");
+        }
     }
 }
-

@@ -3,6 +3,7 @@ package com.agri_system.infrastructure.order.repository;
 import com.agri_system.domain.order.model.OrderItem;
 import com.agri_system.domain.order.repository.OrderItemRepository;
 import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
+import com.mybatisflex.core.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
@@ -49,5 +50,18 @@ public class OrderItemRepositoryImpl implements OrderItemRepository {
     public OrderItem findById(Long id) {
         return mapper.selectOneById(id);
     }
-}
 
+    @Override
+    public long countByProductId(Long productId) {
+        return mapper.selectCountByQuery(
+                QueryWrapper.create().where("product_id = ?", productId)
+        );
+    }
+
+    @Override
+    public long countByPackageId(Long packageId) {
+        return mapper.selectCountByQuery(
+                QueryWrapper.create().where("package_id = ?", packageId)
+        );
+    }
+}

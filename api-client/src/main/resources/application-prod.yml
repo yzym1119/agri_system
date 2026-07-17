@@ -37,12 +37,16 @@ mybatis-flex:
 
 sa-token:
   token-name: Authorization
-  timeout: 2592000
-  active-timeout: -1
+  timeout: 259200
+  active-timeout: 7200
   is-concurrent: true
   is-share: false
   token-style: uuid
   is-log: false
+
+# 安全：生产环境 CORS 必须指定具体前端域名
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:https://m.yourdomain.com}
 
 logging:
   level:

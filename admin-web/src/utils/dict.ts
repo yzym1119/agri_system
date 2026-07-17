@@ -3,19 +3,6 @@
  */
 
 /**
- * 客户类型
- */
-export const CUSTOMER_TYPE = {
-  NORMAL: 1, // 普通客户
-  VIP: 2 // VIP客户
-} as const
-
-export const CUSTOMER_TYPE_MAP: Record<number, string> = {
-  [CUSTOMER_TYPE.NORMAL]: '普通',
-  [CUSTOMER_TYPE.VIP]: 'VIP'
-}
-
-/**
  * 积分兑换单状态
  */
 export const POINTS_ORDER_STATUS = {
@@ -78,6 +65,7 @@ export const PAYMENT_METHOD = {
   BALANCE: 4, // 本金余额
   COUPON: 5, // 红包/优惠券
   CREDIT: 6, // 赊销 (单一标准值：6)
+  SPECIAL_FUND: 8, // 专用金余额
   MIXED: 10 // 混合支付
 } as const
 
@@ -88,6 +76,7 @@ export const PAYMENT_METHOD_MAP: Record<number, string> = {
   [PAYMENT_METHOD.BALANCE]: '本金余额',
   [PAYMENT_METHOD.COUPON]: '红包/优惠券',
   [PAYMENT_METHOD.CREDIT]: '赊销',
+  [PAYMENT_METHOD.SPECIAL_FUND]: '专用金余额',
   [PAYMENT_METHOD.MIXED]: '混合支付'
 }
 
@@ -117,7 +106,6 @@ export const ORDER_STATUS_TAG_MAP: Record<number, string> = {
   8: 'danger',
   9: 'warning'
 }
-
 
 
 

@@ -43,8 +43,12 @@ public interface StaffRepository {
      * 分页查询员工
      */
     com.mybatisflex.core.paginate.Page<Staff> findPage(String code, String name, Long storeId, Integer status, int pageNum, int pageSize);
-}
 
+    /**
+     * 统计归属到指定门店的员工数量
+     */
+    long countByStoreId(Long storeId);
+}
 
 
 

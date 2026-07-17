@@ -57,7 +57,7 @@
 
       <!-- 操作栏 -->
       <div class="toolbar">
-        <el-button type="primary" :icon="Plus" @click="handleAdd">新增员工</el-button>
+        <el-button v-permission="'staff:create'" type="primary" :icon="Plus" @click="handleAdd">新增员工</el-button>
       </div>
 
       <!-- 表格 -->
@@ -95,9 +95,10 @@
         </el-table-column>
         <el-table-column label="操作" width="300" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
+            <el-button v-permission="'staff:update'" type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
             <el-button
               v-if="row.status === 1"
+              v-permission="'staff:disable'"
               type="warning"
               link
               :icon="Lock"
@@ -107,6 +108,7 @@
             </el-button>
             <el-button
               v-else
+              v-permission="'staff:enable'"
               type="success"
               link
               :icon="Unlock"
@@ -114,7 +116,7 @@
             >
               启用
             </el-button>
-            <el-button type="info" link :icon="Key" @click="handleResetPassword(row)">
+            <el-button v-permission="'staff:resetPassword'" type="info" link :icon="Key" @click="handleResetPassword(row)">
               重置密码
             </el-button>
           </template>
@@ -193,7 +195,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
+        <el-button v-permission="isEdit ? 'staff:update' : 'staff:create'" type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
 
@@ -229,7 +231,7 @@
       </el-form>
       <template #footer>
         <el-button @click="passwordDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="passwordSubmitLoading" @click="handlePasswordSubmit">
+        <el-button v-permission="'staff:resetPassword'" type="primary" :loading="passwordSubmitLoading" @click="handlePasswordSubmit">
           确定
         </el-button>
       </template>
@@ -357,10 +359,12 @@ const loadStaffList = async () => {
   loading.value = true
   try {
     const response = await getStaffList(queryParams)
-    staffList.value = response.records
-    total.value = response.total
+    staffList.value = response.records || []
+    total.value = response.total || 0
   } catch (error) {
     console.error('加载员工列表失败:', error)
+    staffList.value = []
+    total.value = 0
     ElMessage.error('加载员工列表失败')
   } finally {
     loading.value = false
@@ -588,28 +592,8 @@ onMounted(async () => {
 </script>
 
 <style scoped lang="scss">
-.staff-container {
-  padding: 20px;
-}
-
-.search-bar {
-  margin-bottom: 20px;
-  padding: 20px;
-  background: #f5f7fa;
-  border-radius: 4px;
-
-  .search-form {
-    margin: 0;
-  }
-}
-
-.toolbar {
-  margin-bottom: 20px;
-}
-
 .text-muted {
-  color: #909399;
+  color: #9ca3af;
   font-size: 12px;
 }
 </style>
-

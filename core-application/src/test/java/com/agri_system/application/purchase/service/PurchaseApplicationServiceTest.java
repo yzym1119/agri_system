@@ -109,7 +109,7 @@ class PurchaseApplicationServiceTest {
         
         PurchaseOrder savedOrder = new PurchaseOrder();
         savedOrder.setId(1L);
-        savedOrder.setOrderNo("PO20240101000001");
+        savedOrder.setPurchaseNo("PO20240101000001");
         when(purchaseRepository.findById(any())).thenReturn(Optional.of(savedOrder));
         
         // When: 创建采购单
@@ -188,7 +188,7 @@ class PurchaseApplicationServiceTest {
         // Given: 采购单存在且状态为待入库
         PurchaseOrder order = new PurchaseOrder();
         order.setId(1L);
-        order.setOrderNo("PO20240101000001");
+        order.setPurchaseNo("PO20240101000001");
         order.setStoreId(1L);
         order.setStatus(2); // 待入库
         when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
@@ -197,10 +197,8 @@ class PurchaseApplicationServiceTest {
         PurchaseOrderItem item = new PurchaseOrderItem();
         item.setId(1L);
         item.setProductId(1L);
-        item.setQty(new BigDecimal("100.0000"));
-        item.setPrice(new BigDecimal("10.50"));
-        item.setProductionDate(LocalDate.of(2024, 1, 1));
-        item.setExpireDate(LocalDate.of(2025, 1, 1));
+        item.setQuantity(new BigDecimal("100.0000"));
+        item.setBuyPrice(new BigDecimal("10.50"));
         when(itemRepository.findByOrderId(1L)).thenReturn(Arrays.asList(item));
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         when(batchRepository.sumQuantityByProduct(1L)).thenReturn(BigDecimal.ZERO);
@@ -259,7 +257,7 @@ class PurchaseApplicationServiceTest {
         // Given: 采购单存在，商品已有库存
         PurchaseOrder order = new PurchaseOrder();
         order.setId(1L);
-        order.setOrderNo("PO20240101000001");
+        order.setPurchaseNo("PO20240101000001");
         order.setStoreId(1L);
         order.setStatus(2); // 待入库
         when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
@@ -268,8 +266,8 @@ class PurchaseApplicationServiceTest {
         PurchaseOrderItem item = new PurchaseOrderItem();
         item.setId(1L);
         item.setProductId(1L);
-        item.setQty(new BigDecimal("100.0000"));
-        item.setPrice(new BigDecimal("12.00")); // 新进价12.00
+        item.setQuantity(new BigDecimal("100.0000"));
+        item.setBuyPrice(new BigDecimal("12.00")); // 新进价12.00
         when(itemRepository.findByOrderId(1L)).thenReturn(Arrays.asList(item));
         
         Product existingProduct = new Product();
@@ -296,4 +294,3 @@ class PurchaseApplicationServiceTest {
                    savedProduct.getAvgCostPrice().compareTo(new BigDecimal("10.66")) == 0); // 允许四舍五入差异
     }
 }
-

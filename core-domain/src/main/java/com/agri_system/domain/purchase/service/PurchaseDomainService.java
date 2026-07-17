@@ -26,17 +26,18 @@ public class PurchaseDomainService {
     /**
      * 生成采购单号
      * 规则：PO + yyyyMMdd + 6位流水
-     * 
+     * 带并发安全重试：若生成的单号已存在则自动递增
+     *
      * @return 采购单号
      */
     public String generateOrderNo() {
         String datePrefix = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
         String prefix = "PO" + datePrefix;
-        
+
         // 查询当天最大流水号
         String maxOrderNo = purchaseRepository.findMaxOrderNoByPrefix(prefix);
         int sequence = 1;
-        
+
         if (maxOrderNo != null && maxOrderNo.length() > prefix.length()) {
             try {
                 String seqStr = maxOrderNo.substring(prefix.length());
@@ -45,9 +46,17 @@ public class PurchaseDomainService {
                 sequence = 1;
             }
         }
-        
-        // 格式化为6位流水号
-        return prefix + String.format("%06d", sequence);
+
+        // 并发安全：循环检查单号唯一性，最多重试10次
+        for (int attempt = 0; attempt < 10; attempt++) {
+            String candidate = prefix + String.format("%06d", sequence);
+            if (purchaseRepository.findByOrderNo(candidate).isEmpty()) {
+                return candidate;
+            }
+            sequence++;
+        }
+        // 兜底：加上时间戳后缀保证唯一
+        return prefix + String.format("%06d", sequence) + System.currentTimeMillis() % 1000;
     }
     
     /**

@@ -1,10 +1,18 @@
 package com.agri_system.application.auth.service;
 
+import cn.dev33.satoken.SaManager;
+import cn.dev33.satoken.context.SaTokenContextForThreadLocal;
+import cn.dev33.satoken.context.SaTokenContextForThreadLocalStorage;
+import cn.dev33.satoken.context.model.SaRequest;
+import cn.dev33.satoken.context.model.SaResponse;
+import cn.dev33.satoken.context.model.SaStorage;
 import com.agri_system.application.auth.dto.LoginResultVO;
 import com.agri_system.application.auth.dto.StaffLoginCommand;
 import com.agri_system.application.auth.util.BCryptUtils;
+import com.agri_system.application.staff.service.StaffAuthorityService;
 import com.agri_system.domain.store.model.Staff;
 import com.agri_system.domain.store.repository.StaffRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -12,6 +20,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -39,6 +50,12 @@ class StaffLoginTest {
     
     @Mock
     private WechatService wechatService;
+
+    @Mock
+    private com.agri_system.domain.system.auth.repository.SysRoleRepository roleRepository;
+
+    @Mock
+    private StaffAuthorityService authorityService;
     
     @InjectMocks
     private AuthService authService;
@@ -48,6 +65,9 @@ class StaffLoginTest {
     
     @BeforeEach
     void setUp() {
+        SaManager.setSaTokenContext(new SaTokenContextForThreadLocal());
+        SaTokenContextForThreadLocalStorage.setBox(new MockSaRequest(), new MockSaResponse(), new MockSaStorage());
+
         // 创建测试员工
         staff = new Staff();
         staff.setId(1L);
@@ -61,6 +81,14 @@ class StaffLoginTest {
         // 加密密码
         encodedPassword = BCryptUtils.encode("123456");
         staff.setPassword(encodedPassword);
+
+        lenient().when(roleRepository.findRoleCodesByStaffId(1L)).thenReturn(List.of("ADMIN"));
+        lenient().when(authorityService.loadPermissions(1L)).thenReturn(List.of("staff:view"));
+    }
+
+    @AfterEach
+    void tearDown() {
+        SaTokenContextForThreadLocalStorage.clearBox();
     }
     
     @Test
@@ -138,5 +166,109 @@ class StaffLoginTest {
         
         verify(staffRepository, times(1)).findByCodeOrPhone("NOTEXIST");
     }
-}
 
+    private static class MockSaStorage implements SaStorage {
+        private final Map<String, Object> storage = new HashMap<>();
+
+        @Override
+        public Object getSource() {
+            return storage;
+        }
+
+        @Override
+        public Object get(String key) {
+            return storage.get(key);
+        }
+
+        @Override
+        public SaStorage set(String key, Object value) {
+            storage.put(key, value);
+            return this;
+        }
+
+        @Override
+        public SaStorage delete(String key) {
+            storage.remove(key);
+            return this;
+        }
+    }
+
+    private static class MockSaRequest implements SaRequest {
+        @Override
+        public Object getSource() {
+            return this;
+        }
+
+        @Override
+        public String getParam(String name) {
+            return null;
+        }
+
+        @Override
+        public List<String> getParamNames() {
+            return List.of();
+        }
+
+        @Override
+        public Map<String, String> getParamMap() {
+            return Map.of();
+        }
+
+        @Override
+        public String getHeader(String name) {
+            return null;
+        }
+
+        @Override
+        public String getCookieValue(String name) {
+            return null;
+        }
+
+        @Override
+        public String getRequestPath() {
+            return "/";
+        }
+
+        @Override
+        public String getUrl() {
+            return "http://localhost/test";
+        }
+
+        @Override
+        public String getMethod() {
+            return "POST";
+        }
+
+        @Override
+        public Object forward(String path) {
+            return null;
+        }
+    }
+
+    private static class MockSaResponse implements SaResponse {
+        @Override
+        public Object getSource() {
+            return this;
+        }
+
+        @Override
+        public SaResponse setStatus(int sc) {
+            return this;
+        }
+
+        @Override
+        public SaResponse setHeader(String name, String value) {
+            return this;
+        }
+
+        @Override
+        public SaResponse addHeader(String name, String value) {
+            return this;
+        }
+
+        @Override
+        public Object redirect(String url) {
+            return null;
+        }
+    }
+}

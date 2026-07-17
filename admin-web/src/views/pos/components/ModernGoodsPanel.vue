@@ -377,15 +377,17 @@ const loadData = async () => {
   try {
     const [productRes, packageRes] = await Promise.all([
       getProductList({
+        status: 1,
         pageNum: 1,
         pageSize: 1000
-        // 线下 POS：展示所有商品，不受上架状态限制
+        // 线下 POS：展示正常商品，不受商城上架状态限制
       }),
       getPackageList({
+        status: 1,
         pageNum: 1,
         pageSize: 1000,
         storeId: props.storeId || undefined
-        // 线下 POS：展示所有套餐，不受状态限制
+        // 线下 POS：只展示已上架套餐
         // 传递 storeId 用于计算套餐库存
       })
     ])
@@ -507,8 +509,9 @@ const explodePackageToCart = (packageItem: GoodsCard) => {
     return
   }
 
+  const packageDetail = packageItem.package
   const packagePrice = packageItem.price // 套餐总价
-  const packageItems = packageItem.package.items
+  const packageItems = packageDetail.items
   
   // 计算套餐原总价（用于价格分摊）
   let originalTotalPrice = 0
@@ -556,6 +559,7 @@ const explodePackageToCart = (packageItem: GoodsCard) => {
       id: '',
       itemType: 1, // 重要：现在都是商品类型
       productId: product.id,
+      packageId: packageDetail.id,
       name: product.name,
       specification: product.specification,
       manufacturer: product.manufacturer,
@@ -570,7 +574,7 @@ const explodePackageToCart = (packageItem: GoodsCard) => {
       subtotal: allocatedPrice,
       stock: inventoryMap.value[product.id] || 0,
       // 标记这是来自套餐的商品（可选，用于UI显示）
-      fromPackage: packageItem.package.name
+      fromPackage: packageDetail.name || '套餐'
     }
     
     // 保存商品信息以便后续价格计算
@@ -581,7 +585,7 @@ const explodePackageToCart = (packageItem: GoodsCard) => {
   })
   
   if (successCount > 0) {
-    ElMessage.success(`已将套餐"${packageItem.package.name}"的 ${successCount} 个商品添加到购物车`)
+    ElMessage.success(`已将套餐"${packageDetail.name || '套餐'}"的 ${successCount} 个商品添加到购物车`)
   } else {
     ElMessage.error('套餐商品添加失败')
   }
@@ -885,4 +889,3 @@ defineExpose({
   min-height: 300px;
 }
 </style>
-

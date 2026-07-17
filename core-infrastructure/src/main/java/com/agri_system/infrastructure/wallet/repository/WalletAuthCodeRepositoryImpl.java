@@ -6,6 +6,7 @@ import com.agri_system.infrastructure.wallet.mapper.WalletAuthCodeMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.util.Optional;
 
 /**
@@ -40,11 +41,10 @@ public class WalletAuthCodeRepositoryImpl implements WalletAuthCodeRepository {
     }
 
     @Override
-    public int consumeAuthCode(String authCode, Long orderId) {
-        return mapper.consumeAuthCode(authCode, orderId);
+    public int consumeAuthCode(Long customerId, String authCode, BigDecimal amount, Long orderId) {
+        return mapper.consumeAuthCode(customerId, authCode, amount, orderId);
     }
 }
-
 
 
 

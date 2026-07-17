@@ -1,6 +1,7 @@
 package com.agri_system.application.config;
 
 import com.agri_system.domain.after_sales.service.AfterSalesDomainService;
+import com.agri_system.domain.after_sales.repository.AfterSalesRepository;
 import com.agri_system.domain.credit.repository.CreditAccountRepository;
 import com.agri_system.domain.credit.service.CreditDomainService;
 import com.agri_system.domain.customer.service.CustomerDomainService;
@@ -8,7 +9,9 @@ import com.agri_system.domain.inventory.repository.InventoryBatchRepository;
 import com.agri_system.domain.inventory.repository.InventoryRepository;
 import com.agri_system.domain.inventory.repository.InventoryTransactionRepository;
 import com.agri_system.domain.inventory.service.InventoryDomainService;
+import com.agri_system.domain.marketing.points.repository.PointsExchangeOrderRepository;
 import com.agri_system.domain.marketing.points.service.PointsDomainService;
+import com.agri_system.domain.order.repository.OrderRepository;
 import com.agri_system.domain.order.service.OrderDomainService;
 import com.agri_system.domain.performance.service.PerformanceDomainService;
 import com.agri_system.domain.product.repository.ProductRepository;
@@ -81,8 +84,17 @@ public class DomainServiceConfig {
 
     @Bean
     public CustomerDomainService customerDomainService(CustomerWalletRepository walletRepository,
-                                                       CreditAccountRepository creditAccountRepository) {
-        return new CustomerDomainService(walletRepository, creditAccountRepository);
+                                                       CreditAccountRepository creditAccountRepository,
+                                                       OrderRepository orderRepository,
+                                                       AfterSalesRepository afterSalesRepository,
+                                                       PointsExchangeOrderRepository pointsExchangeOrderRepository) {
+        return new CustomerDomainService(
+                walletRepository,
+                creditAccountRepository,
+                orderRepository,
+                afterSalesRepository,
+                pointsExchangeOrderRepository
+        );
     }
 
     @Bean
@@ -100,4 +112,3 @@ public class DomainServiceConfig {
         return new PointsDomainService();
     }
 }
-

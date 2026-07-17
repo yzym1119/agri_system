@@ -35,7 +35,15 @@ public class CustomerRepositoryImpl implements CustomerRepository {
     
     @Override
     public Optional<Customer> findById(Long id) {
-        return Optional.ofNullable(mapper.selectOneById(id));
+        QueryWrapper query = QueryWrapper.create()
+                .where("id = ?", id)
+                .and("deleted = 0");
+        return Optional.ofNullable(mapper.selectOneByQuery(query));
+    }
+
+    @Override
+    public Optional<Customer> findByIdIncludingDeleted(Long id) {
+        return Optional.ofNullable(mapper.selectByIdIncludingDeleted(id));
     }
     
     @Override
@@ -82,7 +90,8 @@ public class CustomerRepositoryImpl implements CustomerRepository {
     @Override
     public Optional<Customer> findByPhone(String phone) {
         QueryWrapper query = QueryWrapper.create()
-                .where("phone = ?", phone);
+                .where("phone = ?", phone)
+                .and("deleted = 0");
         Customer customer = mapper.selectOneByQuery(query);
         return Optional.ofNullable(customer);
     }
@@ -95,7 +104,34 @@ public class CustomerRepositoryImpl implements CustomerRepository {
             mapper.update(customer);
         }
     }
-}
 
+    @Override
+    public long countByBindStaffId(Long staffId) {
+        if (staffId == null) return 0;
+        QueryWrapper query = QueryWrapper.create()
+                .where("bind_staff_id = ?", staffId)
+                .and("(deleted IS NULL OR deleted = 0)");
+        return mapper.selectCountByQuery(query);
+    }
+
+    @Override
+    public java.util.List<Customer> findByBindStaffId(Long staffId) {
+        if (staffId == null) return java.util.Collections.emptyList();
+        QueryWrapper query = QueryWrapper.create()
+                .where("bind_staff_id = ?", staffId)
+                .and("(deleted IS NULL OR deleted = 0)")
+                .and("status = 1");
+        return mapper.selectListByQuery(query);
+    }
+
+    @Override
+    public java.util.List<Customer> findAllWithBindStaff() {
+        QueryWrapper query = QueryWrapper.create()
+                .where("bind_staff_id IS NOT NULL")
+                .and("(deleted IS NULL OR deleted = 0)")
+                .and("status = 1");
+        return mapper.selectListByQuery(query);
+    }
+}
 
 

@@ -58,8 +58,14 @@ public class ProductPackageItemRepositoryImpl implements ProductPackageItemRepos
     public void delete(Long id) {
         itemMapper.deleteById(id);
     }
-}
 
+    @Override
+    public long countByProductId(Long productId) {
+        QueryWrapper queryWrapper = QueryWrapper.create()
+                .where("product_id = ?", productId);
+        return itemMapper.selectCountByQuery(queryWrapper);
+    }
+}
 
 
 

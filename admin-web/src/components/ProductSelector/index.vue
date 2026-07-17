@@ -175,8 +175,8 @@ const loadProductList = async () => {
       name: searchParams.keyword || searchParams.name || undefined,
       code: searchParams.keyword || undefined
     })
-    productList.value = response.records
-    total.value = response.total
+    productList.value = response.records || []
+    total.value = response.total || 0
 
     // 设置已选中的商品（回显）
     await nextTick()
@@ -205,6 +205,8 @@ const loadProductList = async () => {
     }
   } catch (error) {
     console.error('加载商品列表失败:', error)
+    productList.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -284,4 +286,3 @@ watch(visible, (val) => {
   }
 }
 </style>
-

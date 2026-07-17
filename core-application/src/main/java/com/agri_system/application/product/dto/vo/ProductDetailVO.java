@@ -86,10 +86,34 @@ public class ProductDetailVO {
     
     @Schema(description = "备注", example = "备注信息")
     private String remark;
-    
+
+    @Schema(description = "条形码（EAN-13/Code128）", example = "6901234567890")
+    private String barcode;
+
+    @Schema(description = "农药/肥料登记证号", example = "PD20080001")
+    private String registrationNo;
+
+    @Schema(description = "存储条件（如：阴凉干燥处、避光保存）", example = "阴凉干燥处")
+    private String storageConditions;
+
+    @Schema(description = "保质期（天）", example = "730")
+    private Integer shelfLifeDays;
+
+    @Schema(description = "使用方法/稀释比例", example = "兑水1:500喷雾")
+    private String usageMethod;
+
+    @Schema(description = "最低库存预警值", example = "10.00")
+    private BigDecimal minStock;
+
+    @Schema(description = "最高库存预警值", example = "500.00")
+    private BigDecimal maxStock;
+
+    @Schema(description = "建议补货数量", example = "100.00")
+    private BigDecimal reorderQuantity;
+
     @Schema(description = "创建时间")
     private LocalDateTime createdAt;
-    
+
     @Schema(description = "更新时间")
     private LocalDateTime updatedAt;
 }

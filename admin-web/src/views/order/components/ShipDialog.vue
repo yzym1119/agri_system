@@ -40,15 +40,16 @@
 </template>
 
 <script setup lang="ts">
-import {onMounted, reactive, ref, watch} from 'vue'
+import {computed, onMounted, reactive, ref, watch} from 'vue'
 import type {FormInstance, FormRules} from 'element-plus'
 import {ElMessage} from 'element-plus'
 import {shipOrder} from '@/api/order'
 import {getStaffList} from '@/api/staff'
+import type {OrderPageItem} from '@/types/order'
 
 interface Props {
   modelValue: boolean
-  order: any | null
+  order: OrderPageItem | null
   mode: 'express' | 'local'
 }
 
@@ -141,7 +142,7 @@ const handleSubmit = async () => {
       handleClose()
     } catch (error) {
       console.error('操作失败:', error)
-      ElMessage.error('操作失败')
+      ElMessage.error((error as any)?.message || '操作失败')
     } finally {
       submitting.value = false
     }
@@ -156,9 +157,7 @@ const loadDeliveryStaff = async () => {
       pageSize: 1000,
       status: 1 // 仅查询在职员工
     })
-    if (response && response.data) {
-      deliveryStaffOptions.value = response.data.records || []
-    }
+    deliveryStaffOptions.value = response?.records || []
   } catch (error) {
     console.error('加载配送员列表失败:', error)
   }
@@ -171,4 +170,3 @@ onMounted(() => {
 
 <style scoped lang="scss">
 </style>
-

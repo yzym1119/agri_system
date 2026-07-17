@@ -53,13 +53,13 @@ public class CommissionRule {
 
     private String remark;
 
-    private LocalDateTime createdAt;
+    private LocalDateTime createdAt = LocalDateTime.now();
 
-    private LocalDateTime updatedAt;
+    private LocalDateTime updatedAt = LocalDateTime.now();
 
     private Long createdBy;
 
-    public boolean isEnabled() {
+    public boolean checkEnabled() {
         return enabled == null || enabled == 1;
     }
 

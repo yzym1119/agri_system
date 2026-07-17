@@ -21,6 +21,8 @@ public class InventoryQuery {
 
     @Schema(description = "商品名称（模糊查询，可选）", example = "复合肥料")
     private String productName;
-}
 
+    @Schema(description = "是否仅显示有库存记录", example = "true")
+    private Boolean onlyHasStock;
+}
 

@@ -5,6 +5,7 @@
 export interface InventoryQuery {
   storeId?: number
   productName?: string
+  onlyHasStock?: boolean
   pageNum?: number
   pageSize?: number
 }
@@ -55,6 +56,33 @@ export interface InventoryTransferRequest {
   toStoreId: number
   productId: number
   quantity: number
+  remark?: string
+}
+
+export interface InventoryTransferBatchDetail {
+  batchId: number
+  batchNo?: string
+  expireDate?: string
+  costPrice?: number
+  quantity?: number
+}
+
+export interface InventoryTransferLinkDetail {
+  fromBatchId?: number
+  toBatchId?: number
+  quantity?: number
+  costPrice?: number
+}
+
+export interface InventoryTransferResult {
+  transferId?: number
+  transferNo?: string
+  fromStoreId?: number
+  toStoreId?: number
+  productId?: number
+  quantity?: number
+  batchDetails?: InventoryTransferBatchDetail[]
+  transferBatchDetails?: InventoryTransferLinkDetail[]
 }
 
 export interface InventoryAdjustRequest {
@@ -97,11 +125,30 @@ export interface InventoryTransactionVO {
   mainToAuxRatio?: number
 }
 
-export interface PageResponse<T> {
-  records: T[]
-  total: number
-  pageNum: number
-  pageSize: number
+export interface InventoryTransferRecordQuery {
+  fromStoreId?: number
+  toStoreId?: number
+  productName?: string
+  startTime?: string
+  endTime?: string
+  pageNum?: number
+  pageSize?: number
 }
 
-
+export interface InventoryTransferRecordVO {
+  transferId: number
+  transferNo: string
+  fromStoreId?: number
+  fromStoreName?: string
+  toStoreId?: number
+  toStoreName?: string
+  productId?: number
+  productName?: string
+  productSpec?: string
+  quantity?: number
+  batchCount?: number
+  createdBy?: number
+  createdByName?: string
+  createdAt?: string
+  remark?: string
+}

@@ -59,5 +59,31 @@ public class PerformanceAdminController {
         performanceApplicationService.confirmSalaryBill(id);
         return R.success();
     }
+
+    @DeleteMapping("/rule/{id}")
+    @SaCheckPermission("performance:rule")
+    @Operation(summary = "删除提成规则（软删除）")
+    public R<Void> deleteRule(@PathVariable Long id) {
+        performanceApplicationService.deleteRule(id);
+        return R.success();
+    }
+
+    @GetMapping("/goal")
+    @SaCheckPermission("performance:goal:set")
+    @Operation(summary = "查询目标历史")
+    public R<GoalPageResult> listGoals(@RequestParam(required = false) Long staffId,
+                                        @RequestParam(required = false) String monthFrom,
+                                        @RequestParam(required = false) String monthTo,
+                                        @RequestParam(defaultValue = "1") int page,
+                                        @RequestParam(defaultValue = "20") int size) {
+        return R.success(performanceApplicationService.listGoals(staffId, monthFrom, monthTo, page, size));
+    }
+
+    @GetMapping("/bill/{id}")
+    @SaCheckPermission("performance:salary:view")
+    @Operation(summary = "查询工资单详情")
+    public R<StaffSalaryBillDetailVO> getBillDetail(@PathVariable Long id) {
+        return R.success(performanceApplicationService.getBillDetail(id));
+    }
 }
 

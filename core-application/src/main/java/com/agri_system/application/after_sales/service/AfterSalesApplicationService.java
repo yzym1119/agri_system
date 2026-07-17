@@ -4,27 +4,39 @@ import com.agri_system.application.after_sales.dto.command.AdminReturnCommand;
 import com.agri_system.application.after_sales.dto.command.AfterSalesAuditCommand;
 import com.agri_system.application.after_sales.dto.command.AfterSalesRefundCommand;
 import com.agri_system.application.after_sales.dto.command.ClientApplyCommand;
+import com.agri_system.application.after_sales.dto.query.AfterSalesPageQuery;
+import com.agri_system.application.after_sales.dto.vo.AfterSalesDetailVO;
+import com.agri_system.application.after_sales.dto.vo.AfterSalesItemVO;
+import com.agri_system.application.after_sales.dto.vo.AfterSalesPageVO;
 import com.agri_system.application.after_sales.exception.AfterSalesErrorCode;
 import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.service.InventoryApplicationService;
+import com.agri_system.application.performance.event.OrderRefundedEvent;
 import com.agri_system.application.order.service.OrderPaymentService;
+import com.agri_system.domain.customer.repository.CustomerRepository;
 import com.agri_system.domain.after_sales.model.AfterSales;
 import com.agri_system.domain.after_sales.model.AfterSalesItem;
 import com.agri_system.domain.after_sales.repository.AfterSalesItemRepository;
 import com.agri_system.domain.after_sales.repository.AfterSalesRepository;
 import com.agri_system.domain.after_sales.service.AfterSalesDomainService;
-import com.agri_system.domain.order.enums.PaymentMethod;
+import com.agri_system.domain.order.enums.OrderMainPaymentMethod;
 import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.order.model.OrderItem;
 import com.agri_system.domain.order.repository.OrderItemRepository;
 import com.agri_system.domain.order.repository.OrderRepository;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.repository.ProductRepository;
+import com.agri_system.domain.store.repository.StaffRepository;
+import com.agri_system.domain.store.repository.StoreRepository;
+import com.mybatisflex.core.paginate.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -44,8 +56,12 @@ public class AfterSalesApplicationService {
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
     private final ProductRepository productRepository;
+    private final CustomerRepository customerRepository;
+    private final StoreRepository storeRepository;
+    private final StaffRepository staffRepository;
     private final InventoryApplicationService inventoryApplicationService;
     private final OrderPaymentService orderPaymentService;
+    private final ApplicationEventPublisher eventPublisher;
 
     /**
      * 小程序发起售后（未发货取消）
@@ -168,13 +184,20 @@ public class AfterSalesApplicationService {
             afterSales.setUpdatedAt(LocalDateTime.now());
             afterSalesRepository.save(afterSales);
             
-            // 更新订单状态：全额退款 -> 已退款；否则 -> 部分退款
-            if (refundAmount.compareTo(order.getPayAmount()) == 0) {
+            // 按历史累计退款金额判断最终订单状态
+            BigDecimal cumulativeRefundAmount = resolveCumulativeRefundAmount(order.getId(), afterSales.getId(), refundAmount);
+            if (cumulativeRefundAmount.compareTo(order.getPayAmount()) >= 0) {
                 order.markAsRefunded();
             } else {
                 order.markAsPartRefunded();
             }
             orderRepository.save(order);
+            eventPublisher.publishEvent(new OrderRefundedEvent(
+                    order.getId(),
+                    refundAmount,
+                    buildRefundItemQuantityMap(items),
+                    "AFTER_SALES:" + afterSales.getId()
+            ));
         }
         
         return afterSales.getId();
@@ -239,13 +262,57 @@ public class AfterSalesApplicationService {
         afterSales.setUpdatedAt(LocalDateTime.now());
         afterSalesRepository.save(afterSales);
 
-        // 更新订单状态：全额退款 -> 已退款；否则 -> 部分退款
-        if (refundAmount.compareTo(order.getPayAmount()) == 0) {
+        BigDecimal cumulativeRefundAmount = resolveCumulativeRefundAmount(order.getId(), afterSales.getId(), refundAmount);
+        if (cumulativeRefundAmount.compareTo(order.getPayAmount()) >= 0) {
             order.markAsRefunded();
         } else if (refundAmount.compareTo(BigDecimal.ZERO) > 0) {
             order.markAsPartRefunded();
         }
         orderRepository.save(order);
+        List<AfterSalesItem> items = afterSalesItemRepository.findByAfterSalesId(afterSales.getId());
+        eventPublisher.publishEvent(new OrderRefundedEvent(
+                order.getId(),
+                refundAmount,
+                buildRefundItemQuantityMap(items),
+                "AFTER_SALES:" + afterSales.getId()
+        ));
+    }
+
+    public Page<AfterSalesPageVO> queryPage(AfterSalesPageQuery query) {
+        Page<AfterSales> page = afterSalesRepository.findPage(
+                query.getPageNum(),
+                query.getPageSize(),
+                query.getKeyword(),
+                query.getStoreId(),
+                query.getType(),
+                query.getStatus(),
+                query.getStartTime(),
+                query.getEndTime()
+        );
+
+        List<AfterSalesPageVO> records = page.getRecords().stream()
+                .map(this::buildPageVO)
+                .collect(Collectors.toList());
+
+        Page<AfterSalesPageVO> result = new Page<>();
+        result.setPageNumber(page.getPageNumber());
+        result.setPageSize(page.getPageSize());
+        result.setTotalRow(page.getTotalRow());
+        result.setTotalPage(page.getTotalPage());
+        result.setRecords(records);
+        return result;
+    }
+
+    public AfterSalesDetailVO getDetail(Long afterSalesId) {
+        AfterSales afterSales = afterSalesRepository.findById(afterSalesId)
+                .orElseThrow(() -> new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_NOT_FOUND + ": 售后单不存在"));
+        return buildDetailVO(afterSales);
+    }
+
+    public List<AfterSalesDetailVO> getByOrderId(Long orderId) {
+        return afterSalesRepository.findByOrderId(orderId).stream()
+                .map(this::buildDetailVO)
+                .collect(Collectors.toList());
     }
 
     private void ensureNoProcessingAfterSales(Long orderId) {
@@ -260,24 +327,26 @@ public class AfterSalesApplicationService {
     }
 
     private boolean isAdminReturnable(Integer status) {
-        return status != null && (status.equals(PaymentMethod.COUPON.getCode()) || status.equals(PaymentMethod.CREDIT.getCode()));
+        return status != null && (status == 5 || status == 6 || status == 9);
     }
 
     private boolean isCreditOrder(Order order) {
         if (order.getPaymentMethod() == null) {
             return false;
         }
-        return order.getPaymentMethod().equals(PaymentMethod.COUPON.getCode()) || order.getPaymentMethod().equals(PaymentMethod.CREDIT.getCode());
+        return order.getPaymentMethod().equals(OrderMainPaymentMethod.CREDIT.getCode());
     }
 
     private List<AfterSalesItem> buildAdminItems(AfterSales afterSales,
                                                  AdminReturnCommand command,
                                                  Map<Long, OrderItem> orderItemMap) {
+        Map<Long, RefundAggregate> existingRefunds = loadExistingRefundAggregates(afterSales.getOrderId());
         BigDecimal total = BigDecimal.ZERO;
         List<AfterSalesItem> items = new ArrayList<>();
         for (AdminReturnCommand.ReturnItem itemCommand : command.getItems()) {
             OrderItem orderItem = Optional.ofNullable(orderItemMap.get(itemCommand.getOrderItemId()))
                     .orElseThrow(() -> new IllegalArgumentException(AfterSalesErrorCode.ORDER_NOT_FOUND + ": 订单明细不存在"));
+            validateAdminReturnItem(orderItem, itemCommand, existingRefunds.get(orderItem.getId()));
             AfterSalesItem afterSalesItem = new AfterSalesItem();
             afterSalesItem.setAfterSalesId(afterSales.getId());
             afterSalesItem.setOrderItemId(orderItem.getId());
@@ -293,6 +362,79 @@ public class AfterSalesApplicationService {
             throw new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_STATUS_INVALID + ": 明细退款金额与总金额不一致");
         }
         return items;
+    }
+
+    private Map<Long, RefundAggregate> loadExistingRefundAggregates(Long orderId) {
+        Map<Long, RefundAggregate> aggregates = new HashMap<>();
+        List<AfterSales> history = afterSalesRepository.findByOrderId(orderId);
+        if (history == null || history.isEmpty()) {
+            return aggregates;
+        }
+
+        for (AfterSales historyItem : history) {
+            if (historyItem == null || historyItem.getStatus() == AfterSales.STATUS_REJECTED) {
+                continue;
+            }
+            List<AfterSalesItem> items = afterSalesItemRepository.findByAfterSalesId(historyItem.getId());
+            if (items == null || items.isEmpty()) {
+                continue;
+            }
+            for (AfterSalesItem item : items) {
+                if (item == null || item.getOrderItemId() == null) {
+                    continue;
+                }
+                RefundAggregate aggregate = aggregates.computeIfAbsent(item.getOrderItemId(), key -> new RefundAggregate());
+                aggregate.quantity = aggregate.quantity.add(defaultAmount(item.getQuantity()));
+                aggregate.refundAmount = aggregate.refundAmount.add(defaultAmount(item.getRefundAmount()));
+            }
+        }
+        return aggregates;
+    }
+
+    private BigDecimal resolveCumulativeRefundAmount(Long orderId, Long currentAfterSalesId, BigDecimal currentRefundAmount) {
+        BigDecimal total = defaultAmount(currentRefundAmount);
+        List<AfterSales> history = afterSalesRepository.findByOrderId(orderId);
+        if (history == null || history.isEmpty()) {
+            return total;
+        }
+        for (AfterSales historyItem : history) {
+            if (historyItem == null
+                    || historyItem.getStatus() != AfterSales.STATUS_FINISHED
+                    || Objects.equals(historyItem.getId(), currentAfterSalesId)) {
+                continue;
+            }
+            total = total.add(defaultAmount(historyItem.getRefundAmount()));
+        }
+        return total;
+    }
+
+    private void validateAdminReturnItem(OrderItem orderItem,
+                                         AdminReturnCommand.ReturnItem itemCommand,
+                                         RefundAggregate existingRefund) {
+        BigDecimal requestedQuantity = defaultAmount(itemCommand.getQuantity());
+        BigDecimal requestedRefundAmount = defaultAmount(itemCommand.getRefundAmount());
+        BigDecimal existingQuantity = existingRefund != null ? existingRefund.quantity : BigDecimal.ZERO;
+        BigDecimal existingRefundAmount = existingRefund != null ? existingRefund.refundAmount : BigDecimal.ZERO;
+
+        if (requestedQuantity.compareTo(orderItem.getQuantity()) > 0) {
+            throw new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_STATUS_INVALID + ": 退货数量不能超过购买数量");
+        }
+        if (existingQuantity.add(requestedQuantity).compareTo(orderItem.getQuantity()) > 0) {
+            throw new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_STATUS_INVALID + ": 该商品累计退货数量已超过原购买数量");
+        }
+
+        BigDecimal itemTotalPrice = defaultAmount(orderItem.getTotalPrice());
+        if (itemTotalPrice.compareTo(BigDecimal.ZERO) <= 0
+                && orderItem.getUnitPrice() != null
+                && orderItem.getQuantity() != null) {
+            itemTotalPrice = orderItem.getUnitPrice().multiply(orderItem.getQuantity());
+        }
+        if (requestedRefundAmount.compareTo(itemTotalPrice) > 0) {
+            throw new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_STATUS_INVALID + ": 明细退款金额不能超过商品成交金额");
+        }
+        if (existingRefundAmount.add(requestedRefundAmount).compareTo(itemTotalPrice) > 0) {
+            throw new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_STATUS_INVALID + ": 该商品累计退款金额已超过商品成交金额");
+        }
     }
 
     private void triggerRestock(AfterSales afterSales, List<AfterSalesItem> items, Long operatorId) {
@@ -311,7 +453,7 @@ public class AfterSalesApplicationService {
             inCommand.setStoreId(order.getStoreId());
             inCommand.setProductId(item.getProductId());
             inCommand.setBatchNo(afterSales.getAfterSalesNo() + "-" + item.getOrderItemId());
-            inCommand.setQuantity(item.getQuantity());
+            inCommand.setQuantity(resolveRestockQuantity(item, orderItem, product));
             BigDecimal costPrice = product.getAvgCostPrice();
             if (costPrice == null || costPrice.compareTo(BigDecimal.ZERO) <= 0) {
                 costPrice = orderItem.getUnitPrice();
@@ -323,5 +465,109 @@ public class AfterSalesApplicationService {
             inventoryApplicationService.inbound(inCommand, operatorId);
         }
     }
-}
 
+    private BigDecimal resolveRestockQuantity(AfterSalesItem item, OrderItem orderItem, Product product) {
+        if (item.getQuantity() == null) {
+            throw new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_STATUS_INVALID + ": 售后明细数量不能为空");
+        }
+        if (!StringUtils.hasText(orderItem.getUnit())
+                || !StringUtils.hasText(product.getAuxUnit())
+                || !Objects.equals(orderItem.getUnit(), product.getAuxUnit())
+                || product.getMainToAuxRatio() == null
+                || product.getMainToAuxRatio().compareTo(BigDecimal.ONE) <= 0) {
+            return item.getQuantity();
+        }
+        return item.getQuantity().divide(product.getMainToAuxRatio(), 8, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal defaultAmount(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
+    }
+
+    private Map<Long, BigDecimal> buildRefundItemQuantityMap(List<AfterSalesItem> items) {
+        Map<Long, BigDecimal> refundItems = new HashMap<>();
+        if (items == null || items.isEmpty()) {
+            return refundItems;
+        }
+        for (AfterSalesItem item : items) {
+            if (item == null || item.getOrderItemId() == null || item.getQuantity() == null) {
+                continue;
+            }
+            refundItems.merge(item.getOrderItemId(), item.getQuantity(), BigDecimal::add);
+        }
+        return refundItems;
+    }
+
+    private AfterSalesPageVO buildPageVO(AfterSales afterSales) {
+        AfterSalesPageVO vo = new AfterSalesPageVO();
+        vo.setId(afterSales.getId());
+        vo.setAfterSalesNo(afterSales.getAfterSalesNo());
+        vo.setOrderId(afterSales.getOrderId());
+        vo.setCustomerId(afterSales.getCustomerId());
+        vo.setStoreId(afterSales.getStoreId());
+        vo.setType(afterSales.getType());
+        vo.setStatus(afterSales.getStatus());
+        vo.setRefundAmount(afterSales.getRefundAmount());
+        vo.setReason(afterSales.getReason());
+        vo.setAuditRemark(afterSales.getAuditRemark());
+        vo.setAuditBy(afterSales.getAuditBy());
+        vo.setAuditTime(afterSales.getAuditTime());
+        vo.setRefundBy(afterSales.getRefundBy());
+        vo.setRefundTime(afterSales.getRefundTime());
+        vo.setCreatedAt(afterSales.getCreatedAt());
+
+        if (afterSales.getOrderId() != null) {
+            orderRepository.findById(afterSales.getOrderId()).ifPresent(order -> {
+                vo.setOrderNo(order.getOrderNo());
+                vo.setOrderStatus(order.getOrderStatus());
+            });
+        }
+        if (afterSales.getCustomerId() != null) {
+            customerRepository.findByIdIncludingDeleted(afterSales.getCustomerId()).ifPresent(customer -> {
+                vo.setCustomerName(customer.getName());
+                vo.setCustomerPhone(customer.getPhone());
+            });
+        }
+        if (afterSales.getStoreId() != null) {
+            storeRepository.findByIdIncludingDeleted(afterSales.getStoreId()).ifPresent(store -> vo.setStoreName(store.getName()));
+        }
+        if (afterSales.getAuditBy() != null) {
+            staffRepository.findById(afterSales.getAuditBy()).ifPresent(staff -> vo.setAuditByName(staff.getName()));
+        }
+        if (afterSales.getRefundBy() != null) {
+            staffRepository.findById(afterSales.getRefundBy()).ifPresent(staff -> vo.setRefundByName(staff.getName()));
+        }
+        return vo;
+    }
+
+    private AfterSalesDetailVO buildDetailVO(AfterSales afterSales) {
+        AfterSalesDetailVO vo = new AfterSalesDetailVO();
+        AfterSalesPageVO base = buildPageVO(afterSales);
+        org.springframework.beans.BeanUtils.copyProperties(base, vo);
+        vo.setItems(afterSalesItemRepository.findByAfterSalesId(afterSales.getId()).stream()
+                .map(this::buildItemVO)
+                .collect(Collectors.toList()));
+        return vo;
+    }
+
+    private AfterSalesItemVO buildItemVO(AfterSalesItem item) {
+        AfterSalesItemVO vo = new AfterSalesItemVO();
+        vo.setId(item.getId());
+        vo.setOrderItemId(item.getOrderItemId());
+        vo.setProductId(item.getProductId());
+        vo.setQuantity(item.getQuantity());
+        vo.setRefundAmount(item.getRefundAmount());
+
+        OrderItem orderItem = item.getOrderItemId() != null ? orderItemRepository.findById(item.getOrderItemId()) : null;
+        if (orderItem != null) {
+            vo.setProductName(orderItem.getProductName());
+            vo.setUnit(orderItem.getUnit());
+        }
+        return vo;
+    }
+
+    private static class RefundAggregate {
+        private BigDecimal quantity = BigDecimal.ZERO;
+        private BigDecimal refundAmount = BigDecimal.ZERO;
+    }
+}

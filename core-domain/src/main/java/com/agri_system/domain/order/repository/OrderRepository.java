@@ -34,6 +34,16 @@ public interface OrderRepository {
     java.math.BigDecimal sumPayAmountByStaffAndMonth(Long staffId, String month);
 
     /**
+     * 统计指定员工在时间范围内的销售额
+     */
+    java.math.BigDecimal sumPayAmountByStaffAndDateRange(Long staffId, java.time.LocalDateTime start, java.time.LocalDateTime end);
+
+    /**
+     * 统计指定员工在时间范围内的订单数
+     */
+    Integer countByStaffAndDateRange(Long staffId, java.time.LocalDateTime start, java.time.LocalDateTime end);
+
+    /**
      * 查询已发货超过指定时间的订单
      * 
      * @param beforeTime 时间阈值（查询此时间之前发货的订单）
@@ -68,7 +78,11 @@ public interface OrderRepository {
             String endTime,
             Long customerId
     );
-}
 
+    /**
+     * 统计客户进行中的订单数量
+     */
+    long countActiveOrdersByCustomerId(Long customerId);
+}
 
 

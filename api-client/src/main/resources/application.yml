@@ -2,7 +2,7 @@ spring:
   application:
     name: api-client
   profiles:
-    active: dev
+    active: ${SPRING_PROFILES_ACTIVE:dev}
 
 server:
   port: 8081
@@ -12,7 +12,6 @@ springdoc:
     path: /api-docs
   swagger-ui:
     path: /swagger-ui.html
-
 
 
 

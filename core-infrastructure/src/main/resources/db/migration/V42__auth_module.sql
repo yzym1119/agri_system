@@ -19,24 +19,7 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
--- 2. 客户身份表添加session_key字段（如果不存在）
-SET @column_exists = 0;
-SELECT COUNT(*) INTO @column_exists
-FROM information_schema.COLUMNS
-WHERE TABLE_SCHEMA = DATABASE()
-  AND TABLE_NAME = 'customer_identity'
-  AND COLUMN_NAME = 'session_key';
-
-SET @sql = IF(@column_exists = 0,
-    'ALTER TABLE `customer_identity`
-        ADD COLUMN `session_key` VARCHAR(255) COMMENT ''微信SessionKey（仅微信登录时使用）'' AFTER `identity_value`',
-    'SELECT 1');
-
-PREPARE stmt FROM @sql;
-EXECUTE stmt;
-DEALLOCATE PREPARE stmt;
-
--- 3. 确保customer_identity表存在（如果不存在则创建）
+-- 2. 确保customer_identity表存在（如果不存在则创建）
 SET @table_exists = 0;
 SELECT COUNT(*) INTO @table_exists
 FROM information_schema.TABLES
@@ -64,6 +47,22 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+-- 3. 客户身份表添加session_key字段（如果不存在）
+SET @column_exists = 0;
+SELECT COUNT(*) INTO @column_exists
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE()
+  AND TABLE_NAME = 'customer_identity'
+  AND COLUMN_NAME = 'session_key';
+
+SET @sql = IF(@column_exists = 0,
+    'ALTER TABLE `customer_identity`
+        ADD COLUMN `session_key` VARCHAR(255) COMMENT ''微信SessionKey（仅微信登录时使用）'' AFTER `identity_value`',
+    'SELECT 1');
+
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 
 

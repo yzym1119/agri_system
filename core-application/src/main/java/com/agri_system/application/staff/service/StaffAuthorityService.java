@@ -135,33 +135,40 @@ public class StaffAuthorityService {
     }
 
     public List<MenuTreeVO> getMenuTree() {
-        List<SysMenu> menus = menuRepository.findAll();
-        Map<Long, MenuTreeVO> map = new HashMap<>();
-        menus.forEach(menu -> {
-            MenuTreeVO vo = new MenuTreeVO();
-            vo.setId(menu.getId());
-            vo.setParentId(menu.getParentId());
-            vo.setName(menu.getName());
-            vo.setPermission(menu.getPermission());
-            vo.setType(menu.getType());
-            vo.setSortOrder(menu.getSortOrder());
-            map.put(vo.getId(), vo);
-        });
-        List<MenuTreeVO> roots = new ArrayList<>();
-        map.values().forEach(node -> {
-            if (node.getParentId() == null || node.getParentId() == 0) {
-                roots.add(node);
-            } else {
-                MenuTreeVO parent = map.get(node.getParentId());
-                if (parent != null) {
-                    parent.getChildren().add(node);
-                } else {
-                    roots.add(node);
+        return buildMenuTree(menuRepository.findAll());
+    }
+
+    public List<MenuTreeVO> getCurrentMenuTree(Long staffId) {
+        List<Long> roleIds = staffRoleRepository.findRoleIdsByStaffId(staffId);
+        if (roleIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        Set<Long> grantedMenuIds = new LinkedHashSet<>(roleMenuRepository.findMenuIdsByRoleIds(roleIds));
+        if (grantedMenuIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<SysMenu> allMenus = menuRepository.findAll();
+        Map<Long, SysMenu> menuMap = allMenus.stream()
+                .collect(Collectors.toMap(SysMenu::getId, menu -> menu));
+
+        for (Long menuId : new ArrayList<>(grantedMenuIds)) {
+            Long currentId = menuId;
+            while (currentId != null && currentId > 0) {
+                SysMenu currentMenu = menuMap.get(currentId);
+                if (currentMenu == null) {
+                    break;
                 }
+                grantedMenuIds.add(currentId);
+                currentId = currentMenu.getParentId();
             }
-        });
-        roots.sort(Comparator.comparing(MenuTreeVO::getSortOrder, Comparator.nullsLast(Integer::compareTo)));
-        return roots;
+        }
+
+        List<SysMenu> currentMenus = allMenus.stream()
+                .filter(menu -> grantedMenuIds.contains(menu.getId()))
+                .collect(Collectors.toList());
+        return buildMenuTree(currentMenus);
     }
 
     public List<Long> getRoleMenuIds(Long roleId) {
@@ -201,6 +208,44 @@ public class StaffAuthorityService {
         return roleCodes;
     }
 
+    private List<MenuTreeVO> buildMenuTree(List<SysMenu> menus) {
+        Map<Long, MenuTreeVO> map = new LinkedHashMap<>();
+        menus.forEach(menu -> {
+            MenuTreeVO vo = new MenuTreeVO();
+            vo.setId(menu.getId());
+            vo.setParentId(menu.getParentId());
+            vo.setName(menu.getName());
+            vo.setPermission(menu.getPermission());
+            vo.setType(menu.getType());
+            vo.setPath(menu.getPath());
+            vo.setIcon(menu.getIcon());
+            vo.setSortOrder(menu.getSortOrder());
+            vo.setVisible(menu.getVisible());
+            map.put(vo.getId(), vo);
+        });
+
+        List<MenuTreeVO> roots = new ArrayList<>();
+        map.values().forEach(node -> {
+            if (node.getParentId() == null || node.getParentId() == 0) {
+                roots.add(node);
+            } else {
+                MenuTreeVO parent = map.get(node.getParentId());
+                if (parent != null) {
+                    parent.getChildren().add(node);
+                } else {
+                    roots.add(node);
+                }
+            }
+        });
+        sortMenuTree(roots);
+        return roots;
+    }
+
+    private void sortMenuTree(List<MenuTreeVO> nodes) {
+        nodes.sort(Comparator.comparing(MenuTreeVO::getSortOrder, Comparator.nullsLast(Integer::compareTo)));
+        nodes.forEach(node -> sortMenuTree(node.getChildren()));
+    }
+
     private void syncStaffRoles(Long staffId, List<Long> roleIds) {
         staffRoleRepository.deleteByStaffId(staffId);
         if (!CollectionUtils.isEmpty(roleIds)) {
@@ -208,4 +253,3 @@ public class StaffAuthorityService {
         }
     }
 }
-

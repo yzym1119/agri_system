@@ -8,6 +8,9 @@ import com.agri_system.application.productpackage.dto.vo.ProductPackageDetailVO;
 import com.agri_system.application.productpackage.dto.vo.ProductPackageItemVO;
 import com.agri_system.application.productpackage.exception.PackageErrorCode;
 import com.agri_system.domain.inventory.repository.InventoryRepository;
+import com.agri_system.domain.order.repository.OrderItemRepository;
+import com.agri_system.domain.performance.model.CommissionRule;
+import com.agri_system.domain.performance.repository.CommissionRuleRepository;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.productpackage.model.ProductPackage;
@@ -43,6 +46,8 @@ public class ProductPackageApplicationService {
     private final ProductRepository productRepository;
     private final ProductPackageDomainService domainService;
     private final InventoryRepository inventoryRepository;
+    private final OrderItemRepository orderItemRepository;
+    private final CommissionRuleRepository commissionRuleRepository;
     
     // ==================== 套餐主档管理 ====================
     
@@ -129,14 +134,31 @@ public class ProductPackageApplicationService {
     }
     
     /**
-     * 删除套餐（软删除，不校验订单引用）
+     * 删除套餐（软删除）
      */
     @Transactional(rollbackFor = Exception.class)
     public void deletePackage(Long id) {
-        // 校验套餐存在
-        packageRepository.findById(id)
+        ProductPackage productPackage = packageRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException(PackageErrorCode.PACKAGE_NOT_FOUND + ": 套餐不存在"));
-        
+
+        if (productPackage.isDeleted()) {
+            throw new IllegalStateException("套餐已删除");
+        }
+        if (productPackage.isOnline()) {
+            throw new IllegalStateException("上架中的套餐不能直接删除，请先下架后再删除");
+        }
+
+        long orderRefCount = orderItemRepository.countByPackageId(id);
+        if (orderRefCount > 0) {
+            throw new IllegalStateException("该套餐已被历史订单引用，无法删除");
+        }
+
+        long commissionRuleCount = commissionRuleRepository.countEnabledByCategoryAndTargetId(
+                CommissionRule.Category.PACKAGE.getCode(), id);
+        if (commissionRuleCount > 0) {
+            throw new IllegalStateException("该套餐仍被启用中的套餐提成规则引用，无法删除");
+        }
+
         packageRepository.delete(id);
     }
     
@@ -445,4 +467,3 @@ public class ProductPackageApplicationService {
         }
     }
 }
-

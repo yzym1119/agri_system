@@ -2,6 +2,7 @@ package com.agri_system.domain.performance.model;
 
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
+import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Table;
 import lombok.Data;
 
@@ -20,6 +21,7 @@ public class StaffPerformanceLog {
 
     private Long staffId;
 
+    @Column(tenantId = true)
     private Long storeId;
 
     private Integer bizType;

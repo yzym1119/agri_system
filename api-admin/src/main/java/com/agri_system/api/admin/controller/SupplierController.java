@@ -108,7 +108,7 @@ public class SupplierController {
     }
     
     @DeleteMapping("/{id}")
-    @Operation(summary = "删除供应商", description = "逻辑删除供应商")
+    @Operation(summary = "删除供应商", description = "删除未被采购单引用的供应商")
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "删除成功"),
         @ApiResponse(responseCode = "404", description = "供应商不存在", content = @Content(schema = @Schema(implementation = Map.class)))
@@ -123,4 +123,3 @@ public class SupplierController {
         return ResponseEntity.ok(result);
     }
 }
-

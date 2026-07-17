@@ -2,6 +2,7 @@ package com.agri_system.domain.inventory.model;
 
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
+import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Table;
 import lombok.Data;
 
@@ -24,6 +25,7 @@ public class InventoryBatch {
     private Long id;
     
     /** 门店ID */
+    @Column(tenantId = true)
     private Long storeId;
     
     /** 商品ID */

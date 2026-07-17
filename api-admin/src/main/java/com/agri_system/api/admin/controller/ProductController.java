@@ -146,6 +146,7 @@ public class ProductController {
 
     @PostMapping(value = "/image/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @Operation(summary = "上传商品主图", description = "上传图片到阿里云 OSS，并返回可访问 URL")
+    @SaCheckPermission("product:create")
     public ResponseEntity<Map<String, Object>> uploadProductImage(
             @Parameter(description = "待上传文件", required = true)
             @RequestPart("file") MultipartFile file) {

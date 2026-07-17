@@ -1,5 +1,6 @@
 package com.agri_system.api.admin.controller;
 
+import com.agri_system.api.admin.config.TestApplication;
 import com.agri_system.application.store.dto.command.StoreCreateCommand;
 import com.agri_system.application.store.service.StoreApplicationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -8,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -20,10 +22,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * 门店控制器集成测试
  * 注意：鉴权测试需要配置 Sa-Token，这里仅测试基本功能
- * 
+ *
  * @author AI Generated
  */
-@WebMvcTest(StoreController.class)
+@WebMvcTest
+@ContextConfiguration(classes = {TestApplication.class, StoreController.class})
 class StoreControllerTest {
     
     @Autowired

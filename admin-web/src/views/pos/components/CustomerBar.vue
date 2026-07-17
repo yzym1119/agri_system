@@ -1,6 +1,7 @@
 <template>
   <div class="customer-bar">
     <el-autocomplete
+      ref="autocompleteRef"
       v-if="!selectedCustomer"
       v-model="searchText"
       :fetch-suggestions="searchCustomers"
@@ -54,7 +55,7 @@
 </template>
 
 <script setup lang="ts">
-import {computed, ref} from 'vue'
+import {computed, nextTick, ref} from 'vue'
 import {Close, User} from '@element-plus/icons-vue'
 import {getCustomerDetail, getCustomerList} from '@/api/customer'
 import type {CustomerListVO} from '@/types/customer'
@@ -70,6 +71,7 @@ const emit = defineEmits<{
 }>()
 
 const searchText = ref('')
+const autocompleteRef = ref<any>(null)
 const selectedCustomer = computed({
   get: () => props.selectedCustomer,
   set: (val) => emit('customerChange', val)
@@ -154,6 +156,21 @@ const handleClear = () => {
   searchText.value = ''
   emit('customerChange', null)
 }
+
+const focusSearch = () => {
+  if (selectedCustomer.value) {
+    handleClear()
+  }
+  nextTick(() => {
+    const input = autocompleteRef.value?.inputRef?.input as HTMLInputElement | undefined
+    input?.focus()
+    input?.select?.()
+  })
+}
+
+defineExpose({
+  focusSearch
+})
 </script>
 
 <style scoped lang="scss">
@@ -275,4 +292,3 @@ const handleClear = () => {
   }
 }
 </style>
-

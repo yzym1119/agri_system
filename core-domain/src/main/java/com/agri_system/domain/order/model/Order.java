@@ -1,6 +1,7 @@
 package com.agri_system.domain.order.model;
 
-import com.agri_system.domain.order.enums.PaymentMethod;
+import com.agri_system.domain.order.enums.OrderMainPaymentMethod;
+import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
 import com.mybatisflex.annotation.Table;
@@ -26,6 +27,7 @@ public class Order {
     private String orderNo;
     
     /** 门店ID */
+    @Column(tenantId = true)
     private Long storeId;
     
     /** 客户ID（可为空，支持散客） */
@@ -51,7 +53,7 @@ public class Order {
     /** 实付金额（元） */
     private BigDecimal payAmount;
     
-    /** 主支付方式：1-现金, 2-微信, 3-支付宝, 5-赊销, 10-混合支付(详见order_payment表) */
+    /** 主支付方式：1-现金, 2-微信, 3-支付宝, 4-余额, 5-优惠券, 6-赊销, 10-混合支付 */
     private Integer paymentMethod;
     
     /** 销售员工ID（线下POS必填） */
@@ -59,11 +61,13 @@ public class Order {
     
     /** 收货人姓名（下单时固化） */
     private String receiverName;
-    
+
     /** 收货人电话（下单时固化） */
+    @Column("delivery_phone")
     private String receiverPhone;
-    
+
     /** 收货地址（下单时固化） */
+    @Column("delivery_address")
     private String receiverAddress;
     
     /** 自提核销码（仅自提订单生成，6位数字） */
@@ -71,7 +75,11 @@ public class Order {
     
     /** 备注 */
     private String remark;
-    
+
+    /** 逻辑删除：1-已删，0-未删 */
+    @Column(isLogicDelete = true)
+    private Integer deleted;
+
     /** 创建时间 */
     private LocalDateTime createdAt;
     
@@ -99,7 +107,10 @@ public class Order {
      * 检查订单是否可以退款
      */
     public boolean canRefund() {
-        return orderStatus != null && orderStatus == 2 && paymentMethod != null && !paymentMethod.equals(PaymentMethod.CREDIT.getCode()); // 赊销不支持退款
+        return orderStatus != null
+                && (orderStatus == 2 || orderStatus == 3 || orderStatus == 4)
+                && paymentMethod != null
+                && !paymentMethod.equals(OrderMainPaymentMethod.CREDIT.getCode());
     }
     
     /**
@@ -157,4 +168,3 @@ public class Order {
         this.orderStatus = 9;
     }
 }
-

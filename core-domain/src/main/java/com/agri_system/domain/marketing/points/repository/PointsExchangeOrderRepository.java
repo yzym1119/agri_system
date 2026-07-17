@@ -24,5 +24,8 @@ public interface PointsExchangeOrderRepository {
     List<PointsExchangeOrder> query(Long customerId, Integer status, int offset, int limit);
 
     long count(Long customerId, Integer status);
-}
 
+    long countByGoodsId(Long goodsId);
+
+    long countActiveByCustomerId(Long customerId);
+}

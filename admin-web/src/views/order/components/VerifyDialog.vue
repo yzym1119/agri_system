@@ -13,7 +13,7 @@
           <span style="font-size: 24px; font-weight: bold; color: #409eff">{{ order.pickupCode }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="客户">{{ order.customerName || '散客' }}</el-descriptions-item>
-        <el-descriptions-item label="订单金额">¥{{ formatMoney(order.payAmount) }}</el-descriptions-item>
+        <el-descriptions-item label="应收净额">¥{{ formatMoney(orderPaymentSummary.netReceivable) }}</el-descriptions-item>
       </el-descriptions>
     </div>
 
@@ -37,14 +37,16 @@
 </template>
 
 <script setup lang="ts">
-import {reactive, ref, watch} from 'vue'
+import {computed, reactive, ref, watch} from 'vue'
 import type {FormInstance, FormRules} from 'element-plus'
 import {ElMessage} from 'element-plus'
 import {verifyPickup} from '@/api/order'
+import {getOrderPaymentSummary} from '@/utils/orderPayment'
+import type {OrderPageItem} from '@/types/order'
 
 interface Props {
   modelValue: boolean
-  order: any | null
+  order: OrderPageItem | null
 }
 
 interface Emits {
@@ -58,6 +60,7 @@ const emit = defineEmits<Emits>()
 const dialogVisible = ref(false)
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
+const orderPaymentSummary = computed(() => getOrderPaymentSummary(props.order))
 
 const form = reactive({
   pickupCode: ''
@@ -117,7 +120,7 @@ const handleSubmit = async () => {
       handleClose()
     } catch (error) {
       console.error('核销失败:', error)
-      ElMessage.error('核销失败，请检查核销码是否正确')
+      ElMessage.error((error as any)?.message || '核销失败，请检查核销码是否正确')
     } finally {
       submitting.value = false
     }
@@ -127,8 +130,6 @@ const handleSubmit = async () => {
 
 <style scoped lang="scss">
 </style>
-
-
 
 
 

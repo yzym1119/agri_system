@@ -30,9 +30,17 @@ public interface OrderItemRepository {
      * 根据ID查询明细
      */
     OrderItem findById(Long id);
+
+    /**
+     * 统计商品被订单明细引用次数
+     */
+    long countByProductId(Long productId);
+
+    /**
+     * 统计套餐被订单明细引用次数
+     */
+    long countByPackageId(Long packageId);
 }
-
-
 
 
 

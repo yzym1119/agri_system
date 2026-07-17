@@ -13,7 +13,12 @@ export function getStoreList(params: StoreQueryParams): Promise<PageResponse<Sto
     url: '/api/admin/stores',
     method: 'get',
     params
-  })
+  }).then((page: any) => ({
+    records: page?.records || [],
+    total: page?.total ?? page?.totalRow ?? 0,
+    pageNum: page?.pageNumber ?? params.pageNum ?? 1,
+    pageSize: page?.pageSize ?? params.pageSize ?? 10
+  }))
 }
 
 /**
@@ -66,6 +71,5 @@ export function getAllStores(): Promise<StoreDetailVO[]> {
     url: '/api/admin/stores',
     method: 'get',
     params: { pageNum: 1, pageSize: 1000 }
-  }).then((response: PageResponse<StoreDetailVO>) => response.records)
+  }).then((response: any) => response?.records || response?.data?.records || [])
 }
-

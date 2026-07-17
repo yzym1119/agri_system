@@ -187,15 +187,6 @@ export interface CustomerBenefitLogVO {
 }
 
 /**
- * 客户权益流水查询参数
- */
-export interface CustomerBenefitLogQuery {
-  customerId: number
-  pageNum?: number
-  pageSize?: number
-}
-
-/**
  * 客户优惠券VO
  */
 export interface CustomerCouponVO {
@@ -215,13 +206,4 @@ export interface CustomerCouponVO {
   createdAt: string
 }
 
-/**
- * 客户优惠券查询参数
- */
-export interface CustomerCouponQuery {
-  customerId: number
-  status?: number // 1-未使用, 2-已使用, 3-已过期, 4-已作废
-  pageNum?: number
-  pageSize?: number
-}
 

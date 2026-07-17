@@ -30,35 +30,79 @@
 
 - JDK 17+
 - Maven 3.6+
-- Docker / Docker Compose
+- MySQL 8
+- Redis 7
 - Node.js 18+（前端需要）
 
-### 启动基础设施
+### 1. 准备环境变量
 
 ```bash
-docker-compose up -d mysql redis
+cp .env.example .env
 ```
 
-### 构建后端
+默认本地开发使用：
+
+- MySQL: `127.0.0.1:3306/agri_system`
+- 用户名: `agri`
+- 密码: `agri1234`
+- Redis: `127.0.0.1:6379`
+
+如果你要改端口、密码或主机，只改 `.env` 这一处。
+
+### 2. 启动基础设施
+
+方案 A：本机已有 MySQL / Redis
+
+- 只需要确保 `.env` 中的连接信息和本机实例一致
+- MySQL 中存在库 `agri_system`
+
+方案 B：使用 Docker
+
+```bash
+docker compose --env-file .env up -d mysql redis
+```
+
+### 3. 构建后端
 
 ```bash
 mvn clean install -DskipTests
 ```
 
-### 启动服务
+如果你是空库首次启动，先启动任一后端入口让 Flyway 自动建表，再执行本地开发初始化脚本创建默认门店和管理员账号：
 
 ```bash
-mvn spring-boot:run -pl api-admin
-mvn spring-boot:run -pl api-client
+MYSQL_PWD=agri1234 mysql -h 127.0.0.1 -P 3306 -u agri -D agri_system < scripts/dev-bootstrap.sql
 ```
 
-### 启动前端
+默认管理端账号仅用于本地开发：`admin / admin123`。不要在生产库执行该脚本。
+
+### 4. 启动服务
+
+```bash
+mvn -pl api-admin spring-boot:run
+mvn -pl api-client spring-boot:run
+```
+
+管理端默认端口 `8080`，客户端默认端口 `8081`。
+
+### 5. 启动前端
 
 ```bash
 cd admin-web
 npm install
 npm run dev
 ```
+
+### 启动自检
+
+```bash
+nc -z localhost 3306
+nc -z localhost 6379
+curl http://localhost:8080/health
+curl http://localhost:8081/health
+```
+
+如果 `3306` 或 `6379` 不通，后端一定起不来。
 
 ## 文档入口
 

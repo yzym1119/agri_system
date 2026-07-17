@@ -41,12 +41,16 @@ public class OrderCreateCommand {
     
     @Schema(description = "配送联系电话（配送订单必填）", example = "13800138000")
     private String deliveryPhone;
+
+    @Schema(description = "收货人/提货人姓名（配送订单建议必填）", example = "张三")
+    private String receiverName;
+
+    @Schema(description = "配送方式：2-同城配送，3-快递配送（配送订单未传时默认按3处理）", example = "3")
+    private Integer deliveryType;
     
     @Schema(description = "备注", example = "请尽快发货")
     private String remark;
 }
-
-
 
 
 

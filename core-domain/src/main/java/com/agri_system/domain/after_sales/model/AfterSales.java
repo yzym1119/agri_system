@@ -2,6 +2,7 @@ package com.agri_system.domain.after_sales.model;
 
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
+import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Table;
 import lombok.Data;
 
@@ -34,6 +35,7 @@ public class AfterSales {
 
     private Long customerId;
 
+    @Column(tenantId = true)
     private Long storeId;
 
     private Integer type;

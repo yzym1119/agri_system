@@ -130,7 +130,8 @@ public class PerformanceEventListener {
     @Transactional(rollbackFor = Exception.class)
     public void onOrderRefunded(OrderRefundedEvent event) {
         Long orderId = event.orderId();
-        if (!markEvent(EVENT_ORDER_REFUNDED, orderId)) {
+        String refundEventKey = buildRefundEventKey(event);
+        if (!markEvent(refundEventKey, EVENT_ORDER_REFUNDED, orderId)) {
             return;
         }
         Order order = orderRepository.findById(orderId)
@@ -144,9 +145,27 @@ public class PerformanceEventListener {
         if (positives == null || positives.isEmpty()) {
             return;
         }
+        Map<Long, BigDecimal> refundItems = event.refundItems() != null ? event.refundItems() : Collections.emptyMap();
+        Map<Long, BigDecimal> orderItemQuantityMap = refundItems.isEmpty() ? Collections.emptyMap() : loadOrderItemQuantityMap(orderId);
         List<StaffPerformanceLog> negatives = new ArrayList<>();
         for (StaffPerformanceLog logEntry : positives) {
-            BigDecimal deductAmount = logEntry.getAmount().multiply(ratio).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal deductRatio = ratio;
+            if (!refundItems.isEmpty()) {
+                Long orderItemId = logEntry.getOrderItemId();
+                if (orderItemId == null || !refundItems.containsKey(orderItemId)) {
+                    continue;
+                }
+                BigDecimal originalQuantity = orderItemQuantityMap.get(orderItemId);
+                if (originalQuantity == null || originalQuantity.compareTo(BigDecimal.ZERO) <= 0) {
+                    continue;
+                }
+                BigDecimal refundedQuantity = refundItems.get(orderItemId);
+                deductRatio = refundedQuantity.divide(originalQuantity, 4, RoundingMode.HALF_UP);
+                if (deductRatio.compareTo(BigDecimal.ONE) > 0) {
+                    deductRatio = BigDecimal.ONE;
+                }
+            }
+            BigDecimal deductAmount = logEntry.getAmount().multiply(deductRatio).setScale(2, RoundingMode.HALF_UP);
             if (deductAmount.compareTo(BigDecimal.ZERO) == 0) {
                 continue;
             }
@@ -157,7 +176,7 @@ public class PerformanceEventListener {
             negative.setBizId(orderId);
             negative.setOrderItemId(logEntry.getOrderItemId());
             negative.setAmount(deductAmount.negate());
-            negative.setCalcDesc("退款扣减，按比例 " + ratio);
+            negative.setCalcDesc("退款扣减，按比例 " + deductRatio);
             negative.setNeedReview(0);
             negatives.add(negative);
         }
@@ -324,6 +343,42 @@ public class PerformanceEventListener {
         return markEvent(key, type, bizId);
     }
 
+    private String buildRefundEventKey(OrderRefundedEvent event) {
+        if (event.refundKey() != null && !event.refundKey().trim().isEmpty()) {
+            return EVENT_ORDER_REFUNDED + ":" + event.refundKey();
+        }
+        StringBuilder builder = new StringBuilder(EVENT_ORDER_REFUNDED)
+                .append(":")
+                .append(event.orderId())
+                .append(":")
+                .append(event.refundAmount());
+        Map<Long, BigDecimal> refundItems = event.refundItems();
+        if (refundItems != null && !refundItems.isEmpty()) {
+            refundItems.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(entry -> builder.append(":")
+                            .append(entry.getKey())
+                            .append("=")
+                            .append(entry.getValue()));
+        }
+        return builder.toString();
+    }
+
+    private Map<Long, BigDecimal> loadOrderItemQuantityMap(Long orderId) {
+        Map<Long, BigDecimal> quantities = new HashMap<>();
+        List<OrderItem> orderItems = orderItemRepository.findByOrderId(orderId);
+        if (orderItems == null || orderItems.isEmpty()) {
+            return quantities;
+        }
+        for (OrderItem orderItem : orderItems) {
+            if (orderItem.getId() == null || orderItem.getQuantity() == null) {
+                continue;
+            }
+            quantities.put(orderItem.getId(), orderItem.getQuantity());
+        }
+        return quantities;
+    }
+
     private boolean markEvent(String eventKey, String type, Long bizId) {
         if (eventRecordRepository.existsByEventKey(eventKey)) {
             return false;
@@ -341,4 +396,3 @@ public class PerformanceEventListener {
         }
     }
 }
-

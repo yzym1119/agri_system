@@ -19,7 +19,7 @@
               </template>
             </el-alert>
             <div class="toolbar">
-              <el-button type="primary" :icon="Plus" @click="handleAddRechargeRule">新增规则</el-button>
+              <el-button v-permission="'marketing:rule:create'" type="primary" :icon="Plus" @click="handleAddRechargeRule">新增规则</el-button>
             </div>
 
             <el-table :data="rechargeRuleList" v-loading="rechargeLoading" border>
@@ -58,6 +58,7 @@
               <el-table-column prop="status" label="状态" width="100" align="center">
                 <template #default="{ row }">
                   <el-switch
+                    v-permission="'marketing:rule:update'"
                     v-model="row.status"
                     :active-value="1"
                     :inactive-value="0"
@@ -67,8 +68,8 @@
               </el-table-column>
               <el-table-column label="操作" width="180" fixed="right">
                 <template #default="{ row }">
-                  <el-button link type="primary" @click="handleEditRechargeRule(row)">编辑</el-button>
-                  <el-button link type="danger" @click="handleDeleteRechargeRule(row)">删除</el-button>
+                  <el-button v-permission="'marketing:rule:update'" link type="primary" @click="handleEditRechargeRule(row)">编辑</el-button>
+                  <el-button v-permission="'marketing:rule:delete'" link type="danger" @click="handleDeleteRechargeRule(row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -128,9 +129,10 @@
               </el-table-column>
               <el-table-column label="操作" width="200" fixed="right">
                 <template #default="{ row }">
-                  <el-button link type="primary" @click="handleConfigVipRights(row)">配置权益</el-button>
+                  <el-button v-permission="'marketing:rule:create'" link type="primary" @click="handleConfigVipRights(row)">配置权益</el-button>
                   <el-button
                     v-if="row.status === 1"
+                    v-permission="'marketing:rule:update'"
                     link
                     type="warning"
                     @click="handleToggleVipRightsStatus(row, 0)"
@@ -139,6 +141,7 @@
                   </el-button>
                   <el-button
                     v-if="row.status === 0"
+                    v-permission="'marketing:rule:update'"
                     link
                     type="success"
                     @click="handleToggleVipRightsStatus(row, 1)"
@@ -224,7 +227,7 @@
       </el-form>
       <template #footer>
         <el-button @click="rechargeDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="rechargeSubmitLoading" @click="handleRechargeSubmit">确定</el-button>
+        <el-button v-permission="rechargeIsEdit ? 'marketing:rule:update' : 'marketing:rule:create'" type="primary" :loading="rechargeSubmitLoading" @click="handleRechargeSubmit">确定</el-button>
       </template>
     </el-dialog>
 
@@ -313,11 +316,11 @@
         </el-table-column>
       </el-table>
       <div style="margin-bottom: 16px">
-        <el-button type="primary" :icon="Plus" @click="handleAddVipRightsRow">添加权益</el-button>
+        <el-button v-permission="'marketing:rule:create'" type="primary" :icon="Plus" @click="handleAddVipRightsRow">添加权益</el-button>
       </div>
       <template #footer>
         <el-button @click="vipDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="vipSubmitLoading" @click="handleVipSubmit">确定</el-button>
+        <el-button v-permission="'marketing:rule:create'" type="primary" :loading="vipSubmitLoading" @click="handleVipSubmit">确定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -519,7 +522,7 @@ const handleEditRechargeRule = async (row: RechargeRuleVO) => {
 
 // 删除充值奖励规则
 const handleDeleteRechargeRule = (row: RechargeRuleVO) => {
-  ElMessageBox.confirm(`确定要删除规则"${row.name}"吗？`, '提示', {
+  ElMessageBox.confirm(`确定要删除规则"${row.name}"吗？仅已停用规则允许删除。`, '提示', {
     type: 'warning',
     confirmButtonText: '确定',
     cancelButtonText: '取消'
@@ -901,4 +904,3 @@ onMounted(() => {
   z-index: 1;
 }
 </style>
-

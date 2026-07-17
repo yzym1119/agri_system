@@ -3,7 +3,7 @@
     <el-card>
       <!-- 操作栏 -->
       <div class="toolbar">
-        <el-button type="primary" :icon="Plus" @click="handleAdd">新增角色</el-button>
+        <el-button v-permission="'role:save'" type="primary" :icon="Plus" @click="handleAdd">新增角色</el-button>
       </div>
 
       <!-- 表格 -->
@@ -25,11 +25,11 @@
         </el-table-column>
         <el-table-column label="操作" width="250" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
-            <el-button type="warning" link :icon="Setting" @click="handleAssignMenus(row)">
+            <el-button v-permission="'role:save'" type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
+            <el-button v-permission="'role:assign'" type="warning" link :icon="Setting" @click="handleAssignMenus(row)">
               分配权限
             </el-button>
-            <el-button type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'role:delete'" type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -51,10 +51,16 @@
         <el-form-item label="角色名称" prop="name">
           <el-input v-model="formData.name" placeholder="请输入角色名称" />
         </el-form-item>
+        <el-form-item label="角色状态" prop="status">
+          <el-radio-group v-model="formData.status">
+            <el-radio :label="1">启用</el-radio>
+            <el-radio :label="0">停用</el-radio>
+          </el-radio-group>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
+        <el-button v-permission="'role:save'" type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
 
@@ -75,7 +81,7 @@
       />
       <template #footer>
         <el-button @click="menuDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="menuSubmitLoading" @click="handleMenuSubmit">
+        <el-button v-permission="'role:assign'" type="primary" :loading="menuSubmitLoading" @click="handleMenuSubmit">
           确定
         </el-button>
       </template>
@@ -107,12 +113,14 @@ const formRef = ref<FormInstance>()
 // 表单数据
 const formData = reactive<RoleCreateRequest & { id?: number }>({
   name: '',
+  status: 1,
   menuIds: []
 })
 
 // 表单验证规则
 const formRules: FormRules = {
-  name: [{ required: true, message: '请输入角色名称', trigger: 'blur' }]
+  name: [{ required: true, message: '请输入角色名称', trigger: 'blur' }],
+  status: [{ required: true, message: '请选择角色状态', trigger: 'change' }]
 }
 
 // 对话框标题
@@ -153,6 +161,7 @@ const handleEdit = (row: RoleVO) => {
   resetForm()
   formData.id = row.id
   formData.name = row.name
+  formData.status = row.status ?? 1
   // code 在编辑时不可修改，不设置
   dialogVisible.value = true
 }
@@ -215,6 +224,7 @@ const handleSubmit = async () => {
         const updateData: RoleUpdateRequest = {
           name: formData.name,
           code: undefined, // 编辑时不修改编码
+          status: formData.status,
           menuIds: formData.menuIds
         }
         await updateRole(formData.id!, updateData)
@@ -222,6 +232,7 @@ const handleSubmit = async () => {
       } else {
         const createData: RoleCreateRequest = {
           name: formData.name,
+          status: formData.status,
           menuIds: formData.menuIds
           // code 留空，后端自动生成
         }
@@ -263,6 +274,7 @@ const handleMenuSubmit = async () => {
 const resetForm = () => {
   formData.id = undefined
   formData.name = ''
+  formData.status = 1
   formData.menuIds = []
   formRef.value?.resetFields()
 }
@@ -293,4 +305,3 @@ onMounted(() => {
   margin-bottom: 20px;
 }
 </style>
-

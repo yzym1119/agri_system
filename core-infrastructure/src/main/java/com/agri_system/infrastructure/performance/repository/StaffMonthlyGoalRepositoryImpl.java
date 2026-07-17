@@ -7,6 +7,7 @@ import com.mybatisflex.core.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -31,6 +32,33 @@ public class StaffMonthlyGoalRepositoryImpl implements StaffMonthlyGoalRepositor
                 QueryWrapper.create()
                         .where("staff_id = ?", staffId)
                         .and("month = ?", month)));
+    }
+
+    @Override
+    public List<StaffMonthlyGoal> query(Long staffId, String monthFrom, String monthTo, int page, int size) {
+        QueryWrapper query = buildGoalQuery(staffId, monthFrom, monthTo)
+                .orderBy("month", false)
+                .limit((page - 1) * size, size);
+        return mapper.selectListByQuery(query);
+    }
+
+    @Override
+    public long count(Long staffId, String monthFrom, String monthTo) {
+        return mapper.selectCountByQuery(buildGoalQuery(staffId, monthFrom, monthTo));
+    }
+
+    private QueryWrapper buildGoalQuery(Long staffId, String monthFrom, String monthTo) {
+        QueryWrapper query = QueryWrapper.create();
+        if (staffId != null) {
+            query.where("staff_id = ?", staffId);
+        }
+        if (monthFrom != null && !monthFrom.isEmpty()) {
+            query.and("month >= ?", monthFrom);
+        }
+        if (monthTo != null && !monthTo.isEmpty()) {
+            query.and("month <= ?", monthTo);
+        }
+        return query;
     }
 }
 

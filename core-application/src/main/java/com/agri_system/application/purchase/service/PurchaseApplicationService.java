@@ -134,7 +134,7 @@ public class PurchaseApplicationService {
             vo.setCreatedAt(order.getCreatedAt());
 
             // store name
-            storeRepository.findById(order.getStoreId()).ifPresent(store -> vo.setStoreName(store.getName()));
+            storeRepository.findByIdIncludingDeleted(order.getStoreId()).ifPresent(store -> vo.setStoreName(store.getName()));
             // supplier name
             if (order.getSupplierId() != null) {
                 supplierRepository.findById(order.getSupplierId()).ifPresent(supplier -> vo.setSupplierName(supplier.getName()));
@@ -390,7 +390,7 @@ public class PurchaseApplicationService {
         vo.setItems(itemVOs);
         
         // 填充门店名称
-        storeRepository.findById(order.getStoreId()).ifPresent(store -> {
+        storeRepository.findByIdIncludingDeleted(order.getStoreId()).ifPresent(store -> {
             vo.setStoreName(store.getName());
         });
         
@@ -425,4 +425,3 @@ public class PurchaseApplicationService {
         }
     }
 }
-

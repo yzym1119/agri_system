@@ -15,10 +15,12 @@ public class MenuTreeVO {
     private String name;
     private String permission;
     private Integer type;
+    private String path;
+    private String icon;
     private Integer sortOrder;
+    private Integer visible;
     private List<MenuTreeVO> children = new ArrayList<>();
 }
-
 
 
 

@@ -42,7 +42,7 @@
 
       <!-- 操作栏 -->
       <div class="toolbar">
-        <el-button type="primary" :icon="Plus" @click="handleAdd">新增供应商</el-button>
+        <el-button v-permission="'supplier:create'" type="primary" :icon="Plus" @click="handleAdd">新增供应商</el-button>
       </div>
 
       <!-- 表格 -->
@@ -69,8 +69,8 @@
         </el-table-column>
         <el-table-column label="操作" width="200" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
-            <el-button type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'supplier:update'" type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
+            <el-button v-permission="'supplier:delete'" type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -145,7 +145,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
+        <el-button v-permission="isEdit ? 'supplier:update' : 'supplier:create'" type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -216,10 +216,12 @@ const loadSupplierList = async () => {
   loading.value = true
   try {
     const response: PageResponse<SupplierDetailVO> = await getSupplierList(queryParams)
-    supplierList.value = response.records
-    total.value = response.total
+    supplierList.value = response.records || []
+    total.value = response.total || 0
   } catch (error) {
     console.error('加载供应商列表失败:', error)
+    supplierList.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -278,6 +280,7 @@ const handleDelete = async (row: SupplierDetailVO) => {
   } catch (error: any) {
     if (error !== 'cancel') {
       console.error('删除失败:', error)
+      ElMessage.error(error?.message || '删除失败')
     }
   }
 }
@@ -368,28 +371,4 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
-.supplier-container {
-  padding: 20px;
-}
-
-.search-bar {
-  margin-bottom: 20px;
-}
-
-.search-form {
-  .el-form-item {
-    margin-bottom: 0;
-  }
-}
-
-.toolbar {
-  margin-bottom: 20px;
-}
-
-.pagination {
-  margin-top: 20px;
-  display: flex;
-  justify-content: flex-end;
-}
 </style>
-

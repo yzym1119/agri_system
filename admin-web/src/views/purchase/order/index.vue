@@ -37,7 +37,7 @@
         <el-form-item>
           <el-button type="primary" :loading="loading" :icon="Search" @click="handleSearch">查询</el-button>
           <el-button :icon="Refresh" @click="handleReset">重置</el-button>
-          <el-button type="success" :icon="Plus" @click="handleOpenCreate">新建采购单</el-button>
+          <el-button v-permission="'purchase:create'" type="success" :icon="Plus" @click="handleOpenCreate">新建采购单</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -64,6 +64,7 @@
             <el-button link type="primary" @click="handleView(row)">详情</el-button>
             <el-button
               v-if="row.status === 1"
+              v-permission="'purchase:submit'"
               link
               type="success"
               :loading="actionLoading[row.id]"
@@ -71,6 +72,7 @@
             >提交</el-button>
             <el-button
               v-if="row.status === 2"
+              v-permission="'purchase:inbound'"
               link
               type="warning"
               :loading="actionLoading[row.id]"
@@ -78,6 +80,7 @@
             >入库</el-button>
             <el-button
               v-if="row.status === 1 || row.status === 2"
+              v-permission="'purchase:cancel'"
               link
               type="danger"
               :loading="actionLoading[row.id]"
@@ -140,7 +143,7 @@
         <div class="item-toolbar">
           <div>
             <el-button type="primary" @click="openProductSelector">添加商品</el-button>
-            <el-button type="success" @click="openQuickCreateProduct">+ 新建商品</el-button>
+            <el-button v-permission="'product:create'" type="success" @click="openQuickCreateProduct">+ 新建商品</el-button>
           </div>
           <span class="total-amount">合计：¥{{ totalAmount.toFixed(2) }}</span>
         </div>
@@ -200,7 +203,7 @@
       <template #footer>
         <div style="text-align: right; padding: 20px">
           <el-button @click="createVisible = false">取消</el-button>
-          <el-button type="primary" :loading="submitLoading" @click="handleCreate">提交</el-button>
+          <el-button v-permission="'purchase:create'" type="primary" :loading="submitLoading" @click="handleCreate">提交</el-button>
         </div>
       </template>
     </el-drawer>
@@ -301,7 +304,7 @@
       </el-table>
       <template #footer>
         <el-button @click="inboundVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitLoading" @click="handleInbound">确认入库</el-button>
+        <el-button v-permission="'purchase:inbound'" type="primary" :loading="submitLoading" @click="handleInbound">确认入库</el-button>
       </template>
     </el-dialog>
 
@@ -445,7 +448,14 @@ const totalAmount = computed(() =>
 
 // 加载数据
 const loadOptions = async () => {
-  [storeOptions.value, supplierOptions.value] = await Promise.all([getAllStores(), getAllSuppliers()])
+  try {
+    ;[storeOptions.value, supplierOptions.value] = await Promise.all([getAllStores(), getAllSuppliers()])
+  } catch (error) {
+    console.error('加载采购页选项失败:', error)
+    storeOptions.value = []
+    supplierOptions.value = []
+    ElMessage.error('加载门店或供应商选项失败')
+  }
 }
 
 const loadTable = async () => {
@@ -464,6 +474,11 @@ const loadTable = async () => {
     const res = await getPurchaseList(params)
     tableData.value = res.records || []
     total.value = res.total || 0
+  } catch (error) {
+    console.error('加载采购单列表失败:', error)
+    tableData.value = []
+    total.value = 0
+    ElMessage.error('加载采购单列表失败')
   } finally {
     loading.value = false
   }
@@ -813,5 +828,3 @@ loadOptions().then(loadTable)
   color: #f56c6c;
 }
 </style>
-
-

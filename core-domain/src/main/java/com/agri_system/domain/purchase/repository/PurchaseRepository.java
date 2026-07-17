@@ -41,10 +41,14 @@ public interface PurchaseRepository {
      * 根据前缀查找最大订单号（用于生成流水号）
      */
     String findMaxOrderNoByPrefix(String prefix);
+
+    /**
+     * 统计供应商被采购单引用次数
+     */
+    long countBySupplierId(Long supplierId);
     
     /**
      * 仅更新状态
      */
     void updateStatus(Long id, Integer status);
 }
-

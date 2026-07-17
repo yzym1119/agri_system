@@ -22,8 +22,10 @@ public class OrderShipCommand {
     
     @Schema(description = "快递单号（快递发货时必填）", example = "SF1234567890")
     private String trackingNo;
-}
 
+    @Schema(description = "配送员ID（同城派单时必填）", example = "1001")
+    private Long deliveryStaffId;
+}
 
 
 

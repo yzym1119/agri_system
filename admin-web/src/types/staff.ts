@@ -44,7 +44,7 @@ export interface StaffProfileVO {
  * 创建员工请求
  */
 export interface StaffCreateRequest {
-  code: string
+  code?: string
   name: string
   phone: string // 必填
   password: string
@@ -57,6 +57,7 @@ export interface StaffCreateRequest {
  */
 export interface StaffUpdateRequest {
   id: number // 员工ID（必填）
+  code?: string
   name: string
   phone: string // 必填
   storeId: number
@@ -83,4 +84,3 @@ export interface StaffQueryParams {
   pageNum?: number
   pageSize?: number
 }
-

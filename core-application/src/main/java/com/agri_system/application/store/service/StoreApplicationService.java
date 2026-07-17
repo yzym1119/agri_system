@@ -6,6 +6,7 @@ import com.agri_system.application.store.dto.command.StoreUpdateCommand;
 import com.agri_system.application.store.dto.query.StoreQuery;
 import com.agri_system.application.store.dto.vo.StoreDetailVO;
 import com.agri_system.application.store.exception.StoreErrorCode;
+import com.agri_system.domain.inventory.repository.InventoryRepository;
 import com.agri_system.domain.common.service.CodeGenerationService;
 import com.agri_system.domain.store.model.Store;
 import com.agri_system.domain.store.repository.StaffRepository;
@@ -32,6 +33,7 @@ public class StoreApplicationService {
     
     private final StoreRepository storeRepository;
     private final StaffRepository staffRepository;
+    private final InventoryRepository inventoryRepository;
     private final StoreDomainService domainService;
     private final CodeGenerationApplicationService codeGenerationService;
     
@@ -166,6 +168,16 @@ public class StoreApplicationService {
         storeRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException(
                         StoreErrorCode.STORE_NOT_FOUND + ": 门店不存在"));
+
+        long staffCount = staffRepository.countByStoreId(id);
+        if (staffCount > 0) {
+            throw new IllegalArgumentException("该门店下还有员工归属，不能删除");
+        }
+
+        long inventoryCount = inventoryRepository.countPositiveInventoryByStoreId(id);
+        if (inventoryCount > 0) {
+            throw new IllegalArgumentException("该门店仍有库存余额，不能删除");
+        }
         
         // 逻辑删除
         storeRepository.delete(id);
@@ -191,4 +203,3 @@ public class StoreApplicationService {
         return vo;
     }
 }
-

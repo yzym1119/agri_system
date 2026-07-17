@@ -68,7 +68,7 @@ public class InventoryRepositoryImpl implements InventoryRepository {
     }
 
     @Override
-    public Page<InventoryPageVO> findPage(Integer pageNum, Integer pageSize, Long storeId, String productName) {
+    public Page<InventoryPageVO> findPage(Integer pageNum, Integer pageSize, Long storeId, String productName, Boolean onlyHasStock) {
         // 修复：从 product 表开始，LEFT JOIN inventory，确保无库存商品也可见
         QueryWrapper qw = QueryWrapper.create()
                 .select("p.id AS productId",
@@ -94,7 +94,11 @@ public class InventoryRepositoryImpl implements InventoryRepository {
         qw.leftJoin("store").as("s").on("i.store_id = s.id");
 
         if (StringUtils.hasText(productName)) {
-            qw.where("p.name LIKE ?", "%" + productName + "%");
+            qw.where("p.name LIKE ?", "%" + productName.trim() + "%");
+        }
+
+        if (Boolean.TRUE.equals(onlyHasStock)) {
+            qw.where("COALESCE(i.quantity, 0) > 0");
         }
 
         qw.orderBy("p.name asc");
@@ -142,9 +146,32 @@ public class InventoryRepositoryImpl implements InventoryRepository {
         
         return result;
     }
+
+    @Override
+    public long countPositiveInventoryByStoreId(Long storeId) {
+        if (storeId == null) {
+            return 0;
+        }
+        QueryWrapper queryWrapper = QueryWrapper.create()
+                .where("store_id = ?", storeId)
+                .and("quantity > 0");
+        return inventoryMapper.selectCountByQuery(queryWrapper);
+    }
+
+    @Override
+    public java.math.BigDecimal sumQuantityByProduct(Long productId, Long storeId) {
+        QueryWrapper query = QueryWrapper.create()
+                .select("COALESCE(SUM(quantity), 0) AS total")
+                .where("product_id = ?", productId);
+        if (storeId != null) {
+            query.and("store_id = ?", storeId);
+        }
+        Object result = inventoryMapper.selectObjectByQuery(query);
+        if (result == null) return java.math.BigDecimal.ZERO;
+        if (result instanceof java.math.BigDecimal) return (java.math.BigDecimal) result;
+        return new java.math.BigDecimal(result.toString());
+    }
 }
-
-
 
 
 

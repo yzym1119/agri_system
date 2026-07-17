@@ -28,6 +28,23 @@
         </el-radio-group>
       </el-form-item>
 
+      <el-form-item label="门店" prop="storeId">
+        <el-select
+          v-model="form.storeId"
+          clearable
+          filterable
+          placeholder="请选择还款门店"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="store in storeOptions"
+            :key="store.id"
+            :label="store.name"
+            :value="store.id"
+          />
+        </el-select>
+      </el-form-item>
+
       <el-form-item label="外部单号" prop="transactionId">
         <el-input v-model="form.transactionId" placeholder="可选：第三方交易单号" />
       </el-form-item>
@@ -45,10 +62,12 @@
 </template>
 
 <script setup lang="ts">
-import {ref, watch, computed} from 'vue'
+import {computed, onMounted, reactive, ref, watch} from 'vue'
 import {ElMessage} from 'element-plus'
 import {repayCredit} from '@/api/credit'
+import {getAllStores} from '@/api/store'
 import {useUserStore} from '@/store/user'
+import type {StoreDetailVO} from '@/types/store'
 
 const emit = defineEmits(['update:modelValue', 'success'])
 
@@ -66,21 +85,36 @@ const visible = computed({
 
 const formRef = ref()
 const loading = ref(false)
+const storeOptions = ref<StoreDetailVO[]>([])
+const userStore = useUserStore()
 
-const form = ref({
+const form = reactive({
   customerName: props.customerName || '',
   amount: props.currentTotalDebt ? Number(props.currentTotalDebt) : 0,
+  storeId: undefined as number | undefined,
   paymentMethod: 1,
   transactionId: '',
   remark: ''
 })
 
 watch(() => props.currentTotalDebt, (v) => {
-  form.value.amount = v ? Number(v) : 0
+  form.amount = v ? Number(v) : 0
 })
 
 watch(() => props.customerName, (v) => {
-  form.value.customerName = v || ''
+  form.customerName = v || ''
+})
+
+watch(() => props.modelValue, (value) => {
+  if (!value) return
+  form.customerName = props.customerName || ''
+  form.amount = props.currentTotalDebt ? Number(props.currentTotalDebt) : 0
+  form.paymentMethod = 1
+  form.transactionId = ''
+  form.remark = ''
+  if (!form.storeId) {
+    form.storeId = resolveDefaultStoreId()
+  }
 })
 
 const displayDebt = computed(() => {
@@ -104,7 +138,25 @@ const rules = {
       }, trigger: 'blur'
     }
   ],
+  storeId: [{ required: true, message: '请选择还款门店', trigger: 'change' }],
   paymentMethod: [{ required: true, message: '请选择还款方式', trigger: 'change' }]
+}
+
+const resolveDefaultStoreId = () => {
+  const maybeExtra: any = userStore.userInfo as any
+  return maybeExtra?.extra?.storeId || maybeExtra?.storeId || storeOptions.value[0]?.id
+}
+
+const loadStores = async () => {
+  try {
+    storeOptions.value = await getAllStores()
+    if (!form.storeId) {
+      form.storeId = resolveDefaultStoreId()
+    }
+  } catch (error) {
+    console.error('加载门店列表失败:', error)
+    storeOptions.value = []
+  }
 }
 
 const onClose = () => {
@@ -116,21 +168,16 @@ const handleSubmit = async () => {
     if (!valid) return
     loading.value = true
     try {
-      const userStore = useUserStore()
       const createdBy = userStore.userInfo ? userStore.userInfo.id : undefined
-      // try to derive storeId from userInfo.extra.storeId or fallback to 0
-      const maybeExtra: any = userStore.userInfo as any
-      const storeId = (maybeExtra && maybeExtra.extra && maybeExtra.extra.storeId) ? maybeExtra.extra.storeId
-        : (maybeExtra && (maybeExtra.storeId as any)) ? maybeExtra.storeId : 0
 
       await repayCredit({
         customerId: props.customerId,
-        storeId: storeId,
-        amount: Number(form.value.amount),
-        paymentMethod: Number(form.value.paymentMethod),
-        transactionId: form.value.transactionId || undefined,
-        remark: form.value.remark || undefined,
-        createdBy: createdBy
+        storeId: form.storeId!,
+        amount: Number(form.amount),
+        paymentMethod: Number(form.paymentMethod),
+        transactionId: form.transactionId || undefined,
+        remark: form.remark || undefined,
+        createdBy
       })
       ElMessage.success('还款成功')
       emit('success')
@@ -142,6 +189,10 @@ const handleSubmit = async () => {
     }
   })
 }
+
+onMounted(() => {
+  loadStores()
+})
 </script>
 
 <style scoped>
@@ -149,5 +200,4 @@ const handleSubmit = async () => {
   padding-top: 8px;
 }
 </style>
-
 

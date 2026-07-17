@@ -2,6 +2,8 @@ package com.agri_system.application.auth.dto;
 
 import lombok.Data;
 
+import java.util.List;
+
 /**
  * 登录结果VO
  * 
@@ -32,12 +34,14 @@ public class LoginResultVO {
         
         /** 角色（员工）或类型（客户） */
         private String role;
+
+        /** 当前权限列表 */
+        private List<String> permissions;
         
         /** 其他信息（JSON格式，可扩展） */
         private Object extra;
     }
 }
-
 
 
 

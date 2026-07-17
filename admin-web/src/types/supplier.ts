@@ -2,6 +2,8 @@
  * 供应商管理相关类型定义
  */
 
+export type { PageResponse } from './api'
+
 /**
  * 供应商详情VO
  */
@@ -60,4 +62,3 @@ export interface SupplierQueryParams {
   pageNum?: number
   pageSize?: number
 }
-

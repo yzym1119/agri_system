@@ -1,19 +1,20 @@
 package com.agri_system.domain.order.enums;
 
 /**
- * 支付方式枚举 - 单一可信来源
+ * 支付记录类型枚举
  *
- * 注意：项目历史数据与多处代码使用数字常量表示支付方式，统一在此维护并通过 code 获取。
+ * 对应 order_payment.payment_type：
+ * 1-现金，2-微信，3-支付宝，4-本金余额，5-优惠券，6-赊销，8-专用金
  */
 public enum PaymentMethod {
 
     CASH(1, "现金"),
     WECHAT(2, "微信"),
     ALIPAY(3, "支付宝"),
-    BALANCE(3, "本金余额"),
-    SPECIAL_FUND(4, "专用金余额"),
+    BALANCE(4, "本金余额"),
     COUPON(5, "红包/优惠券"),
     CREDIT(6, "赊销"),
+    SPECIAL_FUND(8, "专用金余额"),
     MIXED(10, "混合支付");
 
     private final int code;
@@ -40,5 +41,4 @@ public enum PaymentMethod {
         return null;
     }
 }
-
 

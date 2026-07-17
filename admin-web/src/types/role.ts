@@ -18,6 +18,7 @@ export interface RoleVO {
 export interface RoleCreateRequest {
   name: string
   code?: string // 可选，为空时后端自动生成
+  status?: number
   menuIds?: number[]
 }
 
@@ -26,7 +27,8 @@ export interface RoleCreateRequest {
  */
 export interface RoleUpdateRequest {
   name: string
-  code: string
+  code?: string
+  status?: number
   menuIds?: number[]
 }
 
@@ -39,6 +41,9 @@ export interface MenuTreeNode {
   permission?: string
   type?: number
   parentId?: number
+  path?: string
+  icon?: string
+  sortOrder?: number
+  visible?: number
   children?: MenuTreeNode[]
 }
-

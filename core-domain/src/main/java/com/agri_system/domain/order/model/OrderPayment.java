@@ -24,7 +24,7 @@ public class OrderPayment {
     /** 订单ID */
     private Long orderId;
     
-    /** 支付类型：1-微信, 2-支付宝, 3-本金余额, 4-专用金余额, 5-红包/优惠券, 6-赊销 */
+    /** 支付类型：1-现金, 2-微信, 3-支付宝, 4-本金余额, 5-红包/优惠券, 6-赊销, 8-专用金余额, 10-混合支付 */
     private Integer paymentType;
     
     /** 该方式支付金额（元） */
@@ -42,8 +42,6 @@ public class OrderPayment {
     /** 创建时间 */
     private LocalDateTime createdAt;
 }
-
-
 
 
 

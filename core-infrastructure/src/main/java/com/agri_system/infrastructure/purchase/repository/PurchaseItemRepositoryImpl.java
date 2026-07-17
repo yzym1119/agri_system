@@ -58,8 +58,14 @@ public class PurchaseItemRepositoryImpl implements PurchaseItemRepository {
                 .where("purchase_order_id = ?", orderId);
         itemMapper.deleteByQuery(queryWrapper);
     }
-}
 
+    @Override
+    public long countByProductId(Long productId) {
+        QueryWrapper queryWrapper = QueryWrapper.create()
+                .where("product_id = ?", productId);
+        return itemMapper.selectCountByQuery(queryWrapper);
+    }
+}
 
 
 

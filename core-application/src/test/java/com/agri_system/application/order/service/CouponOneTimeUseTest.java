@@ -84,7 +84,8 @@ class CouponOneTimeUseTest {
         when(paymentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         
         // When
-        var payments = paymentService.executePayment(order, false, false, 1L, null);
+        var payments = paymentService.executePayment(order, false, false, 1L, null,
+                false, null, null, null);
         
         // Then
         // 1. 验证优惠券状态变为已使用
@@ -102,7 +103,8 @@ class CouponOneTimeUseTest {
         // 3. 验证再次使用该券应抛出异常
         coupon.setStatus(2); // 已使用
         assertThrows(IllegalArgumentException.class, () -> {
-            paymentService.executePayment(order, false, false, 1L, null);
+            paymentService.executePayment(order, false, false, 1L, null,
+                    false, null, null, null);
         }, "已使用的优惠券再次使用应抛出异常");
     }
     
@@ -122,7 +124,8 @@ class CouponOneTimeUseTest {
         when(paymentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         
         // When
-        var payments = paymentService.executePayment(order, false, false, 1L, null);
+        var payments = paymentService.executePayment(order, false, false, 1L, null,
+                true, 2, null, null);
         
         // Then
         // 1. 验证优惠券状态变为已使用
@@ -142,7 +145,6 @@ class CouponOneTimeUseTest {
         assertEquals(new BigDecimal("150.00"), totalPaid, "总支付金额应为订单金额150元");
     }
 }
-
 
 
 

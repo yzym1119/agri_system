@@ -31,10 +31,9 @@ public class PriceRuleUpdateCommand {
     @Schema(description = "失效日期", example = "2024-12-31")
     private LocalDate expiryDate;
     
-    @Schema(description = "状态：1-有效，2-无效", example = "1")
+    @Schema(description = "状态：1-启用，0-停用", example = "1")
     private Integer status;
 }
-
 
 
 

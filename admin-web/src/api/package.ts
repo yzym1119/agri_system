@@ -21,13 +21,18 @@ export function getPackageList(params: ProductPackageQueryParams): Promise<PageR
     params
   }).then((response: any) => {
     // 处理分页响应，可能直接返回Page对象或包装在data中
-    if (response && response.records) {
-      return response
-    } else if (response && response.data && response.data.records) {
-      return response.data
-    } else {
-      return { records: [], total: 0, pageNum: 1, pageSize: 10 }
+    const page = (response && response.records) ? response
+      : (response && response.data && response.data.records) ? response.data
+      : null
+    if (page) {
+      return {
+        records: page.records || [],
+        total: page.total ?? page.totalRow ?? 0,
+        pageNum: page.pageNumber ?? params.pageNum ?? 1,
+        pageSize: page.pageSize ?? params.pageSize ?? 10
+      }
     }
+    return { records: [], total: 0, pageNum: 1, pageSize: 10 }
   })
 }
 
@@ -39,16 +44,9 @@ export function getPackageDetail(id: number): Promise<ProductPackageDetailVO> {
     url: `/api/admin/product-packages/${id}`,
     method: 'get'
   }).then((response: any) => {
-    // 处理响应，可能直接返回数据或包装在data中
-    console.log('套餐详情响应:', response)
-    if (response && response.data) {
-      // 如果响应有 data 字段，返回 data
-      return response.data
-    } else if (response && response.id) {
-      // 如果响应本身就是数据对象
+    if (response && response.id) {
       return response
-    } else if (response && response.code === 200 && response.data) {
-      // 如果响应格式为 { code: 200, data: {...} }
+    } else if (response && response.data) {
       return response.data
     } else {
       console.error('无法解析套餐详情数据:', response)
@@ -65,7 +63,7 @@ export function createPackage(data: ProductPackageCreateRequest): Promise<{ id: 
     url: '/api/admin/product-packages',
     method: 'post',
     data
-  }).then((response: any) => response.data)
+  }).then((response: any) => response?.data || response)
 }
 
 /**
@@ -99,4 +97,3 @@ export function updatePackageStatus(id: number, status: number): Promise<void> {
     params: { status }
   })
 }
-

@@ -2,6 +2,7 @@ package com.agri_system.api.client.controller;
 
 import com.agri_system.application.after_sales.dto.command.ClientApplyCommand;
 import com.agri_system.application.after_sales.service.AfterSalesApplicationService;
+import com.agri_system.application.auth.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -19,24 +20,24 @@ import org.springframework.web.bind.annotation.*;
 public class AfterSalesClientController {
 
     private final AfterSalesApplicationService afterSalesService;
+    private final AuthService authService;
 
     @PostMapping("/apply")
     @Operation(summary = "申请售后", description = "仅支持待发货/待自提订单拦截取消")
-    public ResponseEntity<Long> apply(@Valid @RequestBody ClientApplyCommand command,
-                                      @RequestHeader("X-Customer-Id") Long customerId) {
+    public ResponseEntity<Long> apply(@Valid @RequestBody ClientApplyCommand command) {
+        Long customerId = authService.getCurrentCustomerId();
         Long afterSalesId = afterSalesService.applyFromClient(command, customerId);
         return ResponseEntity.ok(afterSalesId);
     }
 
     @PostMapping("/{afterSalesId}/cancel")
     @Operation(summary = "撤销售后", description = "待审核状态下可撤销")
-    public ResponseEntity<Void> cancel(@PathVariable Long afterSalesId,
-                                       @RequestHeader("X-Customer-Id") Long customerId) {
+    public ResponseEntity<Void> cancel(@PathVariable Long afterSalesId) {
+        Long customerId = authService.getCurrentCustomerId();
         afterSalesService.cancel(afterSalesId, customerId);
         return ResponseEntity.ok().build();
     }
 }
-
 
 
 

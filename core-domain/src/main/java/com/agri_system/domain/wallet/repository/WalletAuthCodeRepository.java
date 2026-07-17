@@ -2,6 +2,7 @@ package com.agri_system.domain.wallet.repository;
 
 import com.agri_system.domain.wallet.model.WalletAuthCode;
 
+import java.math.BigDecimal;
 import java.util.Optional;
 
 /**
@@ -28,13 +29,14 @@ public interface WalletAuthCodeRepository {
     /**
      * 根据验证码字符串消费验证码
      *
+     * @param customerId 客户ID
      * @param authCode 验证码字符串
+     * @param amount 本次实际校验金额
      * @param orderId 订单ID
      * @return 更新影响的行数
      */
-    int consumeAuthCode(String authCode, Long orderId);
+    int consumeAuthCode(Long customerId, String authCode, BigDecimal amount, Long orderId);
 }
-
 
 
 

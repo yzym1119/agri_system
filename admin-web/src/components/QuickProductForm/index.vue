@@ -207,12 +207,7 @@ const handleSubmit = () => {
         mainUnit: formData.mainUnit!,
         suggestedRetailPrice: formData.suggestedRetailPrice!
       })
-      
-      // 调试日志
-      if (import.meta.env.DEV) {
-        console.log('创建商品返回结果:', result, '类型:', typeof result)
-      }
-      
+
       // 取返回的ID
       // 注意：request.ts 的响应拦截器已经提取了 data，所以 result 应该是 { id: number }
       const newId = result?.id
@@ -222,9 +217,6 @@ const handleSubmit = () => {
         ElMessage.warning('创建成功，但未获取到商品ID，请刷新列表查看')
         emit('success', {} as ProductDetailVO)
       } else {
-        if (import.meta.env.DEV) {
-          console.log('成功获取商品ID:', newId)
-        }
         ElMessage.success('商品创建成功')
         // 拉取完整详情，回传给父组件
         try {

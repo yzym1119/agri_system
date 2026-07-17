@@ -92,5 +92,11 @@ public class PurchaseRepositoryImpl implements PurchaseRepository {
     public String findMaxOrderNoByPrefix(String prefix) {
         return purchaseMapper.findMaxOrderNoByPrefix(prefix);
     }
-}
 
+    @Override
+    public long countBySupplierId(Long supplierId) {
+        QueryWrapper queryWrapper = QueryWrapper.create()
+                .where("supplier_id = ?", supplierId);
+        return purchaseMapper.selectCountByQuery(queryWrapper);
+    }
+}

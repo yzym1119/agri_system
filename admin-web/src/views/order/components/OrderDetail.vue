@@ -7,13 +7,22 @@
 
     <div v-else-if="orderDetail" class="order-detail">
       <!-- 状态进度条 -->
-      <el-steps :active="getStatusStep" finish-status="success" style="margin-bottom: 24px">
+      <el-steps v-if="showProgressSteps" :active="getStatusStep" finish-status="success" style="margin-bottom: 24px">
         <el-step title="待支付" />
         <el-step title="已支付" />
         <el-step :title="orderDetail.orderType === 1 ? '已完成' : '待发货/自提'" />
         <el-step v-if="orderDetail.orderType !== 1" title="配送中" />
         <el-step v-if="orderDetail.orderType !== 1" title="已完成" />
       </el-steps>
+      <el-alert
+        v-else
+        :title="terminalStateTitle"
+        :type="terminalStateType"
+        :description="terminalStateDescription"
+        show-icon
+        :closable="false"
+        style="margin-bottom: 16px"
+      />
 
       <!-- 基本信息 -->
       <el-card shadow="never" style="margin-bottom: 16px; position: relative;">
@@ -77,6 +86,9 @@
         <div v-else>
           <!-- 配送订单 -->
           <el-descriptions :column="1" border>
+            <el-descriptions-item label="配送方式">
+              {{ getDeliveryTypeText(orderDetail.delivery?.deliveryType) }}
+            </el-descriptions-item>
             <el-descriptions-item label="收货人">{{ orderDetail.receiverName }}</el-descriptions-item>
             <el-descriptions-item label="联系电话">{{ orderDetail.receiverPhone }}</el-descriptions-item>
             <el-descriptions-item label="收货地址">{{ orderDetail.receiverAddress }}</el-descriptions-item>
@@ -122,12 +134,24 @@
               {{ formatStock(row.quantity) }} {{ row.unit || '' }}
             </template>
           </el-table-column>
+          <el-table-column label="已退/可退" width="150" align="right">
+            <template #default="{ row }">
+              <div>{{ formatStock(row.refundedQuantity || 0) }} / {{ formatStock(row.refundableQuantity ?? row.quantity) }}</div>
+              <div style="color: #909399; font-size: 12px">{{ row.unit || '' }}</div>
+            </template>
+          </el-table-column>
           <el-table-column prop="unitPrice" label="单价" width="100" align="right">
             <template #default="{ row }">¥{{ formatMoney(row.unitPrice) }}</template>
           </el-table-column>
           <el-table-column prop="totalPrice" label="小计" width="100" align="right">
             <template #default="{ row }">
               <span style="font-weight: 600">¥{{ formatMoney(row.totalPrice) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="已退/可退金额" width="160" align="right">
+            <template #default="{ row }">
+              <div>¥{{ formatMoney(row.refundedAmount || 0) }}</div>
+              <div style="color: #909399; font-size: 12px">¥{{ formatMoney(row.refundableAmount ?? row.totalPrice) }}</div>
             </template>
           </el-table-column>
         </el-table>
@@ -148,10 +172,23 @@
           <el-descriptions-item v-if="orderDetail.couponAmount" label="优惠券抵扣">
             <span style="color: #f56c6c">-¥{{ formatMoney(orderDetail.couponAmount) }}</span>
           </el-descriptions-item>
-          <el-descriptions-item label="实付金额">
-            <span style="font-size: 18px; font-weight: 600; color: #f56c6c">
-              ¥{{ formatMoney(orderDetail.payAmount) }}
+          <el-descriptions-item label="应收净额">
+            <span style="font-size: 16px; font-weight: 600">
+              ¥{{ formatMoney(paymentSummary.netReceivable) }}
             </span>
+          </el-descriptions-item>
+          <el-descriptions-item label="已收金额">
+            <span style="font-size: 18px; font-weight: 600; color: #f56c6c">
+              ¥{{ formatMoney(paymentSummary.receivedAmount) }}
+            </span>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="paymentSummary.creditAmount > 0" label="赊销金额">
+            <span style="font-size: 16px; font-weight: 600; color: #e6a23c">
+              ¥{{ formatMoney(paymentSummary.creditAmount) }}
+            </span>
+          </el-descriptions-item>
+          <el-descriptions-item label="主支付方式">
+            {{ paymentMethodLabel }}
           </el-descriptions-item>
         </el-descriptions>
 
@@ -160,7 +197,7 @@
           <div style="font-weight: 600; margin-bottom: 8px">支付方式明细：</div>
           <el-table :data="orderDetail.payments" border size="small">
             <el-table-column prop="paymentType" label="支付方式" width="150">
-              <template #default="{ row }">{{ getPaymentTypeText(row.paymentType) }}</template>
+              <template #default="{ row }">{{ row.paymentTypeName || getPaymentTypeText(row.paymentType) }}</template>
             </el-table-column>
             <el-table-column prop="amount" label="金额" width="150" align="right">
               <template #default="{ row }">¥{{ formatMoney(row.amount) }}</template>
@@ -173,8 +210,44 @@
         </div>
       </el-card>
 
+      <!-- 退款汇总 -->
+      <el-card v-if="hasRefundSummary" shadow="never" style="margin-top: 16px">
+        <template #header>
+          <span style="font-weight: 600">退款汇总</span>
+        </template>
+        <el-descriptions :column="2" border>
+          <el-descriptions-item label="累计已退金额">
+            <span style="color: #f56c6c; font-weight: 600">¥{{ formatMoney(refundSummary.refundedAmount) }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="剩余可退金额">
+            <span>¥{{ formatMoney(refundSummary.refundableAmount) }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="已退款商品行">
+            {{ refundSummary.refundedItemCount }} / {{ refundSummary.totalItemCount }}
+          </el-descriptions-item>
+          <el-descriptions-item label="累计已退数量">
+            {{ formatStock(refundSummary.refundedQuantity) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="售后完成">
+            {{ refundSummary.completedAfterSalesCount }} 笔
+          </el-descriptions-item>
+          <el-descriptions-item label="售后处理中">
+            {{ refundSummary.pendingAfterSalesCount }} 笔
+          </el-descriptions-item>
+          <el-descriptions-item label="退款模式">
+            {{ refundModeText }}
+          </el-descriptions-item>
+          <el-descriptions-item label="最近退款时间">
+            {{ latestRefundTimeText }}
+          </el-descriptions-item>
+          <el-descriptions-item label="最近原因" :span="2">
+            {{ latestRefundReasonText }}
+          </el-descriptions-item>
+        </el-descriptions>
+      </el-card>
+
       <!-- 售后记录 -->
-      <el-card v-if="orderDetail.afterSalesList && orderDetail.afterSalesList.length > 0" shadow="never">
+      <el-card v-if="orderDetail.afterSalesList && orderDetail.afterSalesList.length > 0" shadow="never" style="margin-top: 16px">
         <template #header>
           <span style="font-weight: 600">售后记录</span>
         </template>
@@ -216,6 +289,10 @@ import {computed, ref, watch} from 'vue'
 import {ElMessage} from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import {getOrderDetail} from '@/api/order'
+import {formatStock} from '@/utils/number'
+import {buildReceiptHtml, printReceipt} from '@/utils/receipt'
+import {getOrderDisplayPaymentMethod, getOrderPaymentSummary, getPaymentTypeText} from '@/utils/orderPayment'
+import type {OrderDetail as OrderDetailType} from '@/types/order'
 
 interface Props {
   modelValue: boolean
@@ -231,8 +308,9 @@ const emit = defineEmits<Emits>()
 
 const drawerVisible = ref(false)
 const loading = ref(false)
-const orderDetail = ref<any>(null)
+const orderDetail = ref<OrderDetailType | null>(null)
 const printPaperWidth = ref<'receipt_80' | 'invoice_std' | string>('receipt_80')
+const terminalStatuses = [7, 8, 9]
 
 watch(
   () => props.modelValue,
@@ -247,6 +325,13 @@ watch(
 watch(drawerVisible, (val) => {
   emit('update:modelValue', val)
 })
+
+const showProgressSteps = computed(() => {
+  return !terminalStatuses.includes(Number(orderDetail.value?.orderStatus || 0))
+})
+
+const paymentSummary = computed(() => getOrderPaymentSummary(orderDetail.value))
+const paymentMethodLabel = computed(() => getOrderDisplayPaymentMethod(orderDetail.value))
 
 const getStatusStep = computed(() => {
   if (!orderDetail.value) return 0
@@ -264,6 +349,95 @@ const getStatusStep = computed(() => {
   return 0
 })
 
+const refundSummary = computed(() => {
+  const items = Array.isArray(orderDetail.value?.items) ? orderDetail.value.items : []
+  const afterSalesList = Array.isArray(orderDetail.value?.afterSalesList) ? orderDetail.value.afterSalesList : []
+  return {
+    refundedAmount: items.reduce((sum: number, item: any) => sum + Number(item.refundedAmount || 0), 0),
+    refundableAmount: items.reduce((sum: number, item: any) => sum + Number(item.refundableAmount || 0), 0),
+    refundedQuantity: items.reduce((sum: number, item: any) => sum + Number(item.refundedQuantity || 0), 0),
+    refundedItemCount: items.filter((item: any) => Number(item.refundedAmount || 0) > 0 || Number(item.refundedQuantity || 0) > 0).length,
+    totalItemCount: items.length,
+    completedAfterSalesCount: afterSalesList.filter((item: any) => Number(item.status) === 50).length,
+    pendingAfterSalesCount: afterSalesList.filter((item: any) => Number(item.status) === 10 || Number(item.status) === 40).length
+  }
+})
+
+const hasRefundSummary = computed(() => {
+  return refundSummary.value.refundedAmount > 0
+    || refundSummary.value.pendingAfterSalesCount > 0
+    || terminalStatuses.includes(Number(orderDetail.value?.orderStatus || 0))
+})
+
+const latestAfterSalesRecord = computed(() => {
+  const records = Array.isArray(orderDetail.value?.afterSalesList) ? [...orderDetail.value.afterSalesList] : []
+  if (records.length === 0) return null
+  records.sort((a: any, b: any) => {
+    const timeA = new Date(a.refundTime || a.createdAt || 0).getTime()
+    const timeB = new Date(b.refundTime || b.createdAt || 0).getTime()
+    return timeB - timeA
+  })
+  return records[0]
+})
+
+const refundModeText = computed(() => {
+  const status = Number(orderDetail.value?.orderStatus || 0)
+  const hasAfterSales = Array.isArray(orderDetail.value?.afterSalesList) && orderDetail.value.afterSalesList.length > 0
+  if (hasAfterSales) {
+    return status === 9 ? '退货退款进行中' : '售后退货退款'
+  }
+  if (status === 8 || status === 9) {
+    return '订单直退'
+  }
+  return '暂无退款'
+})
+
+const latestRefundTimeText = computed(() => {
+  const latestRecord = latestAfterSalesRecord.value
+  if (!latestRecord) {
+    return refundSummary.value.refundedAmount > 0 ? '订单直退未记录售后时间' : '-'
+  }
+  return formatDateTime(latestRecord.refundTime || latestRecord.createdAt)
+})
+
+const latestRefundReasonText = computed(() => {
+  const latestRecord = latestAfterSalesRecord.value
+  if (!latestRecord) {
+    return refundSummary.value.refundedAmount > 0 ? '订单直退未记录售后原因' : '-'
+  }
+  return latestRecord.reason || '-'
+})
+
+const terminalStateTitle = computed(() => {
+  const status = Number(orderDetail.value?.orderStatus || 0)
+  if (status === 7) return '订单已取消'
+  if (status === 8) return '订单已退款'
+  if (status === 9) return '订单部分退款中'
+  return '订单已结束'
+})
+
+const terminalStateType = computed(() => {
+  const status = Number(orderDetail.value?.orderStatus || 0)
+  if (status === 7) return 'info'
+  if (status === 8) return 'error'
+  if (status === 9) return 'warning'
+  return 'info'
+})
+
+const terminalStateDescription = computed(() => {
+  const status = Number(orderDetail.value?.orderStatus || 0)
+  if (status === 7) {
+    return '该订单已取消，不再继续履约。'
+  }
+  if (status === 8) {
+    return `该订单已累计退款 ¥${formatMoney(refundSummary.value.refundedAmount)}。`
+  }
+  if (status === 9) {
+    return `该订单已累计退款 ¥${formatMoney(refundSummary.value.refundedAmount)}，仍有部分商品或金额可继续退款。`
+  }
+  return ''
+})
+
 const loadOrderDetail = async () => {
   if (!props.orderId) return
 
@@ -273,7 +447,7 @@ const loadOrderDetail = async () => {
     orderDetail.value = data
   } catch (error) {
     console.error('加载订单详情失败:', error)
-    ElMessage.error('加载订单详情失败')
+    ElMessage.error((error as any)?.message || '加载订单详情失败')
   } finally {
     loading.value = false
   }
@@ -289,9 +463,6 @@ const formatDateTime = (dateTime: string | null | undefined) => {
   return dateTime.replace('T', ' ')
 }
 
-import { formatStock } from '@/utils/number'
-import { buildReceiptHtml, printReceipt } from '@/utils/receipt'
-
 const getOrderTypeText = (type: number) => {
   const map: Record<number, string> = {
     1: '线下POS',
@@ -299,6 +470,12 @@ const getOrderTypeText = (type: number) => {
     3: '小程序配送'
   }
   return map[type] || '未知'
+}
+
+const getDeliveryTypeText = (type?: number | null) => {
+  if (type === 2) return '同城配送'
+  if (type === 3) return '快递配送'
+  return '待确定'
 }
 
 const getStatusText = (status: number) => {
@@ -329,21 +506,6 @@ const getStatusTagType = (status: number) => {
     9: 'warning'
   }
   return map[status] || ''
-}
-
-const getPaymentTypeText = (type: number) => {
-  // 注意：paymentType 在 order_payment 表中定义为：
-  // 1 - 现金 (POS 场景)、2 - 微信、3 - 本金余额、4 - 专用金、5 - 红包/优惠券、6 - 赊销
-  const map: Record<number, string> = {
-    1: '现金',
-    2: '微信',
-    3: '本金余额',
-    4: '专用金',
-    5: '红包/优惠券',
-    6: '赊销',
-    10: '混合支付'
-  }
-  return map[type] || '未知'
 }
 
 const getAfterSalesStatusText = (status: number) => {
@@ -398,4 +560,3 @@ const handlePrintReceipt = async () => {
   padding: 0;
 }
 </style>
-

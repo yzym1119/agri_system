@@ -135,6 +135,10 @@ public class InventoryDomainService {
         if ("SALES_RETURN".equalsIgnoreCase(sourceType)) {
             return InventoryTransactionType.SALES_RETURN.getCode(); // 4
         }
+        // 订单退款回库
+        if ("ORDER_REFUND".equalsIgnoreCase(sourceType)) {
+            return InventoryTransactionType.SALES_RETURN.getCode(); // 4
+        }
         // 调拨入库
         if ("TRANSFER_IN".equalsIgnoreCase(sourceType)) {
             return InventoryTransactionType.TRANSFER_IN.getCode(); // 6
@@ -494,6 +498,8 @@ public class InventoryDomainService {
      * 调拨详情
      */
     public static class TransferDetail {
+        private Long transferId;
+        private String transferNo;
         private Long fromStoreId;
         private Long toStoreId;
         private Long productId;
@@ -502,6 +508,10 @@ public class InventoryDomainService {
         private List<TransferBatchDetail> transferBatchDetails;
         
         // Getters and Setters
+        public Long getTransferId() { return transferId; }
+        public void setTransferId(Long transferId) { this.transferId = transferId; }
+        public String getTransferNo() { return transferNo; }
+        public void setTransferNo(String transferNo) { this.transferNo = transferNo; }
         public Long getFromStoreId() { return fromStoreId; }
         public void setFromStoreId(Long fromStoreId) { this.fromStoreId = fromStoreId; }
         public Long getToStoreId() { return toStoreId; }

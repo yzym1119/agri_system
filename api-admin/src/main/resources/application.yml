@@ -2,7 +2,7 @@ spring:
   application:
     name: api-admin
   profiles:
-    active: dev
+    active: ${SPRING_PROFILES_ACTIVE:dev}
 
 server:
   port: 8080
@@ -13,6 +13,17 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
+---
+# 生产环境：禁用 Swagger
+spring:
+  config:
+    activate:
+      on-profile: prod
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
 
 
 

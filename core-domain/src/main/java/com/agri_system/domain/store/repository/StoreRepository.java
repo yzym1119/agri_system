@@ -21,6 +21,11 @@ public interface StoreRepository {
      * 根据ID查找门店
      */
     Optional<Store> findById(Long id);
+
+    /**
+     * 根据ID查找门店（包含已逻辑删除）
+     */
+    Optional<Store> findByIdIncludingDeleted(Long id);
     
     /**
      * 根据编码查找门店
@@ -38,7 +43,6 @@ public interface StoreRepository {
      */
     void delete(Long id);
 }
-
 
 
 

@@ -19,3 +19,9 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# 部署敏感文件
+deploy/.env
+deploy/ssl/*.pem
+deploy/ssl/*.key
+deploy/ssl/*.crt

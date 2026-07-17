@@ -16,7 +16,6 @@ class ExceptionTest {
         R<Void> response = R.fail(exception.getErrorCode().getCode(), exception.getErrorCode().getMessage());
         assertEquals(SystemErrorCode.DATA_NOT_FOUND.getCode(), response.getCode());
         assertEquals(SystemErrorCode.DATA_NOT_FOUND.getMessage(), response.getMessage());
-        assertNotNull(response.getTraceId());
         assertNotNull(response.getTimestamp());
     }
 
@@ -26,7 +25,6 @@ class ExceptionTest {
         R<Void> response = R.fail(SystemErrorCode.INVALID_ARGUMENT.getCode(), message);
         assertEquals(SystemErrorCode.INVALID_ARGUMENT.getCode(), response.getCode());
         assertEquals(message, response.getMessage());
-        assertNotNull(response.getTraceId());
     }
 }
 

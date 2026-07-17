@@ -47,7 +47,7 @@
           :data="templateList"
           border
           highlight-current-row
-          :row-key="(row) => row.id"
+          :row-key="(row: CouponTemplateVO) => row.id"
           @current-change="handleCurrentChange"
           @click.stop
           @mousedown.stop
@@ -321,4 +321,3 @@ const formatDateRange = (start?: string, end?: string) => {
   }
 }
 </style>
-

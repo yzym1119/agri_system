@@ -26,6 +26,7 @@
       <div class="pos-cart-panel">
         <div class="cart-wrapper">
           <ModernCartList
+            ref="cartListRef"
             :cart-items="cartItems"
             :selected-customer="selectedCustomer"
             :store-id="storeId"
@@ -65,6 +66,7 @@
 <script setup lang="ts">
 import {computed, onMounted, onUnmounted, ref} from 'vue'
 import {ElMessage} from 'element-plus'
+import { getProductPriceRules } from '@/api/product'
 import {useUserStore} from '@/store/user'
 import CategorySidebar from './components/CategorySidebar.vue'
 import ModernGoodsPanel from './components/ModernGoodsPanel.vue'
@@ -72,6 +74,8 @@ import ModernCartList from './components/ModernCartList.vue'
 import ModernSettlementBar from './components/ModernSettlementBar.vue'
 import CheckoutDialog from './components/CheckoutDialog.vue'
 import type {CartItem, POSCustomerInfo} from '@/types/pos'
+import type { ProductDetailVO, ProductPriceRuleVO } from '@/types/product'
+import { resolvePackageUnitPrice, resolveProductCartUnitPrice } from '@/utils/posPricing'
 
 const userStore = useUserStore()
 
@@ -94,7 +98,9 @@ const cartItems = ref<CartItem[]>([])
 // 组件引用
 const goodsPanelRef = ref<InstanceType<typeof ModernGoodsPanel> | null>(null)
 const categorySidebarRef = ref<InstanceType<typeof CategorySidebar> | null>(null)
+const cartListRef = ref<InstanceType<typeof ModernCartList> | null>(null)
 const settlementBarRef = ref<InstanceType<typeof ModernSettlementBar> | null>(null)
+const productPriceRuleCache = new Map<number, ProductPriceRuleVO[]>()
 
 // 选中的分类
 const selectedCategoryId = ref<number | null>(null)
@@ -127,19 +133,28 @@ onMounted(async () => {
 })
 
 // 快捷键支持
+const isTypingTarget = (target: EventTarget | null) => {
+  const element = target as HTMLElement | null
+  if (!element) return false
+  const tagName = element.tagName
+  return element.isContentEditable || tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT'
+}
+
 const handleKeydown = (e: KeyboardEvent) => {
+  const typingTarget = isTypingTarget(e.target)
+
   // F1: 聚焦搜索
   if (e.key === 'F1') {
     e.preventDefault()
     goodsPanelRef.value?.focusSearch()
   }
   // Space: 加入购物车（在商品选择区时）
-  if (e.key === ' ' && !e.target || (e.target as HTMLElement).tagName !== 'INPUT') {
+  if (e.key === ' ' && !typingTarget) {
     e.preventDefault()
     // 由 GoodsPanel 内部处理
   }
   // Ctrl+Enter: 结算
-  if (e.key === 'Enter' && e.ctrlKey) {
+  if (e.key === 'Enter' && e.ctrlKey && !typingTarget) {
     e.preventDefault()
     if (cartItems.value.length > 0) {
       // 触发结算栏的收款按钮
@@ -149,7 +164,7 @@ const handleKeydown = (e: KeyboardEvent) => {
   // F2: 客户选择（预留）
   if (e.key === 'F2') {
     e.preventDefault()
-    // TODO: 聚焦客户搜索框
+    cartListRef.value?.focusCustomerSearch()
   }
 }
 
@@ -161,90 +176,58 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
 })
 
+const getProductSnapshot = (item: CartItem): ProductDetailVO | null => {
+  if (!item.productId) return null
+  return (item as any)._product || goodsPanelRef.value?.getProductById?.(item.productId) || null
+}
+
+const getCachedProductPriceRules = async (productId: number): Promise<ProductPriceRuleVO[]> => {
+  if (productPriceRuleCache.has(productId)) {
+    return productPriceRuleCache.get(productId) || []
+  }
+  try {
+    const rules = await getProductPriceRules(productId)
+    productPriceRuleCache.set(productId, rules || [])
+    return rules || []
+  } catch (error) {
+    console.error(`获取商品 ${productId} 价格规则失败:`, error)
+    return []
+  }
+}
+
+const resolveCartItemUnitPrice = async (item: CartItem): Promise<number | null> => {
+  if (item.itemType === 1 && item.productId) {
+    return resolveProductCartUnitPrice({
+      product: getProductSnapshot(item),
+      rules: await getCachedProductPriceRules(item.productId),
+      storeId: storeId.value,
+      customerType: selectedCustomer.value?.type,
+      vipLevel: selectedCustomer.value?.vipLevel,
+      currentUnit: item.currentUnit,
+      fallbackPrice: item.unitPrice
+    })
+  }
+
+  if (item.itemType === 2) {
+    return resolvePackageUnitPrice({
+      customer: selectedCustomer.value,
+      packagePrice: item.packagePrice,
+      vipPrice: item.vipPrice,
+      fallbackPrice: item.unitPrice
+    })
+  }
+
+  return item.unitPrice
+}
+
 // 添加商品到购物车
 const handleAddToCart = async (item: CartItem) => {
-  // 如果是商品，需要根据客户类型和VIP等级获取正确的价格
-  if (item.itemType === 1 && item.productId) {
-    let finalPrice: number | null = null
-    
-    // 1. 优先从价格规则中获取价格
-    if (selectedCustomer.value) {
-      try {
-        const { getProductPriceRules } = await import('@/api/product')
-        const priceRules = await getProductPriceRules(item.productId)
-        console.log(`[价格计算] 商品ID: ${item.productId}, 价格规则数量: ${priceRules?.length || 0}`, priceRules)
-        
-        const matchedPrice = matchPrice(
-          priceRules,
-          storeId.value,
-          selectedCustomer.value.type,
-          selectedCustomer.value.vipLevel || null
-        )
-        
-        console.log(`[价格计算] 匹配到的价格: ${matchedPrice}, 门店ID: ${storeId.value}, 客户类型: ${selectedCustomer.value.type}, VIP等级: ${selectedCustomer.value.vipLevel}`)
-        
-        if (matchedPrice !== null) {
-          finalPrice = matchedPrice
-        }
-      } catch (error) {
-        console.error('获取商品价格规则失败:', error)
-      }
-    }
-    
-    // 2. 如果价格规则没有匹配到，回退到商品表的VIP价格（如果是VIP客户）
-    if (finalPrice === null && selectedCustomer.value?.type === 2) {
-      // 尝试从 item 的临时字段获取
-      const product = (item as any)._product || goodsPanelRef.value?.getProductById?.(item.productId)
-      if (product?.vipPrice) {
-        const vipPrice = typeof product.vipPrice === 'number' ? product.vipPrice : parseFloat(String(product.vipPrice))
-        if (!isNaN(vipPrice) && vipPrice > 0) {
-          finalPrice = vipPrice
-        }
-      }
-    }
-    
-    // 3. 如果还是没有价格，使用传入的 item.price（零售价）
-    if (finalPrice === null) {
-      finalPrice = item.unitPrice
-    }
-    
-    // 应用价格（考虑单位转换）
-    // 价格存储规则：
-    // 1. 有辅单位的商品：零售价是辅单位的价格（最小单位）
-    // 2. 没有辅单位的商品：零售价是主单位的价格
-    if (finalPrice !== null) {
-      // 如果商品有辅单位，说明零售价是辅单位价格
-      if (item.auxUnit && item.mainToAuxRatio && item.mainToAuxRatio > 0) {
-        if (item.currentUnit === item.auxUnit) {
-          // 当前选择辅单位：直接使用价格（零售价就是辅单位价格）
-          item.unitPrice = finalPrice
-        } else {
-          // 当前选择主单位：主单位价格 = 辅单位价格 × 比例
-          // 例如：辅单位10元/瓶，比例3，主单位价格 = 10 × 3 = 30元/箱
-          item.unitPrice = finalPrice * item.mainToAuxRatio
-        }
-      } else {
-        // 没有辅单位：零售价就是主单位价格，直接使用
-        item.unitPrice = finalPrice
-      }
-      item.subtotal = item.quantity * item.unitPrice
-      console.log(`[价格计算] 最终价格: ${item.unitPrice}, 单位: ${item.currentUnit}, 数量: ${item.quantity}, 小计: ${item.subtotal}`)
-    }
+  const resolvedPrice = await resolveCartItemUnitPrice(item)
+  if (resolvedPrice !== null) {
+    item.unitPrice = resolvedPrice
+    item.subtotal = item.quantity * item.unitPrice
   }
-  
-  // 如果是套餐，根据客户类型选择VIP价格或普通价格
-  if (item.itemType === 2) {
-    if (selectedCustomer.value?.type === 2 && item.vipPrice) {
-      // VIP客户使用VIP价格
-      item.unitPrice = item.vipPrice
-      item.subtotal = item.quantity * item.unitPrice
-    } else if (item.packagePrice) {
-      // 普通客户使用套餐价格
-      item.unitPrice = item.packagePrice
-      item.subtotal = item.quantity * item.unitPrice
-    }
-  }
-  
+
   // 检查是否已存在
   const existingIndex = cartItems.value.findIndex(
     (cartItem) =>
@@ -268,201 +251,19 @@ const handleAddToCart = async (item: CartItem) => {
   }
 }
 
-// 根据价格规则匹配最适合的价格
-// 优先级：门店+客户类型+VIP等级 > 门店+客户类型 > 门店 > 全局
-// 价格类型：1-建议零售价，2-VIP价，3-最低限价
-const matchPrice = (
-  rules: any[],
-  storeId: number | null,
-  customerType: number | null,
-  vipLevel: number | null
-): number | null => {
-  if (!rules || rules.length === 0) return null
-
-  const now = new Date()
-  
-  // 过滤有效规则
-  const validRules = rules.filter((rule) => {
-    if (rule.status !== 1) return false
-    if (rule.effectiveDate && new Date(rule.effectiveDate) > now) return false
-    if (rule.expiryDate && new Date(rule.expiryDate) < now) return false
-    return true
-  })
-
-  // 确定需要的价格类型
-  // VIP客户优先使用VIP价(2)，如果没有则使用建议零售价(1)
-  // 普通客户使用建议零售价(1)
-  const targetPriceTypes = customerType === 2 ? [2, 1] : [1]
-
-  // 优先级匹配
-  // 注意：规则中的 null 表示全局/所有客户/所有VIP等级
-  // 匹配规则：规则中的字段必须与查询条件匹配，或者规则中的字段为 null（表示匹配所有）
-  
-  // 辅助函数：检查规则是否匹配条件
-  const matchesRule = (rule: any, sId: number | null, cType: number | null, vLevel: number | null): boolean => {
-    // storeId 匹配：规则为 null（全局）或精确匹配
-    const storeMatch = rule.storeId === null || rule.storeId === sId
-    // customerType 匹配：规则为 null（所有客户）或精确匹配
-    const customerMatch = rule.customerType === null || rule.customerType === cType
-    // vipLevel 匹配：规则为 null（所有VIP等级）或精确匹配
-    const vipMatch = rule.vipLevel === null || rule.vipLevel === vLevel
-    
-    return storeMatch && customerMatch && vipMatch
-  }
-  
-  // 按优先级匹配：门店+客户类型+VIP等级 > 门店+客户类型 > 门店 > 全局
-  // 1. 门店+客户类型+VIP等级（最精确匹配）
-  if (storeId && customerType && vipLevel) {
-    for (const priceType of targetPriceTypes) {
-      const rule = validRules.find(
-        (r) => matchesRule(r, storeId, customerType, vipLevel) && r.priceType === priceType
-      )
-      if (rule) {
-        console.log(`[价格匹配] 匹配到规则(门店+客户类型+VIP等级):`, rule)
-        return rule.price
-      }
-    }
-  }
-
-  // 2. 门店+客户类型（不限制VIP等级）
-  if (storeId && customerType) {
-    for (const priceType of targetPriceTypes) {
-      const rule = validRules.find(
-        (r) => matchesRule(r, storeId, customerType, null) && r.priceType === priceType
-      )
-      if (rule) {
-        console.log(`[价格匹配] 匹配到规则(门店+客户类型):`, rule)
-        return rule.price
-      }
-    }
-  }
-
-  // 3. 门店（不限制客户类型和VIP等级）
-  if (storeId) {
-    for (const priceType of targetPriceTypes) {
-      const rule = validRules.find(
-        (r) => matchesRule(r, storeId, null, null) && r.priceType === priceType
-      )
-      if (rule) {
-        console.log(`[价格匹配] 匹配到规则(门店):`, rule)
-        return rule.price
-      }
-    }
-  }
-
-  // 4. 全局（不限制门店、客户类型和VIP等级）
-  for (const priceType of targetPriceTypes) {
-    const rule = validRules.find(
-      (r) => matchesRule(r, null, null, null) && r.priceType === priceType
-    )
-    if (rule) {
-      console.log(`[价格匹配] 匹配到规则(全局):`, rule)
-      return rule.price
-    }
-  }
-  
-  console.log(`[价格匹配] 未匹配到任何规则，有效规则数量: ${validRules.length}`, validRules)
-
-  return null
-}
-
 // 重新计算购物车中所有商品的价格
 const recalculateCartPrices = async () => {
   if (!cartItems.value || cartItems.value.length === 0) return
   
-  const { getProductPriceRules } = await import('@/api/product')
   const updatedItems = [...cartItems.value]
   let hasChanges = false
 
   for (const item of updatedItems) {
-    // 处理商品价格
-    if (item.itemType === 1 && item.productId) {
-      let finalPrice: number | null = null
-      
-      // 1. 优先从价格规则中获取价格
-      if (selectedCustomer.value) {
-        try {
-          const priceRules = await getProductPriceRules(item.productId)
-          console.log(`[价格重算] 商品ID: ${item.productId}, 价格规则数量: ${priceRules?.length || 0}`, priceRules)
-          
-          const matchedPrice = matchPrice(
-            priceRules,
-            storeId.value,
-            selectedCustomer.value.type,
-            selectedCustomer.value.vipLevel || null
-          )
-          
-          console.log(`[价格重算] 匹配到的价格: ${matchedPrice}, 门店ID: ${storeId.value}, 客户类型: ${selectedCustomer.value.type}, VIP等级: ${selectedCustomer.value.vipLevel}`)
-          
-          if (matchedPrice !== null) {
-            finalPrice = matchedPrice
-          }
-        } catch (error) {
-          console.error(`获取商品 ${item.productId} 价格规则失败:`, error)
-        }
-      }
-      
-      // 2. 如果价格规则没有匹配到，回退到商品表的VIP价格（如果是VIP客户）
-      if (finalPrice === null && selectedCustomer.value?.type === 2) {
-        // 尝试从 item 的临时字段获取
-        const product = (item as any)._product || goodsPanelRef.value?.getProductById?.(item.productId)
-        if (product?.vipPrice) {
-          const vipPrice = typeof product.vipPrice === 'number' ? product.vipPrice : parseFloat(String(product.vipPrice))
-          if (!isNaN(vipPrice) && vipPrice > 0) {
-            finalPrice = vipPrice
-          }
-        }
-      }
-      
-      // 3. 如果还是没有价格，保持原价
-      if (finalPrice === null) {
-        continue // 不更新价格
-      }
-      
-      // 应用价格（考虑单位转换）
-      // 价格存储规则：
-      // 1. 有辅单位的商品：零售价是辅单位的价格（最小单位）
-      // 2. 没有辅单位的商品：零售价是主单位的价格
-      let newPrice = finalPrice
-      if (item.auxUnit && item.mainToAuxRatio && item.mainToAuxRatio > 0) {
-        // 有辅单位：零售价是辅单位价格
-        if (item.currentUnit === item.auxUnit) {
-          // 当前选择辅单位：直接使用价格（零售价就是辅单位价格）
-          newPrice = finalPrice
-        } else {
-          // 当前选择主单位：主单位价格 = 辅单位价格 × 比例
-          // 例如：辅单位10元/瓶，比例3，主单位价格 = 10 × 3 = 30元/箱
-          newPrice = finalPrice * item.mainToAuxRatio
-        }
-      } else {
-        // 没有辅单位：零售价就是主单位价格，直接使用
-        newPrice = finalPrice
-      }
-      
-      if (Math.abs(newPrice - item.unitPrice) > 0.01) { // 允许小的浮点误差
-        item.unitPrice = newPrice
-        item.subtotal = item.quantity * item.unitPrice
-        hasChanges = true
-      }
-    }
-    
-    // 处理套餐价格
-    if (item.itemType === 2) {
-      if (selectedCustomer.value?.type === 2 && item.vipPrice) {
-        // VIP客户使用VIP价格
-        if (Math.abs(item.unitPrice - item.vipPrice) > 0.01) {
-          item.unitPrice = item.vipPrice
-          item.subtotal = item.quantity * item.unitPrice
-          hasChanges = true
-        }
-      } else if (item.packagePrice) {
-        // 普通客户使用套餐价格
-        if (Math.abs(item.unitPrice - item.packagePrice) > 0.01) {
-          item.unitPrice = item.packagePrice
-          item.subtotal = item.quantity * item.unitPrice
-          hasChanges = true
-        }
-      }
+    const newPrice = await resolveCartItemUnitPrice(item)
+    if (newPrice !== null && Math.abs(newPrice - item.unitPrice) > 0.01) {
+      item.unitPrice = newPrice
+      item.subtotal = item.quantity * item.unitPrice
+      hasChanges = true
     }
   }
 
@@ -629,4 +430,3 @@ const handleSubmitOrder = async (orderData: any) => {
   z-index: 10;
 }
 </style>
-

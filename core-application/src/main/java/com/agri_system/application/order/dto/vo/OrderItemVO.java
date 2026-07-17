@@ -45,8 +45,19 @@ public class OrderItemVO {
     
     @Schema(description = "小计金额", example = "500.00")
     private BigDecimal totalPrice;
-}
 
+    @Schema(description = "已退数量", example = "2.0000")
+    private BigDecimal refundedQuantity;
+
+    @Schema(description = "可退数量", example = "8.0000")
+    private BigDecimal refundableQuantity;
+
+    @Schema(description = "已退金额", example = "100.00")
+    private BigDecimal refundedAmount;
+
+    @Schema(description = "可退金额", example = "400.00")
+    private BigDecimal refundableAmount;
+}
 
 
 

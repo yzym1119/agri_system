@@ -9,6 +9,12 @@ import java.util.Map;
  */
 public record OrderRefundedEvent(Long orderId,
                                  BigDecimal refundAmount,
-                                 Map<Long, BigDecimal> refundItems) {
-}
+                                 Map<Long, BigDecimal> refundItems,
+                                 String refundKey) {
 
+    public OrderRefundedEvent(Long orderId,
+                              BigDecimal refundAmount,
+                              Map<Long, BigDecimal> refundItems) {
+        this(orderId, refundAmount, refundItems, null);
+    }
+}

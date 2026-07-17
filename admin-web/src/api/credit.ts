@@ -1,4 +1,10 @@
 import request from '@/utils/request'
+import type {
+  CreditAccountItem,
+  CreditDebtSummary,
+  CreditRepaymentItem,
+  CreditStatementGenerateRequest
+} from '@/types/credit'
 
 /**
  * 调整客户赊销额度
@@ -36,7 +42,12 @@ export function repayCredit(data: {
 /**
  * 查询欠款单据（支持分页）
  */
-export function getCreditAccounts(customerId?: number, pageNum?: number, pageSize?: number, status?: number): Promise<any> {
+export function getCreditAccounts(
+  customerId?: number,
+  pageNum?: number,
+  pageSize?: number,
+  status?: number
+): Promise<{ records: CreditAccountItem[]; total?: number; totalRow?: number }> {
   const params: any = {}
   if (customerId != null) params.customerId = customerId
   if (status != null) params.status = status
@@ -52,7 +63,7 @@ export function getCreditAccounts(customerId?: number, pageNum?: number, pageSiz
 /**
  * 查询还款记录（无分页）
  */
-export function getCreditRepayments(customerId: number): Promise<any> {
+export function getCreditRepayments(customerId: number): Promise<CreditRepaymentItem[]> {
   return request({
     url: '/api/admin/credit/repayments',
     method: 'get',
@@ -60,7 +71,21 @@ export function getCreditRepayments(customerId: number): Promise<any> {
   })
 }
 
+export function getCreditStatistics(customerId: number): Promise<CreditDebtSummary> {
+  return request({
+    url: '/api/admin/credit/statistics',
+    method: 'get',
+    params: { customerId }
+  })
+}
 
+export function generateCreditStatement(data: CreditStatementGenerateRequest): Promise<void> {
+  return request({
+    url: '/api/admin/credit/statements',
+    method: 'post',
+    data
+  })
+}
 
 
 

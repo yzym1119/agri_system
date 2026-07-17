@@ -3,7 +3,7 @@ package com.agri_system.application.customer.service;
 import com.agri_system.domain.customer.model.Customer;
 import com.agri_system.domain.customer.repository.CustomerRepository;
 import com.agri_system.domain.customer.service.CustomerDomainService;
-import com.agri_system.domain.order.enums.PaymentMethod;
+import com.agri_system.domain.order.enums.OrderMainPaymentMethod;
 import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.wallet.model.CustomerWallet;
 import com.agri_system.domain.wallet.model.WalletTransaction;
@@ -61,7 +61,8 @@ public class CustomerSettlementService {
         updateCustomerStatistics(customer, order);
         
         // ⛔️ 2. 发放积分（赊销订单不发放积分）
-        boolean isCreditOrder = order.getPaymentMethod() != null && order.getPaymentMethod().equals(PaymentMethod.CREDIT.getCode());
+        boolean isCreditOrder = order.getPaymentMethod() != null
+                && order.getPaymentMethod().equals(OrderMainPaymentMethod.CREDIT.getCode());
         if (!isCreditOrder) {
             grantPoints(order);
         }
@@ -136,7 +137,6 @@ public class CustomerSettlementService {
         transactionRepository.save(transaction);
     }
 }
-
 
 
 

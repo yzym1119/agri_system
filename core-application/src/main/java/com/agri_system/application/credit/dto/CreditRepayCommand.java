@@ -1,6 +1,6 @@
 package com.agri_system.application.credit.dto;
 
-import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
@@ -16,7 +16,7 @@ public class CreditRepayCommand {
     private Long storeId;
 
     @NotNull
-    @Min(1)
+    @DecimalMin(value = "0.01")
     private BigDecimal amount;
 
     @NotNull
@@ -28,7 +28,6 @@ public class CreditRepayCommand {
 
     private Long createdBy;
 }
-
 
 
 

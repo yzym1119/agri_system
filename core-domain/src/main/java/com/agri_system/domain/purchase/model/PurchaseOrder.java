@@ -1,5 +1,6 @@
 package com.agri_system.domain.purchase.model;
 
+import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
 import com.mybatisflex.annotation.Table;
@@ -29,6 +30,7 @@ public class PurchaseOrder {
     private Long supplierId;
     
     /** 入库门店ID（必填） */
+    @Column(tenantId = true)
     private Long storeId;
     
     /** 明细金额合计 */
@@ -36,6 +38,10 @@ public class PurchaseOrder {
     
     /** 状态：1-待提交，2-待入库，3-已入库，4-已取消 */
     private Integer status;
+
+    /** 逻辑删除：1-已删，0-未删 */
+    @Column(isLogicDelete = true)
+    private Integer deleted;
     
     /** 采购日期 */
     private LocalDate purchaseDate;

@@ -32,6 +32,7 @@ public class StaffLifecycleService {
     private final StaffRepository staffRepository;
     private final StaffAuthorityService authorityService;
     private final StaffPerformanceApplicationService performanceApplicationService;
+    private final StaffSessionOperator staffSessionOperator;
     private final StoreRepository storeRepository;
     private final SysRoleRepository roleRepository;
     private final SysStaffRoleRepository staffRoleRepository;
@@ -52,8 +53,8 @@ public class StaffLifecycleService {
                 .orElseThrow(() -> new IllegalArgumentException("员工不存在"));
         
         // 检查是否是当前登录用户，禁止停用自己的账号
-        if (StpUtil.isLogin()) {
-            String loginId = StpUtil.getLoginIdAsString();
+        if (staffSessionOperator.isLogin()) {
+            String loginId = staffSessionOperator.getLoginIdAsString();
             if (loginId.startsWith("STAFF_")) {
                 Long currentStaffId = Long.parseLong(loginId.substring("STAFF_".length()));
                 if (currentStaffId.equals(staffId)) {
@@ -83,9 +84,9 @@ public class StaffLifecycleService {
             }
         }
         
-        staff.setStatus(0);
+        staff.setStatus(2);
         staffRepository.save(staff);
-        StpUtil.kickout("STAFF_" + staffId);
+        staffSessionOperator.kickout("STAFF_" + staffId);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -102,7 +103,7 @@ public class StaffLifecycleService {
                 .orElseThrow(() -> new IllegalArgumentException("员工不存在"));
         staff.setPassword(BCryptUtils.encode(password));
         staffRepository.save(staff);
-        StpUtil.kickout("STAFF_" + staffId);
+        staffSessionOperator.kickout("STAFF_" + staffId);
     }
 
     public StaffProfileVO profile(Long staffId) {
@@ -209,8 +210,6 @@ public class StaffLifecycleService {
         return vo;
     }
 }
-
-
 
 
 

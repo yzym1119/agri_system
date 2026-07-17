@@ -1,13 +1,83 @@
-// 全局 SCSS 变量
-$primary-color: #409eff;
-$success-color: #67c23a;
-$warning-color: #e6a23c;
-$danger-color: #f56c6c;
-$info-color: #909399;
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  AgriSys Design System — 统一设计令牌
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-$sidebar-width: 200px;
+// ── 品牌色 ──
+$brand-primary: #1d5d73;
+$brand-primary-light: #2a7a96;
+$brand-primary-dark: #164958;
+$brand-accent: #7ea76d;
+$brand-accent-light: #9bc08b;
+$brand-accent-dark: #5e8a4f;
+
+// ── 功能色 ──
+$color-success: #52c41a;
+$color-warning: #faad14;
+$color-danger: #f5222d;
+$color-info: #8c8c8c;
+
+// ── 中性色 ──
+$text-primary: #1f2937;
+$text-regular: #4b5563;
+$text-secondary: #9ca3af;
+$text-placeholder: #c0c4cc;
+$text-disabled: #d1d5db;
+
+// ── 背景色 ──
+$bg-page: #f5f6f8;
+$bg-card: #ffffff;
+$bg-hover: #f9fafb;
+$bg-active: #f0f7f3;
+$bg-sidebar: #1a2332;
+$bg-sidebar-hover: rgba(255, 255, 255, 0.06);
+$bg-sidebar-active: rgba(126, 167, 109, 0.18);
+
+// ── 边框 ──
+$border-color: #e5e7eb;
+$border-light: #f0f0f0;
+$border-radius-sm: 6px;
+$border-radius: 10px;
+$border-radius-lg: 14px;
+$border-radius-xl: 18px;
+
+// ── 阴影 ──
+$shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+$shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.06);
+$shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+$shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.10);
+$shadow-card: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
+
+// ── 间距 ──
+$spacing-xs: 4px;
+$spacing-sm: 8px;
+$spacing-md: 12px;
+$spacing-lg: 16px;
+$spacing-xl: 20px;
+$spacing-2xl: 24px;
+
+// ── 布局 ──
+$sidebar-width: 228px;
 $sidebar-collapse-width: 64px;
-$navbar-height: 60px;
+$topbar-height: 52px;
+$tabsbar-height: 38px;
 
+// ── 过渡 ──
+$transition-fast: 0.15s ease;
+$transition: 0.25s ease;
+$transition-slow: 0.35s ease;
 
+// ── 字体 ──
+$font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+$font-size-xs: 11px;
+$font-size-sm: 12px;
+$font-size: 13px;
+$font-size-md: 14px;
+$font-size-lg: 16px;
+$font-size-xl: 18px;
+$font-size-2xl: 22px;
+$font-size-3xl: 28px;
 
+// ── Element Plus 覆盖变量 ──
+$--el-color-primary: $brand-primary;
+$--el-border-radius-base: $border-radius-sm;
+$--el-font-size-base: $font-size;

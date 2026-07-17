@@ -19,5 +19,8 @@ public interface CommissionRuleRepository {
     List<CommissionRule> findRechargeRules(BigDecimal amount);
 
     List<CommissionRule> query(Integer category, Long targetId, Long staffId, Integer enabled);
-}
 
+    long countEnabledByCategoryAndTargetId(Integer category, Long targetId);
+
+    void disableById(Long id);
+}

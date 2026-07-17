@@ -57,9 +57,18 @@ public class OrderPageVO {
     
     @Schema(description = "实付金额", example = "990.00")
     private BigDecimal payAmount;
+
+    @Schema(description = "已收金额（不含赊销）", example = "690.00")
+    private BigDecimal receivedAmount;
+
+    @Schema(description = "赊销金额", example = "300.00")
+    private BigDecimal creditAmount;
     
     @Schema(description = "主支付方式", example = "1")
     private Integer paymentMethod;
+
+    @Schema(description = "主支付方式展示名称", example = "现金")
+    private String paymentMethodName;
     
     @Schema(description = "收货人姓名", example = "张三")
     private String receiverName;
@@ -79,8 +88,6 @@ public class OrderPageVO {
     @Schema(description = "创建时间")
     private LocalDateTime createdAt;
 }
-
-
 
 
 

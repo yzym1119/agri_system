@@ -5,18 +5,24 @@ import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.dto.command.InventoryOutCommand;
 import com.agri_system.application.inventory.dto.command.InventoryTransferCommand;
 import com.agri_system.application.inventory.dto.query.InventoryQuery;
+import com.agri_system.application.inventory.dto.query.InventoryTransferRecordQuery;
 import com.agri_system.application.inventory.dto.query.InventoryTransactionQuery;
 import com.agri_system.application.inventory.dto.vo.BatchDetailVO;
 import com.agri_system.application.inventory.dto.vo.InventoryDetailVO;
+import com.agri_system.application.inventory.dto.vo.InventoryTransferRecordVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransactionVO;
 import com.agri_system.application.inventory.exception.InventoryErrorCode;
 import com.agri_system.domain.after_sales.repository.AfterSalesRepository;
 import com.agri_system.domain.inventory.enums.InventoryTransactionType;
 import com.agri_system.domain.inventory.model.Inventory;
 import com.agri_system.domain.inventory.model.InventoryBatch;
+import com.agri_system.domain.inventory.model.InventoryTransferOrder;
+import com.agri_system.domain.inventory.model.InventoryTransferOrderDetail;
 import com.agri_system.domain.inventory.model.InventoryTransaction;
 import com.agri_system.domain.inventory.repository.InventoryBatchRepository;
 import com.agri_system.domain.inventory.repository.InventoryRepository;
+import com.agri_system.domain.inventory.repository.InventoryTransferOrderDetailRepository;
+import com.agri_system.domain.inventory.repository.InventoryTransferOrderRepository;
 import com.agri_system.domain.inventory.repository.InventoryTransactionRepository;
 import com.agri_system.domain.inventory.service.InventoryDomainService;
 import com.agri_system.domain.inventory.vo.InventoryPageVO;
@@ -31,11 +37,19 @@ import com.agri_system.domain.store.repository.StoreRepository;
 import com.mybatisflex.core.paginate.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -52,12 +66,15 @@ public class InventoryApplicationService {
     private final InventoryBatchRepository batchRepository;
     private final InventoryRepository inventoryRepository;
     private final InventoryTransactionRepository transactionRepository;
+    private final InventoryTransferOrderRepository transferOrderRepository;
+    private final InventoryTransferOrderDetailRepository transferOrderDetailRepository;
     private final ProductRepository productRepository;
     private final OrderRepository orderRepository;
     private final AfterSalesRepository afterSalesRepository;
     private final StoreRepository storeRepository;
     private final StaffRepository staffRepository;
     private final PurchaseRepository purchaseRepository;
+    private final JdbcTemplate jdbcTemplate;
     
     /**
      * 入库
@@ -194,6 +211,17 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public InventoryDomainService.TransferDetail transfer(InventoryTransferCommand command, Long createdBy) {
+        if (Objects.equals(command.getFromStoreId(), command.getToStoreId())) {
+            throw new IllegalArgumentException(InventoryErrorCode.TARGET_STORE_UNAVAILABLE + ": 调出门店和调入门店不能相同");
+        }
+
+        storeRepository.findById(command.getFromStoreId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        InventoryErrorCode.TARGET_STORE_UNAVAILABLE + ": 调出门店不存在"));
+        storeRepository.findById(command.getToStoreId())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        InventoryErrorCode.TARGET_STORE_UNAVAILABLE + ": 调入门店不存在"));
+
         // 校验商品是否存在并获取单位
         Product product = productRepository.findById(command.getProductId())
                 .orElseThrow(() -> new IllegalArgumentException(
@@ -204,20 +232,169 @@ public class InventoryApplicationService {
         if (unit == null || unit.trim().isEmpty()) {
             throw new IllegalArgumentException("商品单位信息不完整");
         }
-        
-        // 调用领域服务执行调拨
-        // 注意：这里需要生成调拨单ID，暂时使用临时ID
-        Long transferId = System.currentTimeMillis(); // TODO: 应该从调拨单模块获取
-        
-        return domainService.transfer(
+
+        LocalDateTime now = LocalDateTime.now();
+        InventoryTransferOrder order = new InventoryTransferOrder();
+        order.setTransferNo(generateTransferNo(now.toLocalDate()));
+        order.setFromStoreId(command.getFromStoreId());
+        order.setToStoreId(command.getToStoreId());
+        order.setProductId(command.getProductId());
+        order.setQuantity(command.getQuantity());
+        order.setUnit(unit);
+        order.setStatus(3);
+        order.setRemark(command.getRemark());
+        order.setCreatedAt(now);
+        order.setUpdatedAt(now);
+        order.setCreatedBy(createdBy);
+        order.setUpdatedBy(createdBy);
+        transferOrderRepository.save(order);
+
+        InventoryDomainService.TransferDetail transferDetail = domainService.transfer(
                 command.getFromStoreId(),
                 command.getToStoreId(),
                 command.getProductId(),
                 command.getQuantity(),
                 unit,
                 createdBy,
-                transferId
+                order.getId()
         );
+
+        List<InventoryTransferOrderDetail> detailRecords = new ArrayList<>();
+        for (InventoryDomainService.TransferBatchDetail batchDetail : transferDetail.getTransferBatchDetails()) {
+            InventoryTransferOrderDetail detailRecord = new InventoryTransferOrderDetail();
+            detailRecord.setTransferId(order.getId());
+            detailRecord.setFromBatchId(batchDetail.getFromBatchId());
+            detailRecord.setToBatchId(batchDetail.getToBatchId());
+            detailRecord.setQuantity(batchDetail.getQuantity());
+            detailRecord.setCostPrice(batchDetail.getCostPrice());
+            detailRecord.setCreatedAt(now);
+            detailRecords.add(detailRecord);
+        }
+        transferOrderDetailRepository.saveBatch(detailRecords);
+
+        transferDetail.setTransferId(order.getId());
+        transferDetail.setTransferNo(order.getTransferNo());
+        return transferDetail;
+    }
+
+    public Page<InventoryTransferRecordVO> queryTransferPage(InventoryTransferRecordQuery query) {
+        StringBuilder fromSql = new StringBuilder("""
+                FROM inventory_transfer o
+                LEFT JOIN product p ON o.product_id = p.id
+                LEFT JOIN store fs ON o.from_store_id = fs.id
+                LEFT JOIN store ts ON o.to_store_id = ts.id
+                LEFT JOIN staff st ON o.created_by = st.id
+                LEFT JOIN (
+                    SELECT transfer_id, COUNT(1) AS batch_count
+                    FROM inventory_transfer_detail
+                    GROUP BY transfer_id
+                ) td ON td.transfer_id = o.id
+                WHERE 1 = 1
+                """);
+
+        List<Object> params = new ArrayList<>();
+
+        if (query.getFromStoreId() != null) {
+            fromSql.append(" AND o.from_store_id = ? ");
+            params.add(query.getFromStoreId());
+        }
+
+        if (query.getToStoreId() != null) {
+            fromSql.append(" AND o.to_store_id = ? ");
+            params.add(query.getToStoreId());
+        }
+
+        if (StringUtils.hasText(query.getProductName())) {
+            fromSql.append(" AND p.name LIKE ? ");
+            params.add("%" + query.getProductName().trim() + "%");
+        }
+
+        if (StringUtils.hasText(query.getStartTime())) {
+            fromSql.append(" AND o.created_at >= ? ");
+            params.add(LocalDateTime.parse(query.getStartTime(), DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+        }
+
+        if (StringUtils.hasText(query.getEndTime())) {
+            fromSql.append(" AND o.created_at <= ? ");
+            params.add(LocalDateTime.parse(query.getEndTime(), DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+        }
+
+        String countSql = "SELECT COUNT(1) " + fromSql;
+
+        Long total = jdbcTemplate.queryForObject(countSql, Long.class, params.toArray());
+        long totalRows = total == null ? 0L : total;
+
+        String dataSql = """
+                SELECT
+                    o.id AS transfer_id,
+                    o.transfer_no AS transfer_no,
+                    o.from_store_id AS from_store_id,
+                    fs.name AS from_store_name,
+                    o.to_store_id AS to_store_id,
+                    ts.name AS to_store_name,
+                    o.product_id AS product_id,
+                    p.name AS product_name,
+                    p.specification AS product_spec,
+                    o.quantity AS quantity,
+                    COALESCE(td.batch_count, 0) AS batch_count,
+                    o.created_by AS created_by,
+                    st.name AS created_by_name,
+                    o.created_at AS created_at,
+                    o.remark AS remark
+                """ + fromSql + """
+                ORDER BY o.created_at DESC
+                LIMIT ? OFFSET ?
+                """;
+
+        List<Object> dataParams = new ArrayList<>(params);
+        dataParams.add(query.getPageSize());
+        dataParams.add((long) (query.getPageNum() - 1) * query.getPageSize());
+
+        List<InventoryTransferRecordVO> records = jdbcTemplate.query(dataSql, dataParams.toArray(), (rs, rowNum) -> {
+            InventoryTransferRecordVO vo = new InventoryTransferRecordVO();
+            vo.setTransferId(rs.getLong("transfer_id"));
+            vo.setTransferNo(rs.getString("transfer_no"));
+            vo.setFromStoreId((Long) rs.getObject("from_store_id"));
+            vo.setFromStoreName(rs.getString("from_store_name"));
+            vo.setToStoreId((Long) rs.getObject("to_store_id"));
+            vo.setToStoreName(rs.getString("to_store_name"));
+            vo.setProductId(rs.getLong("product_id"));
+            vo.setProductName(rs.getString("product_name"));
+            vo.setProductSpec(rs.getString("product_spec"));
+            vo.setQuantity(rs.getBigDecimal("quantity"));
+            Number batchCount = (Number) rs.getObject("batch_count");
+            vo.setBatchCount(batchCount == null ? 0 : batchCount.intValue());
+            vo.setCreatedBy((Long) rs.getObject("created_by"));
+            vo.setCreatedByName(rs.getString("created_by_name"));
+            Timestamp createdAt = rs.getTimestamp("created_at");
+            vo.setCreatedAt(createdAt != null ? createdAt.toLocalDateTime() : null);
+            vo.setRemark(rs.getString("remark"));
+            return vo;
+        });
+
+        Page<InventoryTransferRecordVO> page = new Page<>();
+        page.setRecords(records);
+        page.setPageNumber(query.getPageNum());
+        page.setPageSize(query.getPageSize());
+        page.setTotalRow(totalRows);
+        page.setTotalPage(query.getPageSize() == null || query.getPageSize() <= 0
+                ? 0L
+                : (long) Math.ceil((double) totalRows / query.getPageSize()));
+        return page;
+    }
+
+    private String generateTransferNo(LocalDate date) {
+        String prefix = "TRF" + date.format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+        String maxTransferNo = transferOrderRepository.findMaxTransferNoByPrefix(prefix);
+        int sequence = 1;
+        if (maxTransferNo != null && maxTransferNo.length() > prefix.length()) {
+            try {
+                sequence = Integer.parseInt(maxTransferNo.substring(prefix.length())) + 1;
+            } catch (NumberFormatException ignored) {
+                sequence = 1;
+            }
+        }
+        return prefix + String.format("%06d", sequence);
     }
     
     /**
@@ -275,7 +452,8 @@ public class InventoryApplicationService {
                 query.getPageNum(),
                 query.getPageSize(),
                 query.getStoreId(),
-                query.getProductName());
+                query.getProductName(),
+                query.getOnlyHasStock());
     }
     
     /**
@@ -403,7 +581,7 @@ public class InventoryApplicationService {
         }
         
         // 查询门店信息
-        Store store = storeRepository.findById(transaction.getStoreId()).orElse(null);
+        Store store = storeRepository.findByIdIncludingDeleted(transaction.getStoreId()).orElse(null);
         if (store != null) {
             vo.setStoreName(store.getName());
         }
@@ -455,6 +633,23 @@ public class InventoryApplicationService {
                     vo.setReferenceNo("SALES_RETURN-" + transaction.getReferenceId());
                 }
             }
+            // 订单退款回库：关联订单号
+            else if ("ORDER_REFUND".equalsIgnoreCase(refType)) {
+                try {
+                    var orderOpt = orderRepository.findById(transaction.getReferenceId());
+                    if (orderOpt.isPresent()) {
+                        var order = orderOpt.get();
+                        String ref = (order.getOrderNo() != null && !order.getOrderNo().trim().isEmpty())
+                                ? order.getOrderNo()
+                                : ("ORDER_REFUND-" + order.getId());
+                        vo.setReferenceNo(ref);
+                    } else {
+                        vo.setReferenceNo("ORDER_REFUND-" + transaction.getReferenceId());
+                    }
+                } catch (Exception e) {
+                    vo.setReferenceNo("ORDER_REFUND-" + transaction.getReferenceId());
+                }
+            }
             // 销售相关出入库：关联订单号（线下 POS / 线上订单等）
             // 只要 referenceType 是 "ORDER"，就查询订单号，不限制 transactionType
             else if ("ORDER".equalsIgnoreCase(refType)) {
@@ -485,4 +680,3 @@ public class InventoryApplicationService {
         return vo;
     }
 }
-

@@ -3,6 +3,7 @@ package com.agri_system.application.report.service;
 import com.agri_system.application.report.dto.SalesTrendVO;
 import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.order.model.OrderItem;
+import com.agri_system.infrastructure.after_sales.mapper.AfterSalesMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditAccountMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditRepaymentLogMapper;
 import com.agri_system.infrastructure.customer.mapper.CustomerMapper;
@@ -45,6 +46,8 @@ class ProfitCalculationTest {
     private CustomerMapper customerMapper;
     @Mock
     private ProductMapper productMapper;
+    @Mock
+    private AfterSalesMapper afterSalesMapper;
 
     private ReportAnalysisService reportAnalysisService;
 
@@ -52,7 +55,7 @@ class ProfitCalculationTest {
     void setUp() {
         reportAnalysisService = new ReportAnalysisService(
                 orderMapper, orderItemMapper, inventoryBatchMapper,
-                creditAccountMapper, repaymentLogMapper, customerMapper, productMapper);
+                creditAccountMapper, repaymentLogMapper, customerMapper, productMapper, afterSalesMapper);
     }
 
     @Test
@@ -137,7 +140,6 @@ class ProfitCalculationTest {
         assertEquals(0, new BigDecimal("100.00").compareTo(vo.getProfit()));
     }
 }
-
 
 
 

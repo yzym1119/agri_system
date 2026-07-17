@@ -21,6 +21,11 @@ public interface CustomerRepository {
      * 根据ID查询客户
      */
     Optional<Customer> findById(Long id);
+
+    /**
+     * 根据ID查询客户（包含已逻辑删除）
+     */
+    Optional<Customer> findByIdIncludingDeleted(Long id);
     
     /**
      * 根据ID查询客户（带悲观锁）
@@ -63,11 +68,25 @@ public interface CustomerRepository {
     
     /**
      * 逻辑删除客户
-     * 
+     *
      * @param id 客户ID
      */
     void logicDelete(Long id);
-}
 
+    /**
+     * 统计指定员工的归属客户数量
+     */
+    long countByBindStaffId(Long staffId);
+
+    /**
+     * 查询指定员工的归属客户列表
+     */
+    java.util.List<Customer> findByBindStaffId(Long staffId);
+
+    /**
+     * 查询所有有归属员工的客户
+     */
+    java.util.List<Customer> findAllWithBindStaff();
+}
 
 

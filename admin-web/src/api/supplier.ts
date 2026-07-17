@@ -22,24 +22,19 @@ export function getSupplierList(params: SupplierQueryParams): Promise<PageRespon
     params
   }).then((response: any) => {
     // 处理分页响应，可能直接返回Page对象或包装在data中
-    if (response && response.records) {
-      return response
-    } else if (response && response.data && response.data.records) {
-      return response.data
-    } else {
-      return { records: [], total: 0, pageNum: 1, pageSize: 10 }
+    const page = (response && response.records) ? response
+      : (response && response.data && response.data.records) ? response.data
+      : null
+    if (page) {
+      return {
+        records: page.records || [],
+        total: page.total ?? page.totalRow ?? 0,
+        pageNum: page.pageNumber ?? params.pageNum ?? 1,
+        pageSize: page.pageSize ?? params.pageSize ?? 10
+      }
     }
+    return { records: [], total: 0, pageNum: 1, pageSize: 10 }
   })
-}
-
-/**
- * 获取供应商详情
- */
-export function getSupplierDetail(id: number): Promise<SupplierDetailVO> {
-  return request({
-    url: `/api/admin/suppliers/${id}`,
-    method: 'get'
-  }).then((response: any) => response.data)
 }
 
 /**
@@ -50,7 +45,7 @@ export function createSupplier(data: SupplierCreateRequest): Promise<{ id: numbe
     url: '/api/admin/suppliers',
     method: 'post',
     data
-  }).then((response: any) => response.data)
+  }).then((response: any) => response?.data || response)
 }
 
 /**
@@ -82,6 +77,5 @@ export function getAllSuppliers(): Promise<SupplierDetailVO[]> {
     url: '/api/admin/suppliers',
     method: 'get',
     params: { pageNum: 1, pageSize: 1000 }
-  }).then((response: PageResponse<SupplierDetailVO>) => response.records)
+  }).then((response: any) => response?.records || response?.data?.records || [])
 }
-

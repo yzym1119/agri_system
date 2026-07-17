@@ -20,14 +20,15 @@
         <el-form-item label="订单来源">
           <el-select v-model="queryParams.orderType" placeholder="全部" clearable style="width: 150px">
             <el-option label="POS" :value="1" />
-            <el-option label="小程序" :value="2" />
+            <el-option label="小程序自提" :value="2" />
+            <el-option label="小程序配送" :value="3" />
           </el-select>
         </el-form-item>
         <el-form-item label="配送方式">
           <el-select v-model="queryParams.deliveryType" placeholder="全部" clearable style="width: 150px">
             <el-option label="自提" :value="1" />
             <el-option label="同城配送" :value="2" />
-            <el-option label="快递" :value="3" />
+            <el-option label="快递配送" :value="3" />
           </el-select>
         </el-form-item>
         <el-form-item label="时间范围">
@@ -53,7 +54,7 @@
       <el-tabs v-model="activeTab" @tab-change="handleTabChange">
         <el-tab-pane label="全部" name="all" />
         <el-tab-pane label="待付款" name="1" />
-        <el-tab-pane label="待发货/自提" name="3" />
+        <el-tab-pane label="待发货/自提" name="3,4" />
         <el-tab-pane label="配送中" name="5" />
         <el-tab-pane label="已完成" name="6" />
         <el-tab-pane label="退款/售后" name="refund" />
@@ -106,14 +107,15 @@
         <el-table-column label="金额" width="220" align="right">
           <template #default="{ row }">
             <div>
-              <div>应付：¥{{ formatMoney(row.totalAmount) }}</div>
-              <div style="color: #67c23a; font-weight: 600">实付：¥{{ formatMoney(getPaidCash(row)) }}</div>
+              <div>订单总额：¥{{ formatMoney(row.totalAmount) }}</div>
+              <div>应收净额：¥{{ formatMoney(getNetReceivable(row)) }}</div>
+              <div style="color: #67c23a; font-weight: 600">已收：¥{{ formatMoney(getPaidCash(row)) }}</div>
               <div style="margin-top:6px">
-                <span v-if="getOweAmount(row) > 0" style="color:#f56c6c; font-weight:600">欠: ¥{{ formatMoney(getOweAmount(row)) }}</span>
+                <span v-if="getOweAmount(row) > 0" style="color:#f56c6c; font-weight:600">赊销：¥{{ formatMoney(getOweAmount(row)) }}</span>
               </div>
               <div style="margin-top:6px">
                 <el-tag size="small" :type="getPaymentMethodTagType(getDisplayPaymentType(row))">
-                  {{ getPaymentMethodTagText(getDisplayPaymentType(row)) }}
+                  {{ row.paymentMethodName || getPaymentMethodTagText(getDisplayPaymentType(row)) }}
                 </el-tag>
               </div>
               <el-tooltip v-if="row.discountAmount || row.couponAmount" placement="top">
@@ -134,13 +136,14 @@
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="下单时间" width="170" />
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="380" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="handleViewDetail(row)">详情</el-button>
             <!-- 待发货/待自提状态的操作 -->
-            <template v-if="row.orderStatus === 3">
+            <template v-if="canVerifyPickup(row) || canShipByExpress(row) || canShipByLocal(row)">
               <el-button
-                v-if="row.deliveryType === 1"
+                v-if="canVerifyPickup(row)"
+                v-permission="'order:pickup:verify'"
                 link
                 type="success"
                 :loading="actionLoading[row.id]"
@@ -149,27 +152,30 @@
                 核销
               </el-button>
               <el-button
-                v-else-if="row.deliveryType === 3"
+                v-if="canShipByExpress(row)"
+                v-permission="'order:ship'"
                 link
                 type="warning"
                 :loading="actionLoading[row.id]"
                 @click="handleShip(row, 'express')"
               >
-                发货
+                快递发货
               </el-button>
               <el-button
-                v-else-if="row.deliveryType === 2"
+                v-if="canShipByLocal(row)"
+                v-permission="'order:ship'"
                 link
-                type="warning"
+                type="primary"
                 :loading="actionLoading[row.id]"
                 @click="handleShip(row, 'local')"
               >
-                派单
+                同城派单
               </el-button>
             </template>
             <!-- 配送中状态 -->
             <el-button
               v-if="row.orderStatus === 5"
+              v-permission="'order:ship'"
               link
               type="success"
               :loading="actionLoading[row.id]"
@@ -180,12 +186,13 @@
             <!-- 退款按钮 -->
             <el-button
               v-if="canRefund(row)"
+              v-permission="'order:refund'"
               link
               type="danger"
               :loading="actionLoading[row.id]"
               @click="handleRefund(row)"
             >
-              退款
+              {{ getRefundActionText(row) }}
             </el-button>
           </template>
         </el-table-column>
@@ -229,15 +236,17 @@ import {ElMessage, ElMessageBox} from 'element-plus'
 import {Refresh, Search} from '@element-plus/icons-vue'
 import {confirmReceipt, getOrderList} from '@/api/order'
 import {getAllStores} from '@/api/store'
+import {getOrderPaymentSummary} from '@/utils/orderPayment'
 import ShipDialog from '../components/ShipDialog.vue'
 import VerifyDialog from '../components/VerifyDialog.vue'
 import RefundDialog from '../components/RefundDialog.vue'
 import OrderDetail from '../components/OrderDetail.vue'
+import type {OrderListQuery, OrderPageItem, OrderPageResponse} from '@/types/order'
 import type {StoreDetailVO} from '@/types/store'
 
 // 响应式数据
 const loading = ref(false)
-const tableData = ref<any[]>([])
+const tableData = ref<OrderPageItem[]>([])
 const total = ref(0)
 const activeTab = ref('all')
 const storeOptions = ref<StoreDetailVO[]>([])
@@ -246,7 +255,7 @@ const shipVisible = ref(false)
 const verifyVisible = ref(false)
 const refundVisible = ref(false)
 const detailVisible = ref(false)
-const currentOrder = ref<any>(null)
+const currentOrder = ref<OrderPageItem | null>(null)
 const currentOrderId = ref<number | null>(null)
 const shipMode = ref<'express' | 'local'>('express')
 
@@ -262,9 +271,38 @@ const queryParams = reactive({
 })
 
 // 计算属性
-const canRefund = (row: any) => {
-  // 已支付或已完成状态可以退款
-  return row.orderStatus === 2 || row.orderStatus === 6
+const canRefund = (row: OrderPageItem) => {
+  // 已支付但未履约走订单直退；已发货/已完成/部分退款走售后退货
+  return row.orderStatus === 2
+    || row.orderStatus === 3
+    || row.orderStatus === 4
+    || row.orderStatus === 5
+    || row.orderStatus === 6
+    || row.orderStatus === 9
+}
+
+const canVerifyPickup = (row: OrderPageItem) => {
+  return row.deliveryType === 1 && row.orderStatus === 3
+}
+
+const isPendingDeliveryOrder = (row: OrderPageItem) => {
+  return row.orderType === 3 && (row.orderStatus === 3 || row.orderStatus === 4)
+}
+
+const canShipByExpress = (row: OrderPageItem) => {
+  return isPendingDeliveryOrder(row) && (row.deliveryType == null || row.deliveryType === 3)
+}
+
+const canShipByLocal = (row: OrderPageItem) => {
+  return isPendingDeliveryOrder(row) && (row.deliveryType == null || row.deliveryType === 2)
+}
+
+const getRefundActionText = (row: OrderPageItem) => {
+  if (row.orderStatus === 9) return '继续退款'
+  if (row.orderStatus === 2 || row.orderStatus === 3 || row.orderStatus === 4) {
+    return '订单退款'
+  }
+  return '退货退款'
 }
 
 // 方法
@@ -273,41 +311,27 @@ const formatMoney = (amount: number | string | null | undefined) => {
   return Number(amount).toFixed(2)
 }
 
-const getPaidCash = (row: any) => {
-  // If main payment method is full credit, show 0; otherwise use payAmount as approximation
-  if (row.paymentMethod === 6) return 0
-  return row.payAmount || 0
+const getNetReceivable = (row: OrderPageItem) => {
+  return getOrderPaymentSummary(row).netReceivable
 }
 
-const getOweAmount = (row: any) => {
-  // 1) If payment breakdown exists, owe equals total credit (paymentType == 6) amount
-  if (row.payments && Array.isArray(row.payments) && row.payments.length > 0) {
-    const creditAmount = row.payments
-      .filter((p: any) => Number(p.paymentType) === 6)
-      .reduce((s: number, p: any) => s + Number(p.amount || 0), 0)
-    return creditAmount > 0.01 ? creditAmount : 0
-  }
+const getPaidCash = (row: OrderPageItem) => {
+  return getOrderPaymentSummary(row).receivedAmount
+}
 
-  // 2) Fallback: owe = totalAmount - realPaid - coupon - discount - balancePaid (balancePaid not always available)
-  const total = Number(row.totalAmount || 0)
-  const realPaid = Number(row.payAmount || 0)
-  const coupon = Number(row.couponAmount || 0)
-  const discount = Number(row.discountAmount || 0)
-  const balancePaid = Number(row.balancePaid || 0) // if available
-  const owe = total - realPaid - coupon - discount - balancePaid
-  return owe > 0.01 ? Number(owe.toFixed(2)) : 0
+const getOweAmount = (row: OrderPageItem) => {
+  return getOrderPaymentSummary(row).creditAmount
 }
 
 const getPaymentMethodTagText = (method?: number) => {
   if (!method) return '未知'
   if (method === 6) return '全额赊销'
   if (method === 10) return '混合支付'
-  // otherwise map to known names
   const map: Record<number, string> = {
     1: '现金',
     2: '微信',
-    3: '本金余额',
-    4: '专用金',
+    3: '支付宝',
+    4: '本金余额',
     5: '优惠券'
   }
   return map[method] || '其他'
@@ -359,24 +383,21 @@ const getStatusTagType = (status: number) => {
   return map[status] || ''
 }
 
-// 计算展示用的支付方式：优先使用 payments 明细（若有），并将专用金视作余额的一部分以保持展示一致性
-const getDisplayPaymentType = (row: any) => {
+// 列表页优先展示后端给出的主支付方式；若缺失再回退到旧的支付明细推断逻辑
+const getDisplayPaymentType = (row: OrderPageItem) => {
+  if (row && row.paymentMethod) {
+    return row.paymentMethod
+  }
   if (row && row.payments && Array.isArray(row.payments) && row.payments.length > 0) {
     const types = row.payments
       .map((p: any) => Number(p.paymentType))
       .filter((t: number) => !isNaN(t))
-      .map((t: number) => (t === 4 ? 3 : t)) // 把专用金(4)视作本金余额(3)用于展示
+      .map((t: number) => (t === 8 ? 4 : t)) // 支付流水中的专用金归并到主支付方式“余额”
       .filter((t: number) => t !== 5) // 忽略优惠券对主支付方式的影响
     const unique = Array.from(new Set(types))
     if (unique.length === 0) return row.paymentMethod || undefined
     if (unique.length === 1) return unique[0]
     return 10 // 混合
-  }
-  // fallback to stored paymentMethod
-  if (row && row.paymentMethod) {
-    // 当后端存的是专用金(4)，把它当成余额展示
-    if (row.paymentMethod === 4) return 3
-    return row.paymentMethod
   }
   return undefined
 }
@@ -405,8 +426,8 @@ const handleTabChange = (tabName: string) => {
   if (tabName === 'all') {
     queryParams.orderStatus = null
   } else if (tabName === 'refund') {
-    // 退款/售后：状态 7-已取消，8-已退款，9-部分退款
-    queryParams.orderStatus = '7,8,9'
+    // 退款/售后：状态 8-已退款，9-部分退款
+    queryParams.orderStatus = '8,9'
   } else {
     queryParams.orderStatus = tabName
   }
@@ -417,7 +438,7 @@ const handleTabChange = (tabName: string) => {
 const loadData = async () => {
   loading.value = true
   try {
-    const params: any = {
+    const params: OrderListQuery = {
       pageNum: queryParams.pageNum,
       pageSize: queryParams.pageSize
     }
@@ -442,8 +463,7 @@ const loadData = async () => {
       params.orderStatus = queryParams.orderStatus
     }
 
-    const response = await getOrderList(params)
-    console.log('订单列表响应:', response)
+    const response: OrderPageResponse = await getOrderList(params)
     // 后端直接返回 Page<OrderPageVO>，包含 records 和 totalRow/total
     if (response) {
       tableData.value = response.records || []
@@ -475,21 +495,23 @@ const handleSizeChange = (size: number) => {
 const handleCopyOrderNo = (orderNo: string) => {
   navigator.clipboard.writeText(orderNo).then(() => {
     ElMessage.success('订单号已复制')
+  }).catch(() => {
+    ElMessage.error('复制失败，请手动复制')
   })
 }
 
-const handleViewDetail = (row: any) => {
+const handleViewDetail = (row: OrderPageItem) => {
   currentOrderId.value = row.id
   detailVisible.value = true
 }
 
-const handleShip = (row: any, mode: 'express' | 'local') => {
+const handleShip = (row: OrderPageItem, mode: 'express' | 'local') => {
   currentOrder.value = row
   shipMode.value = mode
   shipVisible.value = true
 }
 
-const handleVerify = (row: any) => {
+const handleVerify = (row: OrderPageItem) => {
   currentOrder.value = row
   verifyVisible.value = true
 }
@@ -504,7 +526,7 @@ const handleVerifySuccess = () => {
   loadData()
 }
 
-const handleRefund = (row: any) => {
+const handleRefund = (row: OrderPageItem) => {
   currentOrder.value = row
   refundVisible.value = true
 }
@@ -514,7 +536,7 @@ const handleRefundSuccess = () => {
   loadData()
 }
 
-const handleConfirmReceipt = async (row: any) => {
+const handleConfirmReceipt = async (row: OrderPageItem) => {
   try {
     await ElMessageBox.confirm('确认强制完成订单？', '确认收货', {
       confirmButtonText: '确定',
@@ -529,7 +551,7 @@ const handleConfirmReceipt = async (row: any) => {
   } catch (error: any) {
     if (error !== 'cancel') {
       console.error('确认收货失败:', error)
-      ElMessage.error('确认收货失败')
+      ElMessage.error((error as any)?.message || '确认收货失败')
     }
   } finally {
     actionLoading.value[row.id] = false
@@ -548,14 +570,6 @@ onMounted(async () => {
 </script>
 
 <style scoped lang="scss">
-.page-container {
-  padding: 20px;
-}
-
-.search-card {
-  margin-bottom: 16px;
-}
-
 .table-card {
   .pagination {
     margin-top: 16px;
@@ -564,4 +578,3 @@ onMounted(async () => {
   }
 }
 </style>
-

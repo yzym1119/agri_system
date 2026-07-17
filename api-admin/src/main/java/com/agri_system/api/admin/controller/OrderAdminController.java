@@ -10,6 +10,7 @@ import com.agri_system.application.order.dto.query.OrderPageQuery;
 import com.agri_system.application.order.dto.vo.OrderDetailVO;
 import com.agri_system.application.order.dto.vo.OrderPageVO;
 import com.agri_system.application.order.service.OrderApplicationService;
+import com.agri_system.domain.order.enums.OrderMainPaymentMethod;
 import com.agri_system.infrastructure.common.util.RedisDistributedLock;
 import com.mybatisflex.core.paginate.Page;
 import io.swagger.v3.oas.annotations.Operation;
@@ -60,7 +61,7 @@ public class OrderAdminController {
         String lockKey = null;
         String requestId = java.util.UUID.randomUUID().toString();
 
-        // 如果使用钱包验证码或 payments 列表中包含余额/专用金，获取分布式锁
+        // 如果使用钱包验证码，或 mixed payments 中包含余额支付条目，获取分布式锁
         boolean needLock = false;
         String authCodeForLock = null;
         if (StringUtils.hasText(command.getWalletAuthCode())) {
@@ -68,8 +69,10 @@ public class OrderAdminController {
             authCodeForLock = command.getWalletAuthCode();
         } else if (command.getPayments() != null && !command.getPayments().isEmpty()) {
             for (var p : command.getPayments()) {
-                if (p != null && (p.getPaymentType() != null) &&
-                        (p.getPaymentType().equals(3) || p.getPaymentType().equals(4))) { // 3=余额,4=专用金
+                if (p != null
+                        && p.getPaymentType() != null
+                        && p.getPaymentType().equals(OrderMainPaymentMethod.BALANCE.getCode())
+                        && StringUtils.hasText(p.getAuthCode())) {
                     needLock = true;
                     authCodeForLock = p.getAuthCode();
                     break;
@@ -96,6 +99,9 @@ public class OrderAdminController {
                 } catch (NumberFormatException e) {
                     // 解析失败时保持 null，由下游根据需要处理
                 }
+            }
+            if (staffId == null) {
+                throw new IllegalArgumentException("未获取到当前登录员工，无法创建POS订单");
             }
 
             Long orderId = orderService.createPOSOrder(command, staffId);
@@ -212,8 +218,6 @@ public class OrderAdminController {
         return ResponseEntity.ok().build();
     }
 }
-
-
 
 
 

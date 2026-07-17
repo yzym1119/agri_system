@@ -188,11 +188,19 @@ const getDisplayQuantity = (row: InventoryTransactionVO) => {
 const copyReferenceNo = (text: string) => {
   navigator.clipboard.writeText(text).then(() => {
     ElMessage.success('已复制到剪贴板')
+  }).catch(() => {
+    ElMessage.error('复制失败，请手动复制')
   })
 }
 
 const loadOptions = async () => {
-  storeOptions.value = await getAllStores()
+  try {
+    storeOptions.value = await getAllStores()
+  } catch (error) {
+    console.error('加载门店选项失败:', error)
+    storeOptions.value = []
+    ElMessage.error('加载门店选项失败')
+  }
 }
 
 const loadTable = async () => {
@@ -210,6 +218,11 @@ const loadTable = async () => {
     const res = await getInventoryTransactions(params)
     tableData.value = res.records || []
     total.value = res.total || 0
+  } catch (error) {
+    console.error('加载库存流水失败:', error)
+    tableData.value = []
+    total.value = 0
+    ElMessage.error('加载库存流水失败')
   } finally {
     loading.value = false
   }
@@ -241,7 +254,7 @@ const handleSizeChange = (size: number) => {
   loadTable()
 }
 
-loadOptions().then(loadTable)
+loadOptions().finally(loadTable)
 </script>
 
 <style scoped lang="scss">
@@ -263,4 +276,3 @@ loadOptions().then(loadTable)
   justify-content: flex-end;
 }
 </style>
-

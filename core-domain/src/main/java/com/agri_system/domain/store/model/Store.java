@@ -36,7 +36,7 @@ public class Store {
     /** 店长ID（关联staff表，可空） */
     private Long managerId;
     
-    /** 状态：1-启用，0-停用 */
+    /** 状态：1-启用，2-停用 */
     private Integer status;
     
     /** 是否支持自提：1-是，0-否 */
@@ -93,7 +93,7 @@ public class Store {
      * 停用门店
      */
     public void disable() {
-        this.status = 0;
+        this.status = 2;
     }
     
     /**
@@ -103,7 +103,6 @@ public class Store {
         this.deleted = 1;
     }
 }
-
 
 
 

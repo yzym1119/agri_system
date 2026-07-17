@@ -35,8 +35,12 @@ public interface PurchaseItemRepository {
      * 删除采购订单的所有明细
      */
     void deleteByOrderId(Long orderId);
-}
 
+    /**
+     * 统计商品被采购明细引用次数
+     */
+    long countByProductId(Long productId);
+}
 
 
 

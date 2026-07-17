@@ -43,7 +43,7 @@
 
       <!-- 操作栏 -->
       <div class="toolbar">
-        <el-button type="primary" :icon="Plus" @click="handleAdd">新增商品</el-button>
+        <el-button v-permission="'product:create'" type="primary" :icon="Plus" @click="handleAdd">新增商品</el-button>
       </div>
 
       <!-- 表格 -->
@@ -147,10 +147,11 @@
         <el-table-column label="操作" width="400" align="center" fixed="right">
           <template #default="{ row }">
             <div class="action-cell">
-              <el-button type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
+              <el-button v-permission="'product:update'" type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
               <!-- 价格策略 (带 Badge) -->
               <el-badge
                 v-if="row.strategyCount && row.strategyCount > 0"
+                v-permission="'product:price:query'"
                 :value="row.strategyCount"
                 type="warning"
                 :offset="[8, 7]"
@@ -163,6 +164,7 @@
 
               <!-- 价格策略 (无 Badge) -->
               <el-button
+                v-permission="'product:price:query'"
                 v-else
                 link
                 type="primary"
@@ -174,6 +176,7 @@
 
               <!-- 上下架 -->
               <el-button
+                v-permission="'product:update'"
                 type="warning"
                 link
                 :icon="row.isOnline === 1 ? 'Bottom' : 'Top'"
@@ -183,7 +186,7 @@
               </el-button>
 
               <!-- 专用金开关 (加 wrapper) -->
-              <el-tooltip content="允许使用专用金" placement="top">
+              <el-tooltip v-permission="'product:update'" content="允许使用专用金" placement="top">
                 <div class="switch-wrapper">
                   <el-switch
                     :model-value="row.allowSpecialFund"
@@ -193,7 +196,7 @@
                   />
                 </div>
               </el-tooltip>
-              <el-button type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
+              <el-button v-permission="'product:delete'" type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
             </div>
           </template>
         </el-table-column>
@@ -496,11 +499,61 @@
             placeholder="请输入备注"
           />
         </el-form-item>
+
+        <!-- 农资产品合规信息 -->
+        <el-divider content-position="left">农资合规与仓储</el-divider>
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="条形码">
+              <el-input v-model="formData.barcode" placeholder="EAN-13条形码" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="登记证号">
+              <el-input v-model="formData.registrationNo" placeholder="农药/肥料登记证号" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="保质期(天)">
+              <el-input-number v-model="formData.shelfLifeDays" :min="0" :precision="0" style="width: 100%" placeholder="如：730" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="存储条件">
+              <el-input v-model="formData.storageConditions" placeholder="如：阴凉干燥处" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-form-item label="使用方法">
+          <el-input v-model="formData.usageMethod" type="textarea" :rows="2" placeholder="稀释比例、使用方法等" />
+        </el-form-item>
+
+        <!-- 库存预警设置 -->
+        <el-divider content-position="left">库存预警</el-divider>
+        <el-row :gutter="20">
+          <el-col :span="8">
+            <el-form-item label="最低库存">
+              <el-input-number v-model="formData.minStock" :min="0" :precision="2" style="width: 100%" placeholder="低于此值预警" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="最高库存">
+              <el-input-number v-model="formData.maxStock" :min="0" :precision="2" style="width: 100%" placeholder="高于此值积压" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="补货数量">
+              <el-input-number v-model="formData.reorderQuantity" :min="0" :precision="2" style="width: 100%" placeholder="建议补货量" />
+            </el-form-item>
+          </el-col>
+        </el-row>
       </el-form>
       <template #footer>
         <div style="text-align: right; padding: 20px">
           <el-button @click="drawerVisible = false">取消</el-button>
-          <el-button type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
+          <el-button v-permission="isEdit ? 'product:update' : 'product:create'" type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
         </div>
       </template>
     </el-drawer>
@@ -521,8 +574,8 @@ import {
   updateProduct,
   updateProductOnlineStatus
 } from '@/api/product'
+import { getInventoryList } from '@/api/inventory'
 import {getDictDataByCode} from '@/api/system'
-import {getAllStores} from '@/api/store'
 import type {
   CategoryTreeVO,
   PageResponse,
@@ -542,6 +595,7 @@ const defaultImage =
 const loading = ref(false)
 const submitLoading = ref(false)
 const toggleSpecialFundLoading = ref<Record<number, boolean>>({})
+const stockRequestSerial = ref(0)
 
 // 商品列表
 const productList = ref<ProductDetailVO[]>([])
@@ -586,7 +640,15 @@ const formData = reactive<ProductCreateRequest & { id?: number; avgCostPrice?: n
   onlinePrice: undefined,
   baseShippingFee: 0,
   allowSpecialFund: 0,
-  remark: ''
+  remark: '',
+  barcode: '',
+  registrationNo: '',
+  storageConditions: '',
+  shelfLifeDays: undefined,
+  usageMethod: '',
+  minStock: undefined,
+  maxStock: undefined,
+  reorderQuantity: undefined
 })
 
 // 表单验证规则
@@ -621,12 +683,9 @@ const unitOptions = ref<DictDataVO[]>([])
 const manufacturerOptions = ref<DictDataVO[]>([])
 const dosageFormOptions = ref<DictDataVO[]>([])
 
-// 门店列表（用于查询库存）
-const storeList = ref<Array<{ id: number }>>([])
-
 // 图片上传
 const uploadAction = computed(() => {
-  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+  const baseURL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080'
   return `${baseURL}/api/admin/products/image/upload`
 })
 
@@ -664,19 +723,10 @@ const loadDictData = async () => {
   }
 }
 
-// 加载门店列表
-const loadStoreList = async () => {
-  try {
-    const stores = await getAllStores()
-    storeList.value = stores.map(s => ({ id: s.id }))
-  } catch (error) {
-    console.error('加载门店列表失败:', error)
-  }
-}
-
 // 加载商品列表
 const loadProductList = async () => {
   loading.value = true
+  const requestSerial = ++stockRequestSerial.value
   try {
     // 处理级联选择器的值（可能是数组）
     const categoryId = Array.isArray(queryParams.categoryId)
@@ -687,22 +737,72 @@ const loadProductList = async () => {
       ...queryParams,
       categoryId
     })
-    productList.value = response.records
-    total.value = response.total
+    const records = response.records || []
+    productList.value = records
+    total.value = response.total || 0
 
-    // 加载库存（简化版：暂时不显示，后续可优化）
-    // loadStockForProducts(response.records)
+    await loadStockForProducts(records, requestSerial)
   } catch (error) {
     console.error('加载商品列表失败:', error)
+    productList.value = []
+    total.value = 0
+    if (requestSerial === stockRequestSerial.value) {
+      stockMap.value = {}
+    }
   } finally {
     loading.value = false
   }
 }
 
-// 加载库存（简化实现，后续可优化为批量查询）
-const loadStockForProducts = async (products: ProductDetailVO[]) => {
-  // TODO: 实现批量查询库存的逻辑
-  // 目前先留空，后续可以调用后端接口批量获取
+// 汇总当前页商品在所有门店的库存快照
+const loadStockForProducts = async (products: ProductDetailVO[], requestSerial: number) => {
+  const productIds = Array.from(new Set(products.map(item => item.id).filter(Boolean)))
+  if (productIds.length === 0) {
+    if (requestSerial === stockRequestSerial.value) {
+      stockMap.value = {}
+    }
+    return
+  }
+
+  const totals: Record<number, number> = {}
+  const pageSize = 1000
+  let pageNum = 1
+  let totalRows = 0
+
+  try {
+    do {
+      const page = await getInventoryList({ pageNum, pageSize })
+      const records = page.records || []
+      records.forEach(record => {
+        if (!record.productId || !productIds.includes(record.productId)) {
+          return
+        }
+        totals[record.productId] = Number((totals[record.productId] || 0) + Number(record.totalQuantity || 0))
+      })
+      totalRows = page.total || 0
+      if (!records.length) {
+        break
+      }
+      pageNum += 1
+    } while ((pageNum - 1) * pageSize < totalRows)
+
+    if (requestSerial !== stockRequestSerial.value) {
+      return
+    }
+
+    stockMap.value = productIds.reduce<Record<number, number>>((acc, productId) => {
+      acc[productId] = Number((totals[productId] || 0).toFixed(2))
+      return acc
+    }, {})
+  } catch (error) {
+    console.error('加载商品库存失败:', error)
+    if (requestSerial === stockRequestSerial.value) {
+      stockMap.value = productIds.reduce<Record<number, number>>((acc, productId) => {
+        acc[productId] = 0
+        return acc
+      }, {})
+    }
+  }
 }
 
 // 查询
@@ -736,7 +836,6 @@ const handleEdit = async (row: ProductDetailVO) => {
 
   try {
     const detail = await getProductDetail(row.id)
-    console.log('商品详情:', detail)
     if (!detail || !detail.id) {
       console.error('商品详情数据格式错误:', detail)
       ElMessage.error('加载商品详情失败：数据格式错误')
@@ -762,6 +861,14 @@ const handleEdit = async (row: ProductDetailVO) => {
     formData.baseShippingFee = detail.baseShippingFee || 0
     formData.allowSpecialFund = detail.allowSpecialFund || 0
     formData.remark = detail.remark
+    formData.barcode = detail.barcode || ''
+    formData.registrationNo = detail.registrationNo || ''
+    formData.storageConditions = detail.storageConditions || ''
+    formData.shelfLifeDays = detail.shelfLifeDays
+    formData.usageMethod = detail.usageMethod || ''
+    formData.minStock = detail.minStock
+    formData.maxStock = detail.maxStock
+    formData.reorderQuantity = detail.reorderQuantity
 
     drawerVisible.value = true
   } catch (error) {
@@ -831,7 +938,6 @@ const handleToggleSpecialFund = async (row: ProductDetailVO) => {
       suggestedRetailPrice: row.suggestedRetailPrice,
       allowSpecialFund: newValue
     }
-    console.log('更新专用金字段:', { originalValue, newValue, updateData })
     await updateProduct(row.id, updateData)
     ElMessage.success('操作成功')
     // 重新加载列表以确保数据同步
@@ -847,25 +953,32 @@ const handleToggleSpecialFund = async (row: ProductDetailVO) => {
   }
 }
 
+const resolveUploadedImageUrl = (response: any) => {
+  let parsed = response
+
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch {
+      if (parsed.startsWith('http')) {
+        return parsed
+      }
+      return ''
+    }
+  }
+
+  if (!parsed) return ''
+  if (typeof parsed.url === 'string') return parsed.url
+  if (typeof parsed.data === 'string') return parsed.data
+  if (typeof parsed.data?.url === 'string') return parsed.data.url
+  if (typeof parsed.data?.data?.url === 'string') return parsed.data.data.url
+  return ''
+}
+
 // 图片上传成功
 const handleImageSuccess = (response: any) => {
-  console.log('上传响应:', response)
-  // 处理不同的响应格式
-  // 后端返回格式: { code: "200", message: "上传成功", data: { url: "..." } }
-  let imageUrl = ''
-  
-  if (response && response.data) {
-    if (typeof response.data === 'string') {
-      imageUrl = response.data
-    } else if (response.data.url) {
-      imageUrl = response.data.url
-    } else if (response.data.data && response.data.data.url) {
-      imageUrl = response.data.data.url
-    }
-  } else if (response && response.url) {
-    imageUrl = response.url
-  }
-  
+  const imageUrl = resolveUploadedImageUrl(response)
+
   if (imageUrl) {
     formData.imageUrl = imageUrl
     ElMessage.success('图片上传成功')
@@ -944,7 +1057,15 @@ const handleSubmit = async () => {
           onlinePrice: formData.onlinePrice,
           baseShippingFee: formData.baseShippingFee,
           allowSpecialFund: formData.allowSpecialFund,
-          remark: formData.remark
+          remark: formData.remark,
+          barcode: formData.barcode || undefined,
+          registrationNo: formData.registrationNo || undefined,
+          storageConditions: formData.storageConditions || undefined,
+          shelfLifeDays: formData.shelfLifeDays ?? undefined,
+          usageMethod: formData.usageMethod || undefined,
+          minStock: formData.minStock ?? undefined,
+          maxStock: formData.maxStock ?? undefined,
+          reorderQuantity: formData.reorderQuantity ?? undefined
         }
         await updateProduct(formData.id!, updateData)
         ElMessage.success('更新成功')
@@ -968,7 +1089,15 @@ const handleSubmit = async () => {
           onlinePrice: formData.onlinePrice,
           baseShippingFee: formData.baseShippingFee,
           allowSpecialFund: formData.allowSpecialFund,
-          remark: formData.remark
+          remark: formData.remark,
+          barcode: formData.barcode || undefined,
+          registrationNo: formData.registrationNo || undefined,
+          storageConditions: formData.storageConditions || undefined,
+          shelfLifeDays: formData.shelfLifeDays ?? undefined,
+          usageMethod: formData.usageMethod || undefined,
+          minStock: formData.minStock ?? undefined,
+          maxStock: formData.maxStock ?? undefined,
+          reorderQuantity: formData.reorderQuantity ?? undefined
         }
         await createProduct(createData)
         ElMessage.success('新增成功')
@@ -1006,6 +1135,14 @@ const resetForm = () => {
   formData.baseShippingFee = 0
   formData.allowSpecialFund = 0
   formData.remark = ''
+  formData.barcode = ''
+  formData.registrationNo = ''
+  formData.storageConditions = ''
+  formData.shelfLifeDays = undefined
+  formData.usageMethod = ''
+  formData.minStock = undefined
+  formData.maxStock = undefined
+  formData.reorderQuantity = undefined
 }
 
 // 监听辅单位变化，清空辅单位时清空换算比例
@@ -1035,84 +1172,53 @@ const handleCurrentChange = (page: number) => {
 
 // 初始化
 onMounted(async () => {
-  await Promise.all([loadCategoryTree(), loadDictData(), loadStoreList()])
+  await Promise.all([loadCategoryTree(), loadDictData()])
   await loadProductList()
 })
 </script>
 
 <style scoped lang="scss">
-.product-container {
-  padding: 20px;
-}
-
-.search-bar {
-  margin-bottom: 20px;
-}
-
-.search-form {
-  .el-form-item {
-    margin-bottom: 0;
-  }
-}
-
-.toolbar {
-  margin-bottom: 20px;
-}
-
-.pagination {
-  margin-top: 20px;
-  display: flex;
-  justify-content: flex-end;
-}
-
 .no-image {
-  color: #999;
+  color: #9ca3af;
   font-size: 12px;
 }
 
 .loading-stock {
-  color: #999;
+  color: #9ca3af;
   font-size: 12px;
 }
 
 .form-tip {
   margin-left: 10px;
-  color: #999;
+  color: #9ca3af;
   font-size: 12px;
 }
 
-/* 1. 强制 Flex 居中布局 */
 .action-cell {
   display: flex;
-  align-items: center;      /* 垂直居中 */
-  justify-content: center;  /* 水平居中 */
-  gap: 12px;                /* 统一间距 */
-  width: 100%;
-}
-
-/* 2. 重置 Element Plus 按钮默认间距 */
-.action-cell .el-button + .el-button {
-  margin-left: 0;
-}
-
-/* 3. 修复 Badge 对齐 (核心黑魔法) */
-/* 将 Badge 变为 Flex 容器，强制内部 Button 垂直居中 */
-.action-cell :deep(.el-badge) {
-  display: inline-flex;
   align-items: center;
-  vertical-align: middle;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+
+  .el-button + .el-button {
+    margin-left: 0;
+  }
+
+  :deep(.el-badge) {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+  }
+
+  :deep(.el-badge .el-button) {
+    vertical-align: inherit;
+  }
 }
 
-/* 4. 修复 Badge 内部按钮的垂直对齐 */
-.action-cell :deep(.el-badge .el-button) {
-  vertical-align: inherit;
-}
-
-/* 5. Switch 容器高度对齐 */
 .switch-wrapper {
   display: flex;
   align-items: center;
   height: 24px;
 }
 </style>
-

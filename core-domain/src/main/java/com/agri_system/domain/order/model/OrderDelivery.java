@@ -41,6 +41,9 @@ public class OrderDelivery {
     
     /** 配送联系电话 */
     private String deliveryPhone;
+
+    /** 配送方式：2-同城配送，3-快递配送 */
+    private Integer deliveryType;
     
     /** 配送员工ID */
     private Long deliveryStaffId;
@@ -72,7 +75,6 @@ public class OrderDelivery {
     /** 更新时间 */
     private LocalDateTime updatedAt;
 }
-
 
 
 

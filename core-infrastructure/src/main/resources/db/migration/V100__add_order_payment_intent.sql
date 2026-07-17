@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS `order_payment_intent` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `intent_no` VARCHAR(64) NOT NULL COMMENT '支付意图号',
+    `order_id` BIGINT NOT NULL COMMENT '订单ID',
+    `customer_id` BIGINT NOT NULL COMMENT '客户ID',
+    `use_balance` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否使用本金余额',
+    `use_special_fund` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否使用专用金',
+    `coupon_id` BIGINT NULL COMMENT '优惠券ID',
+    `external_payment_type` TINYINT NOT NULL COMMENT '外部支付方式：2-微信，3-支付宝',
+    `external_amount` DECIMAL(10,2) NOT NULL COMMENT '外部支付金额',
+    `status` TINYINT NOT NULL DEFAULT 1 COMMENT '状态：1-待确认，2-已确认，3-已失效',
+    `external_transaction_no` VARCHAR(100) NULL COMMENT '外部支付流水号',
+    `expire_at` DATETIME NOT NULL COMMENT '过期时间',
+    `confirmed_at` DATETIME NULL COMMENT '确认时间',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_intent_no` (`intent_no`),
+    KEY `idx_order_status` (`order_id`, `status`),
+    KEY `idx_customer_status` (`customer_id`, `status`),
+    CONSTRAINT `fk_order_payment_intent_order` FOREIGN KEY (`order_id`) REFERENCES `order` (`id`),
+    CONSTRAINT `fk_order_payment_intent_coupon` FOREIGN KEY (`coupon_id`) REFERENCES `customer_coupon` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单外部支付意图表';

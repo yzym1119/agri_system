@@ -7,9 +7,9 @@ DELIMITER $$
 
 DROP PROCEDURE IF EXISTS `add_column_if_not_exists`$$
 CREATE PROCEDURE `add_column_if_not_exists`(
-    IN table_name VARCHAR(128),
-    IN column_name VARCHAR(128),
-    IN column_definition TEXT
+    IN p_table_name VARCHAR(128),
+    IN p_column_name VARCHAR(128),
+    IN p_column_definition TEXT
 )
 BEGIN
     DECLARE column_exists INT DEFAULT 0;
@@ -17,11 +17,11 @@ BEGIN
     SELECT COUNT(*) INTO column_exists
     FROM information_schema.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = table_name
-      AND COLUMN_NAME = column_name;
+      AND TABLE_NAME = p_table_name
+      AND COLUMN_NAME = p_column_name;
     
     IF column_exists = 0 THEN
-        SET @sql = CONCAT('ALTER TABLE `', table_name, '` ADD COLUMN ', column_definition);
+        SET @sql = CONCAT('ALTER TABLE `', p_table_name, '` ADD COLUMN ', p_column_definition);
         PREPARE stmt FROM @sql;
         EXECUTE stmt;
         DEALLOCATE PREPARE stmt;
@@ -30,9 +30,9 @@ END$$
 
 DROP PROCEDURE IF EXISTS `add_index_if_not_exists`$$
 CREATE PROCEDURE `add_index_if_not_exists`(
-    IN table_name VARCHAR(128),
-    IN index_name VARCHAR(128),
-    IN index_definition TEXT
+    IN p_table_name VARCHAR(128),
+    IN p_index_name VARCHAR(128),
+    IN p_index_definition TEXT
 )
 BEGIN
     DECLARE index_exists INT DEFAULT 0;
@@ -40,11 +40,11 @@ BEGIN
     SELECT COUNT(*) INTO index_exists
     FROM information_schema.STATISTICS
     WHERE TABLE_SCHEMA = DATABASE()
-      AND TABLE_NAME = table_name
-      AND INDEX_NAME = index_name;
+      AND TABLE_NAME = p_table_name
+      AND INDEX_NAME = p_index_name;
     
     IF index_exists = 0 THEN
-        SET @sql = CONCAT('ALTER TABLE `', table_name, '` ADD ', index_definition);
+        SET @sql = CONCAT('ALTER TABLE `', p_table_name, '` ADD ', p_index_definition);
         PREPARE stmt FROM @sql;
         EXECUTE stmt;
         DEALLOCATE PREPARE stmt;

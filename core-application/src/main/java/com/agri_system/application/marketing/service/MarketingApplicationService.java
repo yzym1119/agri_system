@@ -108,6 +108,11 @@ public class MarketingApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void deleteRechargeRule(Long id) {
+        MarketingRechargeRule rule = marketingRuleRepository.findRechargeRuleById(id)
+                .orElseThrow(() -> new IllegalArgumentException("充值规则不存在"));
+        if (rule.getStatus() != null && rule.getStatus() == 1) {
+            throw new IllegalArgumentException("启用中的充值规则不允许直接删除，请先停用");
+        }
         marketingRuleRepository.deleteRechargeRule(id);
     }
     
@@ -240,7 +245,11 @@ public class MarketingApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void deleteVipRights(Long id) {
+        MarketingVipRights rights = marketingRuleRepository.findVipRightsById(id)
+                .orElseThrow(() -> new IllegalArgumentException("VIP权益不存在"));
+        if (rights.getStatus() != null && rights.getStatus() == 1) {
+            throw new IllegalArgumentException("启用中的VIP权益不允许直接删除，请先停用");
+        }
         marketingRuleRepository.deleteVipRights(id);
     }
 }
-

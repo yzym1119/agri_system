@@ -45,9 +45,18 @@ public class OrderDetailVO {
     
     @Schema(description = "实付金额", example = "85.00")
     private BigDecimal payAmount;
+
+    @Schema(description = "已收金额（不含赊销）", example = "60.00")
+    private BigDecimal receivedAmount;
+
+    @Schema(description = "赊销金额", example = "25.00")
+    private BigDecimal creditAmount;
     
     @Schema(description = "主支付方式", example = "10")
     private Integer paymentMethod;
+
+    @Schema(description = "主支付方式展示名称", example = "混合支付")
+    private String paymentMethodName;
     
     @Schema(description = "自提码（仅自提订单）", example = "123456")
     private String pickupCode;
@@ -77,7 +86,7 @@ public class OrderDetailVO {
     private List<OrderPaymentVO> payments;
     
     @Schema(description = "配送信息")
-    private com.agri_system.domain.order.model.OrderDelivery delivery;
+    private OrderDeliveryVO delivery;
     
     @Schema(description = "备注")
     private String remark;
@@ -91,9 +100,6 @@ public class OrderDetailVO {
     @Schema(description = "创建时间")
     private LocalDateTime createdAt;
 }
-
-
-
 
 
 

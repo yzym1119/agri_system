@@ -46,16 +46,25 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" align="center" fixed="right">
+        <el-table-column label="操作" width="210" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
-            <el-button type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'product:price:update'" type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
+            <el-button
+              v-permission="'product:price:update'"
+              type="warning"
+              link
+              @click="handleToggleStatus(row)"
+            >
+              {{ row.status === 1 ? '停用' : '启用' }}
+            </el-button>
+            <el-button v-permission="'product:price:delete'" type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
 
       <!-- 新增/编辑表单 -->
       <el-form
+        v-permission="['product:price:create', 'product:price:update']"
         ref="formRef"
         :model="formData"
         :rules="formRules"
@@ -114,6 +123,16 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
+            <el-form-item label="状态" prop="status">
+              <el-radio-group v-model="formData.status">
+                <el-radio :label="1">启用</el-radio>
+                <el-radio :label="0">停用</el-radio>
+              </el-radio-group>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="20">
+          <el-col :span="12">
             <el-form-item label="有效期" prop="validTime">
               <el-date-picker
                 v-model="validTimeRange"
@@ -133,7 +152,7 @@
 
     <template #footer>
       <el-button @click="handleClose">取消</el-button>
-      <el-button type="primary" :loading="submitLoading" @click="handleSubmit">保存</el-button>
+      <el-button v-permission="editingId ? 'product:price:update' : 'product:price:create'" type="primary" :loading="submitLoading" @click="handleSubmit">保存</el-button>
     </template>
   </el-dialog>
 </template>
@@ -184,6 +203,7 @@ const formData = reactive<Partial<ProductPriceRuleCreateRequest>>({
   vipLevel: null,
   priceType: 1,
   price: 0,
+  status: 1,
   effectiveDate: undefined,
   expiryDate: undefined
 })
@@ -241,6 +261,7 @@ const resetForm = () => {
   formData.vipLevel = null
   formData.priceType = 1
   formData.price = 0
+  formData.status = 1
   formData.effectiveDate = undefined
   formData.expiryDate = undefined
   validTimeRange.value = null
@@ -253,6 +274,7 @@ const handleEdit = (row: ProductPriceRuleVO) => {
   formData.storeId = row.storeId ?? null
   formData.vipLevel = row.vipLevel ?? null
   formData.price = row.price
+  formData.status = row.status
   if (row.effectiveDate && row.expiryDate) {
     validTimeRange.value = [row.effectiveDate, row.expiryDate]
     formData.effectiveDate = row.effectiveDate
@@ -267,7 +289,7 @@ const handleEdit = (row: ProductPriceRuleVO) => {
 // 删除
 const handleDelete = async (row: ProductPriceRuleVO) => {
   try {
-    await ElMessageBox.confirm('确定要删除该价格规则吗？', '提示', {
+    await ElMessageBox.confirm('确定要删除该价格规则吗？启用中的规则需先停用后再删除。', '提示', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       type: 'warning'
@@ -280,6 +302,24 @@ const handleDelete = async (row: ProductPriceRuleVO) => {
     if (error !== 'cancel') {
       ElMessage.error('删除失败：' + (error.message || '未知错误'))
     }
+  }
+}
+
+const handleToggleStatus = async (row: ProductPriceRuleVO) => {
+  const nextStatus = row.status === 1 ? 0 : 1
+  try {
+    await updateProductPriceRule(row.id, {
+      id: row.id,
+      price: row.price,
+      effectiveDate: row.effectiveDate,
+      expiryDate: row.expiryDate,
+      status: nextStatus
+    })
+    ElMessage.success(nextStatus === 1 ? '启用成功' : '停用成功')
+    await loadPriceRules()
+    emit('success')
+  } catch (error: any) {
+    ElMessage.error('状态更新失败：' + (error.message || '未知错误'))
   }
 }
 
@@ -330,7 +370,8 @@ const handleSubmit = async () => {
           id: editingId.value,
           price: formData.price!,
           effectiveDate: formData.effectiveDate,
-          expiryDate: formData.expiryDate
+          expiryDate: formData.expiryDate,
+          status: formData.status
         }
         await updateProductPriceRule(editingId.value, updateData)
         ElMessage.success('更新成功')
@@ -344,7 +385,8 @@ const handleSubmit = async () => {
           priceType,
           price: formData.price!,
           effectiveDate: formData.effectiveDate,
-          expiryDate: formData.expiryDate
+          expiryDate: formData.expiryDate,
+          status: formData.status
         }
         await createProductPriceRule(createData)
         ElMessage.success('创建成功')
@@ -397,4 +439,3 @@ const getPriceTypeTagType = (type: number) => {
   margin-bottom: 18px;
 }
 </style>
-

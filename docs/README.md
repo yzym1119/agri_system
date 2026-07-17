@@ -5,6 +5,7 @@
 ## 建议优先阅读
 
 - `../README.md`：项目总览与启动方式
+- `WORKING_STATE.md`：当前真实进度、风险与下一步开发顺序
 - `../ddl/README.md`：数据库结构说明
 - `../ddl/DATABASE_DESIGN.md`：数据库设计细节
 - `../openapi/`：接口契约文件

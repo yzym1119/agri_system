@@ -1,5 +1,6 @@
 package com.agri_system.domain.wallet.model;
 
+import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
 import com.mybatisflex.annotation.Table;
@@ -37,10 +38,10 @@ public class CustomerWallet {
     private Integer version;
     
     /** 创建时间 */
-    private LocalDateTime createdAt;
-    
+    private LocalDateTime createdAt = LocalDateTime.now();
+
     /** 更新时间 */
-    private LocalDateTime updatedAt;
+    private LocalDateTime updatedAt = LocalDateTime.now();
     
     /**
      * 扣减余额（带乐观锁检查）

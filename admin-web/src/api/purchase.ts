@@ -1,6 +1,5 @@
 import request from '@/utils/request'
 import type {
-    PageResponse,
     PurchaseCancelRequest,
     PurchaseCreateRequest,
     PurchaseDetailVO,
@@ -9,6 +8,7 @@ import type {
     PurchasePageVO,
     PurchaseSubmitRequest
 } from '@/types/purchase'
+import type { PageResponse } from '@/types/store'
 
 /**
  * 采购管理 API
@@ -42,7 +42,7 @@ export function createPurchase(data: PurchaseCreateRequest): Promise<{ orderId: 
     url: '/api/admin/purchase/create',
     method: 'post',
     data
-  }).then((response: any) => response.data)
+  }).then((response: any) => response?.data || response)
 }
 
 // 提交采购单
@@ -77,12 +77,6 @@ export function getPurchaseDetail(orderId: number): Promise<PurchaseDetailVO> {
   return request({
     url: `/api/admin/purchase/${orderId}`,
     method: 'get'
-  }).then((response: any) => {
-    if (response && response.data) {
-      return response.data
-    }
-    return response
-  })
+  }).then((response: any) => response?.data || response)
 }
-
 

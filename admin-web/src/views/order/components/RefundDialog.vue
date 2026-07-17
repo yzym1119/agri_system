@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     v-model="dialogVisible"
-    title="退货退款"
+    :title="dialogTitle"
     width="700px"
     :close-on-click-modal="false"
     @close="handleClose"
@@ -9,7 +9,7 @@
     <div v-if="order" style="margin-bottom: 20px">
       <el-descriptions :column="2" border size="small">
         <el-descriptions-item label="订单号">{{ order.orderNo }}</el-descriptions-item>
-        <el-descriptions-item label="订单金额">¥{{ formatMoney(order.payAmount) }}</el-descriptions-item>
+        <el-descriptions-item label="应收净额">¥{{ formatMoney(orderPaymentSummary.netReceivable) }}</el-descriptions-item>
         <el-descriptions-item label="客户">{{ order.customerName || '散客' }}</el-descriptions-item>
         <el-descriptions-item label="下单时间">{{ formatDateTime(order.createdAt) }}</el-descriptions-item>
       </el-descriptions>
@@ -17,7 +17,7 @@
 
     <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
       <!-- 商品列表 -->
-      <el-form-item label="退货商品" required>
+      <el-form-item :label="itemSectionLabel" required>
         <el-table :data="form.items" border style="width: 100%">
           <el-table-column type="index" label="#" width="60" />
           <el-table-column prop="productName" label="商品名称" min-width="150" show-overflow-tooltip />
@@ -26,23 +26,28 @@
               {{ row.quantity }} {{ row.unit }}
             </template>
           </el-table-column>
+          <el-table-column label="剩余可退" width="120" align="right">
+            <template #default="{ row }">
+              {{ row.refundableQuantity }} {{ row.unit }}
+            </template>
+          </el-table-column>
           <el-table-column prop="unitPrice" label="单价" width="100" align="right">
             <template #default="{ row }">¥{{ formatMoney(row.unitPrice) }}</template>
           </el-table-column>
-          <el-table-column label="退货数量" width="150" align="center">
+          <el-table-column :label="quantityColumnLabel" width="150" align="center">
             <template #default="{ row, $index }">
               <el-input-number
                 v-model="form.items[$index].returnQuantity"
                 :min="0"
-                :max="row.quantity"
-                :precision="Number.isInteger(row.quantity) ? 0 : 4"
-                :step="Number.isInteger(row.quantity) ? 1 : 0.01"
+                :max="row.refundableQuantity"
+                :precision="Number.isInteger(row.refundableQuantity) ? 0 : 4"
+                :step="Number.isInteger(row.refundableQuantity) ? 1 : 0.01"
                 style="width: 100%"
                 @change="calculateRefundAmount"
               />
             </template>
           </el-table-column>
-          <el-table-column label="退货金额" width="120" align="right">
+          <el-table-column :label="amountColumnLabel" width="120" align="right">
             <template #default="{ row }">
               <span style="font-weight: 600">¥{{ formatMoney(row.refundAmount) }}</span>
             </template>
@@ -67,12 +72,12 @@
       </el-form-item>
 
       <!-- 退货原因 -->
-      <el-form-item label="退货原因" prop="reason">
+      <el-form-item :label="reasonLabel" prop="reason">
         <el-input
           v-model="form.reason"
           type="textarea"
           :rows="3"
-          placeholder="请输入退货原因"
+          :placeholder="reasonPlaceholder"
           maxlength="500"
           show-word-limit
         />
@@ -91,11 +96,13 @@ import {computed, reactive, ref, watch} from 'vue'
 import type {FormInstance, FormRules} from 'element-plus'
 import {ElMessage} from 'element-plus'
 import {createAfterSales} from '@/api/afterSales'
-import {getOrderDetail} from '@/api/order'
+import {getOrderDetail, refundOrder} from '@/api/order'
+import {getOrderPaymentSummary} from '@/utils/orderPayment'
+import type {OrderBase, OrderDetail} from '@/types/order'
 
 interface Props {
   modelValue: boolean
-  order: any | null
+  order: OrderBase | null
 }
 
 interface Emits {
@@ -109,14 +116,18 @@ const emit = defineEmits<Emits>()
 const dialogVisible = ref(false)
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
-const orderDetail = ref<any>(null)
+const orderDetail = ref<OrderDetail | null>(null)
 
 interface RefundItem {
   orderItemId: number
   productName: string
   quantity: number
+  refundedQuantity: number
+  refundableQuantity: number
   unit: string
   unitPrice: number
+  refundedAmount: number
+  refundableAmount: number
   returnQuantity: number
   refundAmount: number
 }
@@ -131,8 +142,18 @@ const form = reactive<{
   reason: ''
 })
 
+const directRefundStatuses = [2, 3, 4]
+const useDirectRefund = computed(() => directRefundStatuses.includes(Number(props.order?.orderStatus || 0)))
+const dialogTitle = computed(() => useDirectRefund.value ? '订单退款' : '退货退款')
+const itemSectionLabel = computed(() => useDirectRefund.value ? '退款商品' : '退货商品')
+const quantityColumnLabel = computed(() => useDirectRefund.value ? '退款数量' : '退货数量')
+const amountColumnLabel = computed(() => useDirectRefund.value ? '退款金额' : '退货金额')
+const reasonLabel = computed(() => useDirectRefund.value ? '退款原因' : '退货原因')
+const reasonPlaceholder = computed(() => useDirectRefund.value ? '请输入退款原因' : '请输入退货原因')
+const orderPaymentSummary = computed(() => getOrderPaymentSummary(props.order))
+
 const maxRefundAmount = computed(() => {
-  return props.order ? Number(props.order.payAmount || 0) : 0
+  return form.items.reduce((sum, item) => sum + Number(item.refundableAmount || 0), 0)
 })
 
 const rules = reactive<FormRules>({
@@ -151,7 +172,18 @@ const rules = reactive<FormRules>({
       trigger: 'blur'
     }
   ],
-  reason: [{ required: true, message: '请输入退货原因', trigger: 'blur' }]
+  reason: [
+    {
+      validator: (rule, value, callback) => {
+        if (!value || !String(value).trim()) {
+          callback(new Error(reasonPlaceholder.value))
+        } else {
+          callback()
+        }
+      },
+      trigger: 'blur'
+    }
+  ]
 })
 
 watch(
@@ -177,22 +209,28 @@ const loadOrderDetail = async () => {
     orderDetail.value = await getOrderDetail(props.order.id)
     if (orderDetail.value && orderDetail.value.items) {
       // 使用 reactive 确保响应式
-      form.items = orderDetail.value.items.map((item: any) => {
-        const quantity = Number(item.quantity)
-        return {
-          orderItemId: item.id,
-          productName: item.productName,
-          quantity: quantity,
-          unit: item.unit || '',
-          unitPrice: Number(item.unitPrice) || 0,
-          returnQuantity: 0,
-          refundAmount: 0
-        }
-      })
+      form.items = orderDetail.value.items
+        .map((item: any) => {
+          const quantity = Number(item.quantity)
+          return {
+            orderItemId: item.id,
+            productName: item.productName,
+            quantity: quantity,
+            refundedQuantity: Number(item.refundedQuantity) || 0,
+            refundableQuantity: Number(item.refundableQuantity ?? item.quantity) || 0,
+            unit: item.unit || '',
+            unitPrice: Number(item.unitPrice) || 0,
+            refundedAmount: Number(item.refundedAmount) || 0,
+            refundableAmount: Number(item.refundableAmount ?? item.totalPrice) || 0,
+            returnQuantity: 0,
+            refundAmount: 0
+          }
+        })
+        .filter((item: RefundItem) => item.refundableQuantity > 0 && item.refundableAmount > 0)
     }
   } catch (error) {
     console.error('加载订单详情失败:', error)
-    ElMessage.error('加载订单详情失败')
+    ElMessage.error((error as any)?.message || '加载订单详情失败')
   }
 }
 
@@ -217,9 +255,10 @@ const calculateRefundAmount = () => {
   // 计算每个商品的退货金额
   form.items.forEach((item) => {
     if (item.returnQuantity > 0) {
-      // 按比例计算：退货金额 = (退货数量 / 购买数量) * 单价 * 购买数量
-      const ratio = item.returnQuantity / item.quantity
       item.refundAmount = item.unitPrice * item.returnQuantity
+      if (item.refundAmount > item.refundableAmount) {
+        item.refundAmount = item.refundableAmount
+      }
     } else {
       item.refundAmount = 0
     }
@@ -246,10 +285,10 @@ const handleSubmit = async () => {
       return
     }
 
-    // 检查是否有退货商品
+    // 检查是否有退款/退货商品
     const validItems = form.items.filter((item) => item.returnQuantity > 0)
     if (validItems.length === 0) {
-      ElMessage.warning('请至少选择一个商品进行退货')
+      ElMessage.warning(`请至少选择一个商品进行${useDirectRefund.value ? '退款' : '退货'}`)
       return
     }
 
@@ -258,7 +297,7 @@ const handleSubmit = async () => {
       const data = {
         orderId: props.order.id,
         refundAmount: form.refundAmount,
-        reason: form.reason,
+        refundReason: form.reason,
         items: validItems.map((item) => ({
           orderItemId: item.orderItemId,
           quantity: item.returnQuantity,
@@ -266,13 +305,23 @@ const handleSubmit = async () => {
         }))
       }
 
-      await createAfterSales(data)
-      ElMessage.success('退货退款成功')
+      if (useDirectRefund.value) {
+        await refundOrder(props.order.id, data)
+        ElMessage.success('订单退款成功')
+      } else {
+        await createAfterSales({
+          orderId: data.orderId,
+          refundAmount: data.refundAmount,
+          reason: form.reason,
+          items: data.items
+        })
+        ElMessage.success('退货退款成功')
+      }
       emit('success')
       handleClose()
     } catch (error) {
-      console.error('退货退款失败:', error)
-      ElMessage.error('退货退款失败')
+      console.error(`${useDirectRefund.value ? '订单退款' : '退货退款'}失败:`, error)
+      ElMessage.error((error as any)?.message || `${useDirectRefund.value ? '订单退款' : '退货退款'}失败`)
     } finally {
       submitting.value = false
     }
@@ -282,4 +331,3 @@ const handleSubmit = async () => {
 
 <style scoped lang="scss">
 </style>
-

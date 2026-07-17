@@ -42,7 +42,7 @@
 
       <!-- 操作栏 -->
       <div class="toolbar">
-        <el-button type="primary" :icon="Plus" @click="handleAdd">新增门店</el-button>
+        <el-button v-permission="'store:create'" type="primary" :icon="Plus" @click="handleAdd">新增门店</el-button>
       </div>
 
       <!-- 表格 -->
@@ -74,8 +74,8 @@
         </el-table-column>
         <el-table-column label="操作" width="200" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
-            <el-button type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'store:update'" type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
+            <el-button v-permission="'store:delete'" type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -162,7 +162,8 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
+        <el-button v-if="isEdit" v-permission="'store:update'" type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
+        <el-button v-else v-permission="'store:create'" type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -230,10 +231,12 @@ const loadStoreList = async () => {
   loading.value = true
   try {
     const response = await getStoreList(queryParams)
-    storeList.value = response.records
-    total.value = response.total
+    storeList.value = response.records || []
+    total.value = response.total || 0
   } catch (error) {
     console.error('加载门店列表失败:', error)
+    storeList.value = []
+    total.value = 0
     ElMessage.error('加载门店列表失败')
   } finally {
     loading.value = false
@@ -245,7 +248,7 @@ const loadStaffList = async () => {
   try {
     const { getStaffList } = await import('@/api/staff')
     const response = await getStaffList({ pageNum: 1, pageSize: 1000 })
-    staffList.value = response.records.map(staff => ({
+    staffList.value = (response.records || []).map(staff => ({
       id: staff.id,
       name: staff.name,
       code: staff.code
@@ -322,7 +325,7 @@ const handleDelete = async (row: StoreDetailVO) => {
   } catch (error: any) {
     if (error !== 'cancel') {
       console.error('删除失败:', error)
-      ElMessage.error('删除失败')
+      ElMessage.error(error?.message || '删除失败')
     }
   }
 }
@@ -441,4 +444,3 @@ onMounted(() => {
   margin-top: 4px;
 }
 </style>
-

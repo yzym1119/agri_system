@@ -29,8 +29,11 @@ public class CustomerCoupon {
     
     /** 券名称 */
     private String name;
-    
-    /** 面额（元） */
+
+    /** 类型：1-满减券，2-折扣券 */
+    private Integer type;
+
+    /** 面额/折扣率 */
     private BigDecimal amount;
     
     /** 使用门槛金额（元） */
@@ -109,38 +112,64 @@ public class CustomerCoupon {
     }
     
     /**
-     * 获取可用金额（即面额，优惠券为一次性核销）
-     * 
-     * @return 可用金额（面额）
+     * 获取可用抵扣金额
+     * - 满减券(type=1): 直接返回面额
+     * - 折扣券(type=2): amount 表示"X折"，抵扣金额 = orderAmount × (1 - amount/10)
+     *   例如 amount=8.5 表示 8.5折，抵扣 = orderAmount × 15%
+     *
+     * @param orderAmount 订单金额（仅折扣券需要）
+     * @return 可抵扣金额
      */
-    public BigDecimal getAvailableAmount() {
+    public BigDecimal getAvailableAmount(BigDecimal orderAmount) {
         if (amount == null) {
             return BigDecimal.ZERO;
         }
+        if (type != null && type == 2 && orderAmount != null) {
+            // 折扣券：抵扣金额 = 订单金额 × (1 - 折扣/10)
+            // 例如 8.5折 → 抵扣 = orderAmount × (1 - 0.85) = orderAmount × 0.15
+            BigDecimal discountRate = amount.divide(BigDecimal.TEN, 4, java.math.RoundingMode.HALF_UP);
+            BigDecimal saveRate = BigDecimal.ONE.subtract(discountRate);
+            return orderAmount.multiply(saveRate).setScale(2, java.math.RoundingMode.HALF_UP);
+        }
         return amount;
+    }
+
+    /**
+     * 获取可用金额（无参版本，仅适用于满减券）
+     *
+     * @return 面额
+     */
+    public BigDecimal getAvailableAmount() {
+        return getAvailableAmount(null);
     }
     
     /**
      * 使用优惠券（一次性核销，不设找零）
-     * 
+     *
      * @param orderId 订单ID
      * @param pendingAmount 订单剩余待付金额
-     * @return 实际抵扣金额（取订单待付金额和券面额的较小值）
+     * @return 实际抵扣金额
      */
     public BigDecimal use(Long orderId, BigDecimal pendingAmount) {
         // 校验状态：必须是未使用
         if (status == null || status != 1) {
             throw new IllegalArgumentException("优惠券状态不正确，无法使用");
         }
-        
-        // 计算实际抵扣额：取订单待付金额和券面额的较小值
-        BigDecimal actualDeduct = pendingAmount.min(amount);
-        
+
+        // 校验金额合法性
+        if (pendingAmount == null || pendingAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("订单待付金额必须大于0");
+        }
+
+        // 计算实际抵扣额
+        BigDecimal faceValue = getAvailableAmount(pendingAmount);
+        BigDecimal actualDeduct = pendingAmount.min(faceValue);
+
         // 强制标记为已使用（一次性核销，不找零）
         status = 2; // 已使用
         usedOrderId = orderId;
         usedTime = LocalDateTime.now();
-        
+
         return actualDeduct;
     }
 }

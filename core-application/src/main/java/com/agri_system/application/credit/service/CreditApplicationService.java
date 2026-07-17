@@ -127,6 +127,17 @@ public class CreditApplicationService {
     private CreditAccountVO toAccountVO(CreditAccount account) {
         CreditAccountVO vo = new CreditAccountVO();
         vo.setId(account.getId());
+        vo.setCustomerId(account.getCustomerId());
+        if (account.getCustomerId() != null) {
+            try {
+                customerRepository.findByIdIncludingDeleted(account.getCustomerId()).ifPresent((Customer customer) -> {
+                    vo.setCustomerName(customer.getName());
+                    vo.setCustomerPhone(customer.getPhone());
+                });
+            } catch (Exception ex) {
+                // 忽略关联查询异常，避免影响主要流程
+            }
+        }
         vo.setOrderId(account.getOrderId());
         // 尝试关联查询订单号，若找不到则不设置
         if (account.getOrderId() != null) {
@@ -169,8 +180,6 @@ public class CreditApplicationService {
         creditDomainService.addDebt(customerId, orderId, amount);
     }
 }
-
-
 
 
 

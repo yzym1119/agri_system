@@ -79,8 +79,15 @@ INSERT INTO `sys_menu` (`id`, `parent_id`, `name`, `permission`, `type`, `path`,
 (143, 104, '查看价格', 'product:price:query', 2, NULL, NULL, 40, 1);
 
 -- 3. 为 SUPER_ADMIN 角色分配所有权限
+INSERT INTO `sys_role` (`name`, `code`, `status`, `remark`) VALUES
+('超级管理员', 'SUPER_ADMIN', 1, '系统内置超级管理员')
+ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `status` = VALUES(`status`);
+
 INSERT INTO `sys_role_menu` (`role_id`, `menu_id`)
-SELECT 1, id FROM `sys_menu` WHERE id > 0
+SELECT r.id, m.id
+FROM `sys_role` r
+JOIN `sys_menu` m ON m.id > 0
+WHERE r.code = 'SUPER_ADMIN'
 ON DUPLICATE KEY UPDATE role_id = role_id;
 
 -- 4. 创建编码序号表（用于生成唯一编码）
@@ -102,7 +109,6 @@ INSERT INTO `sys_code_sequence` (`code_type`, `last_code`, `sequence`) VALUES
 ('SUPPLIER', 'SUPP000000', 0),
 ('ROLE', 'ROLE0000', 0)
 ON DUPLICATE KEY UPDATE code_type = code_type;
-
 
 
 

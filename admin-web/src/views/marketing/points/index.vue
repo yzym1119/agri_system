@@ -3,10 +3,10 @@
     <el-card shadow="never">
       <el-tabs v-model="activeTab">
         <!-- Tab 1: 礼品管理 -->
-        <el-tab-pane label="礼品管理" name="goods">
+        <el-tab-pane v-if="canViewGoodsTab" label="礼品管理" name="goods">
           <div class="tab-content">
             <div class="toolbar">
-              <el-button type="primary" :icon="Plus" @click="handleAddGoods">新增礼品</el-button>
+              <el-button v-permission="'marketing:points:goods:create'" type="primary" :icon="Plus" @click="handleAddGoods">新增礼品</el-button>
             </div>
 
             <el-table :data="goodsList" v-loading="goodsLoading" border>
@@ -39,20 +39,22 @@
               </el-table-column>
               <el-table-column label="操作" width="200" fixed="right">
                 <template #default="{ row }">
-                  <el-button link type="primary" @click="handleEditGoods(row)">编辑</el-button>
+                  <el-button v-permission="'marketing:points:goods:update'" link type="primary" @click="handleEditGoods(row)">编辑</el-button>
                   <el-button
                     v-if="row.status === 1"
+                    v-permission="'marketing:points:goods:update'"
                     link
                     type="warning"
                     @click="handleOfflineGoods(row)"
                   >下架</el-button>
                   <el-button
                     v-else
+                    v-permission="'marketing:points:goods:update'"
                     link
                     type="success"
                     @click="handleOnlineGoods(row)"
                   >上架</el-button>
-                  <el-button link type="danger" @click="handleDeleteGoods(row)">删除</el-button>
+                  <el-button v-permission="'marketing:points:goods:delete'" link type="danger" @click="handleDeleteGoods(row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -60,7 +62,7 @@
         </el-tab-pane>
 
         <!-- Tab 2: 兑换订单 -->
-        <el-tab-pane label="兑换订单" name="orders">
+        <el-tab-pane v-if="canViewOrderTab" label="兑换订单" name="orders">
           <div class="tab-content">
             <!-- 搜索栏 -->
             <div class="search-bar">
@@ -116,14 +118,14 @@
               <el-table-column label="操作" width="250" fixed="right">
                 <template #default="{ row }">
                   <template v-if="row.status === 10">
-                    <el-button link type="success" @click="handleAudit(row, true)">通过</el-button>
-                    <el-button link type="danger" @click="handleAudit(row, false)">拒绝</el-button>
+                    <el-button v-permission="'marketing:points:order:audit'" link type="success" @click="handleAudit(row, true)">通过</el-button>
+                    <el-button v-permission="'marketing:points:order:audit'" link type="danger" @click="handleAudit(row, false)">拒绝</el-button>
                   </template>
                   <template v-else-if="row.status === 20">
-                    <el-button link type="primary" @click="handleNotify(row)">通知取货</el-button>
+                    <el-button v-permission="'marketing:points:order:audit'" link type="primary" @click="handleNotify(row)">通知取货</el-button>
                   </template>
                   <template v-else-if="row.status === 40">
-                    <el-button link type="success" @click="handleVerify(row)">核销</el-button>
+                    <el-button v-permission="'marketing:points:order:verify'" link type="success" @click="handleVerify(row)">核销</el-button>
                   </template>
                 </template>
               </el-table-column>
@@ -210,7 +212,7 @@
       </el-form>
       <template #footer>
         <el-button @click="goodsDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="goodsSubmitLoading" @click="handleGoodsSubmit">确定</el-button>
+        <el-button v-permission="goodsIsEdit ? 'marketing:points:goods:update' : 'marketing:points:goods:create'" type="primary" :loading="goodsSubmitLoading" @click="handleGoodsSubmit">确定</el-button>
       </template>
     </el-dialog>
 
@@ -236,7 +238,7 @@
       </el-form>
       <template #footer>
         <el-button @click="auditDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="auditLoading" @click="handleAuditSubmit">确定</el-button>
+        <el-button v-permission="'marketing:points:order:audit'" type="primary" :loading="auditLoading" @click="handleAuditSubmit">确定</el-button>
       </template>
     </el-dialog>
 
@@ -260,7 +262,7 @@
       </el-form>
       <template #footer>
         <el-button @click="notifyDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="notifyLoading" @click="handleNotifySubmit">确定</el-button>
+        <el-button v-permission="'marketing:points:order:audit'" type="primary" :loading="notifyLoading" @click="handleNotifySubmit">确定</el-button>
       </template>
     </el-dialog>
 
@@ -283,7 +285,7 @@
       </el-form>
       <template #footer>
         <el-button @click="verifyDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="verifyLoading" @click="handleVerifySubmit">确定</el-button>
+        <el-button v-permission="'marketing:points:order:verify'" type="primary" :loading="verifyLoading" @click="handleVerifySubmit">确定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -320,6 +322,9 @@ import {useUserStore} from '@/store/user'
 
 const activeTab = ref('goods')
 const userStore = useUserStore()
+const ownedPermissions = computed(() => userStore.userInfo?.permissions || [])
+const canViewGoodsTab = computed(() => ownedPermissions.value.includes('marketing:points:goods:query'))
+const canViewOrderTab = computed(() => ownedPermissions.value.includes('marketing:points:order:query'))
 
 // 礼品管理
 const goodsLoading = ref(false)
@@ -358,7 +363,7 @@ const goodsFormRules: FormRules = {
 
 // 图片上传
 const uploadAction = computed(() => {
-  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'
+  const baseURL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080'
   return `${baseURL}/api/admin/products/image/upload`
 })
 
@@ -519,50 +524,37 @@ const handleOfflineGoods = async (row: PointsGoodsVO) => {
 }
 
 // 图片上传
-const handleImageSuccess = (response: any) => {
-  console.log('图片上传响应:', response)
-  let imageUrl = ''
-  
-  // el-upload 使用原生 XMLHttpRequest，不会经过 Axios 拦截器
-  // 后端返回格式: { code: "200", message: "上传成功", data: { url: "..." } }
-  
-  // 1. 如果响应是字符串（JSON字符串），先解析
-  if (typeof response === 'string') {
+const resolveUploadedImageUrl = (response: any) => {
+  let parsed = response
+
+  if (typeof parsed === 'string') {
     try {
-      response = JSON.parse(response)
-    } catch (e) {
-      console.error('解析响应失败:', e)
-    }
-  }
-  
-  // 2. 处理不同的响应格式
-  if (response) {
-    // 格式1: { url: "..." } (已经被处理过)
-    if (response.url) {
-      imageUrl = response.url
-    }
-    // 格式2: { code: "200", data: { url: "..." } }
-    else if (response.data) {
-      if (typeof response.data === 'string') {
-        imageUrl = response.data
-      } else if (response.data.url) {
-        imageUrl = response.data.url
-      } else if (response.data.data && response.data.data.url) {
-        imageUrl = response.data.data.url
+      parsed = JSON.parse(parsed)
+    } catch {
+      if (parsed.startsWith('http')) {
+        return parsed
       }
-    }
-    // 格式3: 直接是 URL 字符串
-    else if (typeof response === 'string' && response.startsWith('http')) {
-      imageUrl = response
+      return ''
     }
   }
-  
+
+  if (!parsed) return ''
+  if (typeof parsed.url === 'string') return parsed.url
+  if (typeof parsed.data === 'string') return parsed.data
+  if (typeof parsed.data?.url === 'string') return parsed.data.url
+  if (typeof parsed.data?.data?.url === 'string') return parsed.data.data.url
+  return ''
+}
+
+const handleImageSuccess = (response: any) => {
+  const imageUrl = resolveUploadedImageUrl(response)
+
   if (imageUrl) {
     goodsFormData.imageUrl = imageUrl
     ElMessage.success('图片上传成功')
   } else {
-    console.error('无法解析图片URL，完整响应:', JSON.stringify(response, null, 2))
-    ElMessage.error('图片上传失败：无法获取图片地址，请查看控制台日志')
+    console.error('无法解析图片URL:', response)
+    ElMessage.error('图片上传失败：无法获取图片地址')
   }
 }
 
@@ -769,8 +761,16 @@ const getStatusTagType = (status?: number) => {
 
 // 初始化
 onMounted(() => {
-  loadGoodsList()
-  loadOrderList()
+  if (canViewGoodsTab.value) {
+    activeTab.value = 'goods'
+    loadGoodsList()
+  }
+  if (!canViewGoodsTab.value && canViewOrderTab.value) {
+    activeTab.value = 'orders'
+  }
+  if (canViewOrderTab.value) {
+    loadOrderList()
+  }
 })
 </script>
 
@@ -821,4 +821,3 @@ onMounted(() => {
   }
 }
 </style>
-

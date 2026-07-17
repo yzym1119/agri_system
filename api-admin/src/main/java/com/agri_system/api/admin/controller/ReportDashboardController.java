@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -22,8 +23,9 @@ public class ReportDashboardController {
     @GetMapping("/today")
     @SaCheckPermission("report:dashboard")
     @Operation(summary = "今日经营驾驶舱")
-    public ResponseEntity<DashboardVO> today() {
-        return ResponseEntity.ok(reportAnalysisService.dashboardToday());
+    public ResponseEntity<DashboardVO> today(
+            @RequestParam(required = false) Long storeId) {
+        return ResponseEntity.ok(reportAnalysisService.dashboardToday(storeId));
     }
 }
 

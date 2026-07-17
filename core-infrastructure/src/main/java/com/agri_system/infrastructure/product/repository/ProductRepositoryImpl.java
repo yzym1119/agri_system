@@ -59,6 +59,14 @@ public class ProductRepositoryImpl implements ProductRepository {
                 product.getBaseShippingFee(),
                 product.getAllowSpecialFund(),
                 product.getRemark(),
+                product.getBarcode(),
+                product.getRegistrationNo(),
+                product.getStorageConditions(),
+                product.getShelfLifeDays(),
+                product.getUsageMethod(),
+                product.getMinStock(),
+                product.getMaxStock(),
+                product.getReorderQuantity(),
                 product.getUpdatedAt(),
                 product.getUpdatedBy()
         );
@@ -151,6 +159,24 @@ public class ProductRepositoryImpl implements ProductRepository {
     @Override
     public void delete(Long id) {
         productMapper.deleteById(id);
+    }
+
+    @Override
+    public java.util.List<Product> findAllWithMinStock() {
+        QueryWrapper query = QueryWrapper.create()
+                .where("min_stock IS NOT NULL")
+                .and("min_stock > 0")
+                .and("(deleted IS NULL OR deleted = 0)");
+        return productMapper.selectListByQuery(query);
+    }
+
+    @Override
+    public java.util.List<Product> findAllWithMaxStock() {
+        QueryWrapper query = QueryWrapper.create()
+                .where("max_stock IS NOT NULL")
+                .and("max_stock > 0")
+                .and("(deleted IS NULL OR deleted = 0)");
+        return productMapper.selectListByQuery(query);
     }
 }
 

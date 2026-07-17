@@ -44,17 +44,27 @@ public class CommissionRuleRepositoryImpl implements CommissionRuleRepository {
     @Override
     public Optional<CommissionRule> findBestSalesRule(Long productId, Long packageId, Long staffId) {
         QueryWrapper query = QueryWrapper.create()
-                .where("rule_category = ?", CommissionRule.Category.SALES.getCode())
-                .and("enabled = 1")
-                .and("(target_id IS NULL OR target_id = ? OR target_id = ?)",
-                        productId, packageId == null ? -1 : packageId);
+                .where("enabled = 1");
+        if (packageId != null) {
+            query.and("(rule_category = ? OR rule_category = ?)",
+                    CommissionRule.Category.SALES.getCode(),
+                    CommissionRule.Category.PACKAGE.getCode());
+            query.and("(target_id IS NULL OR target_id = ? OR target_id = ?)",
+                    productId, packageId);
+        } else {
+            query.and("rule_category = ?", CommissionRule.Category.SALES.getCode());
+            query.and("(target_id IS NULL OR target_id = ?)", productId);
+        }
         if (staffId != null) {
             query.and("(staff_id IS NULL OR staff_id = ?)", staffId);
         }
         List<CommissionRule> rules = mapper.selectListByQuery(query);
         return rules.stream()
                 .sorted(Comparator
-                        .comparing((CommissionRule r) -> r.getStaffId() != null ? 1 : 0).reversed()
+                        .comparing((CommissionRule r) ->
+                                packageId != null && Integer.valueOf(CommissionRule.Category.PACKAGE.getCode()).equals(r.getRuleCategory()) ? 1 : 0
+                        ).reversed()
+                        .thenComparing((CommissionRule r) -> r.getStaffId() != null ? 1 : 0, Comparator.reverseOrder())
                         .thenComparing(r -> r.getTargetId() != null ? 1 : 0, Comparator.reverseOrder())
                         .thenComparing(CommissionRule::getPriority, Comparator.nullsLast(Comparator.reverseOrder()))
                         .thenComparing(CommissionRule::getId))
@@ -86,5 +96,22 @@ public class CommissionRuleRepositoryImpl implements CommissionRuleRepository {
         }
         return mapper.selectListByQuery(query);
     }
-}
 
+    @Override
+    public long countEnabledByCategoryAndTargetId(Integer category, Long targetId) {
+        QueryWrapper query = QueryWrapper.create()
+                .where("rule_category = ?", category)
+                .and("target_id = ?", targetId)
+                .and("enabled = 1");
+        return mapper.selectCountByQuery(query);
+    }
+
+    @Override
+    public void disableById(Long id) {
+        CommissionRule rule = mapper.selectOneById(id);
+        if (rule != null) {
+            rule.setEnabled(0);
+            mapper.update(rule);
+        }
+    }
+}

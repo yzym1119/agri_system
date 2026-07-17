@@ -1,5 +1,5 @@
 import type {ProductDetailVO} from './product'
-import type {ProductPackageDetailVO} from './package'
+import type {ProductPackageDetailVO, ProductPackageItemVO} from './package'
 
 /**
  * POS 订单创建请求
@@ -9,6 +9,7 @@ export interface POSOrderCreateRequest {
   customerId?: number
   items: POSOrderItemDTO[]
   paymentType: number // 1-现金, 2-微信, 3-支付宝, 4-本金余额, 6-赊销, 10-混合支付
+  payments?: POSPaymentDetail[]
   receiveAmount?: number // 实收金额（现金支付时必填）
   walletAuthCode?: string // 钱包验证码（余额支付时必填）
   useSpecialFund?: boolean // 是否使用专用金（余额支付时可选）
@@ -28,6 +29,12 @@ export interface POSOrderItemDTO {
   quantity: number
   unit?: string
   unitPrice?: number // 单价（可选，如果不提供则从价格体系查询）
+}
+
+export interface POSPaymentDetail {
+  paymentType: number
+  amount: number
+  authCode?: string
 }
 
 /**
@@ -91,4 +98,3 @@ export interface GoodsCard {
   product?: ProductDetailVO
   package?: ProductPackageDetailVO
 }
-

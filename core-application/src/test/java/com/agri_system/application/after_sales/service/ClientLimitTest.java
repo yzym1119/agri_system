@@ -17,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.Optional;
 
@@ -46,6 +47,8 @@ class ClientLimitTest {
     private InventoryApplicationService inventoryApplicationService;
     @Mock
     private OrderPaymentService orderPaymentService;
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     @Test
     void shouldRejectClientApplyWhenOrderAlreadyShipped() {
@@ -65,4 +68,3 @@ class ClientLimitTest {
                 "已发货订单不允许拦截售后");
     }
 }
-

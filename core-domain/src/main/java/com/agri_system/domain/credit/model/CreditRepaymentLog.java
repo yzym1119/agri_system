@@ -2,6 +2,7 @@ package com.agri_system.domain.credit.model;
 
 import com.mybatisflex.annotation.Id;
 import com.mybatisflex.annotation.KeyType;
+import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.Table;
 import lombok.Data;
 
@@ -17,6 +18,7 @@ public class CreditRepaymentLog {
 
     private String repaymentNo;
     private Long customerId;
+    @Column(tenantId = true)
     private Long storeId;
     private BigDecimal amount;
     private Integer paymentMethod;

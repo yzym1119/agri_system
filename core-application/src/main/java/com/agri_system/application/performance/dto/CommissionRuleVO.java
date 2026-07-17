@@ -19,6 +19,9 @@ public class CommissionRuleVO {
     @Schema(description = "目标ID")
     private Long targetId;
 
+    @Schema(description = "目标名称")
+    private String targetName;
+
     @Schema(description = "员工ID")
     private Long staffId;
 
@@ -46,4 +49,3 @@ public class CommissionRuleVO {
     @Schema(description = "创建时间")
     private LocalDateTime createdAt;
 }
-

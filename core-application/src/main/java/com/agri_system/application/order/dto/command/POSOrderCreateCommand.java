@@ -32,7 +32,7 @@ public class POSOrderCreateCommand {
     private List<OrderItemDTO> items;
     
     @NotNull(message = "支付方式不能为空")
-    @Schema(description = "支付方式：1-现金, 2-微信, 3-支付宝, 4-余额, 6-赊销", example = "2")
+    @Schema(description = "主支付方式：1-现金, 2-微信, 3-支付宝, 4-余额, 6-赊销, 10-混合支付", example = "2")
     private Integer paymentType;
     
     @Schema(description = "整单优惠金额（手工优惠，可选）", example = "10.00")
@@ -50,7 +50,7 @@ public class POSOrderCreateCommand {
     @Schema(description = "使用的优惠券ID（可选）", example = "1")
     private Long couponId;
     
-    @Schema(description = "支付明细（混合支付时使用，兼容 legacy paymentType/receiveAmount）")
+    @Schema(description = "支付明细（混合支付时使用，兼容 legacy paymentType/receiveAmount；余额会由后端自动拆分为本金余额/专用金流水）")
     private List<PaymentDetailDTO> payments;
     
     @NotNull(message = "销售员工ID不能为空")
@@ -60,7 +60,6 @@ public class POSOrderCreateCommand {
     @Schema(description = "备注", example = "POS订单")
     private String remark;
 }
-
 
 
 

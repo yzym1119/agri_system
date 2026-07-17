@@ -27,6 +27,14 @@ export interface LoginResponse {
   userInfo: UserInfo
 }
 
+export interface UserExtra {
+  code?: string
+  phone?: string
+  storeId?: number
+  roleCodes?: string[]
+  [key: string]: any
+}
+
 /**
  * 用户信息
  */
@@ -34,7 +42,8 @@ export interface UserInfo {
   id: number
   name: string
   role?: string
-  extra?: any
+  permissions?: string[]
+  extra?: UserExtra
 }
 
 /**
@@ -54,4 +63,3 @@ export interface PageResponse<T = any> {
   pageNum: number
   pageSize: number
 }
-

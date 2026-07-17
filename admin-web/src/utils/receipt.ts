@@ -1,4 +1,5 @@
 import { formatStock } from './number'
+import { getOrderDisplayPaymentMethod, getOrderPaymentSummary, getPaymentTypeText } from './orderPayment'
 
 export type ReceiptOptions = {
   // 'receipt_80' - 80mm 热敏小票, 'invoice_std' - 标准销售单据/三联单
@@ -19,6 +20,7 @@ function escapeHtml(s: any) {
 // - invoice_std: full-width printable invoice with borders and signature area
 export function buildReceiptHtml(orderDetail: any, options: ReceiptOptions = {}) {
   const od = orderDetail || {}
+  const paymentSummary = getOrderPaymentSummary(od)
   const mode = options.paperWidth || 'receipt_80'
   const orientation = options.orientation || 'portrait'
   const store = escapeHtml(od.storeName || options.title || '门店')
@@ -41,13 +43,12 @@ export function buildReceiptHtml(orderDetail: any, options: ReceiptOptions = {})
     }).join('')
 
     const totalQty = (od.items || []).reduce((s: number, it: any) => s + (Number(it.quantity || 0) || 0), 0)
-    const totalAmount = Number(od.totalAmount || 0).toFixed(2)
-    const discountNum = Number(od.discountAmount || 0)
-    const couponNum = Number(od.couponAmount || 0)
-    const pay = Number(od.payAmount || 0).toFixed(2)
-    const owe = (Number(od.totalAmount || 0) - discountNum - couponNum - Number(od.payAmount || 0))
-    const oweNum = owe
-    const oweStr = (oweNum > 0.001) ? `¥${oweNum.toFixed(2)}` : null
+    const totalAmount = paymentSummary.totalAmount.toFixed(2)
+    const discountNum = paymentSummary.discountAmount
+    const couponNum = paymentSummary.couponAmount
+    const netReceivable = paymentSummary.netReceivable.toFixed(2)
+    const receivedAmount = paymentSummary.receivedAmount.toFixed(2)
+    const creditAmount = paymentSummary.creditAmount > 0.001 ? paymentSummary.creditAmount.toFixed(2) : null
 
     const html = `
       <div style="font-family: Arial, Helvetica, sans-serif; color:#000; width:100%; padding:12px;">
@@ -93,8 +94,9 @@ export function buildReceiptHtml(orderDetail: any, options: ReceiptOptions = {})
             <div>总金额：¥${totalAmount}</div>
             ${discountNum > 0 ? `<div>优惠：-¥${discountNum.toFixed(2)}</div>` : ''}
             ${couponNum > 0 ? `<div>优惠券：-¥${couponNum.toFixed(2)}</div>` : ''}
-            <div style="font-weight:800">实收：¥${pay}</div>
-            ${oweStr ? `<div style="font-weight:900; color:#c00">本单欠款：${oweStr}</div>` : ''}
+            <div>应收净额：¥${netReceivable}</div>
+            <div style="font-weight:800">已收：¥${receivedAmount}</div>
+            ${creditAmount ? `<div style="font-weight:900; color:#c00">赊销：¥${creditAmount}</div>` : ''}
           </div>
         </div>
 
@@ -141,17 +143,26 @@ export function buildReceiptHtml(orderDetail: any, options: ReceiptOptions = {})
   }
   lines.push('</div>')
   lines.push('<hr style="border:none; border-top:1px dashed #444; margin:6px 0;">')
-  lines.push(`<div style="font-size:13px;">应付：¥${Number(od.totalAmount || 0).toFixed(2)}</div>`)
-  if (Number(od.discountAmount || 0) > 0) lines.push(`<div style="font-size:12px;color:#f56c6c">优惠：-¥${Number(od.discountAmount).toFixed(2)}</div>`)
-  if (Number(od.couponAmount || 0) > 0) lines.push(`<div style="font-size:12px;color:#f56c6c">优惠券：-¥${Number(od.couponAmount).toFixed(2)}</div>`)
-  lines.push(`<div style="font-size:15px;font-weight:700;margin-top:6px;">实付：¥${Number(od.payAmount || 0).toFixed(2)}</div>`)
+  lines.push(`<div style="font-size:13px;">订单总额：¥${paymentSummary.totalAmount.toFixed(2)}</div>`)
+  if (paymentSummary.discountAmount > 0) lines.push(`<div style="font-size:12px;color:#f56c6c">优惠：-¥${paymentSummary.discountAmount.toFixed(2)}</div>`)
+  if (paymentSummary.couponAmount > 0) lines.push(`<div style="font-size:12px;color:#f56c6c">优惠券：-¥${paymentSummary.couponAmount.toFixed(2)}</div>`)
+  lines.push(`<div style="font-size:13px;">应收净额：¥${paymentSummary.netReceivable.toFixed(2)}</div>`)
+  lines.push(`<div style="font-size:15px;font-weight:700;margin-top:6px;">已收：¥${paymentSummary.receivedAmount.toFixed(2)}</div>`)
+  if (paymentSummary.creditAmount > 0.001) {
+    lines.push(`<div style="font-size:13px;font-weight:700;color:#c00">赊销：¥${paymentSummary.creditAmount.toFixed(2)}</div>`)
+  }
   lines.push('<hr style="border:none; border-top:1px dashed #444; margin:6px 0;">')
   if (od.payments && od.payments.length) {
     od.payments.forEach((p: any) => {
-      const ptype = escapeHtml(getPaymentTypeText(p.paymentType || p.paymentType))
+      const ptype = escapeHtml(String(p.paymentTypeName || getPaymentTypeText(p.paymentType || p.paymentType)))
       const amount = Number(p.amount || 0).toFixed(2)
       lines.push(`<div style="display:flex; justify-content:space-between; font-size:12px;"><div>${ptype}</div><div>¥${amount}</div></div>`)
     })
+  } else {
+    lines.push(`<div style="display:flex; justify-content:space-between; font-size:12px;"><div>${escapeHtml(getOrderDisplayPaymentMethod(od))}</div><div>¥${paymentSummary.receivedAmount.toFixed(2)}</div></div>`)
+    if (paymentSummary.creditAmount > 0.001) {
+      lines.push(`<div style="display:flex; justify-content:space-between; font-size:12px;"><div>赊销</div><div>¥${paymentSummary.creditAmount.toFixed(2)}</div></div>`)
+    }
   }
   if (od.remark) {
     lines.push('<hr style="border:none; border-top:1px dashed #444; margin:6px 0;">')
@@ -196,48 +207,4 @@ export function printReceipt(orderDetail: any, options: ReceiptOptions = {}) {
     }, 300)
   })
 }
-
-// Helper for display text in receipt (not exported)
-function getPaymentTypeText(type: number) {
-  const map: Record<number, string> = {
-    1: '现金',
-    2: '微信',
-    3: '支付宝',
-    4: '本金余额',
-    5: '红包/优惠券',
-    6: '赊销',
-    10: '混合支付'
-  }
-  return map[type] || '其他'
-}
-
-// Keep buildReceiptPayload for backwards compatibility if needed (no backend send)
-export function buildReceiptPayload(orderDetail: any, options: ReceiptOptions = {}) {
-  const od = orderDetail || {}
-  return {
-    orderNo: od.orderNo,
-    storeName: od.storeName,
-    createdAt: od.createdAt,
-    operatorName: od.operatorName,
-    items: (od.items || []).map((it: any) => ({
-      name: it.productName,
-      quantity: formatStock(it.quantity),
-      unit: it.unit,
-      unitPrice: Number(it.unitPrice || 0).toFixed(2),
-      subtotal: Number(it.totalPrice || 0).toFixed(2)
-    })),
-    totals: {
-      totalAmount: Number(od.totalAmount || 0).toFixed(2),
-      discountAmount: Number(od.discountAmount || 0).toFixed(2),
-      couponAmount: Number(od.couponAmount || 0).toFixed(2),
-      payAmount: Number(od.payAmount || 0).toFixed(2)
-    },
-    payments: (od.payments || []).map((p: any) => ({ type: p.paymentType, amount: Number(p.amount || 0).toFixed(2) })),
-    remark: od.remark || '',
-    options
-  }
-}
-
-
-
 

@@ -21,7 +21,12 @@ export function getStaffList(params: StaffQueryParams): Promise<PageResponse<Sta
     url: '/api/admin/staff',
     method: 'get',
     params
-  })
+  }).then((page: any) => ({
+    records: page?.records || [],
+    total: page?.total ?? page?.totalRow ?? 0,
+    pageNum: page?.pageNumber ?? params.pageNum ?? 1,
+    pageSize: page?.pageSize ?? params.pageSize ?? 10
+  }))
 }
 
 /**

@@ -108,11 +108,11 @@ class RepositoryTest {
     @Test
     void testDeleteByPackageId_ShouldDeleteAllItems() {
         // Given: 套餐有明细
-        doNothing().when(itemMapper).deleteByQuery(any());
-        
+        when(itemMapper.deleteByQuery(any())).thenReturn(2);
+
         // When: 删除套餐的所有明细
         itemRepository.deleteByPackageId(1L);
-        
+
         // Then: 应调用删除方法
         verify(itemMapper, times(1)).deleteByQuery(any());
     }

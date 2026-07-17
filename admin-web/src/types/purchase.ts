@@ -90,11 +90,4 @@ export interface PurchaseDetailVO {
   items: PurchaseItemVO[]
 }
 
-export interface PageResponse<T> {
-  records: T[]
-  total: number
-  pageNum: number
-  pageSize: number
-}
-
 

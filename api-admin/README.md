@@ -32,21 +32,27 @@
 
 ### 启动步骤
 
-1. 启动 MySQL 和 Redis（使用 docker-compose）:
+1. 在仓库根目录准备环境变量:
 ```bash
-docker-compose up -d mysql redis
+cp .env.example .env
 ```
 
-2. 配置环境变量（可选）:
+2. 启动 MySQL 和 Redis:
 ```bash
-export DB_PASSWORD=your_password
-export REDIS_PASSWORD=your_redis_password
+docker compose --env-file .env up -d mysql redis
 ```
 
 3. 运行应用:
 ```bash
-mvn spring-boot:run -pl api-admin
+mvn -pl api-admin spring-boot:run
 ```
+
+4. 空库本地开发初始化账号:
+```bash
+MYSQL_PWD=agri1234 mysql -h 127.0.0.1 -P 3306 -u agri -D agri_system < scripts/dev-bootstrap.sql
+```
+
+默认账号：`admin / admin123`。该脚本只用于本地开发，不要在生产库执行。
 
 或直接运行主类：
 ```bash
@@ -82,14 +88,8 @@ docker run -d \
 
 ### 环境变量
 
-- `DB_HOST`: MySQL 主机地址
-- `DB_PORT`: MySQL 端口（默认 3306）
-- `DB_NAME`: 数据库名（默认 agri_system）
-- `DB_USERNAME`: 数据库用户名
-- `DB_PASSWORD`: 数据库密码
-- `REDIS_HOST`: Redis 主机地址
-- `REDIS_PORT`: Redis 端口（默认 6379）
-- `REDIS_PASSWORD`: Redis 密码
+- 统一使用仓库根目录 `.env` 中的配置项
+- 推荐默认值见仓库根目录 `.env.example`
 
 ## DB 迁移说明
 
@@ -104,8 +104,6 @@ docker run -d \
 - [ ] 实现完整的权限管理 API
 - [ ] 添加操作日志记录
 - [ ] 完善错误码文档
-
-
 
 
 

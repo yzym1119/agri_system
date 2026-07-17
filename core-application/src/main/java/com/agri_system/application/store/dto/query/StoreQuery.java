@@ -18,7 +18,7 @@ public class StoreQuery {
     @Schema(description = "门店名称（模糊查询）", example = "XX农资店")
     private String name;
     
-    @Schema(description = "状态：1-启用，0-停用", example = "1")
+    @Schema(description = "状态：1-启用，2-停用", example = "1")
     private Integer status;
     
     @Schema(description = "是否支持自提：1-支持，0-不支持", example = "1")
@@ -30,7 +30,6 @@ public class StoreQuery {
     @Schema(description = "每页大小", example = "10")
     private Integer pageSize = 10;
 }
-
 
 
 

@@ -3,7 +3,7 @@
     <el-card>
       <!-- 操作栏 -->
       <div class="toolbar">
-        <el-button type="primary" :icon="Plus" @click="handleAdd">新增分类</el-button>
+        <el-button v-permission="'product:category:create'" type="primary" :icon="Plus" @click="handleAdd">新增分类</el-button>
       </div>
 
       <!-- 树形表格 -->
@@ -41,8 +41,8 @@
         <el-table-column prop="remark" label="备注" min-width="200" show-overflow-tooltip />
         <el-table-column label="操作" width="200" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
-            <el-button type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'product:category:update'" type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
+            <el-button v-permission="'product:category:delete'" type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -106,7 +106,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
+        <el-button v-permission="isEdit ? 'product:category:update' : 'product:category:create'" type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -217,13 +217,11 @@ const handleDelete = async (row: CategoryTreeVO) => {
   } catch (error: any) {
     if (error !== 'cancel') {
       console.error('删除失败:', error)
-      // 显示后端返回的具体错误信息
-      let errorMessage = '删除失败，请稍后再试'
-      if (error?.response?.data?.message) {
-        errorMessage = error.response.data.message
-      } else if (error?.message) {
-        errorMessage = error.message
-      }
+      const errorMessage =
+        error?.response?.data?.message ||
+        error?.response?.data?.data?.message ||
+        error?.message ||
+        '删除失败，请稍后再试'
       ElMessage.error(errorMessage)
     }
   }
@@ -302,28 +300,17 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
-.category-container {
-  padding: 20px;
-}
-
-.toolbar {
-  margin-bottom: 20px;
-}
-
-
-// 为不同层级添加视觉区分，并确保行高一致
 :deep(.el-table__body-wrapper) {
   .el-table__row {
-    // 确保行高一致
     height: auto;
     min-height: 48px;
-    
+
     .el-table__cell {
-      padding: 12px 0; // 统一单元格内边距
-      
+      padding: 12px 0;
+
       .cell {
         line-height: 1.5;
-        white-space: nowrap; // 防止文本换行导致行高不一致
+        white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
@@ -331,4 +318,3 @@ onMounted(() => {
   }
 }
 </style>
-

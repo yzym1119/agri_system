@@ -237,13 +237,4 @@ export function saveVipRightsBatch(
   })
 }
 
-/**
- * 删除VIP月度权益
- */
-export function deleteVipRights(id: number): Promise<void> {
-  return request({
-    url: `/api/admin/marketing/vip-rights/${id}`,
-    method: 'delete'
-  })
-}
 

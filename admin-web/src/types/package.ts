@@ -2,6 +2,8 @@
  * 套餐管理相关类型定义
  */
 
+export type { PageResponse } from './api'
+
 /**
  * 套餐明细DTO
  */
@@ -86,4 +88,3 @@ export interface ProductPackageQueryParams {
   pageNum?: number
   pageSize?: number
 }
-

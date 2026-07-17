@@ -4,6 +4,7 @@ import com.agri_system.application.order.dto.vo.OrderPayPreviewVO;
 import com.agri_system.application.order.dto.vo.OrderPaymentVO;
 import com.agri_system.application.order.exception.OrderErrorCode;
 import com.agri_system.application.wallet.service.WalletApplicationService;
+import com.agri_system.domain.order.enums.OrderMainPaymentMethod;
 import com.agri_system.domain.order.enums.PaymentMethod;
 import com.agri_system.domain.coupon.model.CustomerCoupon;
 import com.agri_system.domain.coupon.repository.CustomerCouponRepository;
@@ -13,6 +14,7 @@ import com.agri_system.domain.order.model.OrderPayment;
 import com.agri_system.domain.order.repository.OrderItemRepository;
 import com.agri_system.domain.order.repository.OrderPaymentRepository;
 import com.agri_system.domain.order.service.OrderDomainService;
+import com.agri_system.domain.product.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +23,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -32,12 +35,12 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class OrderPaymentService {
-    
     private final OrderPaymentRepository paymentRepository;
     private final CustomerCouponRepository couponRepository;
     private final WalletApplicationService walletService;
     private final OrderDomainService orderDomainService;
     private final OrderItemRepository itemRepository;
+    private final ProductRepository productRepository;
     
     /**
      * 预运算支付金额（不实际扣减）
@@ -61,6 +64,7 @@ public class OrderPaymentService {
         if (couponId != null && order.getCustomerId() != null) {
             CustomerCoupon coupon = couponRepository.findById(couponId)
                     .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券不存在"));
+            validateCouponOwnership(order, coupon);
             
             // 获取订单商品ID和分类ID用于校验
             List<OrderItem> items = itemRepository.findByOrderId(order.getId());
@@ -68,11 +72,11 @@ public class OrderPaymentService {
                     .filter(item -> item.getProductId() != null)
                     .map(OrderItem::getProductId)
                     .collect(Collectors.toList());
-            List<Long> categoryIds = new ArrayList<>(); // TODO: 从商品表获取分类ID
+            List<Long> categoryIds = resolveCategoryIds(productIds);
             
             if (coupon.isUsable(totalAmount, productIds, categoryIds)) {
-                // 优惠券一次性核销：实际抵扣 = min(订单待付, 券面额)
-                BigDecimal faceValue = coupon.getAvailableAmount();
+                // 优惠券一次核销：实际抵扣 = min(订单待付, 券面额或折扣计算值)
+                BigDecimal faceValue = coupon.getAvailableAmount(remaining);
                 couponAmount = remaining.min(faceValue);
                 remaining = remaining.subtract(couponAmount);
                 
@@ -99,7 +103,7 @@ public class OrderPaymentService {
                 remaining = remaining.subtract(specialFundAmount);
                 
                 OrderPaymentVO payment = new OrderPaymentVO();
-                payment.setPaymentType(4);
+                payment.setPaymentType(PaymentMethod.SPECIAL_FUND.getCode());
                 payment.setAmount(specialFundAmount);
                 payments.add(payment);
             }
@@ -114,7 +118,7 @@ public class OrderPaymentService {
                 remaining = remaining.subtract(balanceAmount);
                 
                 OrderPaymentVO payment = new OrderPaymentVO();
-                payment.setPaymentType(3);
+                payment.setPaymentType(PaymentMethod.BALANCE.getCode());
                 payment.setAmount(balanceAmount);
                 payments.add(payment);
             }
@@ -124,7 +128,7 @@ public class OrderPaymentService {
         BigDecimal externalAmount = remaining;
         if (externalAmount.compareTo(BigDecimal.ZERO) > 0) {
             OrderPaymentVO payment = new OrderPaymentVO();
-            payment.setPaymentType(1); // 微信
+            payment.setPaymentType(PaymentMethod.WECHAT.getCode());
             payment.setAmount(externalAmount);
             payments.add(payment);
         }
@@ -152,7 +156,11 @@ public class OrderPaymentService {
      */
     @Transactional(rollbackFor = Exception.class)
     public List<OrderPayment> executePayment(Order order, Boolean useBalance, Boolean useSpecialFund, 
-                                            Long couponId, Long createdBy) {
+                                            Long couponId, Long createdBy,
+                                            boolean includeExternalPayment,
+                                            Integer externalPaymentType,
+                                            String externalTransactionNo,
+                                            LocalDateTime externalPaidAt) {
         // 先预运算
         OrderPayPreviewVO preview = previewPayment(order, useBalance, useSpecialFund, couponId);
         
@@ -163,6 +171,7 @@ public class OrderPaymentService {
         if (preview.getCouponAmount().compareTo(BigDecimal.ZERO) > 0 && couponId != null) {
             CustomerCoupon coupon = couponRepository.findById(couponId)
                     .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券不存在"));
+            validateCouponOwnership(order, coupon);
             
             // 校验状态：必须是未使用
             if (coupon.getStatus() == null || coupon.getStatus() != 1) {
@@ -194,7 +203,7 @@ public class OrderPaymentService {
             
             OrderPayment payment = new OrderPayment();
             payment.setOrderId(order.getId());
-            payment.setPaymentType(4);
+            payment.setPaymentType(PaymentMethod.SPECIAL_FUND.getCode());
             payment.setAmount(preview.getSpecialFundAmount());
             payment.setCreatedAt(LocalDateTime.now());
             payment = paymentRepository.save(payment);
@@ -209,7 +218,7 @@ public class OrderPaymentService {
             
             OrderPayment payment = new OrderPayment();
             payment.setOrderId(order.getId());
-            payment.setPaymentType(3);
+            payment.setPaymentType(PaymentMethod.BALANCE.getCode());
             payment.setAmount(preview.getBalanceAmount());
             payment.setCreatedAt(LocalDateTime.now());
             payment = paymentRepository.save(payment);
@@ -217,24 +226,55 @@ public class OrderPaymentService {
             totalPaid = totalPaid.add(preview.getBalanceAmount());
         }
         
-        // 4. 外部支付（微信/支付宝）- 这里只记录，实际支付由前端调起
-        if (preview.getExternalAmount().compareTo(BigDecimal.ZERO) > 0) {
+        // 4. 外部支付（微信/支付宝）- 仅在已确认外部支付后落库
+        if (includeExternalPayment && preview.getExternalAmount().compareTo(BigDecimal.ZERO) > 0) {
             OrderPayment payment = new OrderPayment();
             payment.setOrderId(order.getId());
-            payment.setPaymentType(1); // 微信
+            payment.setPaymentType(resolveExternalPaymentType(externalPaymentType));
             payment.setAmount(preview.getExternalAmount());
+            payment.setOuterTransNo(externalTransactionNo);
+            payment.setCallbackTime(externalPaidAt != null ? externalPaidAt : LocalDateTime.now());
             payment.setCreatedAt(LocalDateTime.now());
             payment = paymentRepository.save(payment);
             payments.add(payment);
             totalPaid = totalPaid.add(preview.getExternalAmount());
         }
         
-        // 校验支付总额
-        if (totalPaid.compareTo(order.getPayAmount()) != 0) {
+        BigDecimal expectedPaid = includeExternalPayment
+                ? order.getPayAmount()
+                : order.getPayAmount().subtract(preview.getExternalAmount());
+        if (totalPaid.compareTo(expectedPaid) != 0) {
             throw new IllegalArgumentException(OrderErrorCode.PAYMENT_AMOUNT_MISMATCH + ": 支付总额不匹配");
         }
         
         return payments;
+    }
+
+    private void validateCouponOwnership(Order order, CustomerCoupon coupon) {
+        if (coupon.getCustomerId() == null || !coupon.getCustomerId().equals(order.getCustomerId())) {
+            throw new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券不属于当前客户");
+        }
+    }
+
+    private List<Long> resolveCategoryIds(List<Long> productIds) {
+        return productIds.stream()
+                .map(productRepository::findById)
+                .flatMap(Optional::stream)
+                .map(product -> product.getCategoryId())
+                .filter(categoryId -> categoryId != null)
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
+    private Integer resolveExternalPaymentType(Integer externalPaymentType) {
+        if (externalPaymentType == null) {
+            return OrderMainPaymentMethod.WECHAT.getCode();
+        }
+        if (!externalPaymentType.equals(OrderMainPaymentMethod.WECHAT.getCode())
+                && !externalPaymentType.equals(OrderMainPaymentMethod.ALIPAY.getCode())) {
+            throw new IllegalArgumentException(OrderErrorCode.PAYMENT_AMOUNT_MISMATCH + ": 外部支付方式不正确");
+        }
+        return externalPaymentType;
     }
     
     /**
@@ -247,7 +287,7 @@ public class OrderPaymentService {
     @Transactional(rollbackFor = Exception.class)
     public void refund(Order order, BigDecimal refundAmount, Long createdBy) {
         // 赊销订单不支持退款
-        if (order.getPaymentMethod() != null && order.getPaymentMethod().equals(PaymentMethod.CREDIT.getCode())) {
+        if (order.getPaymentMethod() != null && order.getPaymentMethod().equals(OrderMainPaymentMethod.CREDIT.getCode())) {
             throw new IllegalArgumentException(OrderErrorCode.CREDIT_ORDER_NO_REFUND + ": 赊销订单不支持退款");
         }
         
@@ -269,16 +309,24 @@ public class OrderPaymentService {
             BigDecimal refund = payment.getAmount().compareTo(remaining) > 0 ? remaining : payment.getAmount();
             
             // 根据支付类型退款
-            if (payment.getPaymentType().equals(PaymentMethod.WECHAT.getCode()) || payment.getPaymentType().equals(PaymentMethod.ALIPAY.getCode())) {
+            Integer paymentType = payment.getPaymentType();
+            if (paymentType == null) {
+                remaining = remaining.subtract(refund);
+                continue;
+            }
+
+            if (paymentType.equals(PaymentMethod.CASH.getCode())
+                    || paymentType.equals(PaymentMethod.WECHAT.getCode())
+                    || paymentType.equals(PaymentMethod.ALIPAY.getCode())) {
                 // 外部支付：原路退回（TODO: 调用第三方退款接口）
                 // 这里只记录，实际退款由第三方处理
-            } else if (payment.getPaymentType().equals(PaymentMethod.BALANCE.getCode())) {
+            } else if (paymentType.equals(PaymentMethod.BALANCE.getCode())) {
                 // 本金余额：退回余额
                 walletService.refundBalance(order.getCustomerId(), refund, "ORDER_REFUND", order.getId(), createdBy);
-            } else if (payment.getPaymentType().equals(PaymentMethod.SPECIAL_FUND.getCode())) {
+            } else if (paymentType.equals(PaymentMethod.SPECIAL_FUND.getCode())) {
                 // 专用金：退回专用金
                 walletService.refundSpecialFund(order.getCustomerId(), refund, "ORDER_REFUND", order.getId(), createdBy);
-            } else if (payment.getPaymentType().equals(PaymentMethod.COUPON.getCode())) {
+            } else if (paymentType.equals(PaymentMethod.COUPON.getCode())) {
                 // 优惠券：视策略处理（通常不退）
                 // TODO: 根据业务策略决定是否退回优惠券
             }
@@ -287,5 +335,3 @@ public class OrderPaymentService {
         }
     }
 }
-
-

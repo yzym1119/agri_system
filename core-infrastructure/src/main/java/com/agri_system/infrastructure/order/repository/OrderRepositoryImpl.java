@@ -88,7 +88,8 @@ public class OrderRepositoryImpl implements OrderRepository {
         QueryWrapper query = QueryWrapper.create()
                 .from(Order.class).as("o")
                 .leftJoin("store").as("s").on("o.store_id = s.id")
-                .leftJoin("customer").as("c").on("o.customer_id = c.id");
+                .leftJoin("customer").as("c").on("o.customer_id = c.id")
+                .leftJoin("order_delivery").as("od").on("o.id = od.order_id");
         
         // 关键词搜索（订单号/手机号/收货人）
         if (keyword != null && !keyword.trim().isEmpty()) {
@@ -104,13 +105,15 @@ public class OrderRepositoryImpl implements OrderRepository {
             query.and("o.order_type = ?", orderType);
         }
         
-        // 注意：order 表中没有 delivery_type 字段，通过 orderType 推导：
-        // deliveryType=1(自提) -> orderType=2, deliveryType=3(快递) -> orderType=3, deliveryType=2(同城) -> orderType=3
         if (deliveryType != null) {
             if (deliveryType == 1) {
                 query.and("o.order_type = ?", 2); // 自提
-            } else if (deliveryType == 2 || deliveryType == 3) {
-                query.and("o.order_type = ?", 3); // 同城配送或快递
+            } else if (deliveryType == 2) {
+                query.and("o.order_type = ?", 3)
+                        .and("od.delivery_type = ?", 2);
+            } else if (deliveryType == 3) {
+                query.and("o.order_type = ?", 3)
+                        .and("(od.delivery_type = ? OR od.id IS NULL)", 3);
             }
         }
         
@@ -143,5 +146,40 @@ public class OrderRepositoryImpl implements OrderRepository {
         com.mybatisflex.core.paginate.Page<Order> page = new com.mybatisflex.core.paginate.Page<>(pageNum, pageSize);
         return mapper.paginate(page, query);
     }
-}
 
+    @Override
+    public long countActiveOrdersByCustomerId(Long customerId) {
+        if (customerId == null) {
+            return 0;
+        }
+        QueryWrapper query = QueryWrapper.create()
+                .where("customer_id = ?", customerId)
+                .and("order_status IN (1, 2, 3, 4, 5, 9)");
+        return mapper.selectCountByQuery(query);
+    }
+
+    @Override
+    public java.math.BigDecimal sumPayAmountByStaffAndDateRange(Long staffId, java.time.LocalDateTime start, java.time.LocalDateTime end) {
+        QueryWrapper query = QueryWrapper.create()
+                .select("COALESCE(SUM(pay_amount), 0) AS total")
+                .where("staff_id = ?", staffId)
+                .and("created_at >= ?", start)
+                .and("created_at <= ?", end)
+                .and("order_status IN (2, 3, 4, 5, 6)");
+        Object result = mapper.selectObjectByQuery(query);
+        if (result == null) return java.math.BigDecimal.ZERO;
+        if (result instanceof java.math.BigDecimal) return (java.math.BigDecimal) result;
+        return new java.math.BigDecimal(result.toString());
+    }
+
+    @Override
+    public Integer countByStaffAndDateRange(Long staffId, java.time.LocalDateTime start, java.time.LocalDateTime end) {
+        // 仅统计已支付的有效订单
+        QueryWrapper query = QueryWrapper.create()
+                .where("staff_id = ?", staffId)
+                .and("created_at >= ?", start)
+                .and("created_at <= ?", end)
+                .and("order_status IN (2, 3, 4, 5, 6)");
+        return (int) mapper.selectCountByQuery(query);
+    }
+}

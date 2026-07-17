@@ -32,8 +32,9 @@ public class ReportCustomerController {
     @SaCheckPermission("report:customer")
     @Operation(summary = "大户排行榜")
     public ResponseEntity<List<CustomerRankVO>> topCustomers(
-            @RequestParam(defaultValue = "20") int limit) {
-        return ResponseEntity.ok(reportAnalysisService.topCustomers(limit));
+            @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(required = false) Long storeId) {
+        return ResponseEntity.ok(reportAnalysisService.topCustomers(limit, storeId));
     }
 
     @GetMapping("/top/export")
@@ -41,14 +42,15 @@ public class ReportCustomerController {
     @Operation(summary = "导出大户排行榜Excel")
     public void exportTopCustomers(
             @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(required = false) Long storeId,
             HttpServletResponse response) throws IOException {
-        List<CustomerRankVO> data = reportAnalysisService.topCustomers(limit);
+        List<CustomerRankVO> data = reportAnalysisService.topCustomers(limit, storeId);
         response.setContentType("application/vnd.ms-excel");
         response.setCharacterEncoding("utf-8");
         String fileName = "大户排行榜_" + java.time.LocalDate.now() + ".xlsx";
-        response.setHeader("Content-disposition", "attachment;filename*=utf-8''" + 
+        response.setHeader("Content-disposition", "attachment;filename*=utf-8''" +
                 java.net.URLEncoder.encode(fileName, "UTF-8"));
-        
+
         com.alibaba.excel.EasyExcel.write(response.getOutputStream(), CustomerRankVO.class)
                 .sheet("大户排行榜")
                 .doWrite(data);
@@ -57,21 +59,24 @@ public class ReportCustomerController {
     @GetMapping("/churn")
     @SaCheckPermission("report:customer")
     @Operation(summary = "流失预警")
-    public ResponseEntity<List<ChurnRiskVO>> churnRisks() {
-        return ResponseEntity.ok(reportAnalysisService.churnRisks());
+    public ResponseEntity<List<ChurnRiskVO>> churnRisks(
+            @RequestParam(required = false) Long storeId) {
+        return ResponseEntity.ok(reportAnalysisService.churnRisks(storeId));
     }
 
     @GetMapping("/churn/export")
     @SaCheckPermission("report:customer")
     @Operation(summary = "导出流失预警Excel")
-    public void exportChurnRisks(HttpServletResponse response) throws IOException {
-        List<ChurnRiskVO> data = reportAnalysisService.churnRisks();
+    public void exportChurnRisks(
+            @RequestParam(required = false) Long storeId,
+            HttpServletResponse response) throws IOException {
+        List<ChurnRiskVO> data = reportAnalysisService.churnRisks(storeId);
         response.setContentType("application/vnd.ms-excel");
         response.setCharacterEncoding("utf-8");
         String fileName = "流失预警_" + java.time.LocalDate.now() + ".xlsx";
-        response.setHeader("Content-disposition", "attachment;filename*=utf-8''" + 
+        response.setHeader("Content-disposition", "attachment;filename*=utf-8''" +
                 java.net.URLEncoder.encode(fileName, "UTF-8"));
-        
+
         com.alibaba.excel.EasyExcel.write(response.getOutputStream(), ChurnRiskVO.class)
                 .sheet("流失预警")
                 .doWrite(data);

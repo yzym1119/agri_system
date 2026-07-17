@@ -1,8 +1,10 @@
 package com.agri_system.application.wallet.service;
 
 import com.agri_system.domain.wallet.model.CustomerWallet;
+import com.agri_system.domain.wallet.model.WalletAuthCode;
 import com.agri_system.domain.wallet.model.WalletTransaction;
 import com.agri_system.domain.wallet.repository.CustomerWalletRepository;
+import com.agri_system.domain.wallet.repository.WalletAuthCodeRepository;
 import com.agri_system.domain.wallet.repository.WalletTransactionRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -13,6 +15,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 /**
  * 钱包应用服务
@@ -27,6 +30,7 @@ public class WalletApplicationService {
     
     private final CustomerWalletRepository walletRepository;
     private final WalletTransactionRepository transactionRepository;
+    private final WalletAuthCodeRepository walletAuthCodeRepository;
     private final JdbcTemplate jdbcTemplate;
     
     private static final int AUTH_CODE_LENGTH = 6;
@@ -55,6 +59,8 @@ public class WalletApplicationService {
                     newWallet.setBalance(BigDecimal.ZERO);
                     newWallet.setFrozenBalance(BigDecimal.ZERO);
                     newWallet.setVersion(0);
+                    newWallet.setCreatedAt(java.time.LocalDateTime.now());
+                    newWallet.setUpdatedAt(java.time.LocalDateTime.now());
                     return walletRepository.save(newWallet);
                 });
         
@@ -284,6 +290,8 @@ public class WalletApplicationService {
                     newWallet.setBalance(BigDecimal.ZERO);
                     newWallet.setFrozenBalance(BigDecimal.ZERO);
                     newWallet.setVersion(0);
+                    newWallet.setCreatedAt(java.time.LocalDateTime.now());
+                    newWallet.setUpdatedAt(java.time.LocalDateTime.now());
                     return walletRepository.save(newWallet);
                 });
         
@@ -342,17 +350,20 @@ public class WalletApplicationService {
      * @return 是否有效
      */
     public boolean validateWalletAuthCode(Long customerId, String authCode) {
-        // TODO: 实际应该调用验证码服务进行校验
-        // 这里简化实现，假设验证码为6位数字
-        if (authCode == null || authCode.length() != 6) {
+        if (customerId == null || authCode == null || authCode.length() != 6) {
             return false;
         }
-        try {
-            Integer.parseInt(authCode);
-            return true;
-        } catch (NumberFormatException e) {
+
+        Optional<WalletAuthCode> authCodeRecord = walletAuthCodeRepository.findByCustomerIdAndAuthCode(customerId, authCode);
+        if (authCodeRecord.isEmpty()) {
             return false;
         }
+
+        WalletAuthCode record = authCodeRecord.get();
+        if (record.getStatus() == null || record.getStatus() != 1) {
+            return false;
+        }
+        return record.getExpireAt() != null && record.getExpireAt().isAfter(LocalDateTime.now());
     }
 
     /**
@@ -427,5 +438,4 @@ public class WalletApplicationService {
     }
 
 }
-
 

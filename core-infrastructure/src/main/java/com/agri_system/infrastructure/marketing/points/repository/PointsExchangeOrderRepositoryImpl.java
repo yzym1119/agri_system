@@ -100,5 +100,22 @@ public class PointsExchangeOrderRepositoryImpl implements PointsExchangeOrderRep
         }
         return mapper.selectCountByQuery(query);
     }
-}
 
+    @Override
+    public long countByGoodsId(Long goodsId) {
+        QueryWrapper query = QueryWrapper.create()
+                .where("points_goods_id = ?", goodsId);
+        return mapper.selectCountByQuery(query);
+    }
+
+    @Override
+    public long countActiveByCustomerId(Long customerId) {
+        if (customerId == null) {
+            return 0;
+        }
+        QueryWrapper query = QueryWrapper.create()
+                .where("customer_id = ?", customerId)
+                .and("status IN (10, 20, 30)");
+        return mapper.selectCountByQuery(query);
+    }
+}

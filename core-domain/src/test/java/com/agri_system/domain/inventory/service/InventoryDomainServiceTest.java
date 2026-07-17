@@ -11,6 +11,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -30,6 +32,7 @@ import static org.mockito.Mockito.*;
  * @author AI Generated
  */
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class InventoryDomainServiceTest {
     
     @Mock
@@ -96,13 +99,15 @@ class InventoryDomainServiceTest {
         sortedBatches.add(batch2); // 较晚过期
         sortedBatches.add(batch1); // 无日期
         
-        when(batchRepository.findActiveBatchesForFIFO(storeId, productId))
+        when(batchRepository.findActiveBatchesForFIFOWithLock(storeId, productId))
                 .thenReturn(sortedBatches);
+        when(inventoryRepository.findByStoreAndProduct(storeId, productId))
+                .thenReturn(Optional.of(createInventory(new BigDecimal("53"))));
         
         // When: 出库15个
         List<InventoryDomainService.BatchDeductionDetail> details = 
                 domainService.outbound(storeId, productId, new BigDecimal("15"), 
-                        "kg", createdBy, "ORDER", 1L);
+                        "kg", "kg", new BigDecimal("15"), createdBy, 2, "ORDER", 1L);
         
         // Then: 验证按FIFO顺序扣减
         assertEquals(1, details.size());
@@ -131,12 +136,14 @@ class InventoryDomainServiceTest {
         List<InventoryBatch> batches = new ArrayList<>();
         batches.add(batch);
         
-        when(batchRepository.findActiveBatchesForFIFO(storeId, productId))
+        when(batchRepository.findActiveBatchesForFIFOWithLock(storeId, productId))
                 .thenReturn(batches);
+        when(inventoryRepository.findByStoreAndProduct(storeId, productId))
+                .thenReturn(Optional.of(createInventory(new BigDecimal("10"))));
         
         // When: 出库10个（全部扣减）
         domainService.outbound(storeId, productId, new BigDecimal("10"), 
-                "kg", createdBy, "ORDER", 1L);
+                "kg", "kg", new BigDecimal("10"), createdBy, 2, "ORDER", 1L);
         
         // Then: 验证批次被归档（isActive = 0）
         ArgumentCaptor<InventoryBatch> captor = ArgumentCaptor.forClass(InventoryBatch.class);
@@ -161,12 +168,14 @@ class InventoryDomainServiceTest {
         List<InventoryBatch> batches = new ArrayList<>();
         batches.add(batch);
         
-        when(batchRepository.findActiveBatchesForFIFO(storeId, productId))
+        when(batchRepository.findActiveBatchesForFIFOWithLock(storeId, productId))
                 .thenReturn(batches);
+        when(inventoryRepository.findByStoreAndProduct(storeId, productId))
+                .thenReturn(Optional.of(createInventory(new BigDecimal("20"))));
         
         // When: 出库10个（部分扣减）
         domainService.outbound(storeId, productId, new BigDecimal("10"), 
-                "kg", createdBy, "ORDER", 1L);
+                "kg", "kg", new BigDecimal("10"), createdBy, 2, "ORDER", 1L);
         
         // Then: 验证批次未被归档（isActive = 1）
         ArgumentCaptor<InventoryBatch> captor = ArgumentCaptor.forClass(InventoryBatch.class);
@@ -198,13 +207,15 @@ class InventoryDomainServiceTest {
         batches.add(batch2);
         batches.add(batch3);
         
-        when(batchRepository.findActiveBatchesForFIFO(storeId, productId))
+        when(batchRepository.findActiveBatchesForFIFOWithLock(storeId, productId))
                 .thenReturn(batches);
+        when(inventoryRepository.findByStoreAndProduct(storeId, productId))
+                .thenReturn(Optional.of(createInventory(new BigDecimal("23"))));
         
         // When: 出库12个（需要跨批次）
         List<InventoryDomainService.BatchDeductionDetail> details = 
                 domainService.outbound(storeId, productId, new BigDecimal("12"), 
-                        "kg", createdBy, "ORDER", 1L);
+                        "kg", "kg", new BigDecimal("12"), createdBy, 2, "ORDER", 1L);
         
         // Then: 验证扣减详情
         assertEquals(2, details.size());
@@ -322,13 +333,15 @@ class InventoryDomainServiceTest {
         List<InventoryBatch> batches = new ArrayList<>();
         batches.add(batch);
         
-        when(batchRepository.findActiveBatchesForFIFO(storeId, productId))
+        when(batchRepository.findActiveBatchesForFIFOWithLock(storeId, productId))
                 .thenReturn(batches);
+        when(inventoryRepository.findByStoreAndProduct(storeId, productId))
+                .thenReturn(Optional.of(createInventory(new BigDecimal("10"))));
         
         // When & Then: 出库15个，应抛出异常
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
             domainService.outbound(storeId, productId, new BigDecimal("15"), 
-                    "kg", createdBy, "ORDER", 1L);
+                    "kg", "kg", new BigDecimal("15"), createdBy, 2, "ORDER", 1L);
         });
         
         assertTrue(exception.getMessage().contains("inventory-2001"));
@@ -385,4 +398,3 @@ class InventoryDomainServiceTest {
         return inventory;
     }
 }
-

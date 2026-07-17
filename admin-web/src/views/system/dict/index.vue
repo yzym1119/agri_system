@@ -36,6 +36,7 @@
               <h3>{{ currentTypeName || '请选择字典类型' }}</h3>
               <el-button
                 v-if="activeTypeCode"
+                v-permission="'dict:save'"
                 type="primary"
                 :icon="Plus"
                 @click="handleAdd"
@@ -71,6 +72,7 @@
               <el-table-column label="操作" width="200" align="center" fixed="right">
                 <template #default="{ row }">
                   <el-button
+                    v-permission="'dict:save'"
                     type="primary"
                     link
                     :icon="Edit"
@@ -79,6 +81,7 @@
                     编辑
                   </el-button>
                   <el-button
+                    v-permission="'dict:delete'"
                     type="danger"
                     link
                     :icon="Delete"
@@ -146,7 +149,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitLoading" @click="handleSubmit">
+        <el-button v-permission="'dict:save'" type="primary" :loading="submitLoading" @click="handleSubmit">
           确定
         </el-button>
       </template>
@@ -277,7 +280,7 @@ const handleEdit = (row: DictDataManageVO) => {
 const handleDelete = async (row: DictDataManageVO) => {
   try {
     await ElMessageBox.confirm(
-      `确定要删除字典数据"${row.label}"吗？`,
+      `确定要删除字典数据"${row.label}"吗？启用中的字典项需先停用，默认项需先取消默认后再删除。`,
       '提示',
       {
         confirmButtonText: '确定',
@@ -292,7 +295,7 @@ const handleDelete = async (row: DictDataManageVO) => {
   } catch (error: any) {
     if (error !== 'cancel') {
       console.error('删除失败:', error)
-      ElMessage.error('删除失败')
+      ElMessage.error('删除失败：' + (error.message || '未知错误'))
     }
   }
 }
@@ -443,4 +446,3 @@ onMounted(() => {
   }
 }
 </style>
-

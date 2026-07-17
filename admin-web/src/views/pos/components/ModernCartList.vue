@@ -3,8 +3,9 @@
     <!-- 客户栏 -->
     <div class="cart-header">
       <CustomerBar
+        ref="customerBarRef"
         :store-id="storeId"
-        :selected-customer="selectedCustomer"
+        :selected-customer="selectedCustomer ?? null"
         @customer-change="$emit('customerChange', $event)"
       />
     </div>
@@ -86,6 +87,7 @@
 </template>
 
 <script setup lang="ts">
+import {ref} from 'vue'
 import {Box, Delete, Minus, Plus} from '@element-plus/icons-vue'
 import CustomerBar from './CustomerBar.vue'
 import type {CartItem, POSCustomerInfo} from '@/types/pos'
@@ -100,6 +102,8 @@ const emit = defineEmits<{
   update: [items: CartItem[]]
   customerChange: [customer: POSCustomerInfo | null]
 }>()
+
+const customerBarRef = ref<InstanceType<typeof CustomerBar> | null>(null)
 
 // 单位切换
 // 价格存储规则：
@@ -161,6 +165,10 @@ const handleDelete = (index: number) => {
   newItems.splice(index, 1)
   emit('update', newItems)
 }
+
+defineExpose({
+  focusCustomerSearch: () => customerBarRef.value?.focusSearch()
+})
 </script>
 
 <style scoped lang="scss">
@@ -308,4 +316,3 @@ const handleDelete = (index: number) => {
   }
 }
 </style>
-

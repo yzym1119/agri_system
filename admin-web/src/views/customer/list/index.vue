@@ -23,7 +23,7 @@
         <el-form-item>
           <el-button type="primary" :loading="loading" :icon="Search" @click="handleSearch">查询</el-button>
           <el-button :icon="Refresh" @click="handleReset">重置</el-button>
-          <el-button type="success" :icon="Plus" @click="handleAdd">新增客户</el-button>
+          <el-button v-permission="'customer:create'" type="success" :icon="Plus" @click="handleAdd">新增客户</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -81,10 +81,10 @@
         <el-table-column prop="bindStaffName" label="归属员工" width="120" />
         <el-table-column label="操作" width="320" fixed="right">
           <template #default="{ row }">
-            <el-button link type="success" @click="handleRecharge(row)">充值</el-button>
-            <el-button link type="warning" @click="handleGrantCoupon(row)">发券</el-button>
+            <el-button v-permission="'customer:recharge'" link type="success" @click="handleRecharge(row)">充值</el-button>
+            <el-button v-permission="'customer:coupon:grant'" link type="warning" @click="handleGrantCoupon(row)">发券</el-button>
             <el-button link type="primary" @click="handleViewDetail(row)">详情</el-button>
-            <el-button link type="primary" @click="handleEdit(row)">编辑</el-button>
+            <el-button v-permission="'customer:update'" link type="primary" @click="handleEdit(row)">编辑</el-button>
             <el-button link type="danger" v-permission="'customer:delete'" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -147,7 +147,7 @@
       </el-form>
       <template #footer>
         <el-button @click="rechargeVisible = false">取消</el-button>
-        <el-button type="primary" :loading="rechargeLoading" @click="handleRechargeSubmit">确定</el-button>
+        <el-button v-permission="'customer:recharge'" type="primary" :loading="rechargeLoading" @click="handleRechargeSubmit">确定</el-button>
       </template>
     </el-dialog>
 
@@ -184,7 +184,7 @@
       </el-form>
       <template #footer>
         <el-button @click="grantCouponVisible = false">取消</el-button>
-        <el-button type="primary" :loading="grantCouponLoading" @click="handleGrantCouponSubmit">确定</el-button>
+        <el-button v-permission="'customer:coupon:grant'" type="primary" :loading="grantCouponLoading" @click="handleGrantCouponSubmit">确定</el-button>
       </template>
     </el-dialog>
     <!-- 还款弹窗 -->
@@ -248,6 +248,7 @@
   <!-- 按钮 2：还款 (直接把 v-if 加在 button 上，去掉外层 div) -->
   <el-button
     v-if="customerDetail && customerDetail.totalDebt != null && customerDetail.totalDebt > 0"
+    v-permission="'credit:repay'"
     link
     type="primary"
     size="small"
@@ -330,13 +331,17 @@
                   <span style="margin-left:6px">{{ row.storeName || row.storeId || '-' }}</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="payAmount" label="金额" width="120" align="right">
-                <template #default="{ row }">{{ formatAmount(row.payAmount || row.totalAmount || 0) }}</template>
+              <el-table-column label="金额" width="170" align="right">
+                <template #default="{ row }">
+                  <div>应收：{{ formatAmount(getOrderNetReceivable(row)) }}</div>
+                  <div style="color:#67c23a">已收：{{ formatAmount(getOrderReceivedAmount(row)) }}</div>
+                  <div v-if="getOrderCreditAmount(row) > 0" style="color:#f56c6c">赊销：{{ formatAmount(getOrderCreditAmount(row)) }}</div>
+                </template>
               </el-table-column>
               <el-table-column prop="paymentMethod" label="支付方式" width="140">
                 <template #default="{ row }">
                   <span v-if="row.paymentMethod || (row.payments && row.payments.length)">
-                    {{ getPaymentMethodName(row.paymentMethod ?? (row.payments && row.payments.length ? row.payments[0].paymentType : undefined)) }}
+                    {{ getOrderDisplayPaymentMethod(row) }}
                   </span>
                   <span v-else style="color:#909399">-</span>
                 </template>
@@ -416,8 +421,38 @@
             </div>
           </el-tab-pane>
 
-          <el-tab-pane label="赊销/还款" name="credit">
-            
+          <el-tab-pane v-if="canViewCreditTab" label="赊销/还款" name="credit">
+            <div class="credit-toolbar">
+              <div class="credit-summary">
+                <span>当前欠款：<strong>{{ formatAmount(customerDetail.totalDebt || 0) }}</strong></span>
+                <span>赊销额度：{{ formatAmount(customerDetail.creditLimit || 0) }}</span>
+                <span>剩余额度：{{ formatAmount(Math.max(0, (customerDetail.creditLimit || 0) - (customerDetail.totalDebt || 0))) }}</span>
+              </div>
+              <div class="credit-actions">
+                <el-select
+                  v-model="creditQuery.status"
+                  placeholder="全部状态"
+                  clearable
+                  style="width: 140px"
+                  @change="handleCreditFilterChange"
+                >
+                  <el-option label="未还清" :value="1" />
+                  <el-option label="已还清" :value="2" />
+                  <el-option label="已逾期" :value="3" />
+                </el-select>
+                <el-button v-permission="['credit:account:view', 'credit:repayment:view']" @click="refreshCreditTab">刷新</el-button>
+                <el-button
+                  type="primary"
+                  plain
+                  v-permission="'credit:statement:generate'"
+                  @click="handleOpenStatementDialog"
+                >
+                  生成对账单
+                </el-button>
+              </div>
+            </div>
+
+            <div class="credit-section-title">欠款单据</div>
             <el-table :data="creditList" v-loading="creditLoading" border>
               <el-table-column type="index" label="#" width="60" />
               <el-table-column prop="orderId" label="关联订单" min-width="160">
@@ -446,6 +481,10 @@
                   </el-tag>
                 </template>
               </el-table-column>
+              <el-table-column prop="createdAt" label="挂账时间" width="170">
+                <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+              </el-table-column>
+              <el-table-column prop="remark" label="备注" min-width="160" show-overflow-tooltip />
             </el-table>
             <div v-if="creditTotal > 0" class="pagination" style="margin-top:12px">
               <el-pagination
@@ -458,6 +497,34 @@
                 @size-change="handleCreditSizeChange"
               />
             </div>
+
+            <div class="credit-section-title" style="margin-top: 20px">还款记录</div>
+            <el-table
+              :data="creditRepaymentList"
+              v-loading="creditRepaymentLoading"
+              border
+              :max-height="320"
+            >
+              <el-table-column type="index" label="#" width="60" />
+              <el-table-column prop="repaymentNo" label="还款单号" min-width="180" />
+              <el-table-column prop="createdAt" label="时间" width="170">
+                <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+              </el-table-column>
+              <el-table-column prop="amount" label="还款金额" width="130" align="right">
+                <template #default="{ row }">
+                  <span style="color:#67c23a">{{ formatAmount(row.amount) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="paymentMethod" label="还款方式" width="120" align="center">
+                <template #default="{ row }">{{ getCreditRepaymentMethodName(row.paymentMethod) }}</template>
+              </el-table-column>
+              <el-table-column prop="transactionId" label="外部单号" min-width="160" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.transactionId || '-' }}</template>
+              </el-table-column>
+              <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.remark || '-' }}</template>
+              </el-table-column>
+            </el-table>
           </el-tab-pane>
 
           <el-tab-pane label="持有优惠券" name="coupons">
@@ -564,7 +631,44 @@
       </el-form>
       <template #footer>
         <el-button @click="limitDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="limitLoading" @click="handleLimitSubmit">确定</el-button>
+        <el-button v-permission="'credit:limit:update'" type="primary" :loading="limitLoading" @click="handleLimitSubmit">确定</el-button>
+      </template>
+    </el-dialog>
+    <el-dialog
+      v-model="statementDialogVisible"
+      title="生成赊销对账单"
+      width="460px"
+      :close-on-click-modal="false"
+    >
+      <el-form ref="statementFormRef" :model="statementFormData" :rules="statementFormRules" label-width="100px">
+        <el-form-item label="客户">
+          <el-input :value="customerDetail?.name || '-'" disabled />
+        </el-form-item>
+        <el-form-item label="账期" prop="dateRange">
+          <el-date-picker
+            v-model="statementFormData.dateRange"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            value-format="YYYY-MM-DD"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input
+            v-model="statementFormData.remark"
+            type="textarea"
+            :rows="2"
+            placeholder="可选：对账说明"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="statementDialogVisible = false">取消</el-button>
+        <el-button v-permission="'credit:statement:generate'" type="primary" :loading="statementSubmitting" @click="handleGenerateStatement">
+          生成
+        </el-button>
       </template>
     </el-dialog>
     <!-- 订单详情抽屉 -->
@@ -600,14 +704,14 @@
       </el-form>
       <template #footer>
         <el-button @click="customerDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="customerSubmitLoading" @click="handleCustomerSubmit">确定</el-button>
+        <el-button v-permission="customerFormData.id ? 'customer:update' : 'customer:create'" type="primary" :loading="customerSubmitLoading" @click="handleCustomerSubmit">确定</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import {reactive, ref, watch} from 'vue'
+import {computed, reactive, ref, watch} from 'vue'
 import {Plus, Refresh, Search, Star, TrendCharts, Wallet, Warning} from '@element-plus/icons-vue'
 import {
   createCustomer,
@@ -639,10 +743,19 @@ import type {
   WalletTransactionVO
 } from '@/types/customer'
 import type {StaffListVO} from '@/types/staff'
+import type {OrderPageItem} from '@/types/order'
+import type {CreditAccountItem, CreditRepaymentItem} from '@/types/credit'
 import type {FormInstance, FormRules} from 'element-plus'
 import {ElMessage, ElMessageBox} from 'element-plus'
 import {PAYMENT_METHOD_MAP, TRANSACTION_TYPE_MAP, WALLET_TYPE_MAP, ORDER_STATUS_MAP, ORDER_STATUS_TAG_MAP } from '@/utils/dict'
-import {updateCreditLimit} from '@/api/credit'
+import {getOrderDisplayPaymentMethod, getOrderPaymentSummary} from '@/utils/orderPayment'
+import {getOrderList} from '@/api/order'
+import {
+  generateCreditStatement,
+  getCreditAccounts,
+  getCreditRepayments,
+  updateCreditLimit
+} from '@/api/credit'
 import RepaymentDialog from './components/RepaymentDialog.vue'
 import OrderDetail from '@/views/order/components/OrderDetail.vue'
 
@@ -656,6 +769,22 @@ const tableData = ref<CustomerListVO[]>([])
 const total = ref(0)
 const staffOptions = ref<StaffListVO[]>([])
 const userStore = useUserStore()
+const ownedPermissions = computed(() => userStore.userInfo?.permissions || [])
+
+const hasAnyOwnedPermission = (required: string[]) => {
+  return required.some(permission => ownedPermissions.value.includes(permission))
+}
+
+const canViewCreditTab = computed(() =>
+  hasAnyOwnedPermission([
+    'credit:account:view',
+    'credit:repayment:view',
+    'credit:statistics:view',
+    'credit:limit:update',
+    'credit:statement:generate',
+    'credit:repay'
+  ])
+)
 
 // 充值
 const rechargeVisible = ref(false)
@@ -738,10 +867,12 @@ const openOrder = (orderId: number | null) => {
 }
 
 // 订单 / 赊销 / 优惠券占位数据
-const ordersList = ref<any[]>([])
+const ordersList = ref<OrderPageItem[]>([])
 const ordersLoading = ref(false)
-const creditList = ref<any[]>([])
+const creditList = ref<CreditAccountItem[]>([])
 const creditLoading = ref(false)
+const creditRepaymentList = ref<CreditRepaymentItem[]>([])
+const creditRepaymentLoading = ref(false)
 const couponList = ref<CustomerCouponVO[]>([])
 const couponLoading = ref(false)
 const couponTotal = ref(0)
@@ -781,6 +912,33 @@ const limitFormRules: FormRules = {
   creditLimit: [
     { required: true, message: '请输入新额度', trigger: 'blur' },
     { type: 'number', min: 0, message: '额度必须大于等于0', trigger: 'blur' }
+  ]
+}
+
+const statementDialogVisible = ref(false)
+const statementFormRef = ref<FormInstance>()
+const statementSubmitting = ref(false)
+const statementFormData = reactive<{
+  dateRange: string[]
+  remark: string
+}>({
+  dateRange: [],
+  remark: ''
+})
+
+const statementFormRules: FormRules = {
+  dateRange: [
+    {
+      required: true,
+      validator: (_rule, value, callback) => {
+        if (!Array.isArray(value) || value.length !== 2 || !value[0] || !value[1]) {
+          callback(new Error('请选择账期范围'))
+          return
+        }
+        callback()
+      },
+      trigger: 'change'
+    }
   ]
 }
 
@@ -1045,6 +1203,12 @@ const getPaymentMethodName = (method?: number | null) => {
   return '-'
 }
 
+const getOrderNetReceivable = (order: OrderPageItem) => getOrderPaymentSummary(order).netReceivable
+
+const getOrderReceivedAmount = (order: OrderPageItem) => getOrderPaymentSummary(order).receivedAmount
+
+const getOrderCreditAmount = (order: OrderPageItem) => getOrderPaymentSummary(order).creditAmount
+
 // 日期格式化
 const formatDate = (dateStr?: string) => {
   if (!dateStr) return '-'
@@ -1159,30 +1323,11 @@ const handleCustomerSubmit = () => {
           bindStaffId: customerFormData.bindStaffId,
           remark: customerFormData.remark
         }
-        try {
-          const result = await createCustomer(createData)
-          // 如果返回结果有 id，说明创建成功
-          if (result && result.id) {
-            ElMessage.success('创建成功')
-            customerDialogVisible.value = false
-            loadTable()
-          } else {
-            // 如果返回结果没有 id，可能是响应格式问题，但数据可能已创建
-            ElMessage.warning('客户可能已创建，请刷新列表查看')
-            customerDialogVisible.value = false
-            loadTable()
-          }
-        } catch (err: any) {
-          // 如果错误消息包含"已存在"、"重复"或"请求失败"，说明可能是重复提交或响应格式问题
-          if (err.message && (err.message.includes('已存在') || err.message.includes('重复') || err.message.includes('请求失败'))) {
-            ElMessage.warning('客户可能已创建，请刷新列表查看')
-            customerDialogVisible.value = false
-            loadTable()
-          } else {
-            ElMessage.error(err.message || '创建失败')
-          }
-        }
+        await createCustomer(createData)
+        ElMessage.success('创建成功')
       }
+      customerDialogVisible.value = false
+      loadTable()
     } catch (error: any) {
       console.error('提交客户表单失败:', error)
       ElMessage.error(error.message || (customerFormData.id ? '更新失败' : '创建失败'))
@@ -1237,10 +1382,27 @@ const handleViewDetail = async (row: CustomerListVO) => {
     customerDetail.value = detail
     transactionQuery.customerId = row.id
     transactionQuery.pageNum = 1
-    loadTransactions()
-    // benefitQuery 不再需要，直接使用 customerDetail.value.id
+    if (detailActiveTab.value === 'credit' && !canViewCreditTab.value) {
+      detailActiveTab.value = 'transactions'
+    }
+    transactionList.value = []
+    transactionTotal.value = 0
+    ordersQuery.pageNum = 1
+    ordersList.value = []
+    ordersTotal.value = 0
+    creditQuery.pageNum = 1
+    creditQuery.status = undefined
+    creditList.value = []
+    creditRepaymentList.value = []
+    creditTotal.value = 0
+    couponQuery.pageNum = 1
+    couponQuery.status = undefined
+    couponList.value = []
+    couponTotal.value = 0
     benefitQuery.pageNum = 1
-    loadBenefits()
+    benefitList.value = []
+    benefitTotal.value = 0
+    loadDetailTabData(detailActiveTab.value)
   } catch (error: any) {
     console.error('加载客户详情失败:', error)
     ElMessage.error(error.message || '加载客户详情失败')
@@ -1252,7 +1414,7 @@ const handleViewDetail = async (row: CustomerListVO) => {
 const handleDelete = async (row: CustomerListVO) => {
   try {
     await ElMessageBox.confirm(
-      `确定要删除客户"${row.name}"（${row.phone || ''}）吗？删除后无法恢复。若客户有余额或欠款将无法删除。`,
+      `确定要删除客户"${row.name}"（${row.phone || ''}）吗？删除后无法恢复。若客户仍有余额、欠款或进行中的订单/售后/积分兑换将无法删除。`,
       '确认删除',
       {
         confirmButtonText: '确定',
@@ -1321,13 +1483,8 @@ const onRepaymentSuccess = async () => {
   transactionQuery.customerId = customerDetail.value.id
   transactionQuery.pageNum = 1
   loadTransactions()
-  // 刷新赊销 Tab（占位）
-  loadCredit()
+  refreshCreditTab()
 }
-
-// 加载消费订单（对接后端分页接口）
-import { getOrderList } from '@/api/order'
-import { getCreditAccounts } from '@/api/credit'
 
 const loadOrders = async () => {
   if (!customerDetail.value?.id) return
@@ -1339,7 +1496,7 @@ const loadOrders = async () => {
       customerId: customerDetail.value.id
     }
     const res = await getOrderList(params)
-    const page = (res && res.records) ? res : (res && res.data && res.data.records ? res.data : null)
+    const page = res && res.records ? res : null
     if (page) {
       ordersList.value = page.records || []
       ordersTotal.value = page.total ?? page.totalRow ?? 0
@@ -1361,15 +1518,14 @@ const loadCredit = async () => {
   if (!customerDetail.value?.id) return
   creditLoading.value = true
   try {
-    const res = await getCreditAccounts(customerDetail.value.id, creditQuery.pageNum, creditQuery.pageSize, undefined)
-    const page = (res && res.records) ? res : (res && res.data && res.data.records ? res.data : null)
-    if (page) {
-      creditList.value = page.records || []
-      creditTotal.value = page.total ?? page.totalRow ?? 0
-    } else {
-      creditList.value = []
-      creditTotal.value = 0
-    }
+    const page = await getCreditAccounts(
+      customerDetail.value.id,
+      creditQuery.pageNum,
+      creditQuery.pageSize,
+      creditQuery.status
+    )
+    creditList.value = page.records || []
+    creditTotal.value = page.total ?? page.totalRow ?? 0
   } catch (err) {
     console.error('加载赊销单据失败', err)
     creditList.value = []
@@ -1379,14 +1535,38 @@ const loadCredit = async () => {
   }
 }
 
+const loadCreditRepayments = async () => {
+  if (!customerDetail.value?.id) return
+  creditRepaymentLoading.value = true
+  try {
+    const res = await getCreditRepayments(customerDetail.value.id)
+    creditRepaymentList.value = Array.isArray(res) ? res : []
+  } catch (err) {
+    console.error('加载还款记录失败', err)
+    creditRepaymentList.value = []
+  } finally {
+    creditRepaymentLoading.value = false
+  }
+}
+
 // credit account status mapping (domain: 1-未还清,2-已还清,3-已逾期)
 const CREDIT_ACCOUNT_STATUS_MAP: Record<number, string> = {
   1: '未还清',
   2: '已还清',
   3: '已逾期'
 }
+const CREDIT_REPAYMENT_METHOD_MAP: Record<number, string> = {
+  1: '现金',
+  2: '微信',
+  3: '支付宝',
+  4: '银行转账'
+}
 // server-side pagination for creditList
-const creditQuery = reactive({ pageNum: 1, pageSize: 10 })
+const creditQuery = reactive<{ pageNum: number; pageSize: number; status?: number }>({
+  pageNum: 1,
+  pageSize: 10,
+  status: undefined
+})
 
 const handleCreditPageChange = (page: number) => {
   creditQuery.pageNum = page
@@ -1397,6 +1577,21 @@ const handleCreditSizeChange = (size: number) => {
   creditQuery.pageSize = size
   creditQuery.pageNum = 1
   loadCredit()
+}
+
+const handleCreditFilterChange = () => {
+  creditQuery.pageNum = 1
+  loadCredit()
+}
+
+const refreshCreditTab = () => {
+  loadCredit()
+  loadCreditRepayments()
+}
+
+const getCreditRepaymentMethodName = (method?: number) => {
+  if (!method) return '-'
+  return CREDIT_REPAYMENT_METHOD_MAP[method] || `方式${method}`
 }
 
 const loadCoupons = async () => {
@@ -1429,20 +1624,74 @@ const handleCouponSizeChange = (size: number) => {
   loadCoupons()
 }
 
-// 监听详情Tab切换
-watch(detailActiveTab, (newTab) => {
-  if (newTab === 'benefits' && customerDetail.value?.id && benefitList.value.length === 0) {
+const buildCurrentMonthRange = () => {
+  const now = new Date()
+  const start = new Date(now.getFullYear(), now.getMonth(), 1)
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  const format = (date: Date) => {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
+  return [format(start), format(end)]
+}
+
+const handleOpenStatementDialog = () => {
+  if (!customerDetail.value?.id) return
+  statementFormData.dateRange = buildCurrentMonthRange()
+  statementFormData.remark = ''
+  statementDialogVisible.value = true
+}
+
+const handleGenerateStatement = () => {
+  statementFormRef.value?.validate(async (valid) => {
+    if (!valid || !customerDetail.value?.id) return
+    statementSubmitting.value = true
+    try {
+      await generateCreditStatement({
+        customerId: customerDetail.value.id,
+        startDate: statementFormData.dateRange[0],
+        endDate: statementFormData.dateRange[1],
+        createdBy: userStore.userInfo?.id,
+        remark: statementFormData.remark?.trim() || undefined
+      })
+      ElMessage.success('对账单已生成')
+      statementDialogVisible.value = false
+    } catch (error: any) {
+      ElMessage.error(error.message || '生成对账单失败')
+    } finally {
+      statementSubmitting.value = false
+    }
+  })
+}
+
+const loadDetailTabData = (tab: string) => {
+  if (!customerDetail.value?.id) return
+  if (tab === 'orders') {
+    loadOrders()
+    return
+  }
+  if (tab === 'credit') {
+    refreshCreditTab()
+    return
+  }
+  if (tab === 'coupons') {
+    loadCoupons()
+    return
+  }
+  if (tab === 'benefits') {
     loadBenefits()
   }
-  if (newTab === 'orders' && customerDetail.value?.id) {
-    loadOrders()
+}
+
+// 监听详情Tab切换
+watch(detailActiveTab, (newTab) => {
+  if (newTab === 'credit' && !canViewCreditTab.value) {
+    detailActiveTab.value = 'transactions'
+    return
   }
-  if (newTab === 'credit' && customerDetail.value?.id) {
-    loadCredit()
-  }
-  if (newTab === 'coupons' && customerDetail.value?.id) {
-    loadCoupons()
-  }
+  loadDetailTabData(newTab)
 })
 
 // 权益流水来源类型映射
@@ -1590,6 +1839,40 @@ loadTable()
   margin-top: 20px;
 }
 
+.credit-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.credit-summary {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  color: #606266;
+  font-size: 13px;
+}
+
+.credit-summary strong {
+  color: #f56c6c;
+}
+
+.credit-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.credit-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 10px;
+}
+
 /* Prevent layout shift when vertical scrollbar appears/disappears in drawer */
 .el-drawer__body {
   overflow-y: scroll; /* always show scrollbar to avoid layout shift */
@@ -1602,4 +1885,3 @@ loadTable()
   width: 100%;
 }
 </style>
-

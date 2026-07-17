@@ -46,7 +46,7 @@ export function createCategory(data: CategoryCreateRequest): Promise<{ id: numbe
     url: '/api/admin/products/categories',
     method: 'post',
     data
-  }).then((response: any) => response.data)
+  }).then((response: any) => response?.data || response)
 }
 
 /**
@@ -161,33 +161,6 @@ export function deleteProduct(id: number): Promise<void> {
   })
 }
 
-/**
- * 上传商品图片
- */
-export function uploadProductImage(file: File): Promise<{ url: string }> {
-  const formData = new FormData()
-  formData.append('file', file)
-  return request({
-    url: '/api/admin/products/image/upload',
-    method: 'post',
-    data: formData,
-    headers: {
-      'Content-Type': 'multipart/form-data'
-    }
-  }).then((response: any) => response.data)
-}
-
-/**
- * 获取所有商品列表（用于下拉选择）
- */
-export function getAllProducts(): Promise<ProductDetailVO[]> {
-  return request({
-    url: '/api/admin/products',
-    method: 'get',
-    params: { pageNum: 1, pageSize: 1000 }
-  }).then((response: PageResponse<ProductDetailVO>) => response.records)
-}
-
 // ==================== 价格规则管理 ====================
 
 /**
@@ -235,4 +208,3 @@ export function deleteProductPriceRule(id: number): Promise<void> {
     method: 'delete'
   })
 }
-

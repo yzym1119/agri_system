@@ -1,5 +1,6 @@
 package com.agri_system.api.admin.controller;
 
+import com.agri_system.api.admin.config.TestApplication;
 import com.agri_system.application.product.dto.command.PriceRuleCreateCommand;
 import com.agri_system.application.product.service.ProductApplicationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -8,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -19,10 +21,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 商品控制器集成测试
- * 
+ *
  * @author AI Generated
  */
-@WebMvcTest(ProductController.class)
+@WebMvcTest
+@ContextConfiguration(classes = {TestApplication.class, ProductController.class})
 class ProductControllerTest {
     
     @Autowired

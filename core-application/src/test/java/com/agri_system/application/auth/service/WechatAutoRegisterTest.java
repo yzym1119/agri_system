@@ -1,13 +1,21 @@
 package com.agri_system.application.auth.service;
 
+import cn.dev33.satoken.SaManager;
+import cn.dev33.satoken.context.SaTokenContextForThreadLocal;
+import cn.dev33.satoken.context.SaTokenContextForThreadLocalStorage;
+import cn.dev33.satoken.context.model.SaRequest;
+import cn.dev33.satoken.context.model.SaResponse;
+import cn.dev33.satoken.context.model.SaStorage;
 import com.agri_system.application.auth.dto.ClientWechatLoginCommand;
 import com.agri_system.application.auth.dto.LoginResultVO;
+import com.agri_system.application.staff.service.StaffAuthorityService;
 import com.agri_system.domain.auth.model.CustomerIdentity;
 import com.agri_system.domain.auth.repository.CustomerIdentityRepository;
 import com.agri_system.domain.customer.model.Customer;
 import com.agri_system.domain.customer.repository.CustomerRepository;
 import com.agri_system.domain.wallet.model.CustomerWallet;
 import com.agri_system.domain.wallet.repository.CustomerWalletRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,6 +25,9 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -45,6 +56,12 @@ class WechatAutoRegisterTest {
     
     @Mock
     private WechatService wechatService;
+
+    @Mock
+    private com.agri_system.domain.system.auth.repository.SysRoleRepository roleRepository;
+
+    @Mock
+    private StaffAuthorityService authorityService;
     
     @InjectMocks
     private AuthService authService;
@@ -54,12 +71,20 @@ class WechatAutoRegisterTest {
     
     @BeforeEach
     void setUp() {
+        SaManager.setSaTokenContext(new SaTokenContextForThreadLocal());
+        SaTokenContextForThreadLocalStorage.setBox(new MockSaRequest(), new MockSaResponse(), new MockSaStorage());
+
         // Mock微信服务返回
         WechatService.WechatLoginResult wechatResult = new WechatService.WechatLoginResult();
         wechatResult.setOpenId(openId);
         wechatResult.setSessionKey(sessionKey);
         
         when(wechatService.jscode2session(anyString())).thenReturn(wechatResult);
+    }
+
+    @AfterEach
+    void tearDown() {
+        SaTokenContextForThreadLocalStorage.clearBox();
     }
     
     @Test
@@ -174,9 +199,112 @@ class WechatAutoRegisterTest {
         // 验证没有创建新钱包
         verify(walletRepository, never()).save(any(CustomerWallet.class));
     }
+
+    private static class MockSaStorage implements SaStorage {
+        private final Map<String, Object> storage = new HashMap<>();
+
+        @Override
+        public Object getSource() {
+            return storage;
+        }
+
+        @Override
+        public Object get(String key) {
+            return storage.get(key);
+        }
+
+        @Override
+        public SaStorage set(String key, Object value) {
+            storage.put(key, value);
+            return this;
+        }
+
+        @Override
+        public SaStorage delete(String key) {
+            storage.remove(key);
+            return this;
+        }
+    }
+
+    private static class MockSaRequest implements SaRequest {
+        @Override
+        public Object getSource() {
+            return this;
+        }
+
+        @Override
+        public String getParam(String name) {
+            return null;
+        }
+
+        @Override
+        public List<String> getParamNames() {
+            return List.of();
+        }
+
+        @Override
+        public Map<String, String> getParamMap() {
+            return Map.of();
+        }
+
+        @Override
+        public String getHeader(String name) {
+            return null;
+        }
+
+        @Override
+        public String getCookieValue(String name) {
+            return null;
+        }
+
+        @Override
+        public String getRequestPath() {
+            return "/";
+        }
+
+        @Override
+        public String getUrl() {
+            return "http://localhost/test";
+        }
+
+        @Override
+        public String getMethod() {
+            return "POST";
+        }
+
+        @Override
+        public Object forward(String path) {
+            return null;
+        }
+    }
+
+    private static class MockSaResponse implements SaResponse {
+        @Override
+        public Object getSource() {
+            return this;
+        }
+
+        @Override
+        public SaResponse setStatus(int sc) {
+            return this;
+        }
+
+        @Override
+        public SaResponse setHeader(String name, String value) {
+            return this;
+        }
+
+        @Override
+        public SaResponse addHeader(String name, String value) {
+            return this;
+        }
+
+        @Override
+        public Object redirect(String url) {
+            return null;
+        }
+    }
 }
-
-
 
 
 

@@ -33,12 +33,11 @@ public class StoreCreateCommand {
     @Schema(description = "是否支持自提：1-支持，0-不支持", example = "1")
     private Integer supportPickup;
     
-    @Schema(description = "状态：1-启用，0-停用", example = "1")
+    @Schema(description = "状态：1-启用，2-停用", example = "1")
     private Integer status;
     
     @Schema(description = "备注", example = "备注信息")
     private String remark;
 }
-
 
 

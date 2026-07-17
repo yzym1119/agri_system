@@ -22,8 +22,10 @@ public interface CustomerMapper extends BaseMapper<Customer> {
      */
     @Select("SELECT * FROM customer WHERE id = #{id} AND deleted = 0 FOR UPDATE")
     Customer selectByIdWithLock(@Param("id") Long id);
-}
 
+    @Select("SELECT * FROM customer WHERE id = #{id} LIMIT 1")
+    Customer selectByIdIncludingDeleted(@Param("id") Long id);
+}
 
 
 

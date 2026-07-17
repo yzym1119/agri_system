@@ -6,7 +6,7 @@ import com.agri_system.application.order.service.OrderPaymentService;
 import com.agri_system.domain.after_sales.repository.AfterSalesItemRepository;
 import com.agri_system.domain.after_sales.repository.AfterSalesRepository;
 import com.agri_system.domain.after_sales.service.AfterSalesDomainService;
-import com.agri_system.domain.order.enums.PaymentMethod;
+import com.agri_system.domain.order.enums.OrderMainPaymentMethod;
 import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.order.repository.OrderItemRepository;
 import com.agri_system.domain.order.repository.OrderRepository;
@@ -18,6 +18,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -48,6 +49,8 @@ class CreditBanTest {
     private InventoryApplicationService inventoryApplicationService;
     @Mock
     private OrderPaymentService orderPaymentService;
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     @Test
     void shouldBlockCreditOrderAdminReturn() {
@@ -55,7 +58,7 @@ class CreditBanTest {
         creditOrder.setId(10L);
         creditOrder.setStoreId(1L);
         creditOrder.setOrderStatus(6);
-        creditOrder.setPaymentMethod(PaymentMethod.COUPON.getCode()); // 赊销
+        creditOrder.setPaymentMethod(OrderMainPaymentMethod.CREDIT.getCode());
         when(orderRepository.findById(10L)).thenReturn(Optional.of(creditOrder));
         when(afterSalesRepository.findProcessingByOrderId(10L)).thenReturn(Optional.empty());
 
@@ -73,4 +76,3 @@ class CreditBanTest {
                 "赊销订单应该被禁止发起售后退货");
     }
 }
-

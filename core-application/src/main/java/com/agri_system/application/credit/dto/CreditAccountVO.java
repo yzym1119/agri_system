@@ -9,6 +9,9 @@ import java.time.LocalDateTime;
 @Data
 public class CreditAccountVO {
     private Long id;
+    private Long customerId;
+    private String customerName;
+    private String customerPhone;
     private Long orderId;
     private String orderNo;
     private BigDecimal creditAmount;
@@ -19,7 +22,6 @@ public class CreditAccountVO {
     private String remark;
     private LocalDateTime createdAt;
 }
-
 
 
 

@@ -1,6 +1,7 @@
 package com.agri_system.application.order.service;
 
 import com.agri_system.application.order.dto.command.OrderItemDTO;
+import com.agri_system.application.order.dto.command.PaymentDetailDTO;
 import com.agri_system.application.order.dto.command.POSOrderCreateCommand;
 import com.agri_system.domain.order.enums.PaymentMethod;
 import org.junit.jupiter.api.DisplayName;
@@ -49,8 +50,11 @@ public class CreditOrderValidationTest {
     @DisplayName("赊销订单禁止使用余额")
     public void testCreditOrderWithBalance() {
         POSOrderCreateCommand command = createBasicCreditOrder();
-        command.setUseBalance(true); // 尝试使用余额
-        
+        PaymentDetailDTO balancePayment = new PaymentDetailDTO();
+        balancePayment.setPaymentType(PaymentMethod.BALANCE.getCode());
+        balancePayment.setAmount(BigDecimal.valueOf(100));
+        command.setPayments(List.of(balancePayment)); // 尝试混入余额支付
+
         // 预期：抛出 CREDIT_NO_MIXED 异常
     }
     
@@ -121,7 +125,6 @@ public class CreditOrderValidationTest {
         return command;
     }
 }
-
 
 
 

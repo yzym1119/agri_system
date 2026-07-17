@@ -63,6 +63,16 @@ public interface ProductRepository {
      * 删除商品
      */
     void delete(Long id);
+
+    /**
+     * 查询所有设置了最低库存阈值的商品
+     */
+    java.util.List<Product> findAllWithMinStock();
+
+    /**
+     * 查询所有设置了最高库存阈值的商品
+     */
+    java.util.List<Product> findAllWithMaxStock();
 }
 
 

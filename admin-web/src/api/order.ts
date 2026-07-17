@@ -1,5 +1,6 @@
 import request from '@/utils/request'
 import type {POSOrderCreateRequest} from '@/types/pos'
+import type {OrderDetail, OrderListQuery, OrderPageResponse} from '@/types/order'
 
 /**
  * 订单管理 API
@@ -24,18 +25,24 @@ export function createPOSOrder(data: POSOrderCreateRequest): Promise<{ id: numbe
 /**
  * 分页查询订单列表
  */
-export function getOrderList(params: any): Promise<any> {
+export function getOrderList(params: OrderListQuery): Promise<OrderPageResponse> {
   return request({
     url: '/api/admin/orders',
     method: 'get',
     params
-  })
+  }).then((page: any) => ({
+    records: page?.records || [],
+    total: page?.total ?? page?.totalRow ?? 0,
+    totalRow: page?.totalRow ?? 0,
+    pageNumber: page?.pageNumber ?? params.pageNum ?? 1,
+    pageSize: page?.pageSize ?? params.pageSize ?? 20
+  }))
 }
 
 /**
  * 查询订单详情
  */
-export function getOrderDetail(orderId: number): Promise<any> {
+export function getOrderDetail(orderId: number): Promise<OrderDetail> {
   return request({
     url: `/api/admin/orders/${orderId}`,
     method: 'get'
@@ -73,7 +80,12 @@ export function shipOrder(orderId: number, data: {
  */
 export function refundOrder(orderId: number, data: {
   refundAmount: number
-  reason: string
+  refundReason: string
+  items?: Array<{
+    orderItemId: number
+    quantity: number
+    refundAmount: number
+  }>
 }): Promise<void> {
   return request({
     url: `/api/admin/orders/${orderId}/refund`,
@@ -91,4 +103,3 @@ export function confirmReceipt(orderId: number): Promise<void> {
     method: 'post'
   })
 }
-

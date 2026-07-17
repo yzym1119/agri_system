@@ -32,32 +32,39 @@ public class StoreRepositoryImpl implements StoreRepository {
     
     @Override
     public Optional<Store> findById(Long id) {
-        return Optional.ofNullable(storeMapper.selectOneById(id));
+        QueryWrapper queryWrapper = QueryWrapper.create()
+                .where("id = ?", id)
+                .and("deleted = 0");
+        return Optional.ofNullable(storeMapper.selectOneByQuery(queryWrapper));
+    }
+
+    @Override
+    public Optional<Store> findByIdIncludingDeleted(Long id) {
+        return Optional.ofNullable(storeMapper.selectByIdIncludingDeleted(id));
     }
     
     @Override
     public Optional<Store> findByCode(String code) {
-        QueryWrapper queryWrapper = QueryWrapper.create()
-                .where("code = ?", code);
-        return Optional.ofNullable(storeMapper.selectOneByQuery(queryWrapper));
+        return Optional.ofNullable(storeMapper.selectByCodeIncludingDeleted(code));
     }
     
     @Override
     public Page<Store> findPage(String code, String name, Integer status, Integer supportPickup,
                                 int pageNum, int pageSize) {
-        QueryWrapper queryWrapper = QueryWrapper.create();
+        QueryWrapper queryWrapper = QueryWrapper.create()
+                .where("deleted = 0");
         
         if (code != null && !code.isEmpty()) {
-            queryWrapper.where("code LIKE ?", "%" + code + "%");
+            queryWrapper.and("code LIKE ?", "%" + code + "%");
         }
         if (name != null && !name.isEmpty()) {
-            queryWrapper.where("name LIKE ?", "%" + name + "%");
+            queryWrapper.and("name LIKE ?", "%" + name + "%");
         }
         if (status != null) {
-            queryWrapper.where("status = ?", status);
+            queryWrapper.and("status = ?", status);
         }
         if (supportPickup != null) {
-            queryWrapper.where("support_pickup = ?", supportPickup);
+            queryWrapper.and("support_pickup = ?", supportPickup);
         }
         
         queryWrapper.orderBy("created_at DESC");
@@ -74,7 +81,6 @@ public class StoreRepositoryImpl implements StoreRepository {
         storeMapper.update(store);
     }
 }
-
 
 
 

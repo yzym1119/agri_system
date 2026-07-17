@@ -1,6 +1,7 @@
 package com.agri_system.api.admin.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.stp.StpUtil;
 import com.agri_system.application.staff.dto.vo.MenuTreeVO;
 import com.agri_system.application.staff.service.StaffAuthorityService;
 import com.agri_system.infrastructure.common.response.R;
@@ -27,5 +28,21 @@ public class MenuController {
     public R<List<MenuTreeVO>> tree() {
         return R.success(authorityService.getMenuTree());
     }
-}
 
+    @GetMapping("/current")
+    @Operation(summary = "当前员工可见菜单树")
+    public R<List<MenuTreeVO>> current() {
+        return R.success(authorityService.getCurrentMenuTree(getCurrentStaffId()));
+    }
+
+    private Long getCurrentStaffId() {
+        if (!StpUtil.isLogin()) {
+            throw new IllegalArgumentException("未登录");
+        }
+        String loginId = StpUtil.getLoginIdAsString();
+        if (loginId != null && loginId.startsWith("STAFF_")) {
+            return Long.parseLong(loginId.substring("STAFF_".length()));
+        }
+        throw new IllegalArgumentException("当前登录用户不是员工");
+    }
+}

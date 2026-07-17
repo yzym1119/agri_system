@@ -1,6 +1,6 @@
 package com.agri_system.api.admin.controller;
 
-import cn.dev33.satoken.annotation.SaCheckRole;
+import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.agri_system.application.report.dto.CreditRiskVO;
 import com.agri_system.application.report.service.ReportAnalysisService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -23,10 +24,11 @@ public class ReportFinanceController {
     private final ReportAnalysisService reportAnalysisService;
 
     @GetMapping("/credit")
-    @SaCheckRole({"ADMIN", "BOSS", "FINANCE"})
+    @SaCheckPermission("report:finance:query")
     @Operation(summary = "财务风控分析")
-    public ResponseEntity<CreditRiskVO> creditRisk() {
-        return ResponseEntity.ok(reportAnalysisService.creditRisk());
+    public ResponseEntity<CreditRiskVO> creditRisk(
+            @RequestParam(required = false) Long storeId) {
+        return ResponseEntity.ok(reportAnalysisService.creditRisk(storeId));
     }
 }
 

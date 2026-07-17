@@ -21,7 +21,7 @@
         <el-form-item>
           <el-button type="primary" :loading="loading" :icon="Search" @click="handleSearch">查询</el-button>
           <el-button :icon="Refresh" @click="handleReset">重置</el-button>
-          <el-button type="success" :icon="Plus" @click="handleAdd">新增模板</el-button>
+          <el-button v-permission="'marketing:coupon:create'" type="success" :icon="Plus" @click="handleAdd">新增模板</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -41,7 +41,7 @@
         <el-table-column prop="amount" label="面额" width="120" align="right">
           <template #default="{ row }">
             <span v-if="row.type === 1">¥{{ row.amount.toFixed(2) }}</span>
-            <span v-else>{{ row.amount }}折</span>
+            <span v-else>{{ Number(row.amount) }}折</span>
           </template>
         </el-table-column>
         <el-table-column prop="minOrderAmount" label="使用门槛" width="120" align="right">
@@ -79,6 +79,7 @@
         <el-table-column prop="status" label="状态" width="100" align="center">
           <template #default="{ row }">
             <el-switch
+              v-permission="'marketing:coupon:update'"
               v-model="row.status"
               :active-value="1"
               :inactive-value="0"
@@ -88,8 +89,8 @@
         </el-table-column>
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="handleEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
+            <el-button v-permission="'marketing:coupon:update'" link type="primary" @click="handleEdit(row)">编辑</el-button>
+            <el-button v-permission="'marketing:coupon:delete'" link type="danger" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -128,14 +129,15 @@
         <el-form-item label="面额/折扣率" prop="amount">
           <el-input-number
             v-model="formData.amount"
-            :min="0.01"
-            :precision="2"
-            :placeholder="formData.type === 1 ? '请输入面额（元）' : '请输入折扣率（如：0.8表示8折）'"
+            :min="formData.type === 1 ? 0.01 : 0.1"
+            :max="formData.type === 1 ? undefined : 9.9"
+            :precision="formData.type === 1 ? 2 : 1"
+            :placeholder="formData.type === 1 ? '请输入面额（元）' : '请输入折扣（如：8.5表示85折）'"
             style="width: 100%"
           />
           <div style="font-size: 12px; color: #909399; margin-top: 4px">
-            <span v-if="formData.type === 1">满减券：直接减免的金额（元）</span>
-            <span v-else>折扣券：0-1之间的小数，如0.8表示8折，0.95表示9.5折</span>
+            <span v-if="formData.type === 1">满减券：直接减免的金额（元），必须小于使用门槛</span>
+            <span v-else>折扣券：填写0.1~9.9之间的数值，如8表示8折（原价×80%），8.5表示8.5折（原价×85%）</span>
           </div>
         </el-form-item>
         <el-form-item label="使用门槛" prop="minOrderAmount">
@@ -214,7 +216,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
+        <el-button v-permission="isEdit ? 'marketing:coupon:update' : 'marketing:coupon:create'" type="primary" :loading="submitLoading" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -292,10 +294,20 @@ const formRules: FormRules = {
     { required: true, message: '请输入面额/折扣率', trigger: 'blur' },
     {
       validator: (rule, value, callback) => {
-        if (formData.type === 2 && (value <= 0 || value > 1)) {
-          callback(new Error('折扣率必须在0-1之间'))
-        } else if (formData.type === 1 && value <= 0) {
-          callback(new Error('面额必须大于0'))
+        if (formData.type === 2) {
+          if (value < 0.1 || value > 9.9) {
+            callback(new Error('折扣必须在0.1~9.9之间（如8表示8折）'))
+          } else {
+            callback()
+          }
+        } else if (formData.type === 1) {
+          if (value <= 0) {
+            callback(new Error('面额必须大于0'))
+          } else if (formData.minOrderAmount > 0 && value >= formData.minOrderAmount) {
+            callback(new Error('面额必须小于使用门槛金额'))
+          } else {
+            callback()
+          }
         } else {
           callback()
         }
@@ -583,4 +595,3 @@ loadTable()
   justify-content: flex-end;
 }
 </style>
-

@@ -5,6 +5,7 @@ import com.agri_system.application.auth.dto.ClientWechatLoginCommand;
 import com.agri_system.application.auth.dto.LoginResultVO;
 import com.agri_system.application.auth.dto.StaffLoginCommand;
 import com.agri_system.application.auth.util.BCryptUtils;
+import com.agri_system.application.staff.service.StaffAuthorityService;
 import com.agri_system.domain.auth.model.CustomerIdentity;
 import com.agri_system.domain.auth.repository.CustomerIdentityRepository;
 import com.agri_system.domain.customer.model.Customer;
@@ -15,6 +16,8 @@ import com.agri_system.domain.system.auth.repository.SysRoleRepository;
 import com.agri_system.domain.wallet.model.CustomerWallet;
 import com.agri_system.domain.wallet.repository.CustomerWalletRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 认证服务
@@ -40,6 +44,14 @@ public class AuthService {
     private final CustomerWalletRepository walletRepository;
     private final WechatService wechatService;
     private final SysRoleRepository roleRepository;
+    private final StaffAuthorityService authorityService;
+    private final StringRedisTemplate redisTemplate;
+
+    @Value("${wechat.app-id:}")
+    private String wechatAppId;
+
+    private static final int MAX_LOGIN_ATTEMPTS = 5;
+    private static final long LOGIN_LOCK_MINUTES = 15;
     
     /**
      * 员工登录
@@ -49,47 +61,66 @@ public class AuthService {
      */
     @Transactional(rollbackFor = Exception.class)
     public LoginResultVO staffLogin(StaffLoginCommand command) {
-        // 1. 查询员工
-        Staff staff = staffRepository.findByCodeOrPhone(command.getAccount())
-                .orElseThrow(() -> new IllegalArgumentException("账号不存在"));
-        
-        // 2. 校验密码
-        if (staff.getPassword() == null || 
-            !BCryptUtils.matches(command.getPassword(), staff.getPassword())) {
-            throw new IllegalArgumentException("密码错误");
+        String account = command.getAccount();
+        String rateLimitKey = "login:fail:" + account;
+
+        // 0. 检查是否被锁定
+        String failCountStr = redisTemplate.opsForValue().get(rateLimitKey);
+        if (failCountStr != null && Integer.parseInt(failCountStr) >= MAX_LOGIN_ATTEMPTS) {
+            Long ttl = redisTemplate.getExpire(rateLimitKey, TimeUnit.MINUTES);
+            throw new IllegalArgumentException(
+                String.format("登录失败次数过多，账号已锁定，请%d分钟后再试", ttl != null && ttl > 0 ? ttl : LOGIN_LOCK_MINUTES));
         }
-        
+
+        // 1. 查询员工
+        Staff staff = staffRepository.findByCodeOrPhone(account)
+                .orElseThrow(() -> {
+                    recordLoginFailure(rateLimitKey);
+                    return new IllegalArgumentException("账号或密码错误");
+                });
+
+        // 2. 校验密码
+        if (staff.getPassword() == null ||
+            !BCryptUtils.matches(command.getPassword(), staff.getPassword())) {
+            recordLoginFailure(rateLimitKey);
+            throw new IllegalArgumentException("账号或密码错误");
+        }
+
         // 3. 校验状态
         if (!staff.isActive()) {
             throw new IllegalArgumentException("账号已停用");
         }
-        
-        // 4. 执行登录（使用前缀区分）
+
+        // 4. 登录成功，清除失败计数
+        redisTemplate.delete(rateLimitKey);
+
+        // 5. 执行登录（使用前缀区分）
         String loginId = "STAFF_" + staff.getId();
         StpUtil.login(loginId);
         String tokenValue = StpUtil.getTokenValue();
-        
-        // 5. 构建返回结果
+
+        // 5.1 把 storeId / roleCodes 写入 Sa-Token Session，供后续请求复用（避免每次查询 staff 表）
+        try {
+            cn.dev33.satoken.session.SaSession session = StpUtil.getSession(true);
+            session.set("storeId", staff.getStoreId());
+            session.set("roleCodes", roleRepository.findRoleCodesByStaffId(staff.getId()));
+        } catch (Exception ignored) { }
+
+        // 6. 构建返回结果
         LoginResultVO result = new LoginResultVO();
         result.setTokenName(StpUtil.getTokenName());
         result.setTokenValue(tokenValue);
-        
-        LoginResultVO.UserInfo userInfo = new LoginResultVO.UserInfo();
-        userInfo.setId(staff.getId());
-        userInfo.setName(staff.getName());
-        // 从sys_staff_role表获取角色代码（使用细分的RBAC权限管理）
-        List<String> roleCodes = roleRepository.findRoleCodesByStaffId(staff.getId());
-        userInfo.setRole(roleCodes.isEmpty() ? null : roleCodes.get(0)); // 返回第一个角色代码，用于显示
-        
-        Map<String, Object> extra = new HashMap<>();
-        extra.put("code", staff.getCode());
-        extra.put("phone", staff.getPhone());
-        extra.put("storeId", staff.getStoreId());
-        userInfo.setExtra(extra);
-        
-        result.setUserInfo(userInfo);
-        
+
+        result.setUserInfo(buildStaffUserInfo(staff));
+
         return result;
+    }
+
+    private void recordLoginFailure(String rateLimitKey) {
+        Long count = redisTemplate.opsForValue().increment(rateLimitKey);
+        if (count != null && count == 1) {
+            redisTemplate.expire(rateLimitKey, LOGIN_LOCK_MINUTES, TimeUnit.MINUTES);
+        }
     }
     
     /**
@@ -152,13 +183,45 @@ public class AuthService {
         userInfo.setExtra(extra);
         
         result.setUserInfo(userInfo);
-        
+
         return result;
     }
-    
+
+    /**
+     * 开发环境客户登录（仅限开发/测试，生产环境不开放）
+     * 通过手机号直接登录，绕过微信认证
+     */
+    public LoginResultVO devClientLogin(String phone) {
+        if (wechatAppId != null && !wechatAppId.isEmpty()) {
+            throw new IllegalStateException("开发登录仅在未配置微信appId时可用");
+        }
+
+        Customer customer = customerRepository.findByPhone(phone)
+                .orElseThrow(() -> new IllegalArgumentException("客户不存在: " + phone));
+
+        if (customer.getStatus() == null || customer.getStatus() != 1) {
+            throw new IllegalArgumentException("客户账号已停用");
+        }
+
+        String loginId = "CUST_" + customer.getId();
+        StpUtil.login(loginId);
+
+        LoginResultVO result = new LoginResultVO();
+        result.setTokenName(StpUtil.getTokenName());
+        result.setTokenValue(StpUtil.getTokenValue());
+
+        LoginResultVO.UserInfo userInfo = new LoginResultVO.UserInfo();
+        userInfo.setId(customer.getId());
+        userInfo.setName(customer.getName());
+        userInfo.setRole(customer.getType() != null && customer.getType() == 2 ? "VIP" : "NORMAL");
+        result.setUserInfo(userInfo);
+
+        return result;
+    }
+
     /**
      * 从微信创建客户（自动注册）
-     * 
+     *
      * @param openId 微信OpenID
      * @param sessionKey 微信SessionKey
      * @return 客户
@@ -235,20 +298,47 @@ public class AuthService {
         Staff staff = staffRepository.findById(staffId)
                 .orElseThrow(() -> new IllegalArgumentException("员工不存在"));
         
+        return buildStaffUserInfo(staff);
+    }
+
+    private LoginResultVO.UserInfo buildStaffUserInfo(Staff staff) {
         LoginResultVO.UserInfo userInfo = new LoginResultVO.UserInfo();
         userInfo.setId(staff.getId());
         userInfo.setName(staff.getName());
-        // 从sys_staff_role表获取角色代码（使用细分的RBAC权限管理）
         List<String> roleCodes = roleRepository.findRoleCodesByStaffId(staff.getId());
-        userInfo.setRole(roleCodes.isEmpty() ? null : roleCodes.get(0)); // 返回第一个角色代码，用于显示
-        
+        userInfo.setRole(roleCodes.isEmpty() ? null : roleCodes.get(0));
+        userInfo.setPermissions(authorityService.loadPermissions(staff.getId()));
+
         Map<String, Object> extra = new HashMap<>();
         extra.put("code", staff.getCode());
         extra.put("phone", staff.getPhone());
         extra.put("storeId", staff.getStoreId());
+        extra.put("roleCodes", roleCodes);
         userInfo.setExtra(extra);
-        
         return userInfo;
     }
-}
 
+    /**
+     * 获取当前登录客户ID
+     *
+     * @return 客户ID
+     */
+    public Long getCurrentCustomerId() {
+        if (!StpUtil.isLogin()) {
+            throw new IllegalArgumentException("未登录");
+        }
+
+        String loginId = StpUtil.getLoginIdAsString();
+        if (loginId == null || !loginId.startsWith("CUST_")) {
+            throw new IllegalArgumentException("当前登录用户不是客户");
+        }
+
+        Long customerId = Long.parseLong(loginId.substring("CUST_".length()));
+        Customer customer = customerRepository.findById(customerId)
+                .orElseThrow(() -> new IllegalArgumentException("客户不存在"));
+        if (!customer.isActive()) {
+            throw new IllegalArgumentException("客户账号已停用");
+        }
+        return customerId;
+    }
+}

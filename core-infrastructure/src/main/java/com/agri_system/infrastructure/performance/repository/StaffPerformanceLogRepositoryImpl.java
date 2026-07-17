@@ -75,5 +75,14 @@ public class StaffPerformanceLogRepositoryImpl implements StaffPerformanceLogRep
                 .where("DATE_FORMAT(created_at,'%Y-%m') = ?", month);
         return mapper.selectListByQueryAs(query, Long.class);
     }
+
+    @Override
+    public List<StaffPerformanceLog> findByStaffAndMonthRange(Long staffId, String month) {
+        QueryWrapper query = QueryWrapper.create()
+                .where("staff_id = ?", staffId)
+                .and("DATE_FORMAT(created_at,'%Y-%m') = ?", month)
+                .orderBy("created_at DESC");
+        return mapper.selectListByQuery(query);
+    }
 }
 

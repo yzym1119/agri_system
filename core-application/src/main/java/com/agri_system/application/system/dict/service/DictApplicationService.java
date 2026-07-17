@@ -46,6 +46,7 @@ public class DictApplicationService {
     @CacheEvict(value = "sys_dict", key = "#command.typeCode")
     public Long createData(DictDataCreateCommand command) {
         ensureTypeExists(command.getTypeCode());
+        normalizeDefaultFlag(command.getTypeCode(), null, command.getIsDefault());
 
         SysDictData data = new SysDictData();
         data.setTypeCode(command.getTypeCode());
@@ -67,6 +68,7 @@ public class DictApplicationService {
         if (!data.getTypeCode().equals(command.getTypeCode())) {
             throw new IllegalArgumentException("字典类型不匹配");
         }
+        normalizeDefaultFlag(command.getTypeCode(), data.getId(), command.getIsDefault());
         data.setLabel(command.getLabel());
         data.setValue(command.getValue());
         data.setSortOrder(command.getSortOrder());
@@ -84,7 +86,28 @@ public class DictApplicationService {
         if (!data.getTypeCode().equals(typeCode)) {
             throw new IllegalArgumentException("字典类型不匹配");
         }
+        if (data.isEnabled()) {
+            throw new IllegalArgumentException("启用中的字典项不能直接删除，请先停用后再删除");
+        }
+        if (data.getIsDefault() != null && data.getIsDefault() == 1) {
+            throw new IllegalArgumentException("默认字典项不能直接删除，请先取消默认后再删除");
+        }
         dictRepository.deleteData(id);
+    }
+
+    private void normalizeDefaultFlag(String typeCode, Long currentId, Integer isDefault) {
+        if (isDefault == null || isDefault != 1) {
+            return;
+        }
+        List<SysDictData> exists = dictRepository.listDataByTypeCode(typeCode);
+        for (SysDictData item : exists) {
+            if (item.getIsDefault() != null
+                    && item.getIsDefault() == 1
+                    && (currentId == null || !item.getId().equals(currentId))) {
+                item.setIsDefault(0);
+                dictRepository.saveData(item);
+            }
+        }
     }
 
     private void ensureTypeExists(String typeCode) {
@@ -114,7 +137,6 @@ public class DictApplicationService {
         return vo;
     }
 }
-
 
 
 

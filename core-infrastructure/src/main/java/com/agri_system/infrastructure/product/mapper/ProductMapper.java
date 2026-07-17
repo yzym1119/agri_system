@@ -40,6 +40,14 @@ public interface ProductMapper extends BaseMapper<Product> {
             "allow_special_fund = #{allowSpecialFund}, " +
             "remark = #{remark}, " +
             "category_id = #{categoryId}, " +
+            "barcode = #{barcode}, " +
+            "registration_no = #{registrationNo}, " +
+            "storage_conditions = #{storageConditions}, " +
+            "shelf_life_days = #{shelfLifeDays}, " +
+            "usage_method = #{usageMethod}, " +
+            "min_stock = #{minStock}, " +
+            "max_stock = #{maxStock}, " +
+            "reorder_quantity = #{reorderQuantity}, " +
             "updated_at = #{updatedAt}, " +
             "updated_by = #{updatedBy} " +
             "WHERE id = #{id}")
@@ -62,6 +70,14 @@ public interface ProductMapper extends BaseMapper<Product> {
                     @Param("baseShippingFee") BigDecimal baseShippingFee,
                     @Param("allowSpecialFund") Integer allowSpecialFund,
                     @Param("remark") String remark,
+                    @Param("barcode") String barcode,
+                    @Param("registrationNo") String registrationNo,
+                    @Param("storageConditions") String storageConditions,
+                    @Param("shelfLifeDays") Integer shelfLifeDays,
+                    @Param("usageMethod") String usageMethod,
+                    @Param("minStock") BigDecimal minStock,
+                    @Param("maxStock") BigDecimal maxStock,
+                    @Param("reorderQuantity") BigDecimal reorderQuantity,
                     @Param("updatedAt") LocalDateTime updatedAt,
                     @Param("updatedBy") Long updatedBy);
 }
