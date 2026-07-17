@@ -158,7 +158,7 @@ public class OrderApplicationService {
             item.setUnitPrice(unitPrice);
             item.setCostPriceSnapshot(product.getAvgCostPrice());
             item.setTotalPrice(itemTotal);
-            item.setAllowSpecialFund(0); // TODO: 从商品快照获取
+            item.setAllowSpecialFund(product.getAllowSpecialFund() != null ? product.getAllowSpecialFund() : 0);
             item.setSortOrder(sortOrder++);
             items.add(item);
         }
