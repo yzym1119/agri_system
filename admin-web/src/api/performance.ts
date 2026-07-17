@@ -57,7 +57,7 @@ export function confirmSalaryBill(id: number): Promise<void> {
 
 export function getStaffPerformanceDashboard(staffId: number): Promise<StaffPerformanceDashboard> {
   return request({
-    url: '/api/staff/performance/dashboard',
+    url: '/api/admin/staff/performance/dashboard',
     method: 'get',
     params: { staffId }
   })
@@ -70,7 +70,7 @@ export function getStaffPerformanceLogs(params: {
   size?: number
 }): Promise<StaffPerformanceLogItem[]> {
   return request({
-    url: '/api/staff/performance/logs',
+    url: '/api/admin/staff/performance/logs',
     method: 'get',
     params
   })

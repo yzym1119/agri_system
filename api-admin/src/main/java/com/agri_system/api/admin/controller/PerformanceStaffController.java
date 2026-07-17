@@ -17,7 +17,7 @@ import java.util.List;
 
 @Tag(name = "PerformanceStaff", description = "员工绩效看板接口")
 @RestController
-@RequestMapping("/api/staff/performance")
+@RequestMapping("/api/admin/staff/performance")
 @RequiredArgsConstructor
 public class PerformanceStaffController {
 

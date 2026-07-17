@@ -1,5 +1,6 @@
 package com.agri_system.api.admin.controller;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +22,7 @@ public class PrintAdminController {
      * TODO: 集成后端打印服务/生成 PDF 或推送到打印机
      */
     @PostMapping("/receipt")
+    @SaCheckLogin
     public ResponseEntity<Map<String, Object>> printReceipt(@RequestBody Map<String, Object> payload) {
         logger.info("Print endpoint disabled - frontend printing only. Received payload orderNo: {}", payload != null ? payload.get("orderNo") : "null");
         Map<String, Object> resp = new HashMap<>();

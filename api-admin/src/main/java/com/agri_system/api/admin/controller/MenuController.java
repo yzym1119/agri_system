@@ -1,5 +1,6 @@
 package com.agri_system.api.admin.controller;
 
+import cn.dev33.satoken.annotation.SaCheckLogin;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.dev33.satoken.stp.StpUtil;
 import com.agri_system.application.staff.dto.vo.MenuTreeVO;
@@ -30,6 +31,7 @@ public class MenuController {
     }
 
     @GetMapping("/current")
+    @SaCheckLogin
     @Operation(summary = "当前员工可见菜单树")
     public R<List<MenuTreeVO>> current() {
         return R.success(authorityService.getCurrentMenuTree(getCurrentStaffId()));

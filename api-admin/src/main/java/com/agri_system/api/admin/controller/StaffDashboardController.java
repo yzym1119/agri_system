@@ -1,7 +1,8 @@
 package com.agri_system.api.admin.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
-import cn.dev33.satoken.stp.StpUtil;
+import cn.dev33.satoken.annotation.SaCheckLogin;
+import com.agri_system.application.auth.util.CurrentUser;
 import com.agri_system.application.performance.dto.StaffCommissionDashboardVO;
 import com.agri_system.application.performance.service.StaffCommissionDashboardService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -23,14 +24,13 @@ public class StaffDashboardController {
     private final StaffCommissionDashboardService dashboardService;
 
     @GetMapping
+    @SaCheckLogin
     @Operation(summary = "获取我的提成看板数据")
     public ResponseEntity<StaffCommissionDashboardVO> myDashboard() {
-        Long staffId = extractStaffId();
+        Long staffId = CurrentUser.staffId();
+        if (staffId == null) {
+            return ResponseEntity.badRequest().build();
+        }
         return ResponseEntity.ok(dashboardService.getDashboard(staffId));
-    }
-
-    private Long extractStaffId() {
-        String loginId = StpUtil.getLoginIdAsString();
-        return Long.parseLong(loginId.replace("STAFF_", ""));
     }
 }
