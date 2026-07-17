@@ -163,7 +163,16 @@ public class OrderPaymentService {
                                             LocalDateTime externalPaidAt) {
         // 先预运算
         OrderPayPreviewVO preview = previewPayment(order, useBalance, useSpecialFund, couponId);
-        
+
+        // 显式校验优惠券：传入已用/无效券时直接报错，避免被 preview 的 couponAmount>0 守卫静默忽略
+        if (couponId != null) {
+            CustomerCoupon coupon = couponRepository.findById(couponId)
+                    .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券不存在"));
+            if (coupon.getStatus() == null || coupon.getStatus() != 1) {
+                throw new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券已使用或状态不正确");
+            }
+        }
+
         List<OrderPayment> payments = new ArrayList<>();
         BigDecimal totalPaid = BigDecimal.ZERO;
         
