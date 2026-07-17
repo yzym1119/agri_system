@@ -78,7 +78,6 @@ class PackageCreateTest {
         // Given: 不传vip_price
         createCommand.setVipPrice(null);
         when(packageRepository.findByCode(anyString())).thenReturn(Optional.empty());
-        when(productRepository.findById(1L)).thenReturn(Optional.of(testProduct));
         doAnswer(invocation -> {
             ProductPackage pkg = invocation.getArgument(0);
             pkg.setId(1L);
@@ -114,8 +113,10 @@ class PackageCreateTest {
         createCommand.setItems(items);
         
         when(packageRepository.findByCode(anyString())).thenReturn(Optional.empty());
-        when(productRepository.findById(1L)).thenReturn(Optional.of(testProduct));
-        
+        // 领域服务负责重复商品校验，createPackage 委托并向上抛出
+        doThrow(new IllegalArgumentException(PackageErrorCode.PACKAGE_DUPLICATE_PRODUCTS))
+                .when(domainService).validatePackageItems(any());
+
         // When & Then: 应抛出package-1005异常
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
             packageService.createPackage(createCommand);
@@ -129,7 +130,10 @@ class PackageCreateTest {
         // Given: items为空
         createCommand.setItems(new ArrayList<>());
         when(packageRepository.findByCode(anyString())).thenReturn(Optional.empty());
-        
+        // 领域服务负责空明细校验，createPackage 委托并向上抛出
+        doThrow(new IllegalArgumentException(PackageErrorCode.PACKAGE_MUST_HAVE_ITEMS))
+                .when(domainService).validatePackageItems(any());
+
         // When & Then: 应抛出package-1004异常
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class, () -> {
             packageService.createPackage(createCommand);

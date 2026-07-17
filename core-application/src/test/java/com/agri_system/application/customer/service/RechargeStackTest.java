@@ -9,6 +9,7 @@ import com.agri_system.domain.customer.model.Customer;
 import com.agri_system.domain.customer.model.MarketingRechargeRule;
 import com.agri_system.domain.customer.repository.CouponTemplateRepository;
 import com.agri_system.domain.customer.repository.CustomerRepository;
+import com.agri_system.domain.customer.repository.CustomerBenefitLogRepository;
 import com.agri_system.domain.customer.repository.MarketingRuleRepository;
 import com.agri_system.domain.customer.repository.VipMonthlyRecordRepository;
 import com.agri_system.domain.customer.service.CustomerDomainService;
@@ -37,6 +38,7 @@ import static org.mockito.Mockito.*;
  * @author AI Generated
  */
 @ExtendWith(MockitoExtension.class)
+@org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
 class RechargeStackTest {
 
     @Mock
@@ -62,6 +64,9 @@ class RechargeStackTest {
     
     @Mock
     private VipMonthlyRecordRepository vipMonthlyRecordRepository;
+
+    @Mock
+    private CustomerBenefitLogRepository benefitLogRepository;
 
     @InjectMocks
     private WalletRechargeService walletRechargeService;
@@ -203,9 +208,7 @@ class RechargeStackTest {
         // 充值金额100，低于任何门槛
         command.setAmount(new BigDecimal("100"));
 
-        // Mock：找不到任何匹配的门槛
-        when(marketingRuleRepository.findMaxMatchingThreshold(new BigDecimal("100")))
-                .thenReturn(null);
+        // Mock 默认返回 null（找不到匹配门槛），无需显式 stub
 
         // 执行充值
         RechargeResultVO result = walletRechargeService.recharge(command);

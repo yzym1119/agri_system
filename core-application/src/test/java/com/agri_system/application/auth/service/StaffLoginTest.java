@@ -19,6 +19,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
 import java.util.HashMap;
 import java.util.List;
@@ -26,6 +28,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
@@ -56,7 +59,12 @@ class StaffLoginTest {
 
     @Mock
     private StaffAuthorityService authorityService;
-    
+
+    @Mock
+    private StringRedisTemplate redisTemplate;
+
+    private ValueOperations<String, String> valueOps;
+
     @InjectMocks
     private AuthService authService;
     
@@ -84,6 +92,11 @@ class StaffLoginTest {
 
         lenient().when(roleRepository.findRoleCodesByStaffId(1L)).thenReturn(List.of("ADMIN"));
         lenient().when(authorityService.loadPermissions(1L)).thenReturn(List.of("staff:view"));
+
+        // AuthService 登录限流依赖 Redis：mock 成"未被限流"
+        valueOps = mock(ValueOperations.class);
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
+        lenient().when(valueOps.get(anyString())).thenReturn(null);
     }
 
     @AfterEach

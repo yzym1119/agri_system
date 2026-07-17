@@ -5,6 +5,7 @@ import com.agri_system.domain.coupon.model.CustomerCoupon;
 import com.agri_system.domain.coupon.repository.CustomerCouponRepository;
 import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.order.repository.OrderItemRepository;
+import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.order.repository.OrderPaymentRepository;
 import com.agri_system.domain.order.service.OrderDomainService;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,7 +44,10 @@ class CouponOneTimeUseTest {
     
     @Mock
     private OrderItemRepository itemRepository;
-    
+
+    @Mock
+    private ProductRepository productRepository;
+
     @InjectMocks
     private OrderPaymentService paymentService;
     

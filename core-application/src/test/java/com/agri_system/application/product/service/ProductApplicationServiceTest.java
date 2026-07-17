@@ -4,6 +4,8 @@ import com.agri_system.application.product.dto.command.ProductCreateCommand;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.product.service.ProductDomainService;
+import com.agri_system.application.support.SaTokenTestContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,18 +41,30 @@ class ProductApplicationServiceTest {
     
     @BeforeEach
     void setUp() {
+        SaTokenTestContext.setUp();
         createCommand = new ProductCreateCommand();
         createCommand.setCode("P001");
         createCommand.setName("测试商品");
         createCommand.setMainUnit("袋");
         createCommand.setSuggestedRetailPrice(new BigDecimal("50.00"));
     }
-    
+
+    @AfterEach
+    void tearDown() {
+        SaTokenTestContext.tearDown();
+    }
+
     @Test
     void testCreateProduct_VerifyAvgCostPriceNotSet() {
         // Given: 商品编码不存在
         when(productRepository.findByCode("P001")).thenReturn(Optional.empty());
-        
+        // createProduct 返回 product.getId()；单测里 save 是 mock，用 doAnswer 回填 id
+        doAnswer(invocation -> {
+            Product p = invocation.getArgument(0);
+            p.setId(1L);
+            return null;
+        }).when(productRepository).save(any(Product.class));
+
         // When: 创建商品
         Long productId = productService.createProduct(createCommand);
         

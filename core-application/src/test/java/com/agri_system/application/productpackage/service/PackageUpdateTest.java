@@ -29,6 +29,7 @@ import static org.mockito.Mockito.*;
  * @author AI Generated
  */
 @ExtendWith(MockitoExtension.class)
+@org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
 class PackageUpdateTest {
     
     @Mock

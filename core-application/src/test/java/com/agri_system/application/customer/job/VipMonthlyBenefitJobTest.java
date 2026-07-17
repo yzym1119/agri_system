@@ -96,7 +96,7 @@ class VipMonthlyBenefitJobTest {
         verify(vipLifecycleService).grantMonthlyBenefit(1L, "2025-01");
         verify(vipLifecycleService).grantMonthlyBenefit(2L, "2025-01");
         // 验证：没有为过期VIP发放
-        verify(vipLifecycleService, never()).grantMonthlyBenefit(3L, anyString());
+        verify(vipLifecycleService, never()).grantMonthlyBenefit(eq(3L), anyString());
     }
 
     /**

@@ -107,10 +107,12 @@ class PurchaseApplicationServiceTest {
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         when(domainService.generateOrderNo()).thenReturn("PO20240101000001");
         
-        PurchaseOrder savedOrder = new PurchaseOrder();
-        savedOrder.setId(1L);
-        savedOrder.setPurchaseNo("PO20240101000001");
-        when(purchaseRepository.findById(any())).thenReturn(Optional.of(savedOrder));
+        // create() 直接返回 order.getId()；单测里 save 是 mock，用 doAnswer 回填 id
+        doAnswer(invocation -> {
+            PurchaseOrder saved = invocation.getArgument(0);
+            saved.setId(1L);
+            return null;
+        }).when(purchaseRepository).save(any(PurchaseOrder.class));
         
         // When: 创建采购单
         Long orderId = purchaseService.create(createCommand, 1L);
@@ -153,7 +155,7 @@ class PurchaseApplicationServiceTest {
         order.setId(1L);
         order.setStatus(1); // 待提交
         when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
-        when(domainService.checkCanSubmit(order)).thenReturn(true);
+        when(domainService.checkCanAudit(order)).thenReturn(true);
         
         PurchaseSubmitCommand command = new PurchaseSubmitCommand();
         command.setOrderId(1L);
