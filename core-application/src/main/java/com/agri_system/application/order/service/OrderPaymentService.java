@@ -303,7 +303,12 @@ public class OrderPaymentService {
         if (refundAmount == null) {
             refundAmount = order.getPayAmount();
         }
-        
+        // 是否全额退款：refundAmount == 实付金额（buildRefundPlan 的 fullRefund 判定与此一致；
+        // refundAmount 经校验不会超过实付金额，故 == 0 即全额）。订单状态 8/9 在本方法返回后才设置，
+        // 故此处以金额判定，不依赖 orderStatus。
+        BigDecimal payAmount = order.getPayAmount();
+        boolean isFullRefund = payAmount != null && refundAmount.compareTo(payAmount) == 0;
+
         // 查询支付明细（按创建时间倒序，LIFO）
         List<OrderPayment> payments = paymentRepository.findByOrderId(order.getId());
         payments.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
@@ -336,11 +341,26 @@ public class OrderPaymentService {
                 // 专用金：退回专用金
                 walletService.refundSpecialFund(order.getCustomerId(), refund, "ORDER_REFUND", order.getId(), createdBy);
             } else if (paymentType.equals(PaymentMethod.COUPON.getCode())) {
-                // 优惠券：视策略处理（通常不退）
-                // TODO: 根据业务策略决定是否退回优惠券
+                // 优惠券：仅全额退款且券未过期时退回（恢复为未使用，客户可在后续订单复用）；
+                // 部分退款或券已过期均不退。是否实际恢复由 CustomerCoupon.restore() 按状态/过期判定。
+                if (isFullRefund && payment.getCouponId() != null) {
+                    restoreCoupon(payment.getCouponId());
+                }
             }
             
             remaining = remaining.subtract(refund);
         }
+    }
+
+    /**
+     * 退回优惠券（仅全额退款时调用）：券是否实际恢复为"未使用"由
+     * {@link CustomerCoupon#restore()} 按"已使用且未过期"判定；不满足则不改动、不保存。
+     */
+    private void restoreCoupon(Long couponId) {
+        couponRepository.findById(couponId).ifPresent(coupon -> {
+            if (coupon.restore()) {
+                couponRepository.save(coupon);
+            }
+        });
     }
 }

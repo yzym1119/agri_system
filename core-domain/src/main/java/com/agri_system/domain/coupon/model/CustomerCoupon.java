@@ -172,6 +172,33 @@ public class CustomerCoupon {
 
         return actualDeduct;
     }
+
+    /**
+     * 退款回退优惠券：将"已使用"的券恢复为"未使用"，使其可在后续订单复用。
+     * <p>
+     * 业务规则（与 {@code use} 对称的回退）：
+     * <ul>
+     *   <li>仅当当前状态为"已使用(2)"时才回退；其他状态（未使用/已作废）原样不动。</li>
+     *   <li>若券已过期（endTime 早于当前时间），不回退 —— 保持已使用状态，客户无法再用。</li>
+     *   <li>回退成功：状态置为"未使用(1)"，清空使用订单与使用时间。</li>
+     * </ul>
+     * 注意：是否触发回退由调用方按"是否全额退款"决定；本方法只负责状态与过期判定。
+     *
+     * @return true=已成功恢复为未使用；false=不满足回退条件（未改动）
+     */
+    public boolean restore() {
+        if (status == null || status != 2) {
+            return false; // 仅回退"已使用"的券
+        }
+        LocalDateTime now = LocalDateTime.now();
+        if (endTime != null && now.isAfter(endTime)) {
+            return false; // 已过期，不退回
+        }
+        status = 1; // 未使用
+        usedOrderId = null;
+        usedTime = null;
+        return true;
+    }
 }
 
 
