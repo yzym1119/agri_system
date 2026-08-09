@@ -23,5 +23,14 @@ public interface StaffPerformanceLogRepository {
     List<Long> findStaffIdsByMonth(String month);
 
     List<StaffPerformanceLog> findByStaffAndMonthRange(Long staffId, String month);
+
+    /** 到期解冻:把 status=1 且 freeze_until<=now 的行置为 status=2,返回受影响行数 */
+    int unfreezeDue(LocalDateTime now);
+
+    /** 按 freeze_until 月份聚合可发放(status=2)提成 */
+    java.math.BigDecimal sumPayableByFreezeMonth(Long staffId, LocalDateTime start, LocalDateTime end);
+
+    /** 找出 freeze_until 落在指定月份、且有可发放提成的员工 */
+    java.util.List<Long> findStaffIdsWithPayableInMonth(String month);
 }
 

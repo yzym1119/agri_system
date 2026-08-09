@@ -1,6 +1,7 @@
 package com.agri_system.infrastructure.performance.repository;
 
 import com.agri_system.domain.performance.model.StaffPerformanceLog;
+import com.agri_system.domain.performance.model.PerformanceLogStatus;
 import com.agri_system.domain.performance.repository.StaffPerformanceLogRepository;
 import com.agri_system.infrastructure.performance.mapper.StaffPerformanceLogMapper;
 import com.mybatisflex.core.query.QueryWrapper;
@@ -83,6 +84,36 @@ public class StaffPerformanceLogRepositoryImpl implements StaffPerformanceLogRep
                 .and("DATE_FORMAT(created_at,'%Y-%m') = ?", month)
                 .orderBy("created_at DESC");
         return mapper.selectListByQuery(query);
+    }
+
+    @Override
+    public int unfreezeDue(LocalDateTime now) {
+        StaffPerformanceLog update = new StaffPerformanceLog();
+        update.setStatus(PerformanceLogStatus.UNFROZEN.getCode());
+        QueryWrapper query = QueryWrapper.create()
+                .where("status = ?", PerformanceLogStatus.FROZEN.getCode())
+                .and("freeze_until <= ?", now);
+        return mapper.updateByQuery(update, query);
+    }
+
+    @Override
+    public java.math.BigDecimal sumPayableByFreezeMonth(Long staffId, LocalDateTime start, LocalDateTime end) {
+        QueryWrapper query = QueryWrapper.create()
+                .select("COALESCE(SUM(amount),0) AS total")
+                .where("staff_id = ?", staffId)
+                .and("status = ?", PerformanceLogStatus.UNFROZEN.getCode())
+                .and("freeze_until BETWEEN ? AND ?", start, end);
+        java.math.BigDecimal result = mapper.selectOneByQueryAs(query, java.math.BigDecimal.class);
+        return result == null ? java.math.BigDecimal.ZERO : result;
+    }
+
+    @Override
+    public java.util.List<Long> findStaffIdsWithPayableInMonth(String month) {
+        QueryWrapper query = QueryWrapper.create()
+                .select("DISTINCT staff_id")
+                .where("status = ?", PerformanceLogStatus.UNFROZEN.getCode())
+                .and("DATE_FORMAT(freeze_until,'%Y-%m') = ?", month);
+        return mapper.selectListByQueryAs(query, Long.class);
     }
 }
 
