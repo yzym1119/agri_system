@@ -90,6 +90,9 @@ public class PerformanceApplicationService {
     public void confirmSalaryBill(Long billId) {
         StaffSalaryBill bill = staffSalaryBillRepository.findById(billId)
                 .orElseThrow(() -> new IllegalArgumentException("工资单不存在"));
+        if (bill.getStatus() != null && bill.getStatus() != 0) {
+            throw new IllegalStateException("工资单已确认,不可重复确认:" + billId);
+        }
         bill.setStatus(1);
         bill.setConfirmedAt(java.time.LocalDateTime.now());
         staffSalaryBillRepository.save(bill);
