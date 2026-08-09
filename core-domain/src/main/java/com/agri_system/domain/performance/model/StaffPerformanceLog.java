@@ -36,7 +36,25 @@ public class StaffPerformanceLog {
 
     private Integer needReview;
 
+    /** 1-冻结 2-已解冻 */
+    private Integer status;
+
+    /** 解冻时点:冻结类=created_at+冻结期,非冻结类=created_at */
+    private LocalDateTime freezeUntil;
+
     private LocalDateTime createdAt;
+
+    /** 标记为冻结(退货窗口内) */
+    public void markFrozen(int freezeDays) {
+        this.status = PerformanceLogStatus.FROZEN.getCode();
+        this.freezeUntil = LocalDateTime.now().plusDays(freezeDays);
+    }
+
+    /** 标记为立即解冻(即算即发,旧行为) */
+    public void markImmediate() {
+        this.status = PerformanceLogStatus.UNFROZEN.getCode();
+        this.freezeUntil = LocalDateTime.now();
+    }
 
     public static StaffPerformanceLog negativeOf(StaffPerformanceLog positive, BigDecimal negativeAmount, String reason) {
         StaffPerformanceLog log = new StaffPerformanceLog();
