@@ -47,6 +47,26 @@ sa-token:
 wechat:
   app-id: ${WECHAT_APP_ID:}
   app-secret: ${WECHAT_APP_SECRET:}
+  # 客户端微信订阅消息通知（默认关闭；门控：enabled=false 或某事件 template-id 留空时整条管道 no-op）
+  # 运营在 mp.weixin.qq.com 申请模板并填入 template-id 后即激活，无需改后端。
+  # 字段映射的语义键由 CustomerNotificationEventListener 提供：order-finished → orderId/orderNo/amount/time；recharge-success → customerId/amount
+  subscribe-message:
+    enabled: false
+    miniprogram-state: formal
+    templates:
+      # order-finished:
+      #   template-id:        # 在 mp.weixin.qq.com 申请模板后填入
+      #   page: pages/order/detail?id={orderId}
+      #   fields:
+      #     thing1: orderNo
+      #     amount2: amount
+      #     date3: time
+      # recharge-success:
+      #   template-id:
+      #   page: pages/wallet/index
+      #   fields:
+      #     character_string1: customerId
+      #     amount2: amount
 
 logging:
   level:

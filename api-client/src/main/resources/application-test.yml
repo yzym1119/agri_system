@@ -48,4 +48,11 @@ aliyun:
     access-key-secret: ${ALIYUN_OSS_SK}
     bucket-name: ${ALIYUN_OSS_BUCKET:agriculture-store}
 
+# 微信小程序订阅消息通知：测试环境默认关闭
+wechat:
+  subscribe-message:
+    enabled: false
+    miniprogram-state: developer
+    templates: {}
+
 
