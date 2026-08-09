@@ -140,6 +140,9 @@ public class PerformanceEventListener {
         if (payAmount == null || payAmount.compareTo(BigDecimal.ZERO) <= 0) {
             return;
         }
+        // ⛔️ 回退客户积分 + 累计消费/订单数统计（与 onOrderFinished 对称，闭环退款副作用）
+        customerSettlementService.onOrderRefunded(order, event.refundAmount());
+
         BigDecimal ratio = event.refundAmount().divide(payAmount, 4, RoundingMode.HALF_UP);
         List<StaffPerformanceLog> positives = logRepository.findByOrderId(orderId);
         if (positives == null || positives.isEmpty()) {

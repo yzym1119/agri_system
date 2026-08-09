@@ -8,6 +8,8 @@ import com.mybatisflex.core.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 /**
  * 钱包交易记录仓储实现
  * 
@@ -46,6 +48,18 @@ public class WalletTransactionRepositoryImpl implements WalletTransactionReposit
         
         Page<WalletTransaction> page = new Page<>(pageNum, pageSize);
         return mapper.paginate(page, query);
+    }
+
+    @Override
+    public List<WalletTransaction> findByReference(Long customerId, Integer walletType,
+                                                   String referenceType, Long referenceId) {
+        QueryWrapper query = QueryWrapper.create()
+                .where("customer_id = ?", customerId)
+                .and("wallet_type = ?", walletType)
+                .and("reference_type = ?", referenceType)
+                .and("reference_id = ?", referenceId)
+                .orderBy("created_at ASC");
+        return mapper.selectListByQuery(query);
     }
 }
 

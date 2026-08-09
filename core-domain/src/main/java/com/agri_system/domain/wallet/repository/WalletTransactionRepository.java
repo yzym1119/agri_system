@@ -3,6 +3,8 @@ package com.agri_system.domain.wallet.repository;
 import com.agri_system.domain.wallet.model.WalletTransaction;
 import com.mybatisflex.core.paginate.Page;
 
+import java.util.List;
+
 /**
  * 钱包交易记录仓储接口
  * 
@@ -27,6 +29,18 @@ public interface WalletTransactionRepository {
      */
     Page<WalletTransaction> findPage(Integer pageNum, Integer pageSize,
                                     Long customerId, Integer walletType, Integer transactionType);
+
+    /**
+     * 按关联查询钱包交易记录（用于按订单回查已发放/已回退积分等）
+     *
+     * @param customerId     客户ID
+     * @param walletType     钱包类型
+     * @param referenceType  关联类型（如 ORDER / ORDER_REFUND）
+     * @param referenceId    关联ID（如订单ID）
+     * @return 命中的交易记录（按时间升序）
+     */
+    List<WalletTransaction> findByReference(Long customerId, Integer walletType,
+                                            String referenceType, Long referenceId);
 }
 
 
