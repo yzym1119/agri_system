@@ -66,4 +66,8 @@ aliyun:
     access-key-secret: ${ALIYUN_OSS_SK}
     bucket-name: ${ALIYUN_OSS_BUCKET:agriculture-store}
 
+performance:
+  freeze-enabled: false   # 提成冻结开关;true 启用 15 天退货窗口冻结
+  freeze-days: 15
+
 

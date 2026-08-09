@@ -2,6 +2,7 @@ package com.agri_system.application.performance.listener;
 
 import com.agri_system.application.customer.service.CustomerSettlementService;
 import com.agri_system.application.performance.config.PerformanceProperties;
+import com.agri_system.application.performance.event.CustomerRechargeEvent;
 import com.agri_system.application.performance.event.OrderFinishedEvent;
 import com.agri_system.application.performance.event.OrderRefundedEvent;
 import com.agri_system.domain.order.model.Order;
@@ -167,6 +168,32 @@ class CommissionFreezeListenerTest {
         verify(logRepository).saveBatch(cap.capture());
         StaffPerformanceLog neg = cap.getValue().get(0);
         assertEquals(PerformanceLogStatus.UNFROZEN.getCode(), neg.getStatus());
+        // C2 关键断言:已解冻正数的退款负数 freeze_until 必须落在当期(now),不能沿用原正数旧 freeze_until
+        assertNotNull(neg.getFreezeUntil());
+        assertNotEquals(until, neg.getFreezeUntil());
+        assertTrue(neg.getFreezeUntil().isAfter(until));
+    }
+
+    @Test
+    void rechargeRewardLogMarkedImmediate() {
+        // C1: 非销售提成(充值引导)写 log 时必须显式置 status=UNFROZEN + freeze_until=now,
+        // 否则被结算的 freeze_until 过滤器静默丢弃 → 员工少算提成
+        when(eventRecordRepository.existsByEventKey(any())).thenReturn(false);
+        when(eventRecordRepository.save(any())).thenReturn(null);
+        CommissionRule rule = new CommissionRule();
+        rule.setStaffId(null); // 通配,selectRule 放行
+        rule.setCalcMode("FIXED");
+        rule.setCalcValue(new BigDecimal("10"));
+        when(commissionRuleRepository.findByCategory(CommissionRule.Category.RECHARGE.getCode()))
+                .thenReturn(List.of(rule));
+
+        listener.onCustomerRecharge(new CustomerRechargeEvent(99L, new BigDecimal("100"), 5L));
+
+        ArgumentCaptor<StaffPerformanceLog> cap = ArgumentCaptor.forClass(StaffPerformanceLog.class);
+        verify(logRepository).save(cap.capture());
+        StaffPerformanceLog saved = cap.getValue();
+        assertEquals(PerformanceLogStatus.UNFROZEN.getCode(), saved.getStatus());
+        assertNotNull(saved.getFreezeUntil());
     }
 
     // —— 工厂方法 ——

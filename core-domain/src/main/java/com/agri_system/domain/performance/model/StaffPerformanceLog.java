@@ -55,18 +55,5 @@ public class StaffPerformanceLog {
         this.status = PerformanceLogStatus.UNFROZEN.getCode();
         this.freezeUntil = LocalDateTime.now();
     }
-
-    public static StaffPerformanceLog negativeOf(StaffPerformanceLog positive, BigDecimal negativeAmount, String reason) {
-        StaffPerformanceLog log = new StaffPerformanceLog();
-        log.setStaffId(positive.getStaffId());
-        log.setStoreId(positive.getStoreId());
-        log.setBizType(PerformanceBizType.REFUND_DEDUCT.getCode());
-        log.setBizId(positive.getBizId());
-        log.setOrderItemId(positive.getOrderItemId());
-        log.setAmount(negativeAmount.negate());
-        log.setCalcDesc(reason);
-        log.setNeedReview(0);
-        return log;
-    }
 }
 

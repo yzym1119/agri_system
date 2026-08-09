@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 import java.util.*;
 
 @Slf4j
@@ -187,7 +188,12 @@ public class PerformanceEventListener {
             negative.setCalcDesc("退款扣减，按比例 " + deductRatio);
             negative.setNeedReview(0);
             negative.setStatus(logEntry.getStatus());
-            negative.setFreezeUntil(logEntry.getFreezeUntil());
+            if (logEntry.getStatus() != null
+                    && logEntry.getStatus() == PerformanceLogStatus.FROZEN.getCode()) {
+                negative.setFreezeUntil(logEntry.getFreezeUntil());   // 冻结正数:负数同日解冻,净额自动正确
+            } else {
+                negative.setFreezeUntil(LocalDateTime.now());          // 已解冻正数:负数落当期/下期账单(回冲进下期)
+            }
             negatives.add(negative);
         }
         if (!negatives.isEmpty()) {
@@ -224,6 +230,7 @@ public class PerformanceEventListener {
         logEntry.setAmount(amount);
         logEntry.setCalcDesc("充值引导奖励");
         logEntry.setNeedReview(0);
+        logEntry.markImmediate();
         logRepository.save(logEntry);
     }
 
@@ -281,6 +288,7 @@ public class PerformanceEventListener {
         logEntry.setAmount(reward);
         logEntry.setCalcDesc("拉新奖金");
         logEntry.setNeedReview(0);
+        logEntry.markImmediate();
         logRepository.save(logEntry);
     }
 
