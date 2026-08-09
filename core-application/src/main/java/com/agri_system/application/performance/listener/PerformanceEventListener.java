@@ -116,6 +116,11 @@ public class PerformanceEventListener {
             logEntry.setAmount(result.amount());
             logEntry.setCalcDesc(result.desc());
             logEntry.setNeedReview(result.needReview() ? 1 : 0);
+            if (properties.isFreezeEnabled()) {
+                logEntry.markFrozen(properties.getFreezeDays());
+            } else {
+                logEntry.markImmediate();
+            }
             logs.add(logEntry);
         }
 
@@ -181,6 +186,8 @@ public class PerformanceEventListener {
             negative.setAmount(deductAmount.negate());
             negative.setCalcDesc("退款扣减，按比例 " + deductRatio);
             negative.setNeedReview(0);
+            negative.setStatus(logEntry.getStatus());
+            negative.setFreezeUntil(logEntry.getFreezeUntil());
             negatives.add(negative);
         }
         if (!negatives.isEmpty()) {
