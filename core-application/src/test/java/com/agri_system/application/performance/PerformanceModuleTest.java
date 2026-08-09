@@ -136,8 +136,8 @@ class PerformanceModuleTest {
     @Test
     void monthlySettlementTest() {
         StaffPerformanceLogRepository logRepository = mock(StaffPerformanceLogRepository.class);
-        when(logRepository.findStaffIdsByMonth(any())).thenReturn(List.of(5L));
-        when(logRepository.sumAmountByStaffAndPeriod(any(), any(), any())).thenReturn(new BigDecimal("80"));
+        when(logRepository.findStaffIdsWithPayableInMonth(any())).thenReturn(List.of(5L));
+        when(logRepository.sumPayableByFreezeMonth(any(), any(), any())).thenReturn(new BigDecimal("80"));
         OrderRepository orderRepository = mock(OrderRepository.class);
         when(orderRepository.sumPayAmountByStaffAndMonth(any(), any())).thenReturn(new BigDecimal("500"));
         StaffCustomerRelationRepository relationRepository = mock(StaffCustomerRelationRepository.class);

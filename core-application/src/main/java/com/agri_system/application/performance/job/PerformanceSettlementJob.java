@@ -34,9 +34,9 @@ public class PerformanceSettlementJob {
     public void settleLastMonth() {
         YearMonth target = YearMonth.now().minusMonths(1);
         log.info("Start performance settlement for {}", target);
-        List<Long> staffIds = logRepository.findStaffIdsByMonth(target.toString());
+        List<Long> staffIds = logRepository.findStaffIdsWithPayableInMonth(target.toString());
         for (Long staffId : staffIds) {
-            BigDecimal commission = logRepository.sumAmountByStaffAndPeriod(
+            BigDecimal commission = logRepository.sumPayableByFreezeMonth(
                     staffId,
                     target.atDay(1).atStartOfDay(),
                     target.plusMonths(1).atDay(1).atStartOfDay().minusNanos(1));
