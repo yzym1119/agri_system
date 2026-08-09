@@ -39,5 +39,15 @@ public class PerformanceProperties {
      * 二维码有效期（秒）
      */
     private Integer qrExpireSeconds = 90;
+
+    /**
+     * 提成冻结开关;关闭时回退即算即发(旧行为),上线灰度用
+     */
+    private boolean freezeEnabled = false;
+
+    /**
+     * 冻结期天数(订单完成后过 N 天解冻)
+     */
+    private int freezeDays = 15;
 }
 
