@@ -250,7 +250,8 @@ public class ProductController {
 
     @PutMapping("/{productId}/units")
     @Operation(summary = "完整替换商品业务单位", description = "原子校验并替换 SKU 的全部业务单位")
-    @SaCheckPermission("product:unit:update")
+    // 复用已在 V49 初始化的单位管理权限，避免部署库缺少 product:unit:update 导致接口不可用。
+    @SaCheckPermission("product:unit:create")
     public ResponseEntity<Map<String, Object>> replaceProductUnits(
             @Parameter(description = "商品ID", required = true) @PathVariable Long productId,
             @Valid @RequestBody List<ProductUnitUpsertCommand> units) {
@@ -379,7 +380,6 @@ public class ProductController {
         return ResponseEntity.ok(result);
     }
 }
-
 
 
 

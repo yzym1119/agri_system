@@ -16,6 +16,8 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -46,13 +48,22 @@ public class ProductUnitService {
         return projectLegacyUnits(productId);
     }
 
+    /** 管理端读取完整持久化集合，包含停用单位；无新记录时返回 legacy 投影。 */
+    public List<ProductUnit> getManagementUnits(Long productId) {
+        List<ProductUnit> persisted = unitRepository.findByProductId(productId);
+        if (persisted != null && !persisted.isEmpty()) {
+            return persisted;
+        }
+        return projectLegacyUnits(productId);
+    }
+
     public List<ProductUnitVO> getUnitVOs(Long productId) {
-        return getUnits(productId).stream().map(this::toVO).collect(Collectors.toList());
+        return getManagementUnits(productId).stream().map(this::toVO).collect(Collectors.toList());
     }
 
     public String getUnitModelStatus(Long productId) {
-        List<ProductUnit> enabled = unitRepository.findEnabledByProductId(productId);
-        return enabled != null && !enabled.isEmpty() ? NEW_CHAIN_ENABLED : LEGACY;
+        List<ProductUnit> persisted = unitRepository.findByProductId(productId);
+        return persisted != null && !persisted.isEmpty() ? NEW_CHAIN_ENABLED : LEGACY;
     }
 
     public ProductUnit requireEnabledUnit(Long productId, String unitName, UnitOperation operation) {
@@ -97,7 +108,7 @@ public class ProductUnitService {
         return new UnitConversionSnapshot(unit.getUnitName(), originalQuantity, coefficient, baseQuantity);
     }
 
-    /** 完整替换单位集合。所有校验完成后才执行删除和写入。 */
+    /** 完整替换单位集合。所有校验完成后才执行停用、更新和插入。 */
     @Transactional(rollbackFor = Exception.class)
     public void replaceUnits(Long productId, List<ProductUnitUpsertCommand> commands) {
         productRepository.findById(productId)
@@ -106,20 +117,64 @@ public class ProductUnitService {
             throw new IllegalArgumentException("至少需要一个单位");
         }
 
+        List<ProductUnit> existing = unitRepository.findByProductId(productId);
+        if (existing == null) {
+            existing = List.of();
+        }
+        Map<Long, ProductUnit> existingById = existing.stream()
+                .filter(unit -> unit.getId() != null)
+                .collect(Collectors.toMap(ProductUnit::getId, unit -> unit, (a, b) -> a, LinkedHashMap::new));
+        Map<String, ProductUnit> existingByName = existing.stream()
+                .filter(unit -> unit.getUnitName() != null)
+                .collect(Collectors.toMap(unit -> unit.getUnitName().trim().toLowerCase(Locale.ROOT), unit -> unit,
+                        (a, b) -> a, LinkedHashMap::new));
+        Set<Long> requestIds = new HashSet<>();
         Set<String> names = new HashSet<>();
         int enabledBaseCount = 0;
         for (ProductUnitUpsertCommand command : commands) {
             validateCommand(command);
             String name = command.getUnitName().trim();
+            if (command.getId() != null) {
+                if (!requestIds.add(command.getId())) {
+                    throw new IllegalArgumentException("单位ID重复: " + command.getId());
+                }
+                ProductUnit existingUnit = existingById.get(command.getId());
+                if (existingUnit == null) {
+                    ProductUnit referenced = unitRepository.findById(command.getId()).orElse(null);
+                    if (referenced != null && !productId.equals(referenced.getProductId())) {
+                        throw new IllegalArgumentException("单位ID不属于当前商品: " + command.getId());
+                    }
+                    throw new IllegalArgumentException("单位ID不存在: " + command.getId());
+                }
+                if (!productId.equals(existingUnit.getProductId())) {
+                    throw new IllegalArgumentException("单位ID不属于当前商品: " + command.getId());
+                }
+            } else {
+                ProductUnit sameName = existingByName.get(name.toLowerCase(Locale.ROOT));
+                if (sameName != null) {
+                    // 允许客户端省略已停用行的 ID，以名称原位重启用，保持事实外键稳定。
+                    if (sameName.isEnabled() && !requestIds.contains(sameName.getId())) {
+                        throw new IllegalArgumentException("单位名称已存在: " + name);
+                    }
+                    command.setId(sameName.getId());
+                    requestIds.add(sameName.getId());
+                }
+            }
+            ProductUnit sameName = existingByName.get(name.toLowerCase(Locale.ROOT));
+            if (sameName != null && !Objects.equals(sameName.getId(), command.getId())) {
+                throw new IllegalArgumentException("单位名称已存在: " + name);
+            }
             if (!names.add(name.toLowerCase(Locale.ROOT))) {
                 throw new IllegalArgumentException("单位名称重复: " + name);
             }
             boolean enabled = Integer.valueOf(1).equals(command.getStatus());
-            if (enabled && Integer.valueOf(1).equals(command.getIsBaseUnit())) {
-                enabledBaseCount++;
+            if (Integer.valueOf(1).equals(command.getIsBaseUnit())) {
                 if (command.getBaseQuantityPerUnit().compareTo(BigDecimal.ONE) != 0) {
                     throw new IllegalArgumentException("基准单位换算系数必须为1");
                 }
+            }
+            if (enabled && Integer.valueOf(1).equals(command.getIsBaseUnit())) {
+                enabledBaseCount++;
             }
         }
         if (enabledBaseCount != 1) {
@@ -128,9 +183,28 @@ public class ProductUnitService {
 
         Long staffId = currentStaffId();
         LocalDateTime now = LocalDateTime.now();
-        unitRepository.deleteByProductId(productId);
+        Set<Long> retainedIds = commands.stream().map(ProductUnitUpsertCommand::getId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        // 完整集合未携带的历史行只停用，不删除，保护收货/移动/订单等事实外键。
+        for (ProductUnit old : existing) {
+            if (old.getId() != null && !retainedIds.contains(old.getId()) && old.isEnabled()) {
+                old.setStatus(0);
+                old.setUpdatedAt(now);
+                old.setUpdatedBy(staffId);
+                unitRepository.save(old);
+            }
+        }
         for (ProductUnitUpsertCommand command : commands) {
-            ProductUnit unit = new ProductUnit();
+            ProductUnit unit = command.getId() == null ? new ProductUnit() : existingById.get(command.getId());
+            if (unit == null) {
+                throw new IllegalArgumentException("单位ID不存在: " + command.getId());
+            }
+            if (unit.getCreatedAt() == null) {
+                unit.setCreatedAt(now);
+            }
+            if (unit.getCreatedBy() == null) {
+                unit.setCreatedBy(staffId);
+            }
             unit.setProductId(productId);
             unit.setUnitName(command.getUnitName().trim());
             unit.setBaseQuantityPerUnit(command.getBaseQuantityPerUnit());
@@ -141,9 +215,7 @@ public class ProductUnitService {
             unit.setAllowTransfer(flag(command.getAllowTransfer()));
             unit.setBarcode(command.getBarcode());
             unit.setStatus(command.getStatus() == null ? 1 : command.getStatus());
-            unit.setCreatedAt(now);
             unit.setUpdatedAt(now);
-            unit.setCreatedBy(staffId);
             unit.setUpdatedBy(staffId);
             unitRepository.save(unit);
         }
