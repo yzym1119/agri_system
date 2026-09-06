@@ -1,7 +1,6 @@
 package com.agri_system.application.purchase.service;
 
 import com.agri_system.application.inventory.service.BatchBalanceService;
-import com.agri_system.application.inventory.service.InventoryApplicationService;
 import com.agri_system.application.product.service.ProductUnitService;
 import com.agri_system.application.product.service.UnitConversionSnapshot;
 import com.agri_system.application.purchase.dto.command.*;
@@ -13,7 +12,6 @@ import com.agri_system.application.purchase.exception.PurchaseErrorCode;
 import com.agri_system.domain.inventory.model.InventoryReceipt;
 import com.agri_system.domain.inventory.model.InventoryReceiptBatch;
 import com.agri_system.domain.inventory.model.InventoryReceiptLine;
-import com.agri_system.domain.inventory.repository.InventoryBatchRepository;
 import com.agri_system.domain.inventory.repository.InventoryReceiptBatchRepository;
 import com.agri_system.domain.inventory.repository.InventoryReceiptLineRepository;
 import com.agri_system.domain.inventory.repository.InventoryReceiptRepository;
@@ -57,11 +55,9 @@ public class PurchaseApplicationService {
     private final PurchaseRepository purchaseRepository;
     private final PurchaseItemRepository itemRepository;
     private final PurchaseDomainService domainService;
-    private final InventoryApplicationService inventoryService;
     private final ProductRepository productRepository;
     private final StoreRepository storeRepository;
     private final SupplierRepository supplierRepository;
-    private final InventoryBatchRepository batchRepository;
     private final ProductUnitService productUnitService;
     private final InventoryReceiptRepository receiptRepository;
     private final InventoryReceiptLineRepository receiptLineRepository;
@@ -253,7 +249,8 @@ public class PurchaseApplicationService {
     /** 保存收货事实；余额服务只可在所有 header/line/batch 事实写入之后调用。 */
     @Transactional(rollbackFor = Exception.class)
     public Long receive(ReceivePurchaseCommand command, Long receiverId) {
-        PurchaseOrder order = purchaseRepository.findById(command.getPurchaseOrderId())
+        // 收货事务以采购单行锁为边界，后续状态和累计读取均受该锁串行化保护。
+        PurchaseOrder order = purchaseRepository.findByIdForUpdate(command.getPurchaseOrderId())
                 .orElseThrow(() -> new IllegalArgumentException(
                         PurchaseErrorCode.PURCHASE_ORDER_NOT_FOUND + ": 采购单不存在"));
         if (order.isInbound()) {
@@ -272,7 +269,6 @@ public class PurchaseApplicationService {
 
         Set<Long> referencedPurchaseItemIds = new HashSet<>();
         List<PreparedReceiptLine> preparedLines = new ArrayList<>();
-        List<CostCacheSnapshot> costSnapshots = new ArrayList<>();
         boolean overReceipt = false;
         for (ReceivePurchaseCommand.ReceiptLineCommand lineCommand : command.getLines()) {
             if (lineCommand == null || !referencedPurchaseItemIds.add(lineCommand.getPurchaseOrderItemId())) {
@@ -296,10 +292,6 @@ public class PurchaseApplicationService {
             for (ReceiptBatchCommand batchCommand : lineCommand.getBatches()) {
                 PreparedReceiptBatch preparedBatch = prepareBatch(product.getId(), baseUnit, batchCommand);
                 preparedLine.batches.add(preparedBatch);
-                CostCacheSnapshot snapshot = findOrCreateCostSnapshot(costSnapshots, product);
-                snapshot.receivedBaseQuantity = snapshot.receivedBaseQuantity.add(preparedBatch.baseQuantity);
-                snapshot.receivedValue = snapshot.receivedValue.add(
-                        preparedBatch.baseQuantity.multiply(preparedBatch.baseUnitCost));
             }
             BigDecimal previouslyReceived = zero(receiptBatchRepository
                     .sumBaseQuantityByPurchaseOrderItemId(purchaseItem.getId()));
@@ -371,10 +363,8 @@ public class PurchaseApplicationService {
                 balanceService.increaseFromReceipt(receipt.getId(), persistedBatch);
             }
         }
-        for (CostCacheSnapshot snapshot : costSnapshots) {
-            updateCachedAverageCost(snapshot);
-        }
-        if (isOrderFullyReceived(orderItems, preparedLines)) {
+        // Task 4 尚未提供受事务保护的门店余额事实，当前不写 avgCostPrice 展示缓存。
+        if (isOrderFullyReceived(orderItems)) {
             order.completeInbound();
             order.setUpdatedAt(now);
             purchaseRepository.save(order);
@@ -436,39 +426,10 @@ public class PurchaseApplicationService {
                 hasProductionDate ? "KNOWN" : "UNKNOWN");
     }
 
-    private CostCacheSnapshot findOrCreateCostSnapshot(List<CostCacheSnapshot> snapshots, Product product) {
-        for (CostCacheSnapshot snapshot : snapshots) {
-            if (snapshot.product.getId().equals(product.getId())) {
-                return snapshot;
-            }
-        }
-        BigDecimal previousQuantity = zero(batchRepository.sumQuantityByProduct(product.getId()));
-        CostCacheSnapshot snapshot = new CostCacheSnapshot(product, previousQuantity,
-                zero(product.getAvgCostPrice()));
-        snapshots.add(snapshot);
-        return snapshot;
-    }
-
-    private void updateCachedAverageCost(CostCacheSnapshot snapshot) {
-        BigDecimal denominator = snapshot.previousBaseQuantity.add(snapshot.receivedBaseQuantity);
-        if (denominator.compareTo(BigDecimal.ZERO) == 0) {
-            return;
-        }
-        BigDecimal numerator = snapshot.previousAverageCost.multiply(snapshot.previousBaseQuantity)
-                .add(snapshot.receivedValue);
-        snapshot.product.setAvgCostPrice(numerator.divide(denominator, 2, RoundingMode.HALF_UP));
-        productRepository.save(snapshot.product);
-    }
-
-    private boolean isOrderFullyReceived(List<PurchaseOrderItem> orderItems, List<PreparedReceiptLine> currentLines) {
+    private boolean isOrderFullyReceived(List<PurchaseOrderItem> orderItems) {
         for (PurchaseOrderItem item : orderItems) {
             UnitConversionSnapshot expected = productUnitService.toBaseQuantity(item.getProductId(), item.getUnit(), item.getQuantity());
             BigDecimal received = zero(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(item.getId()));
-            for (PreparedReceiptLine currentLine : currentLines) {
-                if (item.getId().equals(currentLine.purchaseItem.getId())) {
-                    received = received.add(currentLine.totalBaseQuantity());
-                }
-            }
             if (received.compareTo(expected.baseQuantity()) < 0) {
                 return false;
             }
@@ -529,20 +490,6 @@ public class PurchaseApplicationService {
         }
     }
 
-    private static final class CostCacheSnapshot {
-        private final Product product;
-        private final BigDecimal previousBaseQuantity;
-        private final BigDecimal previousAverageCost;
-        private BigDecimal receivedBaseQuantity = BigDecimal.ZERO;
-        private BigDecimal receivedValue = BigDecimal.ZERO;
-
-        private CostCacheSnapshot(Product product, BigDecimal previousBaseQuantity, BigDecimal previousAverageCost) {
-            this.product = product;
-            this.previousBaseQuantity = previousBaseQuantity;
-            this.previousAverageCost = previousAverageCost;
-        }
-    }
-    
     /**
      * 查询采购单详情
      */

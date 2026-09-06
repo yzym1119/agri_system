@@ -1,6 +1,5 @@
 package com.agri_system.application.purchase.service;
 
-import com.agri_system.application.inventory.service.InventoryApplicationService;
 import com.agri_system.application.inventory.service.BatchBalanceService;
 import com.agri_system.application.product.service.ProductUnitService;
 import com.agri_system.application.product.service.UnitConversionSnapshot;
@@ -11,7 +10,6 @@ import com.agri_system.application.purchase.dto.command.PurchaseSubmitCommand;
 import com.agri_system.application.purchase.dto.command.ReceivePurchaseCommand;
 import com.agri_system.application.purchase.dto.command.ReceiptBatchCommand;
 import com.agri_system.application.purchase.exception.PurchaseErrorCode;
-import com.agri_system.domain.inventory.repository.InventoryBatchRepository;
 import com.agri_system.domain.inventory.repository.InventoryReceiptBatchRepository;
 import com.agri_system.domain.inventory.repository.InventoryReceiptLineRepository;
 import com.agri_system.domain.inventory.repository.InventoryReceiptRepository;
@@ -64,17 +62,11 @@ class PurchaseApplicationServiceTest {
     private PurchaseDomainService domainService;
     
     @Mock
-    private InventoryApplicationService inventoryService;
-    
-    @Mock
     private ProductRepository productRepository;
     
     @Mock
     private StoreRepository storeRepository;
     
-    @Mock
-    private InventoryBatchRepository batchRepository;
-
     @Mock
     private ProductUnitService productUnitService;
 
@@ -223,6 +215,7 @@ class PurchaseApplicationServiceTest {
         order.setStoreId(1L);
         order.setStatus(2); // 待入库
         when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(domainService.checkCanInbound(order)).thenReturn(true);
         
         PurchaseOrderItem item = new PurchaseOrderItem();
@@ -233,9 +226,9 @@ class PurchaseApplicationServiceTest {
         item.setBuyPrice(new BigDecimal("10.50"));
         when(itemRepository.findByOrderId(1L)).thenReturn(Arrays.asList(item));
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
-        when(batchRepository.sumQuantityByProduct(1L)).thenReturn(BigDecimal.ZERO);
         stubPurchaseUnitConversion();
-        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(1L)).thenReturn(BigDecimal.ZERO);
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(1L))
+                .thenReturn(BigDecimal.ZERO, new BigDecimal("100.00000000"));
         
         PurchaseInboundCommand command = new PurchaseInboundCommand();
         command.setOrderId(1L);
@@ -249,7 +242,6 @@ class PurchaseApplicationServiceTest {
         verify(receiptBatchRepository).save(receiptBatchCaptor.capture());
         assertNull(receiptBatchCaptor.getValue().getSupplierBatchNo());
         assertTrue(receiptBatchCaptor.getValue().getInternalReceiptBatchNo().startsWith("INTERNAL-RECEIPT-"));
-        verifyNoInteractions(inventoryService);
         
         // 验证采购单状态已更新为已入库
         verify(purchaseRepository, times(1)).save(argThat(o -> {
@@ -257,12 +249,8 @@ class PurchaseApplicationServiceTest {
             return po.getStatus() == 3; // 已入库
         }));
         
-        // 验证商品平均成本已更新
-        verify(productRepository, times(1)).save(argThat(p -> {
-            Product prod = (Product) p;
-            return prod.getAvgCostPrice() != null && 
-                   prod.getAvgCostPrice().compareTo(new BigDecimal("10.50")) == 0;
-        }));
+        // 收货事实未接入 Task 4 余额前，不更新 avgCostPrice 展示缓存
+        verify(productRepository, never()).save(any());
     }
     
     @Test
@@ -284,14 +272,15 @@ class PurchaseApplicationServiceTest {
     }
     
     @Test
-    void testInbound_UpdateAvgCostPrice_WithExistingStock() {
-        // Given: 采购单存在，商品已有库存
+    void testInbound_DoesNotUpdateUnreliableAvgCostPriceCache() {
+        // Given: 采购单存在，旧库存快照不属于新收货事实链
         PurchaseOrder order = new PurchaseOrder();
         order.setId(1L);
         order.setPurchaseNo("PO20240101000001");
         order.setStoreId(1L);
         order.setStatus(2); // 待入库
         when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(domainService.checkCanInbound(order)).thenReturn(true);
         
         PurchaseOrderItem item = new PurchaseOrderItem();
@@ -306,7 +295,6 @@ class PurchaseApplicationServiceTest {
         existingProduct.setId(1L);
         existingProduct.setAvgCostPrice(new BigDecimal("10.00")); // 旧平均成本10.00
         when(productRepository.findById(1L)).thenReturn(Optional.of(existingProduct));
-        when(batchRepository.sumQuantityByProduct(1L)).thenReturn(new BigDecimal("200.0000")); // 已有200库存
         stubPurchaseUnitConversion();
         when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(1L)).thenReturn(BigDecimal.ZERO);
         
@@ -316,27 +304,20 @@ class PurchaseApplicationServiceTest {
         // When: 入库
         purchaseService.inbound(command, 1L);
         
-        // Then: 验证平均成本计算正确
-        // 公式: (10.00 * 200 + 12.00 * 100) / (200 + 100) = (2000 + 1200) / 300 = 10.67
-        ArgumentCaptor<Product> productCaptor = ArgumentCaptor.forClass(Product.class);
-        verify(productRepository, times(1)).save(productCaptor.capture());
-        
-        Product savedProduct = productCaptor.getValue();
-        BigDecimal expectedAvgCost = new BigDecimal("10.67");
-        assertTrue(savedProduct.getAvgCostPrice().compareTo(expectedAvgCost) == 0 ||
-                   savedProduct.getAvgCostPrice().compareTo(new BigDecimal("10.66")) == 0); // 允许四舍五入差异
+        // Then: Task 4 余额事实就绪前，收货不写不可靠的展示缓存
+        assertEquals(new BigDecimal("10.00"), existingProduct.getAvgCostPrice());
+        verify(productRepository, never()).save(any());
     }
 
     @Test
     void receivesOnePurchaseLineAsTwoSupplierBatchesWithDifferentDatesAndCosts() {
         PurchaseOrder order = pendingInboundOrder();
         PurchaseOrderItem item = purchaseItem();
-        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(domainService.checkCanInbound(order)).thenReturn(true);
         when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         stubPurchaseUnitConversion();
-        when(batchRepository.sumQuantityByProduct(1L)).thenReturn(new BigDecimal("20"));
         when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
         when(batchBalanceServiceProvider.getIfAvailable()).thenReturn(batchBalanceService);
 
@@ -385,12 +366,11 @@ class PurchaseApplicationServiceTest {
     void recordsUnknownDateInsteadOfTreatingMissingExpiryAsSafe() {
         PurchaseOrder order = pendingInboundOrder();
         PurchaseOrderItem item = purchaseItem();
-        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(domainService.checkCanInbound(order)).thenReturn(true);
         when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         stubPurchaseUnitConversion();
-        when(batchRepository.sumQuantityByProduct(1L)).thenReturn(BigDecimal.ZERO);
         when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
         doAnswer(invocation -> {
             invocation.getArgument(0, com.agri_system.domain.inventory.model.InventoryReceipt.class).setId(100L);
@@ -416,12 +396,11 @@ class PurchaseApplicationServiceTest {
     void keepsPurchaseOrderPendingWhenReceiptIsPartial() {
         PurchaseOrder order = pendingInboundOrder();
         PurchaseOrderItem item = purchaseItem();
-        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(domainService.checkCanInbound(order)).thenReturn(true);
         when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         stubPurchaseUnitConversion();
-        when(batchRepository.sumQuantityByProduct(1L)).thenReturn(BigDecimal.ZERO);
         when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
 
         purchaseService.receive(receiveCommand(batch("PARTIAL", "4", "10.00", null, null)), 9L);
@@ -431,15 +410,103 @@ class PurchaseApplicationServiceTest {
     }
 
     @Test
-    void rejectsOverReceiptWithoutExplicitExceptionReasonBeforePersistingFacts() {
+    void completesOnlyAfterPersistedReceiptBatchesReachPlannedQuantity() {
         PurchaseOrder order = pendingInboundOrder();
         PurchaseOrderItem item = purchaseItem();
-        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
+        List<com.agri_system.domain.inventory.model.InventoryReceiptBatch> persistedBatches = new java.util.ArrayList<>();
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(domainService.checkCanInbound(order)).thenReturn(true);
         when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         stubPurchaseUnitConversion();
-        when(batchRepository.sumQuantityByProduct(1L)).thenReturn(BigDecimal.ZERO);
+        doAnswer(invocation -> persistedBatches.stream()
+                .map(com.agri_system.domain.inventory.model.InventoryReceiptBatch::getBaseQuantity)
+                .reduce(BigDecimal.ZERO, BigDecimal::add))
+                .when(receiptBatchRepository).sumBaseQuantityByPurchaseOrderItemId(11L);
+        doAnswer(invocation -> {
+            persistedBatches.add(invocation.getArgument(0));
+            return null;
+        }).when(receiptBatchRepository).save(any());
+
+        purchaseService.receive(receiveCommand(batch("FIRST", "6", "10.00", null, null)), 9L);
+
+        assertEquals(2, order.getStatus());
+        verify(purchaseRepository, never()).save(order);
+
+        purchaseService.receive(receiveCommand(batch("SECOND", "4", "10.00", null, null)), 9L);
+
+        assertEquals(3, order.getStatus());
+        verify(purchaseRepository).save(order);
+        assertEquals(new BigDecimal("10.00000000"), persistedBatches.stream()
+                .map(com.agri_system.domain.inventory.model.InventoryReceiptBatch::getBaseQuantity)
+                .reduce(BigDecimal.ZERO, BigDecimal::add));
+    }
+
+    @Test
+    void locksPurchaseOrderBeforeCheckingReceiptStatusAndTotals() {
+        PurchaseOrder order = pendingInboundOrder();
+        PurchaseOrderItem item = purchaseItem();
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
+        when(domainService.checkCanInbound(order)).thenReturn(true);
+        when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        stubPurchaseUnitConversion();
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
+
+        purchaseService.receive(receiveCommand(batch("LOCKED", "1", "10.00", null, null)), 9L);
+
+        InOrder orderOfReads = inOrder(purchaseRepository, itemRepository, receiptBatchRepository);
+        orderOfReads.verify(purchaseRepository).findByIdForUpdate(1L);
+        orderOfReads.verify(itemRepository).findByOrderId(1L);
+        orderOfReads.verify(receiptBatchRepository).sumBaseQuantityByPurchaseOrderItemId(11L);
+        verify(purchaseRepository, never()).findById(1L);
+    }
+
+    @Test
+    void storesNonBaseUnitConversionSnapshotForReceiptBatch() {
+        PurchaseOrder order = pendingInboundOrder();
+        PurchaseOrderItem item = purchaseItem();
+        item.setUnit("箱");
+        item.setQuantity(BigDecimal.ONE);
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
+        when(domainService.checkCanInbound(order)).thenReturn(true);
+        when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        stubCaseUnitConversion();
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
+
+        ReceiptBatchCommand receiptBatch = batch("CASE-10", "1", "100.00", null, null);
+        receiptBatch.setOriginalUnit("箱");
+        purchaseService.receive(receiveCommand(receiptBatch), 9L);
+
+        ArgumentCaptor<com.agri_system.domain.inventory.model.InventoryReceiptBatch> captor =
+                ArgumentCaptor.forClass(com.agri_system.domain.inventory.model.InventoryReceiptBatch.class);
+        verify(receiptBatchRepository).save(captor.capture());
+        assertEquals(new BigDecimal("1.00000000"), captor.getValue().getOriginalQuantity());
+        assertEquals(new BigDecimal("100.00000000"), captor.getValue().getOriginalUnitCost());
+        assertEquals(new BigDecimal("10.00000000"), captor.getValue().getBaseQuantity());
+        assertEquals(new BigDecimal("10.00000000"), captor.getValue().getBaseUnitCost());
+    }
+
+    @Test
+    void rejectsProductionDateWithoutExpiryBeforeWritingFacts() {
+        assertRejectedDateBatch(batch("DATE", "1", "10.00", LocalDate.of(2026, 1, 1), null));
+    }
+
+    @Test
+    void rejectsInvertedProductionAndExpiryDatesBeforeWritingFacts() {
+        assertRejectedDateBatch(batch("DATE", "1", "10.00", LocalDate.of(2027, 1, 2), LocalDate.of(2027, 1, 1)));
+    }
+
+    @Test
+    void rejectsOverReceiptWithoutExplicitExceptionReasonBeforePersistingFacts() {
+        PurchaseOrder order = pendingInboundOrder();
+        PurchaseOrderItem item = purchaseItem();
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
+        when(domainService.checkCanInbound(order)).thenReturn(true);
+        when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        stubPurchaseUnitConversion();
         when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(new BigDecimal("8"));
 
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
@@ -488,6 +555,45 @@ class PurchaseApplicationServiceTest {
             return new UnitConversionSnapshot("件", originalQuantity, BigDecimal.ONE,
                     originalQuantity.setScale(8));
         });
+    }
+
+    private void stubCaseUnitConversion() {
+        com.agri_system.domain.product.model.ProductUnit baseUnit = new com.agri_system.domain.product.model.ProductUnit();
+        baseUnit.setId(31L);
+        baseUnit.setProductId(1L);
+        baseUnit.setUnitName("个");
+        baseUnit.setBaseQuantityPerUnit(BigDecimal.ONE);
+        baseUnit.setIsBaseUnit(1);
+        baseUnit.setAllowPurchase(1);
+        baseUnit.setStatus(1);
+        com.agri_system.domain.product.model.ProductUnit caseUnit = new com.agri_system.domain.product.model.ProductUnit();
+        caseUnit.setId(32L);
+        caseUnit.setProductId(1L);
+        caseUnit.setUnitName("箱");
+        caseUnit.setBaseQuantityPerUnit(new BigDecimal("10"));
+        caseUnit.setAllowPurchase(1);
+        caseUnit.setStatus(1);
+        when(productUnitService.requireEnabledUnit(1L, "箱", ProductUnitService.UnitOperation.PURCHASE))
+                .thenReturn(caseUnit);
+        when(productUnitService.getUnits(1L)).thenReturn(List.of(baseUnit, caseUnit));
+        when(productUnitService.toBaseQuantity(1L, "箱", BigDecimal.ONE))
+                .thenReturn(new UnitConversionSnapshot("箱", BigDecimal.ONE, new BigDecimal("10"), new BigDecimal("10.00000000")));
+    }
+
+    private void assertRejectedDateBatch(ReceiptBatchCommand receiptBatch) {
+        PurchaseOrder order = pendingInboundOrder();
+        PurchaseOrderItem item = purchaseItem();
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
+        when(domainService.checkCanInbound(order)).thenReturn(true);
+        when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        stubPurchaseUnitConversion();
+
+        assertThrows(IllegalArgumentException.class,
+                () -> purchaseService.receive(receiveCommand(receiptBatch), 9L));
+
+        verifyNoInteractions(receiptRepository, receiptLineRepository);
+        verify(receiptBatchRepository, never()).save(any());
     }
 
     private ReceivePurchaseCommand receiveCommand(ReceiptBatchCommand... batches) {
