@@ -6,6 +6,7 @@ import com.agri_system.application.purchase.dto.command.PurchaseCancelCommand;
 import com.agri_system.application.purchase.dto.command.PurchaseCreateCommand;
 import com.agri_system.application.purchase.dto.command.PurchaseInboundCommand;
 import com.agri_system.application.purchase.dto.command.PurchaseSubmitCommand;
+import com.agri_system.application.purchase.dto.command.ReceivePurchaseCommand;
 import com.agri_system.application.purchase.dto.query.PurchasePageQuery;
 import com.agri_system.application.purchase.dto.vo.PurchaseDetailVO;
 import com.agri_system.application.purchase.dto.vo.PurchasePageVO;
@@ -33,7 +34,7 @@ import java.util.Map;
  * @author AI Generated
  */
 @RestController
-@RequestMapping("/api/admin/purchase")
+@RequestMapping({"/api/admin/purchase", "/api/admin/purchases"})
 @Tag(name = "采购管理", description = "采购单创建、提交、入库、查询")
 @RequiredArgsConstructor
 public class PurchaseController {
@@ -109,6 +110,18 @@ public class PurchaseController {
         result.put("message", "入库成功");
         return ResponseEntity.ok(result);
     }
+
+    @PostMapping("/receipts")
+    @Operation(summary = "采购收货", description = "按采购明细记录一个或多个实际收货批次，保留单位、成本和日期事实")
+    @SaCheckPermission("purchase:inbound")
+    public ResponseEntity<Map<String, Object>> receive(@Valid @RequestBody ReceivePurchaseCommand command) {
+        Long receiptId = purchaseService.receive(command, getCurrentUserId());
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", "200");
+        result.put("message", "收货成功");
+        result.put("data", Map.of("receiptId", receiptId));
+        return ResponseEntity.ok(result);
+    }
     
     // ==================== 取消采购单 ====================
     
@@ -162,7 +175,6 @@ public class PurchaseController {
         throw new IllegalArgumentException("无法获取用户ID");
     }
 }
-
 
 
 

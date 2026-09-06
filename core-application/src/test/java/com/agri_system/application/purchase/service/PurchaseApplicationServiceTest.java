@@ -1,13 +1,20 @@
 package com.agri_system.application.purchase.service;
 
-import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.service.InventoryApplicationService;
+import com.agri_system.application.inventory.service.BatchBalanceService;
+import com.agri_system.application.product.service.ProductUnitService;
+import com.agri_system.application.product.service.UnitConversionSnapshot;
 import com.agri_system.application.purchase.dto.command.PurchaseCreateCommand;
 import com.agri_system.application.purchase.dto.command.PurchaseInboundCommand;
 import com.agri_system.application.purchase.dto.command.PurchaseItemDTO;
 import com.agri_system.application.purchase.dto.command.PurchaseSubmitCommand;
+import com.agri_system.application.purchase.dto.command.ReceivePurchaseCommand;
+import com.agri_system.application.purchase.dto.command.ReceiptBatchCommand;
 import com.agri_system.application.purchase.exception.PurchaseErrorCode;
 import com.agri_system.domain.inventory.repository.InventoryBatchRepository;
+import com.agri_system.domain.inventory.repository.InventoryReceiptBatchRepository;
+import com.agri_system.domain.inventory.repository.InventoryReceiptLineRepository;
+import com.agri_system.domain.inventory.repository.InventoryReceiptRepository;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.purchase.model.PurchaseOrder;
@@ -21,14 +28,18 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -63,6 +74,24 @@ class PurchaseApplicationServiceTest {
     
     @Mock
     private InventoryBatchRepository batchRepository;
+
+    @Mock
+    private ProductUnitService productUnitService;
+
+    @Mock
+    private InventoryReceiptRepository receiptRepository;
+
+    @Mock
+    private InventoryReceiptLineRepository receiptLineRepository;
+
+    @Mock
+    private InventoryReceiptBatchRepository receiptBatchRepository;
+
+    @Mock
+    private ObjectProvider<BatchBalanceService> batchBalanceServiceProvider;
+
+    @Mock
+    private BatchBalanceService batchBalanceService;
     
     @InjectMocks
     private PurchaseApplicationService purchaseService;
@@ -199,12 +228,14 @@ class PurchaseApplicationServiceTest {
         PurchaseOrderItem item = new PurchaseOrderItem();
         item.setId(1L);
         item.setProductId(1L);
+        item.setUnit("件");
         item.setQuantity(new BigDecimal("100.0000"));
         item.setBuyPrice(new BigDecimal("10.50"));
         when(itemRepository.findByOrderId(1L)).thenReturn(Arrays.asList(item));
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         when(batchRepository.sumQuantityByProduct(1L)).thenReturn(BigDecimal.ZERO);
-        when(inventoryService.inbound(any(InventoryInCommand.class), eq(1L))).thenReturn(1L);
+        stubPurchaseUnitConversion();
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(1L)).thenReturn(BigDecimal.ZERO);
         
         PurchaseInboundCommand command = new PurchaseInboundCommand();
         command.setOrderId(1L);
@@ -212,15 +243,13 @@ class PurchaseApplicationServiceTest {
         // When: 入库
         purchaseService.inbound(command, 1L);
         
-        // Then: 验证库存服务被调用，且批次号 = 采购单号
-        ArgumentCaptor<InventoryInCommand> captor = ArgumentCaptor.forClass(InventoryInCommand.class);
-        verify(inventoryService, times(1)).inbound(captor.capture(), eq(1L));
-        
-        InventoryInCommand capturedCommand = captor.getValue();
-        assertEquals("PO20240101000001", capturedCommand.getBatchNo()); // 批次号 = 采购单号
-        assertEquals("PURCHASE", capturedCommand.getSourceType());
-        assertEquals(1L, capturedCommand.getSourceId());
-        assertEquals(1, capturedCommand.getSourceLineNo());
+        // Then: legacy 入口转换为单收货批次，不再把采购单号伪装成供应商批号
+        ArgumentCaptor<com.agri_system.domain.inventory.model.InventoryReceiptBatch> receiptBatchCaptor =
+                ArgumentCaptor.forClass(com.agri_system.domain.inventory.model.InventoryReceiptBatch.class);
+        verify(receiptBatchRepository).save(receiptBatchCaptor.capture());
+        assertNull(receiptBatchCaptor.getValue().getSupplierBatchNo());
+        assertTrue(receiptBatchCaptor.getValue().getInternalReceiptBatchNo().startsWith("INTERNAL-RECEIPT-"));
+        verifyNoInteractions(inventoryService);
         
         // 验证采购单状态已更新为已入库
         verify(purchaseRepository, times(1)).save(argThat(o -> {
@@ -268,6 +297,7 @@ class PurchaseApplicationServiceTest {
         PurchaseOrderItem item = new PurchaseOrderItem();
         item.setId(1L);
         item.setProductId(1L);
+        item.setUnit("件");
         item.setQuantity(new BigDecimal("100.0000"));
         item.setBuyPrice(new BigDecimal("12.00")); // 新进价12.00
         when(itemRepository.findByOrderId(1L)).thenReturn(Arrays.asList(item));
@@ -277,7 +307,8 @@ class PurchaseApplicationServiceTest {
         existingProduct.setAvgCostPrice(new BigDecimal("10.00")); // 旧平均成本10.00
         when(productRepository.findById(1L)).thenReturn(Optional.of(existingProduct));
         when(batchRepository.sumQuantityByProduct(1L)).thenReturn(new BigDecimal("200.0000")); // 已有200库存
-        when(inventoryService.inbound(any(InventoryInCommand.class), eq(1L))).thenReturn(1L);
+        stubPurchaseUnitConversion();
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(1L)).thenReturn(BigDecimal.ZERO);
         
         PurchaseInboundCommand command = new PurchaseInboundCommand();
         command.setOrderId(1L);
@@ -294,5 +325,191 @@ class PurchaseApplicationServiceTest {
         BigDecimal expectedAvgCost = new BigDecimal("10.67");
         assertTrue(savedProduct.getAvgCostPrice().compareTo(expectedAvgCost) == 0 ||
                    savedProduct.getAvgCostPrice().compareTo(new BigDecimal("10.66")) == 0); // 允许四舍五入差异
+    }
+
+    @Test
+    void receivesOnePurchaseLineAsTwoSupplierBatchesWithDifferentDatesAndCosts() {
+        PurchaseOrder order = pendingInboundOrder();
+        PurchaseOrderItem item = purchaseItem();
+        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(domainService.checkCanInbound(order)).thenReturn(true);
+        when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        stubPurchaseUnitConversion();
+        when(batchRepository.sumQuantityByProduct(1L)).thenReturn(new BigDecimal("20"));
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
+        when(batchBalanceServiceProvider.getIfAvailable()).thenReturn(batchBalanceService);
+
+        AtomicLong ids = new AtomicLong(100L);
+        doAnswer(invocation -> {
+            invocation.getArgument(0, com.agri_system.domain.inventory.model.InventoryReceipt.class)
+                    .setId(ids.getAndIncrement());
+            return null;
+        }).when(receiptRepository).save(any());
+        doAnswer(invocation -> {
+            invocation.getArgument(0, com.agri_system.domain.inventory.model.InventoryReceiptLine.class)
+                    .setId(ids.getAndIncrement());
+            return null;
+        }).when(receiptLineRepository).save(any());
+        doAnswer(invocation -> {
+            invocation.getArgument(0, com.agri_system.domain.inventory.model.InventoryReceiptBatch.class)
+                    .setId(ids.getAndIncrement());
+            return null;
+        }).when(receiptBatchRepository).save(any());
+
+        Long receiptId = purchaseService.receive(receiveCommand(
+                batch("SUP-X", "6", "10.00", LocalDate.of(2026, 1, 1), LocalDate.of(2027, 1, 1)),
+                batch("SUP-Y", "4", "12.00", LocalDate.of(2026, 2, 1), LocalDate.of(2027, 2, 1))), 9L);
+
+        ArgumentCaptor<com.agri_system.domain.inventory.model.InventoryReceiptBatch> batchCaptor =
+                ArgumentCaptor.forClass(com.agri_system.domain.inventory.model.InventoryReceiptBatch.class);
+        verify(receiptBatchRepository, times(2)).save(batchCaptor.capture());
+        assertEquals(2, batchCaptor.getAllValues().size());
+        assertEquals("SUP-X", batchCaptor.getAllValues().get(0).getSupplierBatchNo());
+        assertEquals(new BigDecimal("6.00000000"), batchCaptor.getAllValues().get(0).getOriginalQuantity());
+        assertEquals(new BigDecimal("6.00000000"), batchCaptor.getAllValues().get(0).getBaseQuantity());
+        assertEquals(new BigDecimal("10.00000000"), batchCaptor.getAllValues().get(0).getBaseUnitCost());
+        assertEquals("KNOWN", batchCaptor.getAllValues().get(0).getDateStatus());
+        assertEquals("SUP-Y", batchCaptor.getAllValues().get(1).getSupplierBatchNo());
+        assertEquals(new BigDecimal("12.00000000"), batchCaptor.getAllValues().get(1).getBaseUnitCost());
+        assertEquals("KNOWN", batchCaptor.getAllValues().get(1).getDateStatus());
+        verify(batchBalanceService, times(2)).increaseFromReceipt(eq(receiptId), any());
+        InOrder orderOfFacts = inOrder(receiptRepository, receiptLineRepository, receiptBatchRepository, batchBalanceService);
+        orderOfFacts.verify(receiptRepository).save(any());
+        orderOfFacts.verify(receiptLineRepository).save(any());
+        orderOfFacts.verify(receiptBatchRepository, times(2)).save(any());
+        orderOfFacts.verify(batchBalanceService, times(2)).increaseFromReceipt(eq(receiptId), any());
+    }
+
+    @Test
+    void recordsUnknownDateInsteadOfTreatingMissingExpiryAsSafe() {
+        PurchaseOrder order = pendingInboundOrder();
+        PurchaseOrderItem item = purchaseItem();
+        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(domainService.checkCanInbound(order)).thenReturn(true);
+        when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        stubPurchaseUnitConversion();
+        when(batchRepository.sumQuantityByProduct(1L)).thenReturn(BigDecimal.ZERO);
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
+        doAnswer(invocation -> {
+            invocation.getArgument(0, com.agri_system.domain.inventory.model.InventoryReceipt.class).setId(100L);
+            return null;
+        }).when(receiptRepository).save(any());
+        doAnswer(invocation -> {
+            invocation.getArgument(0, com.agri_system.domain.inventory.model.InventoryReceiptLine.class).setId(101L);
+            return null;
+        }).when(receiptLineRepository).save(any());
+
+        purchaseService.receive(receiveCommand(batch(null, "3", "10.00", null, null)), 9L);
+
+        ArgumentCaptor<com.agri_system.domain.inventory.model.InventoryReceiptBatch> batchCaptor =
+                ArgumentCaptor.forClass(com.agri_system.domain.inventory.model.InventoryReceiptBatch.class);
+        verify(receiptBatchRepository).save(batchCaptor.capture());
+        assertEquals("UNKNOWN", batchCaptor.getValue().getDateStatus());
+        assertNull(batchCaptor.getValue().getProductionDate());
+        assertNull(batchCaptor.getValue().getExpiryDate());
+        assertTrue(batchCaptor.getValue().getInternalReceiptBatchNo().startsWith("INTERNAL-RECEIPT-"));
+    }
+
+    @Test
+    void keepsPurchaseOrderPendingWhenReceiptIsPartial() {
+        PurchaseOrder order = pendingInboundOrder();
+        PurchaseOrderItem item = purchaseItem();
+        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(domainService.checkCanInbound(order)).thenReturn(true);
+        when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        stubPurchaseUnitConversion();
+        when(batchRepository.sumQuantityByProduct(1L)).thenReturn(BigDecimal.ZERO);
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
+
+        purchaseService.receive(receiveCommand(batch("PARTIAL", "4", "10.00", null, null)), 9L);
+
+        assertEquals(2, order.getStatus());
+        verify(purchaseRepository, never()).save(order);
+    }
+
+    @Test
+    void rejectsOverReceiptWithoutExplicitExceptionReasonBeforePersistingFacts() {
+        PurchaseOrder order = pendingInboundOrder();
+        PurchaseOrderItem item = purchaseItem();
+        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(domainService.checkCanInbound(order)).thenReturn(true);
+        when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        stubPurchaseUnitConversion();
+        when(batchRepository.sumQuantityByProduct(1L)).thenReturn(BigDecimal.ZERO);
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(new BigDecimal("8"));
+
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> purchaseService.receive(receiveCommand(batch("OVER", "3", "10.00", null, null)), 9L));
+
+        assertTrue(exception.getMessage().contains("exceptionReason"));
+        verifyNoInteractions(receiptRepository, receiptLineRepository);
+        verify(receiptBatchRepository, never()).save(any());
+    }
+
+    private PurchaseOrder pendingInboundOrder() {
+        PurchaseOrder order = new PurchaseOrder();
+        order.setId(1L);
+        order.setStoreId(1L);
+        order.setSupplierId(2L);
+        order.setPurchaseNo("PO-1");
+        order.setStatus(2);
+        return order;
+    }
+
+    private PurchaseOrderItem purchaseItem() {
+        PurchaseOrderItem item = new PurchaseOrderItem();
+        item.setId(11L);
+        item.setPurchaseOrderId(1L);
+        item.setProductId(1L);
+        item.setUnit("件");
+        item.setQuantity(new BigDecimal("10"));
+        item.setBuyPrice(new BigDecimal("9.00"));
+        return item;
+    }
+
+    private void stubPurchaseUnitConversion() {
+        com.agri_system.domain.product.model.ProductUnit unit = new com.agri_system.domain.product.model.ProductUnit();
+        unit.setId(31L);
+        unit.setProductId(1L);
+        unit.setUnitName("件");
+        unit.setBaseQuantityPerUnit(BigDecimal.ONE);
+        unit.setIsBaseUnit(1);
+        unit.setAllowPurchase(1);
+        unit.setStatus(1);
+        when(productUnitService.requireEnabledUnit(1L, "件", ProductUnitService.UnitOperation.PURCHASE))
+                .thenReturn(unit);
+        when(productUnitService.getUnits(1L)).thenReturn(List.of(unit));
+        when(productUnitService.toBaseQuantity(eq(1L), eq("件"), any(BigDecimal.class))).thenAnswer(invocation -> {
+            BigDecimal originalQuantity = invocation.getArgument(2);
+            return new UnitConversionSnapshot("件", originalQuantity, BigDecimal.ONE,
+                    originalQuantity.setScale(8));
+        });
+    }
+
+    private ReceivePurchaseCommand receiveCommand(ReceiptBatchCommand... batches) {
+        ReceivePurchaseCommand command = new ReceivePurchaseCommand();
+        command.setPurchaseOrderId(1L);
+        ReceivePurchaseCommand.ReceiptLineCommand line = new ReceivePurchaseCommand.ReceiptLineCommand();
+        line.setPurchaseOrderItemId(11L);
+        line.setProductId(1L);
+        line.setBatches(Arrays.asList(batches));
+        command.setLines(List.of(line));
+        return command;
+    }
+
+    private ReceiptBatchCommand batch(String supplierBatchNo, String quantity, String unitCost,
+                                      LocalDate productionDate, LocalDate expiryDate) {
+        ReceiptBatchCommand batch = new ReceiptBatchCommand();
+        batch.setSupplierBatchNo(supplierBatchNo);
+        batch.setOriginalUnit("件");
+        batch.setOriginalQuantity(new BigDecimal(quantity));
+        batch.setOriginalUnitCost(new BigDecimal(unitCost));
+        batch.setProductionDate(productionDate);
+        batch.setExpiryDate(expiryDate);
+        return batch;
     }
 }
