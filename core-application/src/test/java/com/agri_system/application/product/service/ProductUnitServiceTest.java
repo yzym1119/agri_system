@@ -167,7 +167,7 @@ class ProductUnitServiceTest {
         ProductUnit disabled = persisted(101L, 10L, "瓶", 1, 0);
         when(unitRepository.findByProductId(10L)).thenReturn(List.of(disabled));
         assertThat(service.getManagementUnits(10L)).containsExactly(disabled);
-        assertThat(service.getUnitModelStatus(10L)).isEqualTo("NEW_CHAIN_ENABLED");
+        assertThat(service.getUnitModelStatus(10L)).isEqualTo("NEW_CHAIN_NO_ENABLED_UNITS");
     }
 
     @Test
@@ -197,8 +197,53 @@ class ProductUnitServiceTest {
                 && "LEGACY_UNCONFIRMED".equals(unit.getProjectionStatus()));
     }
 
+    @Test
+    void configuredSkuCannotSwitchBaseUnitId() {
+        when(productRepository.findById(10L)).thenReturn(Optional.of(new Product()));
+        ProductUnit base = persisted(101L, 10L, "瓶", 1, 1);
+        ProductUnit other = persisted(102L, 10L, "件", 288, 1);
+        when(unitRepository.findByProductId(10L)).thenReturn(List.of(base, other));
+        ProductUnitUpsertCommand oldBase = unitCommand("瓶", "1", false);
+        oldBase.setId(101L);
+        ProductUnitUpsertCommand newBase = unitCommand("件", "1", true);
+        newBase.setId(102L);
+
+        assertThatThrownBy(() -> service.replaceUnits(10L, List.of(oldBase, newBase)))
+                .hasMessageContaining("基准单位");
+        verify(unitRepository, never()).save(any());
+    }
+
+    @Test
+    void configuredSkuCannotRemoveOrDisableCurrentBaseUnit() {
+        when(productRepository.findById(10L)).thenReturn(Optional.of(new Product()));
+        ProductUnit base = persisted(101L, 10L, "瓶", 1, 1);
+        ProductUnit other = persisted(102L, 10L, "件", 288, 1);
+        when(unitRepository.findByProductId(10L)).thenReturn(List.of(base, other));
+        ProductUnitUpsertCommand disabledBase = unitCommand("瓶", "1", true);
+        disabledBase.setId(101L);
+        disabledBase.setStatus(0);
+        assertThatThrownBy(() -> service.replaceUnits(10L, List.of(disabledBase)))
+                .hasMessageContaining("基准单位");
+        verify(unitRepository, never()).save(any());
+    }
+
+    @Test
+    void configuredSkuWithAllUnitsDisabledDoesNotFallbackToLegacy() {
+        ProductUnit disabled = persisted(101L, 10L, "瓶", 1, 0);
+        when(unitRepository.findEnabledByProductId(10L)).thenReturn(List.of());
+        when(unitRepository.findByProductId(10L)).thenReturn(List.of(disabled));
+
+        assertThatThrownBy(() -> service.getUnits(10L)).hasMessageContaining("无启用单位");
+        assertThatThrownBy(() -> service.requireEnabledUnit(10L, "瓶", ProductUnitService.UnitOperation.SALE))
+                .hasMessageContaining("无启用单位");
+        assertThat(service.getUnitModelStatus(10L)).isEqualTo("NEW_CHAIN_NO_ENABLED_UNITS");
+        verify(unitRepository, never()).save(any());
+    }
+
     private static ProductUnit base(String name) {
-        return unit(name, "1", true, true);
+        ProductUnit unit = unit(name, "1", true, true);
+        unit.setIsBaseUnit(1);
+        return unit;
     }
 
     private static ProductUnit unit(String name, String coefficient, boolean purchase, boolean sale) {
@@ -227,6 +272,7 @@ class ProductUnitServiceTest {
         ProductUnit unit = unit(name, Integer.toString(coefficient), true, true);
         unit.setId(id);
         unit.setProductId(productId);
+        unit.setIsBaseUnit(coefficient == 1 ? 1 : 0);
         unit.setStatus(status);
         return unit;
     }

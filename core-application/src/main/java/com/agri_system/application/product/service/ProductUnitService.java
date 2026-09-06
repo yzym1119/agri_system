@@ -30,6 +30,7 @@ import java.util.stream.Collectors;
 public class ProductUnitService {
     private static final String LEGACY_UNCONFIRMED = "LEGACY_UNCONFIRMED";
     private static final String NEW_CHAIN_ENABLED = "NEW_CHAIN_ENABLED";
+    private static final String NEW_CHAIN_NO_ENABLED_UNITS = "NEW_CHAIN_NO_ENABLED_UNITS";
     private static final String LEGACY = "LEGACY";
 
     private final ProductUnitRepository unitRepository;
@@ -44,6 +45,10 @@ public class ProductUnitService {
         List<ProductUnit> enabled = unitRepository.findEnabledByProductId(productId);
         if (enabled != null && !enabled.isEmpty()) {
             return enabled;
+        }
+        List<ProductUnit> persisted = unitRepository.findByProductId(productId);
+        if (persisted != null && !persisted.isEmpty()) {
+            throw new IllegalStateException("无启用单位: 商品 " + productId);
         }
         return projectLegacyUnits(productId);
     }
@@ -63,7 +68,11 @@ public class ProductUnitService {
 
     public String getUnitModelStatus(Long productId) {
         List<ProductUnit> persisted = unitRepository.findByProductId(productId);
-        return persisted != null && !persisted.isEmpty() ? NEW_CHAIN_ENABLED : LEGACY;
+        if (persisted == null || persisted.isEmpty()) {
+            return LEGACY;
+        }
+        boolean hasEnabled = persisted.stream().anyMatch(ProductUnit::isEnabled);
+        return hasEnabled ? NEW_CHAIN_ENABLED : NEW_CHAIN_NO_ENABLED_UNITS;
     }
 
     public ProductUnit requireEnabledUnit(Long productId, String unitName, UnitOperation operation) {
@@ -179,6 +188,24 @@ public class ProductUnitService {
         }
         if (enabledBaseCount != 1) {
             throw new IllegalArgumentException("必须且只能有一个启用的基准单位");
+        }
+
+        ProductUnit persistedBase = existing.stream()
+                .filter(ProductUnit::isBase)
+                .findFirst().orElse(null);
+        if (persistedBase != null) {
+            ProductUnitUpsertCommand baseCommand = commands.stream()
+                    .filter(command -> Objects.equals(command.getId(), persistedBase.getId()))
+                    .findFirst().orElse(null);
+            if (baseCommand == null || !Integer.valueOf(1).equals(baseCommand.getStatus())
+                    || !Integer.valueOf(1).equals(baseCommand.getIsBaseUnit())) {
+                throw new IllegalArgumentException("已配置 SKU 的基准单位不可移除或停用");
+            }
+            if (!persistedBase.getUnitName().trim().equals(baseCommand.getUnitName().trim())) {
+                throw new IllegalArgumentException("已配置 SKU 的基准单位名称不可变更");
+            }
+        } else if (!existing.isEmpty()) {
+            throw new IllegalArgumentException("已配置 SKU 缺少基准单位，不能在线重定义");
         }
 
         Long staffId = currentStaffId();

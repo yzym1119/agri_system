@@ -236,7 +236,7 @@ public class ProductController {
     // ==================== 多单位管理 ====================
 
     @GetMapping("/{productId}/units")
-    @Operation(summary = "查询商品业务单位", description = "查询 SKU 的启用业务单位；旧主辅单位以只读兼容投影返回")
+    @Operation(summary = "查询商品业务单位", description = "查询 SKU 的完整持久化业务单位集合（包含停用）；未配置新模型时返回旧主辅单位只读兼容投影")
     @SaCheckPermission("product:unit:query")
     public ResponseEntity<Map<String, Object>> getProductUnits(
             @Parameter(description = "商品ID", required = true) @PathVariable Long productId) {
@@ -380,7 +380,6 @@ public class ProductController {
         return ResponseEntity.ok(result);
     }
 }
-
 
 
 
