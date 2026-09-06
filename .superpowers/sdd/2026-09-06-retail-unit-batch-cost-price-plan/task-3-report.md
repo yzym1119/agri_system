@@ -54,3 +54,25 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home PAT
 - Task 4 尚未提供实际余额实现，因此新收货事实不会在本任务中直接写入 `inventory_batch_balance` 或旧 `inventory_batch`。
 - 本任务不更新 `avgCostPrice`。既有订单服务仍使用历史 `Product.avgCostPrice` 建立成本快照，绩效/佣金也存在遗留读取；按范围未修改 POS、出库、价格、营销或绩效。Task 5/6 必须在上线前以批次分配事实替代这些消费者，不能把本任务的展示缓存用于销售毛利或佣金。
 - 用户已有的 `api-client/src/main/resources/application-dev.yml` 修改未触碰、未暂存、未提交。
+
+## 修复第 2 轮
+
+- legacy `/inbound` 现在先以 `purchase_order` 的 `FOR UPDATE` 查询取得采购单，并在该锁内完成收货许可校验后才读取采购明细、构造单批次收货命令。
+- `/inbound` 与 `/receipts` 共享锁内的状态许可校验和 `receiveLocked` 收货事实写入流程；legacy adapter 不再调用公开 `receive`，因此不会进行第二次锁查询。
+- legacy adapter 仍只支持一条采购明细和一个实际批次；生产日期、有效期与供应商/厂商批号均不推断。
+- 新增 `legacyInboundLocksOrderBeforeReadingItemsAndDoesNotUsePlainOrderLookup`，验证 legacy 入口依次锁定采购单、读取明细，完全不调用普通 `findById`，且锁查询仅一次。
+
+本轮验证（JDK 17）：
+
+```bash
+env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH \
+./mvnw -pl core-domain,core-infrastructure -am install -DskipTests
+
+env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH \
+./mvnw -pl core-application -Dtest=PurchaseApplicationServiceTest test
+
+env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH \
+./mvnw -pl api-admin -am -DskipTests package
+```
+
+三条命令退出码均为 `0`；`PurchaseApplicationServiceTest` 为 18/18 通过。真实 MySQL 并发事务演练尚未执行，原有的上线前阻塞结论不变。
