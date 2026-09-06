@@ -5,6 +5,7 @@ import com.agri_system.domain.customer.repository.CustomerRepository;
 import com.agri_system.domain.order.repository.OrderRepository;
 import com.agri_system.domain.performance.model.StaffMonthlyGoal;
 import com.agri_system.domain.performance.repository.StaffMonthlyGoalRepository;
+import com.agri_system.domain.performance.repository.StaffPerformanceLogRepository;
 import com.agri_system.domain.store.model.Staff;
 import com.agri_system.domain.store.model.Store;
 import com.agri_system.domain.store.repository.StaffRepository;
@@ -33,6 +34,7 @@ public class StaffCommissionDashboardService {
     private final OrderRepository orderRepository;
     private final StaffMonthlyGoalRepository staffMonthlyGoalRepository;
     private final CustomerRepository customerRepository;
+    private final StaffPerformanceLogRepository staffPerformanceLogRepository;
 
     public StaffCommissionDashboardVO getDashboard(Long staffId) {
         StaffCommissionDashboardVO vo = new StaffCommissionDashboardVO();
@@ -82,13 +84,13 @@ public class StaffCommissionDashboardService {
             }
         });
 
-        // 底薪和预估工资
+        // 底薪和预估工资(提成取 staff_performance_log 真实产生口径,非销售额估算)
         BigDecimal baseSalary = staff.getSalaryBase() != null ? staff.getSalaryBase() : BigDecimal.ZERO;
         vo.setSalaryBase(baseSalary);
-        BigDecimal todayCommission = estimateDailyCommission(staffId, todayStart, todayEnd);
+        BigDecimal todayCommission = accruedCommission(staffId, todayStart, todayEnd);
         vo.setTodayCommission(todayCommission);
 
-        BigDecimal monthCommission = estimateMonthlyCommission(staffId, monthStart, monthEnd);
+        BigDecimal monthCommission = accruedCommission(staffId, monthStart, monthEnd);
         vo.setMonthCommission(monthCommission);
         vo.setEstimatedSalary(baseSalary.add(monthCommission));
 
@@ -103,21 +105,11 @@ public class StaffCommissionDashboardService {
     }
 
     /**
-     * 估算每日提成（简化：按销售额的固定比例估算，后续可接入实际提成规则）
+     * 提成产生口径:取 staff_performance_log 中该员工在 [start,end] 内按 created_at 产生的实际提成净额
+     * (含冻结中与已解冻,已扣减退款负数)。替代旧的"销售额×2%"假估算,数字与真实提成规则一致。
      */
-    private BigDecimal estimateDailyCommission(Long staffId, LocalDateTime start, LocalDateTime end) {
-        BigDecimal sales = orderRepository.sumPayAmountByStaffAndDateRange(staffId, start, end);
-        if (sales == null || sales.compareTo(BigDecimal.ZERO) <= 0) return BigDecimal.ZERO;
-        // 默认按2%估算提成（实际应按规则引擎计算）
-        return sales.multiply(new BigDecimal("0.02")).setScale(2, RoundingMode.HALF_UP);
-    }
-
-    /**
-     * 估算每月提成
-     */
-    private BigDecimal estimateMonthlyCommission(Long staffId, LocalDateTime start, LocalDateTime end) {
-        BigDecimal sales = orderRepository.sumPayAmountByStaffAndDateRange(staffId, start, end);
-        if (sales == null || sales.compareTo(BigDecimal.ZERO) <= 0) return BigDecimal.ZERO;
-        return sales.multiply(new BigDecimal("0.02")).setScale(2, RoundingMode.HALF_UP);
+    private BigDecimal accruedCommission(Long staffId, LocalDateTime start, LocalDateTime end) {
+        BigDecimal commission = staffPerformanceLogRepository.sumAmountByStaffAndPeriod(staffId, start, end);
+        return commission != null ? commission : BigDecimal.ZERO;
     }
 }
