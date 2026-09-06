@@ -98,6 +98,7 @@ class RetailFactChainMigrationTest {
         jdbc.update("DELETE FROM order_item_batch_allocation");
         jdbc.update("DELETE FROM inventory_movement");
         jdbc.update("DELETE FROM inventory_batch_balance");
+        jdbc.update("DELETE FROM inventory_balance_feature_status");
         jdbc.update("DELETE FROM inventory_receipt_batch");
         jdbc.update("DELETE FROM inventory_receipt_line");
         jdbc.update("DELETE FROM inventory_receipt");
@@ -129,11 +130,12 @@ class RetailFactChainMigrationTest {
         assertIndex("inventory_receipt_batch", "idx_inventory_receipt_batch_supplier_no", "supplier_batch_no");
         assertIndex("inventory_receipt_batch", "idx_inventory_receipt_batch_line", "receipt_line_id");
         assertIndex("inventory_movement", "idx_inventory_movement_reference", "reference_type", "reference_id");
+        assertIndex("inventory_movement", "idx_inventory_movement_transfer", "transfer_id", "occurred_at");
     }
 
     @Test
     void retailFactChainMigrationCreatesAllFactTablesAndSnapshots() throws SQLException {
-        assertEquals("120", flyway.info().current().getVersion().getVersion());
+        assertEquals("121", flyway.info().current().getVersion().getVersion());
 
         List.of(
                 "product_unit",
@@ -142,6 +144,7 @@ class RetailFactChainMigrationTest {
                 "inventory_receipt_batch",
                 "inventory_location",
                 "inventory_batch_balance",
+                "inventory_balance_feature_status",
                 "inventory_movement",
                 "order_item_batch_allocation",
                 "order_item_price_audit",
@@ -186,11 +189,11 @@ class RetailFactChainMigrationTest {
         assertEquals(migrationFiles.size(), versions.size(), "所有 V*.sql 文件都必须被枚举和解析");
         assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
         assertTrue(versions.stream().allMatch(version -> version.compareTo(MigrationVersion.fromVersion("1")) >= 0
-                        && version.compareTo(MigrationVersion.fromVersion("120")) <= 0),
-                "存在超出 V1..V120 范围的迁移版本");
+                        && version.compareTo(MigrationVersion.fromVersion("121")) <= 0),
+                "存在超出 V1..V121 范围的迁移版本");
         assertTrue(versions.containsAll(List.of(MigrationVersion.fromVersion("119"),
-                MigrationVersion.fromVersion("120"))), "缺少 V119/V120");
-        assertEquals("120", flyway.info().current().getVersion().getVersion());
+                MigrationVersion.fromVersion("120"), MigrationVersion.fromVersion("121"))), "缺少 V119/V120/V121");
+        assertEquals("121", flyway.info().current().getVersion().getVersion());
     }
 
     @Test
@@ -205,6 +208,7 @@ class RetailFactChainMigrationTest {
         assertTrue(schema.contains("KEY `idx_inventory_receipt_batch_supplier_no` (`supplier_batch_no`)"));
         assertTrue(schema.contains("KEY `idx_inventory_receipt_batch_line` (`receipt_line_id`)"));
         assertTrue(schema.contains("KEY `idx_inventory_movement_reference` (`reference_type`, `reference_id`)"));
+        assertTrue(schema.contains("KEY `idx_inventory_movement_transfer` (`transfer_id`, `occurred_at`)"));
     }
 
     @Test

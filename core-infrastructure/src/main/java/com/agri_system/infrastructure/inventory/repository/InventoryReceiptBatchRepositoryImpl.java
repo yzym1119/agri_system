@@ -8,6 +8,7 @@ import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 @RequiredArgsConstructor
@@ -21,6 +22,11 @@ public class InventoryReceiptBatchRepositoryImpl implements InventoryReceiptBatc
         } else {
             mapper.update(batch);
         }
+    }
+
+    @Override
+    public Optional<InventoryReceiptBatch> findById(Long id) {
+        return Optional.ofNullable(mapper.selectOneById(id));
     }
 
     @Override

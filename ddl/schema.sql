@@ -817,13 +817,14 @@ CREATE TABLE `staff_performance` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='员工绩效记录表';
 
 -- ============================================
--- 零售事实链（V119/V120 增量参考结构）
+-- 零售事实链（V119/V120/V121 增量参考结构）
 -- ============================================
 DROP TABLE IF EXISTS `inventory_decision_log`;
 DROP TABLE IF EXISTS `order_item_price_audit`;
 DROP TABLE IF EXISTS `order_item_batch_allocation`;
 DROP TABLE IF EXISTS `inventory_movement`;
 DROP TABLE IF EXISTS `inventory_batch_balance`;
+DROP TABLE IF EXISTS `inventory_balance_feature_status`;
 DROP TABLE IF EXISTS `inventory_location`;
 DROP TABLE IF EXISTS `inventory_receipt_batch`;
 DROP TABLE IF EXISTS `inventory_receipt_line`;
@@ -955,7 +956,7 @@ CREATE TABLE `inventory_location` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `store_id` BIGINT NOT NULL,
     `location_type` VARCHAR(30) NOT NULL,
-    `code` VARCHAR(64) NOT NULL,
+    `code` VARCHAR(64) NULL,
     `name` VARCHAR(100) NOT NULL,
     `status` TINYINT NOT NULL DEFAULT 1,
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -996,6 +997,7 @@ CREATE TABLE `inventory_movement` (
     `from_location_id` BIGINT,
     `to_location_id` BIGINT,
     `movement_type` VARCHAR(30) NOT NULL,
+    `transfer_id` VARCHAR(64),
     `original_unit_id` BIGINT,
     `original_unit_name` VARCHAR(50) NOT NULL,
     `original_quantity` DECIMAL(20,8) NOT NULL,
@@ -1013,14 +1015,32 @@ CREATE TABLE `inventory_movement` (
     UNIQUE KEY `uk_inventory_movement_product_store` (`id`, `product_id`, `store_id`),
     KEY `idx_inventory_movement_batch_time` (`batch_id`, `occurred_at`),
     KEY `idx_inventory_movement_reference` (`reference_type`, `reference_id`),
+    KEY `idx_inventory_movement_transfer` (`transfer_id`, `occurred_at`),
     CONSTRAINT `fk_inventory_movement_batch` FOREIGN KEY (`batch_id`, `product_id`, `store_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`, `store_id`),
     CONSTRAINT `fk_inventory_movement_from_location` FOREIGN KEY (`from_location_id`, `store_id`) REFERENCES `inventory_location` (`id`, `store_id`),
     CONSTRAINT `fk_inventory_movement_to_location` FOREIGN KEY (`to_location_id`, `store_id`) REFERENCES `inventory_location` (`id`, `store_id`),
     CONSTRAINT `fk_inventory_movement_original_unit` FOREIGN KEY (`original_unit_id`, `product_id`) REFERENCES `product_unit` (`id`, `product_id`),
     CONSTRAINT `fk_inventory_movement_operator` FOREIGN KEY (`operator_id`) REFERENCES `staff` (`id`),
     CONSTRAINT `chk_inventory_movement_quantity` CHECK (`original_quantity` > 0 AND `base_quantity` > 0 AND `unit_cost` > 0),
-    CONSTRAINT `chk_inventory_movement_type` CHECK (`movement_type` IN ('RECEIPT', 'REPLENISH', 'PICK', 'TRANSFER', 'SALE', 'RETURN', 'ADJUSTMENT', 'WRITE_OFF'))
+    CONSTRAINT `chk_inventory_movement_type` CHECK (`movement_type` IN ('REPLENISHMENT', 'PICK', 'TRANSFER', 'COUNT_ADJUSTMENT', 'RETURN'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='库存移动事实';
+
+CREATE TABLE `inventory_balance_feature_status` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `store_id` BIGINT NOT NULL,
+    `product_id` BIGINT NOT NULL,
+    `balance_mode` VARCHAR(30) NOT NULL DEFAULT 'LEGACY',
+    `cutover_at` DATETIME,
+    `cutover_by` BIGINT,
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_inventory_balance_feature_store_product` (`store_id`, `product_id`),
+    CONSTRAINT `fk_inventory_balance_feature_store` FOREIGN KEY (`store_id`) REFERENCES `store` (`id`),
+    CONSTRAINT `fk_inventory_balance_feature_product` FOREIGN KEY (`product_id`) REFERENCES `product` (`id`),
+    CONSTRAINT `fk_inventory_balance_feature_operator` FOREIGN KEY (`cutover_by`) REFERENCES `staff` (`id`),
+    CONSTRAINT `chk_inventory_balance_feature_mode` CHECK (`balance_mode` IN ('LEGACY', 'BATCH_LOCATION'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='SKU库存余额权威来源切换状态';
 
 ALTER TABLE `order_item`
     ADD UNIQUE KEY `uk_order_item_id_product` (`id`, `product_id`),

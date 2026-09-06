@@ -1,6 +1,6 @@
 package com.agri_system.application.purchase.service;
 
-import com.agri_system.application.inventory.service.BatchBalanceService;
+import com.agri_system.domain.inventory.service.BatchBalanceService;
 import com.agri_system.application.product.service.ProductUnitService;
 import com.agri_system.application.product.service.UnitConversionSnapshot;
 import com.agri_system.application.purchase.dto.command.*;
