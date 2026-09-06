@@ -115,5 +115,15 @@ public class StaffPerformanceLogRepositoryImpl implements StaffPerformanceLogRep
                 .and("DATE_FORMAT(freeze_until,'%Y-%m') = ?", month);
         return mapper.selectListByQueryAs(query, Long.class);
     }
+
+    @Override
+    public java.util.List<StaffPerformanceLog> findPayableByStaffAndFreezeMonth(Long staffId, String month) {
+        QueryWrapper query = QueryWrapper.create()
+                .where("staff_id = ?", staffId)
+                .and("status = ?", PerformanceLogStatus.UNFROZEN.getCode())
+                .and("DATE_FORMAT(freeze_until,'%Y-%m') = ?", month)
+                .orderBy("freeze_until DESC");
+        return mapper.selectListByQuery(query);
+    }
 }
 

@@ -125,7 +125,9 @@ public class PerformanceApplicationService {
                 .ifPresent(staff -> vo.setStaffName(staff.getName()));
 
         // Load line items (performance logs for this staff in this month)
-        List<StaffPerformanceLog> logs = staffPerformanceLogRepository.findByStaffAndMonthRange(
+        // 明细口径与账单 totalCommission(sumPayableByFreezeMonth)保持一致:
+        // status=2 且 freeze_until 落在账单月,避免冻结开启后明细行与总额对不上
+        List<StaffPerformanceLog> logs = staffPerformanceLogRepository.findPayableByStaffAndFreezeMonth(
                 bill.getStaffId(), bill.getMonth());
         vo.setLineItems(logs.stream().map(this::toLogVO).collect(Collectors.toList()));
 

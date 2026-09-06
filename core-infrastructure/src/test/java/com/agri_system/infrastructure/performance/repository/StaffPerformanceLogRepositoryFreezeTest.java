@@ -49,4 +49,14 @@ class StaffPerformanceLogRepositoryFreezeTest {
 
         verify(mapper).selectListByQueryAs(any(QueryWrapper.class), eq(Long.class));
     }
+
+    @Test
+    void findPayableByStaffAndFreezeMonthDelegatesToMapper() {
+        StaffPerformanceLogMapper mapper = mock(StaffPerformanceLogMapper.class);
+        StaffPerformanceLogRepositoryImpl repo = new StaffPerformanceLogRepositoryImpl(mapper);
+
+        repo.findPayableByStaffAndFreezeMonth(1L, "2026-08");
+
+        verify(mapper).selectListByQuery(any(QueryWrapper.class));
+    }
 }

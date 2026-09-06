@@ -32,5 +32,8 @@ public interface StaffPerformanceLogRepository {
 
     /** 找出 freeze_until 落在指定月份、且有可发放提成的员工 */
     java.util.List<Long> findStaffIdsWithPayableInMonth(String month);
+
+    /** 账单明细口径:与月结算一致,取 status=2 且 freeze_until 落在指定月份的可发放提成明细 */
+    java.util.List<StaffPerformanceLog> findPayableByStaffAndFreezeMonth(Long staffId, String month);
 }
 
