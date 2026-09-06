@@ -166,22 +166,30 @@ class RetailFactChainMigrationTest {
     void migrationDirectoryHasUniqueVersionsThroughRetailFactChain() throws Exception {
         Path migrationDirectory = Paths.get(getClass().getClassLoader()
                 .getResource("db/migration").toURI());
-        Pattern versionPattern = Pattern.compile("^V(\\d+)__[^/]+\\.sql$");
-        List<Integer> versions;
+        Pattern versionPattern = Pattern.compile("^V([0-9_]+)__[^/]+\\.sql$");
+        List<Path> migrationFiles;
         try (var paths = Files.list(migrationDirectory)) {
-            versions = paths
+            migrationFiles = paths
                     .filter(Files::isRegularFile)
-                    .map(path -> versionPattern.matcher(path.getFileName().toString()))
-                    .filter(Matcher::matches)
-                    .map(matcher -> Integer.parseInt(matcher.group(1)))
-                    .sorted()
+                    .filter(path -> path.getFileName().toString().startsWith("V")
+                            && path.getFileName().toString().endsWith(".sql"))
                     .toList();
         }
+        List<MigrationVersion> versions = migrationFiles.stream()
+                .map(path -> versionPattern.matcher(path.getFileName().toString()))
+                .peek(matcher -> assertTrue(matcher.matches(),
+                        "无法解析 Flyway 版本迁移文件: " + matcher.group(0)))
+                .map(matcher -> MigrationVersion.fromVersion(matcher.group(1).replace('_', '.')))
+                .sorted()
+                .toList();
         assertTrue(!versions.isEmpty(), "未发现 Flyway 版本迁移文件");
+        assertEquals(migrationFiles.size(), versions.size(), "所有 V*.sql 文件都必须被枚举和解析");
         assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
-        assertTrue(versions.stream().allMatch(version -> version >= 1 && version <= 120),
+        assertTrue(versions.stream().allMatch(version -> version.compareTo(MigrationVersion.fromVersion("1")) >= 0
+                        && version.compareTo(MigrationVersion.fromVersion("120")) <= 0),
                 "存在超出 V1..V120 范围的迁移版本");
-        assertTrue(versions.containsAll(List.of(119, 120)), "缺少 V119/V120");
+        assertTrue(versions.containsAll(List.of(MigrationVersion.fromVersion("119"),
+                MigrationVersion.fromVersion("120"))), "缺少 V119/V120");
         assertEquals("120", flyway.info().current().getVersion().getVersion());
     }
 
