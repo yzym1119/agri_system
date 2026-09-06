@@ -41,17 +41,17 @@ public class PointsClearJob {
     @Transactional(rollbackFor = Exception.class)
     public void clearPointsYearly() {
         log.info("开始执行年度积分清零任务");
-        
-        // 幂等性检查：检查今天是否已有清零记录
-        // 通过查询今天是否有 YEARLY_CLEAR 类型的交易记录来判断
-        // 简化实现：如果今天已经有清零记录，跳过（通过检查流水表）
-        // 注意：这里假设如果任务已执行，至少会有一条清零记录
-        // 更严格的实现需要添加专门的执行记录表
-        // 当前实现依赖事务保证，如果任务失败会回滚
-        
+
+        // 幂等守卫:按"客户 + 清零年度"去重。referenceId 固定为执行年度,
+        // 年内重跑(手动触发/失败重试)时,已清零客户会被整体跳过——既避免重复写 YEARLY_CLEAR 流水,
+        // 也避免误清客户在清零后当年新获得的积分(单靠"余额<=0 跳过"无法覆盖这种情况)。
+        long clearYear = java.time.LocalDate.now().getYear();
+        java.util.Set<Long> alreadyCleared = new java.util.HashSet<>(
+                transactionRepository.findCustomerIdsByReference(3, "YEARLY_CLEAR", clearYear));
+        log.info("本年度({})已清零客户数: {}", clearYear, alreadyCleared.size());
+
         // 查询所有积分钱包（Type=3）
         // 注意：如果客户数量很大（10万+），建议使用分页查询
-        // 当前实现使用批量处理，每次处理1000条
         List<CustomerWallet> pointsWallets = walletRepository.findAllByWalletType(3);
         log.info("查询到 {} 个积分钱包", pointsWallets.size());
         
@@ -63,12 +63,18 @@ public class PointsClearJob {
         
         for (CustomerWallet wallet : pointsWallets) {
             try {
-                // 跳过余额为0的账户
+                // 跳过余额为0（或异常负数）的账户
                 if (wallet.getBalance() == null || wallet.getBalance().compareTo(BigDecimal.ZERO) <= 0) {
                     skipCount++;
                     continue;
                 }
-                
+
+                // 跳过本年度已清零的客户（幂等守卫）
+                if (alreadyCleared.contains(wallet.getCustomerId())) {
+                    skipCount++;
+                    continue;
+                }
+
                 BigDecimal originalBalance = wallet.getBalance();
                 
                 // 重置余额为0
@@ -84,12 +90,15 @@ public class PointsClearJob {
                 transaction.setBalanceBefore(originalBalance);
                 transaction.setBalanceAfter(BigDecimal.ZERO);
                 transaction.setReferenceType("YEARLY_CLEAR");
-                transaction.setReferenceId(null); // 保留为null，幂等性通过日期+referenceType判断
+                transaction.setReferenceId(clearYear); // 清零年度,作为"客户+年度"幂等去重键
                 transaction.setRemark("年度积分清零");
                 transaction.setCreatedAt(LocalDateTime.now());
                 transaction.setCreatedBy(null);
                 transactionRepository.save(transaction);
-                
+
+                // 同批次内防御:标记该客户已清零,避免重复 customerId 被处理两次
+                alreadyCleared.add(wallet.getCustomerId());
+
                 clearedCount++;
                 processedCount++;
                 

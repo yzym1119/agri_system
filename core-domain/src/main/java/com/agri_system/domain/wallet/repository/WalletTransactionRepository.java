@@ -41,6 +41,16 @@ public interface WalletTransactionRepository {
      */
     List<WalletTransaction> findByReference(Long customerId, Integer walletType,
                                             String referenceType, Long referenceId);
+
+    /**
+     * 批量查询已存在指定关联记录的客户ID集合（用于幂等守卫，如年度积分清零去重）
+     *
+     * @param walletType    钱包类型
+     * @param referenceType 关联类型（如 YEARLY_CLEAR）
+     * @param referenceId   关联ID（如清零年度）
+     * @return 命中的去重客户ID列表
+     */
+    List<Long> findCustomerIdsByReference(Integer walletType, String referenceType, Long referenceId);
 }
 
 

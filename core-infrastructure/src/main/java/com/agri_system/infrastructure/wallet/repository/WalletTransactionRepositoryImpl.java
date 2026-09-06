@@ -61,6 +61,16 @@ public class WalletTransactionRepositoryImpl implements WalletTransactionReposit
                 .orderBy("created_at ASC");
         return mapper.selectListByQuery(query);
     }
+
+    @Override
+    public List<Long> findCustomerIdsByReference(Integer walletType, String referenceType, Long referenceId) {
+        QueryWrapper query = QueryWrapper.create()
+                .select("DISTINCT customer_id")
+                .where("wallet_type = ?", walletType)
+                .and("reference_type = ?", referenceType)
+                .and("reference_id = ?", referenceId);
+        return mapper.selectListByQueryAs(query, Long.class);
+    }
 }
 
 

@@ -250,6 +250,47 @@ class PointsClearJobTest {
         verify(walletRepository, never()).save(any());
         verify(transactionRepository, never()).save(any());
     }
+
+    /**
+     * 测试用例8：本年度已清零的客户被跳过（幂等守卫）
+     * 年内重跑时,即便客户又攒了积分(balance>0),也不会被二次清零。
+     */
+    @Test
+    void testClearPointsYearly_SkipAlreadyClearedThisYear() {
+        // Given
+        List<CustomerWallet> wallets = List.of(walletWithPoints);
+        when(walletRepository.findAllByWalletType(3)).thenReturn(wallets);
+        long year = java.time.LocalDate.now().getYear();
+        // 客户1本年度已有 YEARLY_CLEAR 记录
+        when(transactionRepository.findCustomerIdsByReference(3, "YEARLY_CLEAR", year))
+                .thenReturn(List.of(1L));
+
+        // When
+        pointsClearJob.clearPointsYearly();
+
+        // Then：不清零、不写流水
+        verify(walletRepository, never()).save(any());
+        verify(transactionRepository, never()).save(any());
+    }
+
+    /**
+     * 测试用例9：清零流水写入 referenceId=清零年度（幂等去重键）
+     */
+    @Test
+    void testClearPointsYearly_SetsReferenceIdToYear() {
+        // Given
+        List<CustomerWallet> wallets = List.of(walletWithPoints);
+        when(walletRepository.findAllByWalletType(3)).thenReturn(wallets);
+
+        // When
+        pointsClearJob.clearPointsYearly();
+
+        // Then
+        ArgumentCaptor<WalletTransaction> captor = ArgumentCaptor.forClass(WalletTransaction.class);
+        verify(transactionRepository).save(captor.capture());
+        long year = java.time.LocalDate.now().getYear();
+        assertEquals(year, captor.getValue().getReferenceId().longValue());
+    }
 }
 
 
