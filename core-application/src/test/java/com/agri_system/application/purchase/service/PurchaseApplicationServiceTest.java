@@ -214,7 +214,6 @@ class PurchaseApplicationServiceTest {
         order.setPurchaseNo("PO20240101000001");
         order.setStoreId(1L);
         order.setStatus(2); // 待入库
-        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
         when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(domainService.checkCanInbound(order)).thenReturn(true);
         
@@ -252,6 +251,28 @@ class PurchaseApplicationServiceTest {
         // 收货事实未接入 Task 4 余额前，不更新 avgCostPrice 展示缓存
         verify(productRepository, never()).save(any());
     }
+
+    @Test
+    void legacyInboundLocksOrderBeforeReadingItemsAndDoesNotUsePlainOrderLookup() {
+        PurchaseOrder order = pendingInboundOrder();
+        PurchaseOrderItem item = purchaseItem();
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
+        when(domainService.checkCanInbound(order)).thenReturn(true);
+        when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        stubPurchaseUnitConversion();
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
+
+        PurchaseInboundCommand command = new PurchaseInboundCommand();
+        command.setOrderId(1L);
+        purchaseService.inbound(command, 9L);
+
+        InOrder reads = inOrder(purchaseRepository, itemRepository);
+        reads.verify(purchaseRepository).findByIdForUpdate(1L);
+        reads.verify(itemRepository).findByOrderId(1L);
+        verify(purchaseRepository, never()).findById(1L);
+        verify(purchaseRepository, times(1)).findByIdForUpdate(1L);
+    }
     
     @Test
     void testInbound_AlreadyInbound_ThrowsException() {
@@ -259,7 +280,7 @@ class PurchaseApplicationServiceTest {
         PurchaseOrder order = new PurchaseOrder();
         order.setId(1L);
         order.setStatus(3); // 已入库
-        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         
         PurchaseInboundCommand command = new PurchaseInboundCommand();
         command.setOrderId(1L);
@@ -279,7 +300,6 @@ class PurchaseApplicationServiceTest {
         order.setPurchaseNo("PO20240101000001");
         order.setStoreId(1L);
         order.setStatus(2); // 待入库
-        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(order));
         when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
         when(domainService.checkCanInbound(order)).thenReturn(true);
         

@@ -216,13 +216,8 @@ public class PurchaseApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void inbound(PurchaseInboundCommand command, Long createdBy) {
-        PurchaseOrder order = purchaseRepository.findById(command.getOrderId())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        PurchaseErrorCode.PURCHASE_ORDER_NOT_FOUND + ": 采购单不存在"));
-        if (order.isInbound()) {
-            throw new IllegalArgumentException(
-                    PurchaseErrorCode.PURCHASE_ORDER_ALREADY_INBOUND + ": 采购单已全部收货");
-        }
+        PurchaseOrder order = lockPurchaseOrder(command.getOrderId());
+        checkCanReceive(order);
         List<PurchaseOrderItem> items = itemRepository.findByOrderId(order.getId());
         if (items == null || items.size() != 1) {
             throw new IllegalArgumentException("旧入库接口只支持一条采购明细，请使用采购收货接口");
@@ -243,23 +238,21 @@ public class PurchaseApplicationService {
         line.setProductId(item.getProductId());
         line.setBatches(List.of(batch));
         receiveCommand.setLines(List.of(line));
-        receive(receiveCommand, createdBy);
+        receiveLocked(receiveCommand, createdBy, order, items);
     }
 
     /** 保存收货事实；余额服务只可在所有 header/line/batch 事实写入之后调用。 */
     @Transactional(rollbackFor = Exception.class)
     public Long receive(ReceivePurchaseCommand command, Long receiverId) {
-        // 收货事务以采购单行锁为边界，后续状态和累计读取均受该锁串行化保护。
-        PurchaseOrder order = purchaseRepository.findByIdForUpdate(command.getPurchaseOrderId())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        PurchaseErrorCode.PURCHASE_ORDER_NOT_FOUND + ": 采购单不存在"));
-        if (order.isInbound()) {
-            throw new IllegalArgumentException(PurchaseErrorCode.PURCHASE_ORDER_ALREADY_INBOUND + ": 采购单已全部收货");
-        }
-        if (!domainService.checkCanInbound(order)) {
-            throw new IllegalArgumentException(PurchaseErrorCode.PURCHASE_ORDER_STATUS_INVALID + ": 采购单状态不允许收货");
-        }
+        PurchaseOrder order = lockPurchaseOrder(command.getPurchaseOrderId());
+        checkCanReceive(order);
         List<PurchaseOrderItem> orderItems = itemRepository.findByOrderId(order.getId());
+        return receiveLocked(command, receiverId, order, orderItems);
+    }
+
+    /** 调用方必须先持有 purchase_order 的行锁，避免 legacy adapter 二次锁定。 */
+    private Long receiveLocked(ReceivePurchaseCommand command, Long receiverId,
+                               PurchaseOrder order, List<PurchaseOrderItem> orderItems) {
         if (orderItems == null || orderItems.isEmpty()) {
             throw new IllegalArgumentException("采购单明细为空");
         }
@@ -370,6 +363,22 @@ public class PurchaseApplicationService {
             purchaseRepository.save(order);
         }
         return receipt.getId();
+    }
+
+    private PurchaseOrder lockPurchaseOrder(Long purchaseOrderId) {
+        // 收货事务以采购单行锁为边界，后续状态和累计读取均受该锁串行化保护。
+        return purchaseRepository.findByIdForUpdate(purchaseOrderId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        PurchaseErrorCode.PURCHASE_ORDER_NOT_FOUND + ": 采购单不存在"));
+    }
+
+    private void checkCanReceive(PurchaseOrder order) {
+        if (order.isInbound()) {
+            throw new IllegalArgumentException(PurchaseErrorCode.PURCHASE_ORDER_ALREADY_INBOUND + ": 采购单已全部收货");
+        }
+        if (!domainService.checkCanInbound(order)) {
+            throw new IllegalArgumentException(PurchaseErrorCode.PURCHASE_ORDER_STATUS_INVALID + ": 采购单状态不允许收货");
+        }
     }
 
     private PurchaseInboundCommand.InboundItem legacyInboundItem(PurchaseInboundCommand command, PurchaseOrderItem item) {
