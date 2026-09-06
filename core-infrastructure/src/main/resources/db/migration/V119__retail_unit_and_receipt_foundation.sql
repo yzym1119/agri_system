@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS `product_unit` (
     `created_by` BIGINT,
     `updated_by` BIGINT,
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_product_unit_id_product` (`id`, `product_id`),
     UNIQUE KEY `uk_product_unit_name` (`product_id`, `unit_name`),
     UNIQUE KEY `uk_product_enabled_base_unit` (`product_id`, `enabled_base_unit_key`),
     KEY `idx_product_unit_status` (`product_id`, `status`),
@@ -32,7 +33,7 @@ CREATE TABLE IF NOT EXISTS `product_unit` (
     CONSTRAINT `chk_product_unit_sale_flag` CHECK (`allow_sale` IN (0, 1)),
     CONSTRAINT `chk_product_unit_inventory_flag` CHECK (`allow_inventory` IN (0, 1)),
     CONSTRAINT `chk_product_unit_transfer_flag` CHECK (`allow_transfer` IN (0, 1))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='SKU 业务单位';
 
 CREATE TABLE IF NOT EXISTS `inventory_receipt` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
@@ -47,6 +48,7 @@ CREATE TABLE IF NOT EXISTS `inventory_receipt` (
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_inventory_receipt_id_store` (`id`, `store_id`),
     UNIQUE KEY `uk_inventory_receipt_no` (`receipt_no`),
     KEY `idx_inventory_receipt_store_time` (`store_id`, `received_at`),
     KEY `idx_inventory_receipt_supplier` (`supplier_id`),
@@ -55,7 +57,7 @@ CREATE TABLE IF NOT EXISTS `inventory_receipt` (
     CONSTRAINT `fk_inventory_receipt_store` FOREIGN KEY (`store_id`) REFERENCES `store` (`id`),
     CONSTRAINT `fk_inventory_receipt_receiver` FOREIGN KEY (`receiver_id`) REFERENCES `staff` (`id`),
     CONSTRAINT `chk_inventory_receipt_status` CHECK (`status` IN ('DRAFT', 'RECEIVED', 'CANCELLED'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='收货单';
 
 CREATE TABLE IF NOT EXISTS `inventory_receipt_line` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
@@ -63,19 +65,25 @@ CREATE TABLE IF NOT EXISTS `inventory_receipt_line` (
     `line_no` INT NOT NULL,
     `purchase_order_item_id` BIGINT,
     `product_id` BIGINT NOT NULL,
+    `store_id` BIGINT NOT NULL,
     `remark` VARCHAR(500),
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_inventory_receipt_line_no` (`receipt_id`, `line_no`),
+    UNIQUE KEY `uk_inventory_receipt_line_product` (`id`, `product_id`),
+    UNIQUE KEY `uk_inventory_receipt_line_store` (`id`, `store_id`),
     KEY `idx_inventory_receipt_line_product` (`product_id`),
     CONSTRAINT `fk_inventory_receipt_line_receipt` FOREIGN KEY (`receipt_id`) REFERENCES `inventory_receipt` (`id`),
+    CONSTRAINT `fk_inventory_receipt_line_receipt_store` FOREIGN KEY (`receipt_id`, `store_id`) REFERENCES `inventory_receipt` (`id`, `store_id`),
     CONSTRAINT `fk_inventory_receipt_line_purchase_item` FOREIGN KEY (`purchase_order_item_id`) REFERENCES `purchase_order_item` (`id`),
     CONSTRAINT `fk_inventory_receipt_line_product` FOREIGN KEY (`product_id`) REFERENCES `product` (`id`)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='收货单行';
 
 CREATE TABLE IF NOT EXISTS `inventory_receipt_batch` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `receipt_line_id` BIGINT NOT NULL,
+    `product_id` BIGINT NOT NULL,
+    `store_id` BIGINT NOT NULL,
     `supplier_batch_no` VARCHAR(100),
     `internal_receipt_batch_no` VARCHAR(100) NOT NULL,
     `original_unit_id` BIGINT,
@@ -94,17 +102,25 @@ CREATE TABLE IF NOT EXISTS `inventory_receipt_batch` (
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_inventory_receipt_batch_internal_no` (`internal_receipt_batch_no`),
+    UNIQUE KEY `uk_inventory_receipt_batch_product` (`id`, `product_id`),
+    UNIQUE KEY `uk_inventory_receipt_batch_store` (`id`, `store_id`),
+    UNIQUE KEY `uk_inventory_receipt_batch_product_store` (`id`, `product_id`, `store_id`),
     KEY `idx_inventory_receipt_batch_supplier_no` (`supplier_batch_no`),
     KEY `idx_inventory_receipt_batch_expiry` (`expiry_date`),
     KEY `idx_inventory_receipt_batch_line` (`receipt_line_id`),
     CONSTRAINT `fk_inventory_receipt_batch_line` FOREIGN KEY (`receipt_line_id`) REFERENCES `inventory_receipt_line` (`id`),
-    CONSTRAINT `fk_inventory_receipt_batch_original_unit` FOREIGN KEY (`original_unit_id`) REFERENCES `product_unit` (`id`),
-    CONSTRAINT `fk_inventory_receipt_batch_base_unit` FOREIGN KEY (`base_unit_id`) REFERENCES `product_unit` (`id`),
+    CONSTRAINT `fk_inventory_receipt_batch_line_product` FOREIGN KEY (`receipt_line_id`, `product_id`) REFERENCES `inventory_receipt_line` (`id`, `product_id`),
+    CONSTRAINT `fk_inventory_receipt_batch_line_store` FOREIGN KEY (`receipt_line_id`, `store_id`) REFERENCES `inventory_receipt_line` (`id`, `store_id`),
+    CONSTRAINT `fk_inventory_receipt_batch_original_unit` FOREIGN KEY (`original_unit_id`, `product_id`) REFERENCES `product_unit` (`id`, `product_id`),
+    CONSTRAINT `fk_inventory_receipt_batch_base_unit` FOREIGN KEY (`base_unit_id`, `product_id`) REFERENCES `product_unit` (`id`, `product_id`),
     CONSTRAINT `fk_inventory_receipt_batch_receiver` FOREIGN KEY (`receiver_id`) REFERENCES `staff` (`id`),
     CONSTRAINT `chk_inventory_receipt_batch_quantity` CHECK (`original_quantity` > 0 AND `base_quantity` > 0),
-    CONSTRAINT `chk_inventory_receipt_batch_cost` CHECK (`original_unit_cost` >= 0 AND `base_unit_cost` >= 0),
-    CONSTRAINT `chk_inventory_receipt_batch_date_status` CHECK (`date_status` IN ('KNOWN', 'UNKNOWN'))
-);
+    CONSTRAINT `chk_inventory_receipt_batch_cost` CHECK (`original_unit_cost` > 0 AND `base_unit_cost` > 0),
+    CONSTRAINT `chk_inventory_receipt_batch_date_status` CHECK (
+        (`date_status` = 'UNKNOWN' AND `production_date` IS NULL AND `expiry_date` IS NULL)
+        OR (`date_status` = 'KNOWN' AND `production_date` IS NOT NULL AND `expiry_date` IS NOT NULL AND `production_date` <= `expiry_date`)
+    )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='收货批次';
 
 CREATE TABLE IF NOT EXISTS `inventory_location` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
@@ -117,14 +133,17 @@ CREATE TABLE IF NOT EXISTS `inventory_location` (
     `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_inventory_location_code` (`store_id`, `code`),
+    UNIQUE KEY `uk_inventory_location_id_store` (`id`, `store_id`),
     KEY `idx_inventory_location_type` (`store_id`, `location_type`, `status`),
     CONSTRAINT `fk_inventory_location_store` FOREIGN KEY (`store_id`) REFERENCES `store` (`id`),
     CONSTRAINT `chk_inventory_location_type` CHECK (`location_type` IN ('SALES_FLOOR', 'STORE_BACKROOM', 'CENTRAL_WAREHOUSE', 'OTHER_STORE'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='库存位置';
 
 CREATE TABLE IF NOT EXISTS `inventory_batch_balance` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `batch_id` BIGINT NOT NULL,
+    `product_id` BIGINT NOT NULL,
+    `store_id` BIGINT NOT NULL,
     `location_id` BIGINT NOT NULL,
     `base_quantity` DECIMAL(20,8) NOT NULL DEFAULT 0,
     `reserved_base_quantity` DECIMAL(20,8) NOT NULL DEFAULT 0,
@@ -134,21 +153,23 @@ CREATE TABLE IF NOT EXISTS `inventory_batch_balance` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_batch_location` (`batch_id`, `location_id`),
     KEY `idx_inventory_batch_balance_location` (`location_id`),
-    CONSTRAINT `fk_inventory_batch_balance_batch` FOREIGN KEY (`batch_id`) REFERENCES `inventory_receipt_batch` (`id`),
-    CONSTRAINT `fk_inventory_batch_balance_location` FOREIGN KEY (`location_id`) REFERENCES `inventory_location` (`id`),
+    CONSTRAINT `fk_inventory_batch_balance_batch` FOREIGN KEY (`batch_id`, `product_id`, `store_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`, `store_id`),
+    CONSTRAINT `fk_inventory_batch_balance_location` FOREIGN KEY (`location_id`, `store_id`) REFERENCES `inventory_location` (`id`, `store_id`),
     CONSTRAINT `chk_inventory_batch_balance_quantity` CHECK (`base_quantity` >= 0 AND `reserved_base_quantity` >= 0 AND `reserved_base_quantity` <= `base_quantity`)
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='批次位置余额';
 
 CREATE TABLE IF NOT EXISTS `inventory_movement` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `movement_no` VARCHAR(64) NOT NULL,
     `batch_id` BIGINT NOT NULL,
+    `product_id` BIGINT NOT NULL,
     `from_location_id` BIGINT,
     `to_location_id` BIGINT,
     `movement_type` VARCHAR(30) NOT NULL,
     `original_unit_id` BIGINT,
     `original_unit_name` VARCHAR(50) NOT NULL,
     `original_quantity` DECIMAL(20,8) NOT NULL,
+    `unit_cost` DECIMAL(20,8) NOT NULL,
     `base_quantity` DECIMAL(20,8) NOT NULL,
     `reference_type` VARCHAR(50),
     `reference_id` BIGINT,
@@ -158,13 +179,14 @@ CREATE TABLE IF NOT EXISTS `inventory_movement` (
     `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_inventory_movement_no` (`movement_no`),
+    UNIQUE KEY `uk_inventory_movement_batch_product` (`id`, `product_id`),
     KEY `idx_inventory_movement_batch_time` (`batch_id`, `occurred_at`),
     KEY `idx_inventory_movement_reference` (`reference_type`, `reference_id`),
-    CONSTRAINT `fk_inventory_movement_batch` FOREIGN KEY (`batch_id`) REFERENCES `inventory_receipt_batch` (`id`),
+    CONSTRAINT `fk_inventory_movement_batch` FOREIGN KEY (`batch_id`, `product_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`),
     CONSTRAINT `fk_inventory_movement_from_location` FOREIGN KEY (`from_location_id`) REFERENCES `inventory_location` (`id`),
     CONSTRAINT `fk_inventory_movement_to_location` FOREIGN KEY (`to_location_id`) REFERENCES `inventory_location` (`id`),
-    CONSTRAINT `fk_inventory_movement_original_unit` FOREIGN KEY (`original_unit_id`) REFERENCES `product_unit` (`id`),
+    CONSTRAINT `fk_inventory_movement_original_unit` FOREIGN KEY (`original_unit_id`, `product_id`) REFERENCES `product_unit` (`id`, `product_id`),
     CONSTRAINT `fk_inventory_movement_operator` FOREIGN KEY (`operator_id`) REFERENCES `staff` (`id`),
-    CONSTRAINT `chk_inventory_movement_quantity` CHECK (`original_quantity` > 0 AND `base_quantity` > 0),
+    CONSTRAINT `chk_inventory_movement_quantity` CHECK (`original_quantity` > 0 AND `base_quantity` > 0 AND `unit_cost` > 0),
     CONSTRAINT `chk_inventory_movement_type` CHECK (`movement_type` IN ('RECEIPT', 'REPLENISH', 'PICK', 'TRANSFER', 'SALE', 'RETURN', 'ADJUSTMENT', 'WRITE_OFF'))
-);
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='库存移动事实';

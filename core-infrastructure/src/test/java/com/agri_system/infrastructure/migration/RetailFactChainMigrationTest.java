@@ -4,6 +4,7 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -52,12 +53,20 @@ class RetailFactChainMigrationTest {
                 );
                 CREATE TABLE `order_item` (
                     `id` BIGINT PRIMARY KEY,
+                    `product_id` BIGINT NOT NULL,
                     `unit` VARCHAR(20) NOT NULL
                 );
+                INSERT INTO `store` (`id`) VALUES (1), (2);
+                INSERT INTO `staff` (`id`) VALUES (1);
+                INSERT INTO `supplier` (`id`) VALUES (1);
+                INSERT INTO `purchase_order` (`id`) VALUES (1);
+                INSERT INTO `purchase_order_item` (`id`) VALUES (1);
                 INSERT INTO `product` (`id`, `main_unit`, `aux_unit`, `main_to_aux_ratio`)
                     VALUES (1, '箱', '瓶', 24);
+                INSERT INTO `product` (`id`, `main_unit`, `aux_unit`, `main_to_aux_ratio`)
+                    VALUES (2, '袋', '克', 500);
                 INSERT INTO `inventory_batch` (`id`, `quantity`) VALUES (1, 12.00000000);
-                INSERT INTO `order_item` (`id`, `unit`) VALUES (1, '箱');
+                INSERT INTO `order_item` (`id`, `product_id`, `unit`) VALUES (1, 1, '箱');
                 """);
 
         flyway = Flyway.configure()
@@ -68,6 +77,25 @@ class RetailFactChainMigrationTest {
                 .target(MigrationVersion.LATEST)
                 .load();
         flyway.migrate();
+        createH2AppendOnlyTriggers();
+    }
+
+    @BeforeEach
+    void resetFactTables() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        dropH2AppendOnlyTriggers(jdbc);
+        jdbc.update("UPDATE order_item SET base_unit_id = NULL, base_quantity = NULL, unit_cost = NULL");
+        jdbc.update("DELETE FROM order_item_price_audit");
+        jdbc.update("DELETE FROM inventory_decision_log");
+        jdbc.update("DELETE FROM order_item_batch_allocation");
+        jdbc.update("DELETE FROM inventory_movement");
+        jdbc.update("DELETE FROM inventory_batch_balance");
+        jdbc.update("DELETE FROM inventory_receipt_batch");
+        jdbc.update("DELETE FROM inventory_receipt_line");
+        jdbc.update("DELETE FROM inventory_receipt");
+        jdbc.update("DELETE FROM inventory_location");
+        jdbc.update("DELETE FROM product_unit");
+        createH2AppendOnlyTriggers(jdbc);
     }
 
     @AfterAll
@@ -84,6 +112,11 @@ class RetailFactChainMigrationTest {
         assertUniqueIndex("product_unit", "uk_product_unit_name", "product_id", "unit_name");
         assertUniqueIndex("product_unit", "uk_product_enabled_base_unit", "product_id", "enabled_base_unit_key");
         assertUniqueIndex("inventory_batch_balance", "uk_batch_location", "batch_id", "location_id");
+        assertUniqueIndex("inventory_receipt_line", "uk_inventory_receipt_line_product", "id", "product_id");
+        assertUniqueIndex("inventory_receipt_line", "uk_inventory_receipt_line_store", "id", "store_id");
+        assertUniqueIndex("inventory_receipt_batch", "uk_inventory_receipt_batch_product", "id", "product_id");
+        assertUniqueIndex("inventory_receipt_batch", "uk_inventory_receipt_batch_store", "id", "store_id");
+        assertUniqueIndex("inventory_location", "uk_inventory_location_id_store", "id", "store_id");
     }
 
     @Test
@@ -115,6 +148,227 @@ class RetailFactChainMigrationTest {
         assertColumnExists("product", "main_to_aux_ratio");
         assertColumnExists("inventory_batch", "quantity");
         assertColumnExists("order_item", "unit");
+    }
+
+    @Test
+    void factForeignKeysRejectCrossSkuUnitBatchMovementAllocationAndPriceAudit() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        long unitOne = insertUnit(jdbc, 1, "瓶", 1);
+        long unitTwo = insertUnit(jdbc, 2, "袋", 1);
+        long receipt = insertReceipt(jdbc, "R-CROSS", 1);
+        long line = insertReceiptLine(jdbc, receipt, 1, 1);
+        long batch = insertBatch(jdbc, line, 1, unitOne, unitOne, "B-CROSS", "KNOWN", "2026-01-01", "2026-12-31");
+        long location = insertLocation(jdbc, 1, "L-CROSS");
+
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO inventory_receipt_batch
+                    (receipt_line_id, product_id, store_id, internal_receipt_batch_no,
+                     original_unit_id, original_unit_name, original_quantity, original_unit_cost,
+                     base_unit_id, base_quantity, base_unit_cost, date_status)
+                VALUES (?, 2, 1, 'B-WRONG', ?, '袋', 1, 1, ?, 1, 1, 'KNOWN')
+                """, line, unitTwo, unitTwo));
+
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO inventory_movement
+                    (movement_no, batch_id, product_id, original_unit_id, original_unit_name,
+                     original_quantity, unit_cost, base_quantity)
+                VALUES ('M-WRONG', ?, 2, ?, '袋', 1, 1, 1)
+                """, batch, unitTwo));
+
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_item_batch_allocation
+                    (order_item_id, product_id, batch_id, allocated_base_quantity,
+                     batch_unit_cost, allocated_cost, evidence_level)
+                VALUES (1, 2, ?, 1, 1, 1, 'SCANNED')
+                """, batch));
+
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_item_price_audit
+                    (order_item_id, product_id, sale_unit_id, suggested_unit_price,
+                     final_unit_price, price_difference)
+                VALUES (1, 2, ?, 1, 1, 0)
+                """, unitTwo));
+
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO inventory_batch_balance
+                    (batch_id, product_id, store_id, location_id, base_quantity)
+                VALUES (?, 1, 2, ?, 1)
+                """, batch, location));
+    }
+
+    @Test
+    void receiptMovementAndAllocationRejectNonPositiveQuantitiesAndCosts() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        long unit = insertUnit(jdbc, 1, "瓶", 1);
+        long receipt = insertReceipt(jdbc, "R-POSITIVE", 1);
+        long line = insertReceiptLine(jdbc, receipt, 1, 1);
+
+        assertThrows(DataAccessException.class, () -> insertBatch(jdbc, line, 1, unit, unit,
+                "B-ZERO-QTY", "KNOWN", "2026-01-01", "2026-12-31", 0, 1, 1));
+        long batch = insertBatch(jdbc, line, 1, unit, unit, "B-POSITIVE", "KNOWN", "2026-01-01", "2026-12-31");
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO inventory_movement
+                    (movement_no, batch_id, product_id, original_unit_id, original_unit_name,
+                     original_quantity, unit_cost, base_quantity)
+                VALUES ('M-ZERO-COST', ?, 1, ?, '瓶', 1, 0, 1)
+                """, batch, unit));
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO inventory_movement
+                    (movement_no, batch_id, product_id, original_unit_id, original_unit_name,
+                     original_quantity, unit_cost, base_quantity)
+                VALUES ('M-ZERO-QTY', ?, 1, ?, '瓶', 0, 1, 0)
+                """, batch, unit));
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_item_batch_allocation
+                    (order_item_id, product_id, batch_id, allocated_base_quantity,
+                     batch_unit_cost, allocated_cost, evidence_level)
+                VALUES (1, 1, ?, 0, 1, 1, 'SCANNED')
+                """, batch));
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_item_batch_allocation
+                    (order_item_id, product_id, batch_id, allocated_base_quantity,
+                     batch_unit_cost, allocated_cost, evidence_level)
+                VALUES (1, 1, ?, 1, 0, 0, 'SCANNED')
+                """, batch));
+    }
+
+    @Test
+    void receiptBatchDateStatusRejectsContradictoryOrReversedDates() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        long unit = insertUnit(jdbc, 1, "瓶", 1);
+        long receipt = insertReceipt(jdbc, "R-DATE", 1);
+        long line = insertReceiptLine(jdbc, receipt, 1, 1);
+
+        assertThrows(DataAccessException.class, () -> insertBatch(jdbc, line, 1, unit, unit,
+                "B-UNKNOWN-DATE", "UNKNOWN", "2026-01-01", null));
+        assertThrows(DataAccessException.class, () -> insertBatch(jdbc, line, 1, unit, unit,
+                "B-KNOWN-MISSING", "KNOWN", null, "2026-12-31"));
+        assertThrows(DataAccessException.class, () -> insertBatch(jdbc, line, 1, unit, unit,
+                "B-REVERSED", "KNOWN", "2026-12-31", "2026-01-01"));
+    }
+
+    @Test
+    void appendOnlyAuditAndDecisionTablesRejectUpdateAndDelete() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        long unit = insertUnit(jdbc, 1, "瓶", 1);
+        jdbc.update("""
+                INSERT INTO order_item_price_audit
+                    (order_item_id, product_id, sale_unit_id, suggested_unit_price,
+                     final_unit_price, price_difference)
+                VALUES (1, 1, ?, 10, 9, -1)
+                """, unit);
+        jdbc.update("""
+                INSERT INTO inventory_decision_log
+                    (risk_kind, entity_type, entity_id, decision_action, decision_reason)
+                VALUES ('DATE_UNKNOWN', 'BATCH', 1, 'HOLD', '人工复核')
+                """);
+
+        assertThrows(DataAccessException.class,
+                () -> jdbc.update("UPDATE order_item_price_audit SET final_unit_price = 8 WHERE id = 1"));
+        assertThrows(DataAccessException.class,
+                () -> jdbc.update("DELETE FROM order_item_price_audit WHERE id = 1"));
+        assertThrows(DataAccessException.class,
+                () -> jdbc.update("UPDATE inventory_decision_log SET decision_action = 'SELL' WHERE id = 1"));
+        assertThrows(DataAccessException.class,
+                () -> jdbc.update("DELETE FROM inventory_decision_log WHERE id = 1"));
+    }
+
+    private long insertUnit(JdbcTemplate jdbc, long productId, String unitName, int baseQuantity) {
+        jdbc.update("""
+                INSERT INTO product_unit
+                    (product_id, unit_name, base_quantity_per_unit, is_base_unit, status)
+                VALUES (?, ?, ?, 1, 1)
+                """, productId, unitName, baseQuantity);
+        return jdbc.queryForObject("SELECT id FROM product_unit WHERE product_id = ? AND unit_name = ?",
+                Long.class, productId, unitName);
+    }
+
+    private long insertReceipt(JdbcTemplate jdbc, String receiptNo, long storeId) {
+        jdbc.update("INSERT INTO inventory_receipt (receipt_no, store_id) VALUES (?, ?)", receiptNo, storeId);
+        return jdbc.queryForObject("SELECT id FROM inventory_receipt WHERE receipt_no = ?", Long.class, receiptNo);
+    }
+
+    private long insertReceiptLine(JdbcTemplate jdbc, long receiptId, long storeId, long productId) {
+        jdbc.update("""
+                INSERT INTO inventory_receipt_line (receipt_id, line_no, product_id, store_id)
+                VALUES (?, 1, ?, ?)
+                """, receiptId, productId, storeId);
+        return jdbc.queryForObject("SELECT id FROM inventory_receipt_line WHERE receipt_id = ?",
+                Long.class, receiptId);
+    }
+
+    private long insertBatch(JdbcTemplate jdbc, long lineId, long productId, long originalUnitId,
+                             long baseUnitId, String batchNo, String dateStatus,
+                             String productionDate, String expiryDate) {
+        return insertBatch(jdbc, lineId, productId, originalUnitId, baseUnitId, batchNo,
+                dateStatus, productionDate, expiryDate, 1, 1, 1);
+    }
+
+    private long insertBatch(JdbcTemplate jdbc, long lineId, long productId, long originalUnitId,
+                             long baseUnitId, String batchNo, String dateStatus,
+                             String productionDate, String expiryDate, int quantity, int originalCost,
+                             int baseCost) {
+        jdbc.update("""
+                INSERT INTO inventory_receipt_batch
+                    (receipt_line_id, product_id, store_id, internal_receipt_batch_no,
+                     original_unit_id, original_unit_name, original_quantity, original_unit_cost,
+                     base_unit_id, base_quantity, base_unit_cost, date_status, production_date, expiry_date)
+                VALUES (?, ?, 1, ?, ?, '瓶', ?, ?, ?, ?, ?, ?, ?, ?)
+                """, lineId, productId, batchNo, originalUnitId, quantity, originalCost,
+                baseUnitId, quantity, baseCost, dateStatus, productionDate, expiryDate);
+        return jdbc.queryForObject("SELECT id FROM inventory_receipt_batch WHERE internal_receipt_batch_no = ?",
+                Long.class, batchNo);
+    }
+
+    private long insertLocation(JdbcTemplate jdbc, long storeId, String code) {
+        jdbc.update("""
+                INSERT INTO inventory_location (store_id, location_type, code, name)
+                VALUES (?, 'SALES_FLOOR', ?, ?)
+                """, storeId, code, code);
+        return jdbc.queryForObject("SELECT id FROM inventory_location WHERE code = ?", Long.class, code);
+    }
+
+    private static void createH2AppendOnlyTriggers() {
+        createH2AppendOnlyTriggers(new JdbcTemplate(dataSource));
+    }
+
+    private static void createH2AppendOnlyTriggers(JdbcTemplate jdbc) {
+        String triggerClass = AppendOnlyTrigger.class.getName();
+        jdbc.execute("CREATE TRIGGER price_audit_no_update BEFORE UPDATE ON order_item_price_audit "
+                + "FOR EACH ROW CALL '" + triggerClass + "'");
+        jdbc.execute("CREATE TRIGGER price_audit_no_delete BEFORE DELETE ON order_item_price_audit "
+                + "FOR EACH ROW CALL '" + triggerClass + "'");
+        jdbc.execute("CREATE TRIGGER decision_log_no_update BEFORE UPDATE ON inventory_decision_log "
+                + "FOR EACH ROW CALL '" + triggerClass + "'");
+        jdbc.execute("CREATE TRIGGER decision_log_no_delete BEFORE DELETE ON inventory_decision_log "
+                + "FOR EACH ROW CALL '" + triggerClass + "'");
+    }
+
+    private static void dropH2AppendOnlyTriggers(JdbcTemplate jdbc) {
+        jdbc.execute("DROP TRIGGER IF EXISTS price_audit_no_update");
+        jdbc.execute("DROP TRIGGER IF EXISTS price_audit_no_delete");
+        jdbc.execute("DROP TRIGGER IF EXISTS decision_log_no_update");
+        jdbc.execute("DROP TRIGGER IF EXISTS decision_log_no_delete");
+    }
+
+    public static final class AppendOnlyTrigger implements org.h2.api.Trigger {
+        @Override
+        public void init(Connection connection, String schemaName, String triggerName,
+                          String tableName, boolean before, int type) {
+        }
+
+        @Override
+        public void fire(Connection connection, Object[] oldRow, Object[] newRow) throws SQLException {
+            throw new SQLException("append-only fact");
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public void remove() {
+        }
     }
 
     @Test
