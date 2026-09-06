@@ -666,6 +666,14 @@
 - 主键：`id`
 - 普通索引：`staff_id`, `performance_type`, `order_id`, `customer_id`, `performance_date`
 
+### 2.13 零售事实链（V119/V120）
+
+零售新链路以 SKU 自定义的 `product_unit` 为单位事实。`base_quantity_per_unit` 直接换算到该 SKU 的库存基准单位；`(product_id, unit_name)` 保证单位名称唯一，生成列 `enabled_base_unit_key` 配合唯一索引 `uk_product_enabled_base_unit`，保证每个 SKU 最多一个启用基准单位，基准单位比例由应用校验为 1。旧 `product.main_unit`、`aux_unit`、`main_to_aux_ratio` 及旧库存表保留不变。
+
+收货事实分为 `inventory_receipt`、`inventory_receipt_line`、`inventory_receipt_batch` 三层；批次永久保存原始单位/数量/单价、基准数量/单位成本、供应商批号或内部收货批号、日期事实状态（`KNOWN`/`UNKNOWN`）、生产/有效期、验收凭证和收货人。`inventory_location` 支持 `SALES_FLOOR`、`STORE_BACKROOM`、`CENTRAL_WAREHOUSE`、`OTHER_STORE` 四类位置，`inventory_batch_balance` 以 `(batch_id, location_id)` 唯一，`inventory_movement` 保存位置间移动的原始业务单位和基准数量。
+
+`order_item` 仅增加可空的 `base_unit_id`、`base_quantity`、`unit_cost` 快照列，历史订单不回填。`order_item_batch_allocation` 允许一行多批次，并区分 `SCANNED`、`FULFILLMENT_CONFIRMED`、`RULE_ALLOCATED`、`UNKNOWN` 证据等级；未知批次使用空批次引用，不伪造成本。`order_item_price_audit` 和 `inventory_decision_log` 只追加价格及风险处置事实，风险记录不自动停售、报损、调拨或采购。
+
 ## 3. 索引设计原则
 
 ### 3.1 主键索引
@@ -845,5 +853,6 @@
 - **支付风控模块**：1张（wallet_auth_code）
 - **赊销相关表**：2张（credit_account, credit_statement）
 - **员工绩效相关表**：1张（staff_performance）
+- **零售事实链相关表**：10张（product_unit, inventory_receipt, inventory_receipt_line, inventory_receipt_batch, inventory_location, inventory_batch_balance, inventory_movement, order_item_batch_allocation, order_item_price_audit, inventory_decision_log）
 
-**总计：31张表**
+**总计：41张表**
