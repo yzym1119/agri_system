@@ -13,6 +13,11 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
+# 定时任务调度归属:admin 进程承担全部 @Scheduled 任务(VIP/积分/订单/提成结算与解冻)
+app:
+  scheduling:
+    enabled: true
+
 ---
 # 生产环境：禁用 Swagger
 spring:

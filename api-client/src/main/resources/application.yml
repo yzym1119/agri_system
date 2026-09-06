@@ -13,6 +13,11 @@ springdoc:
   swagger-ui:
     path: /swagger-ui.html
 
+# client 进程不承担定时任务,避免与 api-admin 双跑(积分清零会重复写流水、结算并发 upsert)
+app:
+  scheduling:
+    enabled: false
+
 
 
 
