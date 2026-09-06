@@ -8,8 +8,8 @@
 - 超收仅在 `exceptionReason` 非空时允许，并把 `OVER_RECEIPT` 理由写入收货单事实备注；无理由时在任何收货事实写入前拒绝。
 - `UNKNOWN` 只代表日期资料缺失，生产日期和有效期同时缺失时保存为 `UNKNOWN`；只提供其中一个日期或日期倒置会拒绝。
 - 原 `/inbound` 保留为 legacy adapter，但仅允许单采购明细和单实际批次。它不推断供应商/厂商批号，改为生成显式 `INTERNAL-RECEIPT-*` 内部收货批次号。
-- 平均成本仅作为商品展示缓存，使用本次余额变更前的库存数量与缓存成本快照计算；新收货本身不会被读取为旧库存从而重复计入。
-- 新增/更新 `PurchaseApplicationServiceTest`：双供应商批次、UNKNOWN 日期、部分收货、无理由超收拒绝、事实写入先于余额适配以及 legacy adapter 行为。
+- 平均成本缓存暂不由 Task 3 更新。Task 4 尚未提供受事务保护的门店余额事实，继续读取 legacy `inventory_batch` 全门店数量会造成跨门店、重复累计和并发丢失，因此本任务主动禁用该写入。
+- 新增/更新 `PurchaseApplicationServiceTest`：双供应商批次、UNKNOWN 日期、1 箱=10 基准单位换算、部分收货累计（首收 6 后再收 4 才完成）、无理由超收拒绝、生产日期/有效期拒绝、事实写入先于余额适配、采购单锁查询及 legacy adapter 行为。
 
 ## 设计取舍
 
@@ -33,7 +33,7 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home PAT
 ./mvnw -pl core-application -Dtest=PurchaseApplicationServiceTest test
 ```
 
-结果：退出码 `0`，`PurchaseApplicationServiceTest` 12/12 通过。
+结果：退出码 `0`，`PurchaseApplicationServiceTest` 17/17 通过。
 
 ```bash
 env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH \
@@ -44,12 +44,13 @@ env JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home PAT
 
 ## 提交
 
-- 代码提交：`84ff66ba94c8b2bfd5187eedbf636fc59c848fe8`（`feat: 支持采购收货多批次与部分收货`）。
+- 代码提交：`5eacea4543049b232389d6f69b1c9afee0c34175`（`fix: 修正收货累计锁与成本缓存边界`）。
 - 报告提交：本文件随后单独提交。
 
 ## 关切
 
 - 未执行真实数据库迁移后的收货写入或端到端验证；目前验证范围为编译与应用服务单元测试。
+- 并发保护已改为 `purchase_order` 的 `SELECT ... FOR UPDATE` 行锁，服务测试验证锁查询先于状态/累计读取；当前测试设施未执行真实 MySQL 并发事务演练，因此“两次并行收 6/计划 10 至多一笔成功”的数据库级证明仍是上线前阻塞项。
 - Task 4 尚未提供实际余额实现，因此新收货事实不会在本任务中直接写入 `inventory_batch_balance` 或旧 `inventory_batch`。
-- 既有订单服务仍使用历史 `Product.avgCostPrice` 建立成本快照；本任务按范围未修改 POS、出库、价格、营销或库存扣减。后续 Task 5/6 必须以批次分配事实替代该成本来源，不能把本任务的展示缓存用于销售毛利。
+- 本任务不更新 `avgCostPrice`。既有订单服务仍使用历史 `Product.avgCostPrice` 建立成本快照，绩效/佣金也存在遗留读取；按范围未修改 POS、出库、价格、营销或绩效。Task 5/6 必须在上线前以批次分配事实替代这些消费者，不能把本任务的展示缓存用于销售毛利或佣金。
 - 用户已有的 `api-client/src/main/resources/application-dev.yml` 修改未触碰、未暂存、未提交。
