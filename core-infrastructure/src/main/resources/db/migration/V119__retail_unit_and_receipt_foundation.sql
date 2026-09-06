@@ -59,6 +59,9 @@ CREATE TABLE IF NOT EXISTS `inventory_receipt` (
     CONSTRAINT `chk_inventory_receipt_status` CHECK (`status` IN ('DRAFT', 'RECEIVED', 'CANCELLED'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='收货单';
 
+ALTER TABLE `purchase_order_item`
+    ADD UNIQUE KEY `uk_purchase_order_item_id_product` (`id`, `product_id`);
+
 CREATE TABLE IF NOT EXISTS `inventory_receipt_line` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `receipt_id` BIGINT NOT NULL,
@@ -75,7 +78,7 @@ CREATE TABLE IF NOT EXISTS `inventory_receipt_line` (
     KEY `idx_inventory_receipt_line_product` (`product_id`),
     CONSTRAINT `fk_inventory_receipt_line_receipt` FOREIGN KEY (`receipt_id`) REFERENCES `inventory_receipt` (`id`),
     CONSTRAINT `fk_inventory_receipt_line_receipt_store` FOREIGN KEY (`receipt_id`, `store_id`) REFERENCES `inventory_receipt` (`id`, `store_id`),
-    CONSTRAINT `fk_inventory_receipt_line_purchase_item` FOREIGN KEY (`purchase_order_item_id`) REFERENCES `purchase_order_item` (`id`),
+    CONSTRAINT `fk_inventory_receipt_line_purchase_item` FOREIGN KEY (`purchase_order_item_id`, `product_id`) REFERENCES `purchase_order_item` (`id`, `product_id`),
     CONSTRAINT `fk_inventory_receipt_line_product` FOREIGN KEY (`product_id`) REFERENCES `product` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='收货单行';
 
@@ -163,6 +166,7 @@ CREATE TABLE IF NOT EXISTS `inventory_movement` (
     `movement_no` VARCHAR(64) NOT NULL,
     `batch_id` BIGINT NOT NULL,
     `product_id` BIGINT NOT NULL,
+    `store_id` BIGINT NOT NULL,
     `from_location_id` BIGINT,
     `to_location_id` BIGINT,
     `movement_type` VARCHAR(30) NOT NULL,
@@ -180,11 +184,12 @@ CREATE TABLE IF NOT EXISTS `inventory_movement` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_inventory_movement_no` (`movement_no`),
     UNIQUE KEY `uk_inventory_movement_batch_product` (`id`, `product_id`),
+    UNIQUE KEY `uk_inventory_movement_product_store` (`id`, `product_id`, `store_id`),
     KEY `idx_inventory_movement_batch_time` (`batch_id`, `occurred_at`),
     KEY `idx_inventory_movement_reference` (`reference_type`, `reference_id`),
-    CONSTRAINT `fk_inventory_movement_batch` FOREIGN KEY (`batch_id`, `product_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`),
-    CONSTRAINT `fk_inventory_movement_from_location` FOREIGN KEY (`from_location_id`) REFERENCES `inventory_location` (`id`),
-    CONSTRAINT `fk_inventory_movement_to_location` FOREIGN KEY (`to_location_id`) REFERENCES `inventory_location` (`id`),
+    CONSTRAINT `fk_inventory_movement_batch` FOREIGN KEY (`batch_id`, `product_id`, `store_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`, `store_id`),
+    CONSTRAINT `fk_inventory_movement_from_location` FOREIGN KEY (`from_location_id`, `store_id`) REFERENCES `inventory_location` (`id`, `store_id`),
+    CONSTRAINT `fk_inventory_movement_to_location` FOREIGN KEY (`to_location_id`, `store_id`) REFERENCES `inventory_location` (`id`, `store_id`),
     CONSTRAINT `fk_inventory_movement_original_unit` FOREIGN KEY (`original_unit_id`, `product_id`) REFERENCES `product_unit` (`id`, `product_id`),
     CONSTRAINT `fk_inventory_movement_operator` FOREIGN KEY (`operator_id`) REFERENCES `staff` (`id`),
     CONSTRAINT `chk_inventory_movement_quantity` CHECK (`original_quantity` > 0 AND `base_quantity` > 0 AND `unit_cost` > 0),

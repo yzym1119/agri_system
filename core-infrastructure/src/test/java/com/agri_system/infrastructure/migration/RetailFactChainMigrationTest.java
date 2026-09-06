@@ -15,8 +15,13 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -40,7 +45,10 @@ class RetailFactChainMigrationTest {
                 CREATE TABLE `staff` (`id` BIGINT PRIMARY KEY);
                 CREATE TABLE `supplier` (`id` BIGINT PRIMARY KEY);
                 CREATE TABLE `purchase_order` (`id` BIGINT PRIMARY KEY);
-                CREATE TABLE `purchase_order_item` (`id` BIGINT PRIMARY KEY);
+                CREATE TABLE `purchase_order_item` (
+                    `id` BIGINT PRIMARY KEY,
+                    `product_id` BIGINT NOT NULL
+                );
                 CREATE TABLE `product` (
                     `id` BIGINT PRIMARY KEY,
                     `main_unit` VARCHAR(20) NOT NULL,
@@ -60,11 +68,11 @@ class RetailFactChainMigrationTest {
                 INSERT INTO `staff` (`id`) VALUES (1);
                 INSERT INTO `supplier` (`id`) VALUES (1);
                 INSERT INTO `purchase_order` (`id`) VALUES (1);
-                INSERT INTO `purchase_order_item` (`id`) VALUES (1);
                 INSERT INTO `product` (`id`, `main_unit`, `aux_unit`, `main_to_aux_ratio`)
                     VALUES (1, '箱', '瓶', 24);
                 INSERT INTO `product` (`id`, `main_unit`, `aux_unit`, `main_to_aux_ratio`)
                     VALUES (2, '袋', '克', 500);
+                INSERT INTO `purchase_order_item` (`id`, `product_id`) VALUES (1, 1), (2, 2);
                 INSERT INTO `inventory_batch` (`id`, `quantity`) VALUES (1, 12.00000000);
                 INSERT INTO `order_item` (`id`, `product_id`, `unit`) VALUES (1, 1, '箱');
                 """);
@@ -117,6 +125,10 @@ class RetailFactChainMigrationTest {
         assertUniqueIndex("inventory_receipt_batch", "uk_inventory_receipt_batch_product", "id", "product_id");
         assertUniqueIndex("inventory_receipt_batch", "uk_inventory_receipt_batch_store", "id", "store_id");
         assertUniqueIndex("inventory_location", "uk_inventory_location_id_store", "id", "store_id");
+        assertIndex("inventory_receipt", "idx_inventory_receipt_supplier", "supplier_id");
+        assertIndex("inventory_receipt_batch", "idx_inventory_receipt_batch_supplier_no", "supplier_batch_no");
+        assertIndex("inventory_receipt_batch", "idx_inventory_receipt_batch_line", "receipt_line_id");
+        assertIndex("inventory_movement", "idx_inventory_movement_reference", "reference_type", "reference_id");
     }
 
     @Test
@@ -151,6 +163,43 @@ class RetailFactChainMigrationTest {
     }
 
     @Test
+    void migrationDirectoryHasUniqueVersionsThroughRetailFactChain() throws Exception {
+        Path migrationDirectory = Paths.get(getClass().getClassLoader()
+                .getResource("db/migration").toURI());
+        Pattern versionPattern = Pattern.compile("^V(\\d+)__[^/]+\\.sql$");
+        List<Integer> versions;
+        try (var paths = Files.list(migrationDirectory)) {
+            versions = paths
+                    .filter(Files::isRegularFile)
+                    .map(path -> versionPattern.matcher(path.getFileName().toString()))
+                    .filter(Matcher::matches)
+                    .map(matcher -> Integer.parseInt(matcher.group(1)))
+                    .sorted()
+                    .toList();
+        }
+        assertTrue(!versions.isEmpty(), "未发现 Flyway 版本迁移文件");
+        assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
+        assertTrue(versions.stream().allMatch(version -> version >= 1 && version <= 120),
+                "存在超出 V1..V120 范围的迁移版本");
+        assertTrue(versions.containsAll(List.of(119, 120)), "缺少 V119/V120");
+        assertEquals("120", flyway.info().current().getVersion().getVersion());
+    }
+
+    @Test
+    void schemaKeepsRetailIndexParity() throws Exception {
+        Path schemaPath = List.of(Paths.get("ddl/schema.sql"), Paths.get("../ddl/schema.sql"))
+                .stream()
+                .filter(Files::exists)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("未找到 ddl/schema.sql"));
+        String schema = Files.readString(schemaPath);
+        assertTrue(schema.contains("KEY `idx_inventory_receipt_supplier` (`supplier_id`)"));
+        assertTrue(schema.contains("KEY `idx_inventory_receipt_batch_supplier_no` (`supplier_batch_no`)"));
+        assertTrue(schema.contains("KEY `idx_inventory_receipt_batch_line` (`receipt_line_id`)"));
+        assertTrue(schema.contains("KEY `idx_inventory_movement_reference` (`reference_type`, `reference_id`)"));
+    }
+
+    @Test
     void factForeignKeysRejectCrossSkuUnitBatchMovementAllocationAndPriceAudit() {
         JdbcTemplate jdbc = new JdbcTemplate(dataSource);
         long unitOne = insertUnit(jdbc, 1, "瓶", 1);
@@ -159,6 +208,7 @@ class RetailFactChainMigrationTest {
         long line = insertReceiptLine(jdbc, receipt, 1, 1);
         long batch = insertBatch(jdbc, line, 1, unitOne, unitOne, "B-CROSS", "KNOWN", "2026-01-01", "2026-12-31");
         long location = insertLocation(jdbc, 1, "L-CROSS");
+        long otherStoreLocation = insertLocation(jdbc, 2, "L-CROSS-OTHER");
 
         assertThrows(DataAccessException.class, () -> jdbc.update("""
                 INSERT INTO inventory_receipt_batch
@@ -169,18 +219,38 @@ class RetailFactChainMigrationTest {
                 """, line, unitTwo, unitTwo));
 
         assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO inventory_receipt_line
+                    (receipt_id, line_no, purchase_order_item_id, product_id, store_id)
+                VALUES (?, 2, 2, 1, 1)
+                """, receipt));
+
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
                 INSERT INTO inventory_movement
-                    (movement_no, batch_id, product_id, original_unit_id, original_unit_name,
-                     original_quantity, unit_cost, base_quantity)
-                VALUES ('M-WRONG', ?, 2, ?, '袋', 1, 1, 1)
-                """, batch, unitTwo));
+                    (movement_no, batch_id, product_id, store_id, from_location_id,
+                     original_unit_id, original_unit_name, original_quantity, unit_cost, base_quantity)
+                VALUES ('M-WRONG', ?, 2, 1, ?, ?, '袋', 1, 1, 1)
+                """, batch, otherStoreLocation, unitTwo));
+
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO inventory_movement
+                    (movement_no, batch_id, product_id, store_id, from_location_id,
+                     original_unit_id, original_unit_name, original_quantity, unit_cost, base_quantity)
+                VALUES ('M-WRONG-LOCATION', ?, 1, 1, ?, ?, '瓶', 1, 1, 1)
+                """, batch, otherStoreLocation, unitOne));
 
         assertThrows(DataAccessException.class, () -> jdbc.update("""
                 INSERT INTO order_item_batch_allocation
-                    (order_item_id, product_id, batch_id, allocated_base_quantity,
+                    (order_item_id, product_id, store_id, batch_id, location_id, allocated_base_quantity,
                      batch_unit_cost, allocated_cost, evidence_level)
-                VALUES (1, 2, ?, 1, 1, 1, 'SCANNED')
-                """, batch));
+                VALUES (1, 2, 1, ?, ?, 1, 1, 1, 'SCANNED')
+                """, batch, location));
+
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_item_batch_allocation
+                    (order_item_id, product_id, store_id, batch_id, location_id, allocated_base_quantity,
+                     batch_unit_cost, allocated_cost, evidence_level)
+                VALUES (1, 1, 1, ?, ?, 1, 1, 1, 'SCANNED')
+                """, batch, otherStoreLocation));
 
         assertThrows(DataAccessException.class, () -> jdbc.update("""
                 INSERT INTO order_item_price_audit
@@ -208,28 +278,32 @@ class RetailFactChainMigrationTest {
         long batch = insertBatch(jdbc, line, 1, unit, unit, "B-POSITIVE", "KNOWN", "2026-01-01", "2026-12-31");
         assertThrows(DataAccessException.class, () -> jdbc.update("""
                 INSERT INTO inventory_movement
-                    (movement_no, batch_id, product_id, original_unit_id, original_unit_name,
+                    (movement_no, batch_id, product_id, store_id, original_unit_id, original_unit_name,
                      original_quantity, unit_cost, base_quantity)
-                VALUES ('M-ZERO-COST', ?, 1, ?, '瓶', 1, 0, 1)
+                VALUES ('M-ZERO-COST', ?, 1, 1, ?, '瓶', 1, 0, 1)
                 """, batch, unit));
         assertThrows(DataAccessException.class, () -> jdbc.update("""
                 INSERT INTO inventory_movement
-                    (movement_no, batch_id, product_id, original_unit_id, original_unit_name,
+                    (movement_no, batch_id, product_id, store_id, original_unit_id, original_unit_name,
                      original_quantity, unit_cost, base_quantity)
-                VALUES ('M-ZERO-QTY', ?, 1, ?, '瓶', 0, 1, 0)
+                VALUES ('M-ZERO-QTY', ?, 1, 1, ?, '瓶', 0, 1, 0)
                 """, batch, unit));
         assertThrows(DataAccessException.class, () -> jdbc.update("""
                 INSERT INTO order_item_batch_allocation
-                    (order_item_id, product_id, batch_id, allocated_base_quantity,
+                    (order_item_id, product_id, store_id, batch_id, allocated_base_quantity,
                      batch_unit_cost, allocated_cost, evidence_level)
-                VALUES (1, 1, ?, 0, 1, 1, 'SCANNED')
+                VALUES (1, 1, 1, ?, 0, 1, 1, 'SCANNED')
                 """, batch));
         assertThrows(DataAccessException.class, () -> jdbc.update("""
                 INSERT INTO order_item_batch_allocation
-                    (order_item_id, product_id, batch_id, allocated_base_quantity,
+                    (order_item_id, product_id, store_id, batch_id, allocated_base_quantity,
                      batch_unit_cost, allocated_cost, evidence_level)
-                VALUES (1, 1, ?, 1, 0, 0, 'SCANNED')
+                VALUES (1, 1, 1, ?, 1, 0, 0, 'SCANNED')
                 """, batch));
+        assertThrows(DataAccessException.class,
+                () -> jdbc.update("UPDATE order_item SET base_quantity = 0 WHERE id = 1"));
+        assertThrows(DataAccessException.class,
+                () -> jdbc.update("UPDATE order_item SET unit_cost = 0 WHERE id = 1"));
     }
 
     @Test
@@ -439,5 +513,22 @@ class RetailFactChainMigrationTest {
             }
         }
         assertEquals(List.of(expectedColumns), actualColumns, "唯一索引列不匹配: " + indexName);
+    }
+
+    private void assertIndex(String tableName, String indexName, String... expectedColumns)
+            throws SQLException {
+        List<String> actualColumns = new ArrayList<>();
+        try (Connection connection = dataSource.getConnection()) {
+            DatabaseMetaData metadata = connection.getMetaData();
+            try (ResultSet indexes = metadata.getIndexInfo(null, null, tableName, false, false)) {
+                while (indexes.next()) {
+                    String actualIndexName = indexes.getString("INDEX_NAME");
+                    if (actualIndexName != null && indexName.equalsIgnoreCase(actualIndexName)) {
+                        actualColumns.add(indexes.getString("COLUMN_NAME"));
+                    }
+                }
+            }
+        }
+        assertEquals(List.of(expectedColumns), actualColumns, "索引列不匹配: " + indexName);
     }
 }

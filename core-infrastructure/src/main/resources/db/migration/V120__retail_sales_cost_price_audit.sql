@@ -11,14 +11,15 @@ ALTER TABLE `order_item` ADD KEY `idx_order_item_base_unit` (`base_unit_id`);
 ALTER TABLE `order_item`
     ADD CONSTRAINT `fk_order_item_base_unit` FOREIGN KEY (`base_unit_id`, `product_id`) REFERENCES `product_unit` (`id`, `product_id`);
 ALTER TABLE `order_item`
-    ADD CONSTRAINT `chk_order_item_base_quantity` CHECK (`base_quantity` IS NULL OR `base_quantity` >= 0);
+    ADD CONSTRAINT `chk_order_item_base_quantity` CHECK (`base_quantity` IS NULL OR `base_quantity` > 0);
 ALTER TABLE `order_item`
-    ADD CONSTRAINT `chk_order_item_unit_cost` CHECK (`unit_cost` IS NULL OR `unit_cost` >= 0);
+    ADD CONSTRAINT `chk_order_item_unit_cost` CHECK (`unit_cost` IS NULL OR `unit_cost` > 0);
 
 CREATE TABLE IF NOT EXISTS `order_item_batch_allocation` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `order_item_id` BIGINT NOT NULL,
     `product_id` BIGINT NOT NULL,
+    `store_id` BIGINT NOT NULL,
     `batch_id` BIGINT,
     `location_id` BIGINT,
     `allocated_base_quantity` DECIMAL(20,8) NOT NULL,
@@ -36,9 +37,9 @@ CREATE TABLE IF NOT EXISTS `order_item_batch_allocation` (
     KEY `idx_order_item_batch_allocation_evidence` (`evidence_level`),
     CONSTRAINT `fk_order_item_batch_allocation_item` FOREIGN KEY (`order_item_id`) REFERENCES `order_item` (`id`),
     CONSTRAINT `fk_order_item_batch_allocation_item_product` FOREIGN KEY (`order_item_id`, `product_id`) REFERENCES `order_item` (`id`, `product_id`),
-    CONSTRAINT `fk_order_item_batch_allocation_batch` FOREIGN KEY (`batch_id`, `product_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`),
-    CONSTRAINT `fk_order_item_batch_allocation_location` FOREIGN KEY (`location_id`) REFERENCES `inventory_location` (`id`),
-    CONSTRAINT `fk_order_item_batch_allocation_movement` FOREIGN KEY (`source_movement_id`, `product_id`) REFERENCES `inventory_movement` (`id`, `product_id`),
+    CONSTRAINT `fk_order_item_batch_allocation_batch` FOREIGN KEY (`batch_id`, `product_id`, `store_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`, `store_id`),
+    CONSTRAINT `fk_order_item_batch_allocation_location` FOREIGN KEY (`location_id`, `store_id`) REFERENCES `inventory_location` (`id`, `store_id`),
+    CONSTRAINT `fk_order_item_batch_allocation_movement` FOREIGN KEY (`source_movement_id`, `product_id`, `store_id`) REFERENCES `inventory_movement` (`id`, `product_id`, `store_id`),
     CONSTRAINT `chk_order_item_batch_allocation_quantity` CHECK (`allocated_base_quantity` > 0),
     CONSTRAINT `chk_order_item_batch_allocation_cost` CHECK ((`batch_unit_cost` IS NULL OR `batch_unit_cost` > 0) AND (`allocated_cost` IS NULL OR `allocated_cost` > 0)),
     CONSTRAINT `chk_order_item_batch_allocation_evidence` CHECK (`evidence_level` IN ('SCANNED', 'FULFILLMENT_CONFIRMED', 'RULE_ALLOCATED', 'UNKNOWN'))

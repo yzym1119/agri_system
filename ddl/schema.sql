@@ -157,6 +157,7 @@ CREATE TABLE `purchase_order_item` (
     PRIMARY KEY (`id`),
     KEY `idx_purchase_order_id` (`purchase_order_id`),
     KEY `idx_product_id` (`product_id`),
+    UNIQUE KEY `uk_purchase_order_item_id_product` (`id`, `product_id`),
     CONSTRAINT `fk_purchase_item_order` FOREIGN KEY (`purchase_order_id`) REFERENCES `purchase_order` (`id`),
     CONSTRAINT `fk_purchase_item_product` FOREIGN KEY (`product_id`) REFERENCES `product` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='采购订单明细表';
@@ -882,6 +883,7 @@ CREATE TABLE `inventory_receipt` (
     UNIQUE KEY `uk_inventory_receipt_id_store` (`id`, `store_id`),
     UNIQUE KEY `uk_inventory_receipt_no` (`receipt_no`),
     KEY `idx_inventory_receipt_store_time` (`store_id`, `received_at`),
+    KEY `idx_inventory_receipt_supplier` (`supplier_id`),
     CONSTRAINT `fk_inventory_receipt_purchase_order` FOREIGN KEY (`purchase_order_id`) REFERENCES `purchase_order` (`id`),
     CONSTRAINT `fk_inventory_receipt_supplier` FOREIGN KEY (`supplier_id`) REFERENCES `supplier` (`id`),
     CONSTRAINT `fk_inventory_receipt_store` FOREIGN KEY (`store_id`) REFERENCES `store` (`id`),
@@ -905,7 +907,7 @@ CREATE TABLE `inventory_receipt_line` (
     KEY `idx_inventory_receipt_line_product` (`product_id`),
     CONSTRAINT `fk_inventory_receipt_line_receipt` FOREIGN KEY (`receipt_id`) REFERENCES `inventory_receipt` (`id`),
     CONSTRAINT `fk_inventory_receipt_line_receipt_store` FOREIGN KEY (`receipt_id`, `store_id`) REFERENCES `inventory_receipt` (`id`, `store_id`),
-    CONSTRAINT `fk_inventory_receipt_line_purchase_item` FOREIGN KEY (`purchase_order_item_id`) REFERENCES `purchase_order_item` (`id`),
+    CONSTRAINT `fk_inventory_receipt_line_purchase_item` FOREIGN KEY (`purchase_order_item_id`, `product_id`) REFERENCES `purchase_order_item` (`id`, `product_id`),
     CONSTRAINT `fk_inventory_receipt_line_product` FOREIGN KEY (`product_id`) REFERENCES `product` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='收货单行';
 
@@ -935,7 +937,9 @@ CREATE TABLE `inventory_receipt_batch` (
     UNIQUE KEY `uk_inventory_receipt_batch_product` (`id`, `product_id`),
     UNIQUE KEY `uk_inventory_receipt_batch_store` (`id`, `store_id`),
     UNIQUE KEY `uk_inventory_receipt_batch_product_store` (`id`, `product_id`, `store_id`),
+    KEY `idx_inventory_receipt_batch_supplier_no` (`supplier_batch_no`),
     KEY `idx_inventory_receipt_batch_expiry` (`expiry_date`),
+    KEY `idx_inventory_receipt_batch_line` (`receipt_line_id`),
     CONSTRAINT `fk_inventory_receipt_batch_line` FOREIGN KEY (`receipt_line_id`) REFERENCES `inventory_receipt_line` (`id`),
     CONSTRAINT `fk_inventory_receipt_batch_line_product` FOREIGN KEY (`receipt_line_id`, `product_id`) REFERENCES `inventory_receipt_line` (`id`, `product_id`),
     CONSTRAINT `fk_inventory_receipt_batch_line_store` FOREIGN KEY (`receipt_line_id`, `store_id`) REFERENCES `inventory_receipt_line` (`id`, `store_id`),
@@ -988,6 +992,7 @@ CREATE TABLE `inventory_movement` (
     `movement_no` VARCHAR(64) NOT NULL,
     `batch_id` BIGINT NOT NULL,
     `product_id` BIGINT NOT NULL,
+    `store_id` BIGINT NOT NULL,
     `from_location_id` BIGINT,
     `to_location_id` BIGINT,
     `movement_type` VARCHAR(30) NOT NULL,
@@ -1005,10 +1010,12 @@ CREATE TABLE `inventory_movement` (
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_inventory_movement_no` (`movement_no`),
     UNIQUE KEY `uk_inventory_movement_batch_product` (`id`, `product_id`),
+    UNIQUE KEY `uk_inventory_movement_product_store` (`id`, `product_id`, `store_id`),
     KEY `idx_inventory_movement_batch_time` (`batch_id`, `occurred_at`),
-    CONSTRAINT `fk_inventory_movement_batch` FOREIGN KEY (`batch_id`, `product_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`),
-    CONSTRAINT `fk_inventory_movement_from_location` FOREIGN KEY (`from_location_id`) REFERENCES `inventory_location` (`id`),
-    CONSTRAINT `fk_inventory_movement_to_location` FOREIGN KEY (`to_location_id`) REFERENCES `inventory_location` (`id`),
+    KEY `idx_inventory_movement_reference` (`reference_type`, `reference_id`),
+    CONSTRAINT `fk_inventory_movement_batch` FOREIGN KEY (`batch_id`, `product_id`, `store_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`, `store_id`),
+    CONSTRAINT `fk_inventory_movement_from_location` FOREIGN KEY (`from_location_id`, `store_id`) REFERENCES `inventory_location` (`id`, `store_id`),
+    CONSTRAINT `fk_inventory_movement_to_location` FOREIGN KEY (`to_location_id`, `store_id`) REFERENCES `inventory_location` (`id`, `store_id`),
     CONSTRAINT `fk_inventory_movement_original_unit` FOREIGN KEY (`original_unit_id`, `product_id`) REFERENCES `product_unit` (`id`, `product_id`),
     CONSTRAINT `fk_inventory_movement_operator` FOREIGN KEY (`operator_id`) REFERENCES `staff` (`id`),
     CONSTRAINT `chk_inventory_movement_quantity` CHECK (`original_quantity` > 0 AND `base_quantity` > 0 AND `unit_cost` > 0),
@@ -1019,13 +1026,14 @@ ALTER TABLE `order_item`
     ADD UNIQUE KEY `uk_order_item_id_product` (`id`, `product_id`),
     ADD KEY `idx_order_item_base_unit` (`base_unit_id`),
     ADD CONSTRAINT `fk_order_item_base_unit` FOREIGN KEY (`base_unit_id`, `product_id`) REFERENCES `product_unit` (`id`, `product_id`),
-    ADD CONSTRAINT `chk_order_item_base_quantity` CHECK (`base_quantity` IS NULL OR `base_quantity` >= 0),
-    ADD CONSTRAINT `chk_order_item_unit_cost` CHECK (`unit_cost` IS NULL OR `unit_cost` >= 0);
+    ADD CONSTRAINT `chk_order_item_base_quantity` CHECK (`base_quantity` IS NULL OR `base_quantity` > 0),
+    ADD CONSTRAINT `chk_order_item_unit_cost` CHECK (`unit_cost` IS NULL OR `unit_cost` > 0);
 
 CREATE TABLE `order_item_batch_allocation` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `order_item_id` BIGINT NOT NULL,
     `product_id` BIGINT NOT NULL,
+    `store_id` BIGINT NOT NULL,
     `batch_id` BIGINT,
     `location_id` BIGINT,
     `allocated_base_quantity` DECIMAL(20,8) NOT NULL,
@@ -1043,9 +1051,9 @@ CREATE TABLE `order_item_batch_allocation` (
     KEY `idx_order_item_batch_allocation_evidence` (`evidence_level`),
     CONSTRAINT `fk_order_item_batch_allocation_item` FOREIGN KEY (`order_item_id`) REFERENCES `order_item` (`id`),
     CONSTRAINT `fk_order_item_batch_allocation_item_product` FOREIGN KEY (`order_item_id`, `product_id`) REFERENCES `order_item` (`id`, `product_id`),
-    CONSTRAINT `fk_order_item_batch_allocation_batch` FOREIGN KEY (`batch_id`, `product_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`),
-    CONSTRAINT `fk_order_item_batch_allocation_location` FOREIGN KEY (`location_id`) REFERENCES `inventory_location` (`id`),
-    CONSTRAINT `fk_order_item_batch_allocation_movement` FOREIGN KEY (`source_movement_id`, `product_id`) REFERENCES `inventory_movement` (`id`, `product_id`),
+    CONSTRAINT `fk_order_item_batch_allocation_batch` FOREIGN KEY (`batch_id`, `product_id`, `store_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`, `store_id`),
+    CONSTRAINT `fk_order_item_batch_allocation_location` FOREIGN KEY (`location_id`, `store_id`) REFERENCES `inventory_location` (`id`, `store_id`),
+    CONSTRAINT `fk_order_item_batch_allocation_movement` FOREIGN KEY (`source_movement_id`, `product_id`, `store_id`) REFERENCES `inventory_movement` (`id`, `product_id`, `store_id`),
     CONSTRAINT `chk_order_item_batch_allocation_quantity` CHECK (`allocated_base_quantity` > 0),
     CONSTRAINT `chk_order_item_batch_allocation_cost` CHECK ((`batch_unit_cost` IS NULL OR `batch_unit_cost` > 0) AND (`allocated_cost` IS NULL OR `allocated_cost` > 0)),
     CONSTRAINT `chk_order_item_batch_allocation_evidence` CHECK (`evidence_level` IN ('SCANNED', 'FULFILLMENT_CONFIRMED', 'RULE_ALLOCATED', 'UNKNOWN'))
