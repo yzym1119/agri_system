@@ -6,6 +6,7 @@ import com.agri_system.application.product.dto.query.ProductQuery;
 import com.agri_system.application.product.dto.vo.CategoryTreeVO;
 import com.agri_system.application.product.dto.vo.PriceRuleVO;
 import com.agri_system.application.product.dto.vo.ProductDetailVO;
+import com.agri_system.application.product.dto.vo.ProductUnitVO;
 import com.agri_system.application.product.dto.vo.UnitConversionVO;
 import com.agri_system.application.product.exception.ProductErrorCode;
 import com.agri_system.application.storage.dto.FileUploadCommand;
@@ -60,6 +61,7 @@ public class ProductApplicationService {
     private final ProductPackageItemRepository productPackageItemRepository;
     private final PurchaseItemRepository purchaseItemRepository;
     private final InventoryBatchRepository inventoryBatchRepository;
+    private final ProductUnitService productUnitService;
     
     // ==================== 商品基本档案 ====================
     
@@ -283,6 +285,7 @@ public class ProductApplicationService {
             categoryRepository.findById(product.getCategoryId())
                     .ifPresent(category -> vo.setCategoryName(category.getName()));
         }
+        enrichUnitFields(vo, product.getId());
         
         return vo;
     }
@@ -597,6 +600,15 @@ public class ProductApplicationService {
                 .map(this::convertToUnitConversionVO)
                 .collect(Collectors.toList());
     }
+
+    public List<ProductUnitVO> getProductUnits(Long productId) {
+        return productUnitService.getUnitVOs(productId);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void replaceProductUnits(Long productId, List<ProductUnitUpsertCommand> units) {
+        productUnitService.replaceUnits(productId, units);
+    }
     
     // ==================== 多维价格体系 ====================
     
@@ -708,6 +720,14 @@ public class ProductApplicationService {
         vo.setUpdatedAt(product.getUpdatedAt());
         return vo;
     }
+
+    private void enrichUnitFields(ProductDetailVO vo, Long productId) {
+        if (productUnitService == null || productId == null) {
+            return;
+        }
+        vo.setUnitModelStatus(productUnitService.getUnitModelStatus(productId));
+        vo.setUnits(productUnitService.getUnitVOs(productId));
+    }
     
     private CategoryTreeVO convertToCategoryTreeVO(ProductCategory category, List<ProductCategory> allCategories) {
         CategoryTreeVO vo = new CategoryTreeVO();
@@ -795,4 +815,3 @@ public class ProductApplicationService {
         return null;
     }
 }
-

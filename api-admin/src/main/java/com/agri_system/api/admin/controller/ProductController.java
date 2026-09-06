@@ -6,6 +6,7 @@ import com.agri_system.application.product.dto.query.ProductQuery;
 import com.agri_system.application.product.dto.vo.CategoryTreeVO;
 import com.agri_system.application.product.dto.vo.PriceRuleVO;
 import com.agri_system.application.product.dto.vo.ProductDetailVO;
+import com.agri_system.application.product.dto.vo.ProductUnitVO;
 import com.agri_system.application.product.dto.vo.UnitConversionVO;
 import com.agri_system.application.product.service.ProductApplicationService;
 import com.agri_system.application.storage.dto.FileUploadCommand;
@@ -233,6 +234,32 @@ public class ProductController {
     }
     
     // ==================== 多单位管理 ====================
+
+    @GetMapping("/{productId}/units")
+    @Operation(summary = "查询商品业务单位", description = "查询 SKU 的启用业务单位；旧主辅单位以只读兼容投影返回")
+    @SaCheckPermission("product:unit:query")
+    public ResponseEntity<Map<String, Object>> getProductUnits(
+            @Parameter(description = "商品ID", required = true) @PathVariable Long productId) {
+        List<ProductUnitVO> units = productService.getProductUnits(productId);
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", "200");
+        result.put("message", "查询成功");
+        result.put("data", units);
+        return ResponseEntity.ok(result);
+    }
+
+    @PutMapping("/{productId}/units")
+    @Operation(summary = "完整替换商品业务单位", description = "原子校验并替换 SKU 的全部业务单位")
+    @SaCheckPermission("product:unit:update")
+    public ResponseEntity<Map<String, Object>> replaceProductUnits(
+            @Parameter(description = "商品ID", required = true) @PathVariable Long productId,
+            @Valid @RequestBody List<ProductUnitUpsertCommand> units) {
+        productService.replaceProductUnits(productId, units);
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", "200");
+        result.put("message", "更新成功");
+        return ResponseEntity.ok(result);
+    }
     
     @PostMapping("/unit-conversions")
     @Operation(summary = "创建单位换算", description = "增加扩展单位换算配置")
@@ -352,7 +379,6 @@ public class ProductController {
         return ResponseEntity.ok(result);
     }
 }
-
 
 
 
