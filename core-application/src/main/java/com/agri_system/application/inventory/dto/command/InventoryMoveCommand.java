@@ -28,4 +28,8 @@ public class InventoryMoveCommand {
     private String referenceType;
     private Long referenceId;
     private String remark;
+    @Schema(description = "单边增减方向,仅盘点调整/退货使用:IN=入库,OUT=出库")
+    private String direction;
+    @Schema(description = "幂等键,防止盘点调整/退货重复提交")
+    private String idempotencyKey;
 }

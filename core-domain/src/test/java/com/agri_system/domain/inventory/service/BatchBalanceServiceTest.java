@@ -96,6 +96,39 @@ class BatchBalanceServiceTest {
         verify(balanceRepository, never()).save(any());
     }
 
+    @Test
+    void replenishmentAndPickRequireBothLocationsAndTransferCannotUseMove() {
+        IllegalArgumentException replenishment = assertThrows(IllegalArgumentException.class,
+                () -> service().move(moveWithPurpose(BatchBalanceService.MovementPurpose.REPLENISHMENT, 10L, null)));
+        assertEquals("补货和拣货必须同时指定源货位和目的货位", replenishment.getMessage());
+        IllegalArgumentException pick = assertThrows(IllegalArgumentException.class,
+                () -> service().move(moveWithPurpose(BatchBalanceService.MovementPurpose.PICK, null, 11L)));
+        assertEquals("补货和拣货必须同时指定源货位和目的货位", pick.getMessage());
+        IllegalArgumentException transfer = assertThrows(IllegalArgumentException.class,
+                () -> service().move(moveWithPurpose(BatchBalanceService.MovementPurpose.TRANSFER, 10L, 11L)));
+        assertEquals("跨店调拨必须拆成同一transferId的出库和入库两条事实,不能在单次move同时指定源和目的",
+                transfer.getMessage());
+        verify(balanceRepository, never()).save(any());
+        verify(movementRepository, never()).append(any());
+    }
+
+    @Test
+    void adjustmentRequiresDirectionAndNonReceiptDocument() {
+        IllegalArgumentException noDirection = assertThrows(IllegalArgumentException.class,
+                () -> service().move(new BatchBalanceService.MoveRequest(100L, null, 11L,
+                        BatchBalanceService.MovementPurpose.COUNT_ADJUSTMENT, null, 101L, "箱",
+                        new BigDecimal("1"), new BigDecimal("24"), new BigDecimal("10"),
+                        "COUNT", 1L, 9L, "盘盈", null)));
+        assertEquals("盘点调整或退货必须指定方向IN/OUT", noDirection.getMessage());
+        IllegalArgumentException receiptRef = assertThrows(IllegalArgumentException.class,
+                () -> service().move(new BatchBalanceService.MoveRequest(100L, null, 11L,
+                        BatchBalanceService.MovementPurpose.COUNT_ADJUSTMENT, null, 101L, "箱",
+                        new BigDecimal("1"), new BigDecimal("24"), new BigDecimal("10"),
+                        "RECEIPT", 1L, 9L, "盘盈", BatchBalanceService.Direction.IN)));
+        assertEquals("盘点调整或退货必须关联非收货业务单据", receiptRef.getMessage());
+        verify(balanceRepository, never()).save(any());
+    }
+
     private BatchBalanceService service() {
         return new BatchBalanceService(locationRepository, balanceRepository, movementRepository,
                 receiptBatchRepository, featureStatusRepository, inventoryRepository);
@@ -106,7 +139,14 @@ class BatchBalanceServiceTest {
         return new BatchBalanceService.MoveRequest(batchId, fromLocationId, toLocationId,
                 BatchBalanceService.MovementPurpose.REPLENISHMENT, null,
                 101L, "箱", new BigDecimal(originalQuantity), new BigDecimal(baseQuantity),
-                new BigDecimal("10.00"), null, null, 9L, "补货");
+                new BigDecimal("10.00"), null, null, 9L, "补货", null);
+    }
+
+    private BatchBalanceService.MoveRequest moveWithPurpose(BatchBalanceService.MovementPurpose purpose,
+                                                             Long fromLocationId, Long toLocationId) {
+        return new BatchBalanceService.MoveRequest(100L, fromLocationId, toLocationId, purpose, "T-1",
+                101L, "箱", new BigDecimal("1"), new BigDecimal("24"), new BigDecimal("10"),
+                null, null, 9L, "测试", null);
     }
 
     private InventoryLocation location(Long id, Long storeId, String type) {

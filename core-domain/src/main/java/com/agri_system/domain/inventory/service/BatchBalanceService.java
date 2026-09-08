@@ -103,12 +103,12 @@ public class BatchBalanceService {
         MoveRequest outbound = new MoveRequest(sourceBatch.getId(), request.fromLocationId(), null, MovementPurpose.TRANSFER,
                 request.transferId(), request.originalUnitId(), request.originalUnitName(), request.originalQuantity(),
                 request.baseQuantity(), sourceBatch.getBaseUnitCost(), request.referenceType(), request.referenceId(),
-                request.operatorId(), request.remark());
+                request.operatorId(), request.remark(), null);
         InventoryMovement outboundMovement = move(outbound);
         MoveRequest inbound = new MoveRequest(destinationBatch.getId(), null, request.toLocationId(), MovementPurpose.TRANSFER,
                 request.transferId(), request.originalUnitId(), request.originalUnitName(), request.originalQuantity(),
                 request.baseQuantity(), destinationBatch.getBaseUnitCost(), request.referenceType(), request.referenceId(),
-                request.operatorId(), request.remark());
+                request.operatorId(), request.remark(), null);
         return new TransferResult(outboundMovement, move(inbound));
     }
 
@@ -139,23 +139,39 @@ public class BatchBalanceService {
         if (blank(request.originalUnitName())) throw new IllegalArgumentException("原始单位不能为空");
         if (request.originalUnitId() == null) throw new IllegalArgumentException("原始单位ID不能为空");
         if (request.purpose() == null) throw new IllegalArgumentException("移动用途不能为空");
-        if (request.fromLocationId() == null && request.toLocationId() == null) {
-            throw new IllegalArgumentException("移动必须指定源货位或目的货位");
-        }
         if (request.fromLocationId() != null && request.fromLocationId().equals(request.toLocationId())) {
             throw new IllegalArgumentException("源货位和目的货位不能相同");
         }
-        if (request.purpose() == MovementPurpose.TRANSFER && blank(request.transferId())) {
-            throw new IllegalArgumentException("跨店调拨必须提供transferId");
-        }
-        if ((request.purpose() == MovementPurpose.COUNT_ADJUSTMENT || request.purpose() == MovementPurpose.RETURN)
-                && blank(request.remark())) {
-            throw new IllegalArgumentException("盘点调整或退货必须填写审计说明");
-        }
-        if (request.purpose() == MovementPurpose.COUNT_ADJUSTMENT || request.purpose() == MovementPurpose.RETURN) {
-            if (blank(request.referenceType()) || request.referenceId() == null
-                    || "RECEIPT".equalsIgnoreCase(request.referenceType())) {
-                throw new IllegalArgumentException("盘点调整或退货必须关联非收货业务单据");
+        // 按用途约束端点,杜绝用补货/拣货单边凭空增删库存(Critical 1)
+        switch (request.purpose()) {
+            case REPLENISHMENT, PICK -> {
+                if (request.fromLocationId() == null || request.toLocationId() == null) {
+                    throw new IllegalArgumentException("补货和拣货必须同时指定源货位和目的货位");
+                }
+            }
+            case TRANSFER -> {
+                if (blank(request.transferId())) throw new IllegalArgumentException("跨店调拨必须提供transferId");
+                if (request.fromLocationId() != null && request.toLocationId() != null) {
+                    throw new IllegalArgumentException("跨店调拨必须拆成同一transferId的出库和入库两条事实,不能在单次move同时指定源和目的");
+                }
+                if (request.fromLocationId() == null && request.toLocationId() == null) {
+                    throw new IllegalArgumentException("跨店调拨必须指定源货位或目的货位");
+                }
+            }
+            case COUNT_ADJUSTMENT, RETURN -> {
+                if (request.direction() == null) throw new IllegalArgumentException("盘点调整或退货必须指定方向IN/OUT");
+                if (blank(request.remark())) throw new IllegalArgumentException("盘点调整或退货必须填写审计说明");
+                if (blank(request.referenceType()) || request.referenceId() == null
+                        || "RECEIPT".equalsIgnoreCase(request.referenceType())) {
+                    throw new IllegalArgumentException("盘点调整或退货必须关联非收货业务单据");
+                }
+                if (request.direction() == Direction.IN) {
+                    if (request.toLocationId() == null) throw new IllegalArgumentException("入库方向必须指定目的货位");
+                    if (request.fromLocationId() != null) throw new IllegalArgumentException("入库方向不能同时指定源货位");
+                } else {
+                    if (request.fromLocationId() == null) throw new IllegalArgumentException("出库方向必须指定源货位");
+                    if (request.toLocationId() != null) throw new IllegalArgumentException("出库方向不能同时指定目的货位");
+                }
             }
         }
     }
@@ -279,10 +295,14 @@ public class BatchBalanceService {
 
     public enum MovementPurpose { REPLENISHMENT, PICK, TRANSFER, COUNT_ADJUSTMENT, RETURN }
 
+    /** 单边增减方向:仅 COUNT_ADJUSTMENT/RETURN 使用。IN=盘盈/退货入库(只增目的),OUT=盘亏/报损出库(只扣源)。 */
+    public enum Direction { IN, OUT }
+
     public record MoveRequest(Long batchId, Long fromLocationId, Long toLocationId, MovementPurpose purpose,
                               String transferId, Long originalUnitId, String originalUnitName,
                               BigDecimal originalQuantity, BigDecimal baseQuantity, BigDecimal unitCost,
-                              String referenceType, Long referenceId, Long operatorId, String remark) { }
+                              String referenceType, Long referenceId, Long operatorId, String remark,
+                              Direction direction) { }
     public record TransferRequest(Long sourceBatchId, Long destinationBatchId, Long fromLocationId, Long toLocationId,
                                   String transferId, Long originalUnitId, String originalUnitName,
                                   BigDecimal originalQuantity, BigDecimal baseQuantity,

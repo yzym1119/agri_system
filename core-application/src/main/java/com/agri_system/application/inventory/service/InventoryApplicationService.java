@@ -126,7 +126,11 @@ public class InventoryApplicationService {
         var unit = productUnitService.requireEnabledUnit(batch.getProductId(), command.getOriginalUnit(), operation);
         UnitConversionSnapshot converted = productUnitService.toBaseQuantity(
                 batch.getProductId(), command.getOriginalUnit(), command.getOriginalQuantity());
-        if (purpose == BatchBalanceService.MovementPurpose.TRANSFER && command.getDestinationBatchId() != null) {
+        if (purpose == BatchBalanceService.MovementPurpose.TRANSFER) {
+            // 跨店调拨必须走 transfer 拆成同 transferId 的出/入两条事实,禁止外部直接单边 move(Critical 1)
+            if (command.getDestinationBatchId() == null) {
+                throw new IllegalArgumentException("跨店调拨必须提供目的门店已收货批次destinationBatchId");
+            }
             return batchBalanceService.transfer(new BatchBalanceService.TransferRequest(
                     batch.getId(), command.getDestinationBatchId(), command.getFromLocationId(), command.getToLocationId(),
                     command.getTransferId(), unit.getId(), converted.unitName(), converted.originalQuantity(),
@@ -137,7 +141,16 @@ public class InventoryApplicationService {
                 batch.getId(), command.getFromLocationId(), command.getToLocationId(), purpose,
                 command.getTransferId(), unit.getId(), converted.unitName(), converted.originalQuantity(),
                 converted.baseQuantity(), batch.getBaseUnitCost(), command.getReferenceType(),
-                command.getReferenceId(), createdBy, command.getRemark()));
+                command.getReferenceId(), createdBy, command.getRemark(), parseDirection(command.getDirection())));
+    }
+
+    private BatchBalanceService.Direction parseDirection(String direction) {
+        if (!StringUtils.hasText(direction)) return null;
+        try {
+            return BatchBalanceService.Direction.valueOf(direction.trim());
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("移动方向无效,仅支持IN/OUT");
+        }
     }
     
     /**
