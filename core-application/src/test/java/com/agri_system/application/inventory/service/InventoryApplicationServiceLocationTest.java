@@ -59,6 +59,7 @@ class InventoryApplicationServiceLocationTest {
         assertEquals(0, request.getValue().originalQuantity().compareTo(new BigDecimal("2")));
         assertEquals(0, request.getValue().baseQuantity().compareTo(new BigDecimal("48")));
         assertEquals(0, request.getValue().unitCost().compareTo(new BigDecimal("2.50")));
+        assertEquals("IDEM-REPLENISH-1", request.getValue().idempotencyKey());
     }
 
     private InventoryMoveCommand moveCommand() {
@@ -70,6 +71,7 @@ class InventoryApplicationServiceLocationTest {
         command.setOriginalUnit("箱");
         command.setOriginalQuantity(new BigDecimal("2"));
         command.setRemark("补货");
+        command.setIdempotencyKey("IDEM-REPLENISH-1");
         return command;
     }
 }

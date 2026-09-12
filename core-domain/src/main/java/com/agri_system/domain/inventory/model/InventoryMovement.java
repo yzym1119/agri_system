@@ -16,6 +16,7 @@ public class InventoryMovement {
     @Id(keyType = KeyType.Auto)
     private Long id;
     private String movementNo;
+    private String idempotencyKey;
     private Long batchId;
     private Long productId;
     @Column(tenantId = true)

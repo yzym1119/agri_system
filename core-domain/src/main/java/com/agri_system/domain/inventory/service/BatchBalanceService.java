@@ -103,12 +103,12 @@ public class BatchBalanceService {
         MoveRequest outbound = new MoveRequest(sourceBatch.getId(), request.fromLocationId(), null, MovementPurpose.TRANSFER,
                 request.transferId(), request.originalUnitId(), request.originalUnitName(), request.originalQuantity(),
                 request.baseQuantity(), sourceBatch.getBaseUnitCost(), request.referenceType(), request.referenceId(),
-                request.operatorId(), request.remark(), null);
+                request.operatorId(), request.remark(), null, "TRANSFER:" + request.transferId() + ":OUT");
         InventoryMovement outboundMovement = move(outbound);
         MoveRequest inbound = new MoveRequest(destinationBatch.getId(), null, request.toLocationId(), MovementPurpose.TRANSFER,
                 request.transferId(), request.originalUnitId(), request.originalUnitName(), request.originalQuantity(),
                 request.baseQuantity(), destinationBatch.getBaseUnitCost(), request.referenceType(), request.referenceId(),
-                request.operatorId(), request.remark(), null);
+                request.operatorId(), request.remark(), null, "TRANSFER:" + request.transferId() + ":IN");
         return new TransferResult(outboundMovement, move(inbound));
     }
 
@@ -164,6 +164,9 @@ public class BatchBalanceService {
                 if (blank(request.referenceType()) || request.referenceId() == null
                         || "RECEIPT".equalsIgnoreCase(request.referenceType())) {
                     throw new IllegalArgumentException("盘点调整或退货必须关联非收货业务单据");
+                }
+                if (blank(request.idempotencyKey())) {
+                    throw new IllegalArgumentException("盘点调整或退货必须提供幂等键防止重复提交");
                 }
                 if (request.direction() == Direction.IN) {
                     if (request.toLocationId() == null) throw new IllegalArgumentException("入库方向必须指定目的货位");
@@ -238,6 +241,7 @@ public class BatchBalanceService {
         LocalDateTime now = LocalDateTime.now();
         InventoryMovement movement = new InventoryMovement();
         movement.setMovementNo("MOVE-" + UUID.randomUUID());
+        movement.setIdempotencyKey(request.idempotencyKey());
         movement.setBatchId(request.batchId());
         movement.setProductId(balance.getProductId());
         movement.setStoreId(balance.getStoreId());
@@ -305,7 +309,7 @@ public class BatchBalanceService {
                               String transferId, Long originalUnitId, String originalUnitName,
                               BigDecimal originalQuantity, BigDecimal baseQuantity, BigDecimal unitCost,
                               String referenceType, Long referenceId, Long operatorId, String remark,
-                              Direction direction) { }
+                              Direction direction, String idempotencyKey) { }
     public record TransferRequest(Long sourceBatchId, Long destinationBatchId, Long fromLocationId, Long toLocationId,
                                   String transferId, Long originalUnitId, String originalUnitName,
                                   BigDecimal originalQuantity, BigDecimal baseQuantity,

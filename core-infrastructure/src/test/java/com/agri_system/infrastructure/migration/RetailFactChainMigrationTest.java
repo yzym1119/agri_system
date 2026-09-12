@@ -131,11 +131,12 @@ class RetailFactChainMigrationTest {
         assertIndex("inventory_receipt_batch", "idx_inventory_receipt_batch_line", "receipt_line_id");
         assertIndex("inventory_movement", "idx_inventory_movement_reference", "reference_type", "reference_id");
         assertIndex("inventory_movement", "idx_inventory_movement_transfer", "transfer_id", "occurred_at");
+        assertUniqueIndex("inventory_movement", "uk_inventory_movement_idempotency", "idempotency_key");
     }
 
     @Test
     void retailFactChainMigrationCreatesAllFactTablesAndSnapshots() throws SQLException {
-        assertEquals("123", flyway.info().current().getVersion().getVersion());
+        assertEquals("124", flyway.info().current().getVersion().getVersion());
 
         List.of(
                 "product_unit",
@@ -189,12 +190,13 @@ class RetailFactChainMigrationTest {
         assertEquals(migrationFiles.size(), versions.size(), "所有 V*.sql 文件都必须被枚举和解析");
         assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
         assertTrue(versions.stream().allMatch(version -> version.compareTo(MigrationVersion.fromVersion("1")) >= 0
-                        && version.compareTo(MigrationVersion.fromVersion("123")) <= 0),
-                "存在超出 V1..V123 范围的迁移版本");
+                        && version.compareTo(MigrationVersion.fromVersion("124")) <= 0),
+                "存在超出 V1..V124 范围的迁移版本");
         assertTrue(versions.containsAll(List.of(MigrationVersion.fromVersion("119"),
                 MigrationVersion.fromVersion("120"), MigrationVersion.fromVersion("121"),
-                MigrationVersion.fromVersion("123"))), "缺少 V119/V120/V121/V123");
-        assertEquals("123", flyway.info().current().getVersion().getVersion());
+                MigrationVersion.fromVersion("123"), MigrationVersion.fromVersion("124"))),
+                "缺少 V119/V120/V121/V123/V124");
+        assertEquals("124", flyway.info().current().getVersion().getVersion());
     }
 
     @Test
@@ -485,6 +487,42 @@ class RetailFactChainMigrationTest {
                     (product_id, unit_name, base_quantity_per_unit, is_base_unit, status)
                 VALUES (1, '箱', 24, 1, 1)
                 """));
+    }
+
+    @Test
+    void inventoryMovementRejectsDuplicateIdempotencyKeyButAllowsMultipleNulls() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        long unit = insertUnit(jdbc, 1, "瓶", 1);
+        long receipt = insertReceipt(jdbc, "R-IDEM", 1);
+        long line = insertReceiptLine(jdbc, receipt, 1, 1);
+        long batch = insertBatch(jdbc, line, 1, unit, unit, "B-IDEM", "KNOWN", "2026-01-01", "2026-12-31");
+
+        jdbc.update("""
+                INSERT INTO inventory_movement
+                    (movement_no, idempotency_key, batch_id, product_id, store_id, movement_type,
+                     original_unit_id, original_unit_name, original_quantity, unit_cost, base_quantity)
+                VALUES ('M-IDEM-1', 'IDEM-DUP', ?, 1, 1, 'COUNT_ADJUSTMENT', ?, '瓶', 1, 1, 1)
+                """, batch, unit);
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO inventory_movement
+                    (movement_no, idempotency_key, batch_id, product_id, store_id, movement_type,
+                     original_unit_id, original_unit_name, original_quantity, unit_cost, base_quantity)
+                VALUES ('M-IDEM-2', 'IDEM-DUP', ?, 1, 1, 'COUNT_ADJUSTMENT', ?, '瓶', 1, 1, 1)
+                """, batch, unit));
+
+        // 补货/拣货不强制幂等键,多行 NULL 必须能在唯一索引下共存
+        jdbc.update("""
+                INSERT INTO inventory_movement
+                    (movement_no, batch_id, product_id, store_id, movement_type,
+                     original_unit_id, original_unit_name, original_quantity, unit_cost, base_quantity)
+                VALUES ('M-NULL-1', ?, 1, 1, 'REPLENISHMENT', ?, '瓶', 1, 1, 1)
+                """, batch, unit);
+        jdbc.update("""
+                INSERT INTO inventory_movement
+                    (movement_no, batch_id, product_id, store_id, movement_type,
+                     original_unit_id, original_unit_name, original_quantity, unit_cost, base_quantity)
+                VALUES ('M-NULL-2', ?, 1, 1, 'REPLENISHMENT', ?, '瓶', 1, 1, 1)
+                """, batch, unit);
     }
 
     private void assertTableExistsUnchecked(String tableName) {

@@ -119,15 +119,27 @@ class BatchBalanceServiceTest {
                 () -> service().move(new BatchBalanceService.MoveRequest(100L, null, 11L,
                         BatchBalanceService.MovementPurpose.COUNT_ADJUSTMENT, null, 101L, "箱",
                         new BigDecimal("1"), new BigDecimal("24"), new BigDecimal("10"),
-                        "COUNT", 1L, 9L, "盘盈", null)));
+                        "COUNT", 1L, 9L, "盘盈", null, "COUNT-1")));
         assertEquals("盘点调整或退货必须指定方向IN/OUT", noDirection.getMessage());
         IllegalArgumentException receiptRef = assertThrows(IllegalArgumentException.class,
                 () -> service().move(new BatchBalanceService.MoveRequest(100L, null, 11L,
                         BatchBalanceService.MovementPurpose.COUNT_ADJUSTMENT, null, 101L, "箱",
                         new BigDecimal("1"), new BigDecimal("24"), new BigDecimal("10"),
-                        "RECEIPT", 1L, 9L, "盘盈", BatchBalanceService.Direction.IN)));
+                        "RECEIPT", 1L, 9L, "盘盈", BatchBalanceService.Direction.IN, "COUNT-1")));
         assertEquals("盘点调整或退货必须关联非收货业务单据", receiptRef.getMessage());
         verify(balanceRepository, never()).save(any());
+    }
+
+    @Test
+    void adjustmentRequiresIdempotencyKeyToPreventDuplicateSubmission() {
+        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
+                () -> service().move(new BatchBalanceService.MoveRequest(100L, null, 11L,
+                        BatchBalanceService.MovementPurpose.COUNT_ADJUSTMENT, null, 101L, "箱",
+                        new BigDecimal("1"), new BigDecimal("24"), new BigDecimal("10"),
+                        "COUNT", 1L, 9L, "盘盈", BatchBalanceService.Direction.IN, null)));
+        assertEquals("盘点调整或退货必须提供幂等键防止重复提交", exception.getMessage());
+        verify(balanceRepository, never()).save(any());
+        verify(movementRepository, never()).append(any());
     }
 
     private BatchBalanceService service() {
@@ -140,14 +152,14 @@ class BatchBalanceServiceTest {
         return new BatchBalanceService.MoveRequest(batchId, fromLocationId, toLocationId,
                 BatchBalanceService.MovementPurpose.REPLENISHMENT, null,
                 101L, "箱", new BigDecimal(originalQuantity), new BigDecimal(baseQuantity),
-                new BigDecimal("10.00"), null, null, 9L, "补货", null);
+                new BigDecimal("10.00"), null, null, 9L, "补货", null, null);
     }
 
     private BatchBalanceService.MoveRequest moveWithPurpose(BatchBalanceService.MovementPurpose purpose,
                                                              Long fromLocationId, Long toLocationId) {
         return new BatchBalanceService.MoveRequest(100L, fromLocationId, toLocationId, purpose, "T-1",
                 101L, "箱", new BigDecimal("1"), new BigDecimal("24"), new BigDecimal("10"),
-                null, null, 9L, "测试", null);
+                null, null, 9L, "测试", null, null);
     }
 
     private InventoryLocation location(Long id, Long storeId, String type) {

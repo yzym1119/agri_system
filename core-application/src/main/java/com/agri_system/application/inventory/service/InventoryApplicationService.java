@@ -141,7 +141,8 @@ public class InventoryApplicationService {
                 batch.getId(), command.getFromLocationId(), command.getToLocationId(), purpose,
                 command.getTransferId(), unit.getId(), converted.unitName(), converted.originalQuantity(),
                 converted.baseQuantity(), batch.getBaseUnitCost(), command.getReferenceType(),
-                command.getReferenceId(), createdBy, command.getRemark(), parseDirection(command.getDirection())));
+                command.getReferenceId(), createdBy, command.getRemark(), parseDirection(command.getDirection()),
+                command.getIdempotencyKey()));
     }
 
     private BatchBalanceService.Direction parseDirection(String direction) {
