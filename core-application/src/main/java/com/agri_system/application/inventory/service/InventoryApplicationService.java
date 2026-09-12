@@ -153,6 +153,14 @@ public class InventoryApplicationService {
             throw new IllegalArgumentException("移动方向无效,仅支持IN/OUT");
         }
     }
+
+    /** 已切换到批次货位余额模式的 SKU 禁止走 legacy 路径,避免快照双写与批次余额背离(Critical 2 安全闸门)。 */
+    private void assertNotCutOver(Long storeId, Long productId, String legacyOperation) {
+        if (batchBalanceService.isBatchLocationEnabled(storeId, productId)) {
+            throw new IllegalArgumentException(
+                    "该SKU已切换到批次货位余额模式,禁止走传统" + legacyOperation + "路径,请使用新单位链路");
+        }
+    }
     
     /**
      * 入库
@@ -163,6 +171,7 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long inbound(InventoryInCommand command, Long createdBy) {
+        assertNotCutOver(command.getStoreId(), command.getProductId(), "入库");
         // 校验商品是否存在并获取单位
         Product product = productRepository.findById(command.getProductId())
                 .orElseThrow(() -> new IllegalArgumentException(
@@ -200,6 +209,7 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public List<BatchDetailVO> outbound(InventoryOutCommand command, Long createdBy) {
+        assertNotCutOver(command.getStoreId(), command.getProductId(), "出库");
         // 1. 校验商品是否存在并获取单位信息
         Product product = productRepository.findById(command.getProductId())
                 .orElseThrow(() -> new IllegalArgumentException(
@@ -289,6 +299,8 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public InventoryDomainService.TransferDetail transfer(InventoryTransferCommand command, Long createdBy) {
+        assertNotCutOver(command.getFromStoreId(), command.getProductId(), "调拨");
+        assertNotCutOver(command.getToStoreId(), command.getProductId(), "调拨");
         if (Objects.equals(command.getFromStoreId(), command.getToStoreId())) {
             throw new IllegalArgumentException(InventoryErrorCode.TARGET_STORE_UNAVAILABLE + ": 调出门店和调入门店不能相同");
         }
@@ -555,6 +567,7 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void adjust(InventoryAdjustCommand command, Long createdBy) {
+        assertNotCutOver(command.getStoreId(), command.getProductId(), "盘点");
         // 校验商品是否存在并获取单位
         Product product = productRepository.findById(command.getProductId())
                 .orElseThrow(() -> new IllegalArgumentException(

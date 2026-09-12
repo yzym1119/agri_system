@@ -131,6 +131,11 @@ public class BatchBalanceService {
         return zero(balanceRepository.sumAvailableBaseQuantity(locationId, productId));
     }
 
+    /** 该 store+SKU 是否已切换到批次货位余额权威模式;供 legacy 路径守卫拒绝已切换 SKU(Critical 2 安全闸门)。 */
+    public boolean isBatchLocationEnabled(Long storeId, Long productId) {
+        return isEnabled(storeId, productId);
+    }
+
     private void validateRequest(MoveRequest request) {
         if (request == null || request.batchId() == null) throw new IllegalArgumentException("批次不能为空");
         requirePositive(request.originalQuantity(), "原始数量");
