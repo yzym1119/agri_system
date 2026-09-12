@@ -54,6 +54,11 @@ public class InventoryRepositoryImpl implements InventoryRepository {
             createIfNotExists(storeId, productId, quantity);
         }
     }
+
+    @Override
+    public Optional<Inventory> findByStoreAndProductForUpdate(Long storeId, Long productId) {
+        return Optional.ofNullable(inventoryMapper.findByStoreAndProductForUpdate(storeId, productId));
+    }
     
     @Override
     public void createIfNotExists(Long storeId, Long productId, BigDecimal quantity) {

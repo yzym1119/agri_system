@@ -2,7 +2,7 @@
 
 ## 1. 概述
 
-本文档描述了农资行业进销存系统的完整数据库设计，包含**31张核心业务表**，覆盖供应商、采购、商品、库存、订单、价格体系、客户、积分商城、赊销、员工、门店等业务领域。
+本文档描述了农资行业进销存系统的完整数据库设计，包含**31张原有核心业务表**和 V119/V120 新增的 10 张零售事实链表，覆盖供应商、采购、商品、库存、订单、价格体系、客户、积分商城、赊销、员工、门店等业务领域。
 
 ### 1.1 设计原则
 
@@ -15,7 +15,8 @@
 
 ### 1.2 技术规范
 
-- **数据库**：MySQL 8.x
+- **数据库**：MySQL 8.2+（项目部署镜像：`mysql:8.2`）
+- **约束版本要求**：CHECK 约束与本设计的追加事实触发器依赖 MySQL `>= 8.0.16` 的强制执行语义；生产环境按 MySQL 8.2 基线部署。
 - **字符集**：utf8mb4
 - **排序规则**：utf8mb4_unicode_ci
 - **存储引擎**：InnoDB
@@ -666,6 +667,14 @@
 - 主键：`id`
 - 普通索引：`staff_id`, `performance_type`, `order_id`, `customer_id`, `performance_date`
 
+### 2.13 零售事实链（V119/V120）
+
+零售新链路以 SKU 自定义的 `product_unit` 为单位事实。`base_quantity_per_unit` 直接换算到该 SKU 的库存基准单位；`(product_id, unit_name)` 保证单位名称唯一，生成列 `enabled_base_unit_key` 配合唯一索引 `uk_product_enabled_base_unit`，保证每个 SKU 最多一个启用基准单位，基准单位比例由应用校验为 1。旧 `product.main_unit`、`aux_unit`、`main_to_aux_ratio` 及旧库存表保留不变。
+
+收货事实分为 `inventory_receipt`、`inventory_receipt_line`、`inventory_receipt_batch` 三层；收货行通过 `(purchase_order_item_id, product_id)` 复合外键校验采购明细 SKU，批次永久保存原始单位/数量/单价、基准数量/单位成本、供应商批号或内部收货批号、日期事实状态（`KNOWN`/`UNKNOWN`）、生产/有效期、验收凭证和收货人。`KNOWN` 必须同时有生产日期和有效期且生产日期不晚于有效期，`UNKNOWN` 则两者都必须为空；数量和成本字段使用严格正数约束。`inventory_location` 支持 `SALES_FLOOR`、`STORE_BACKROOM`、`CENTRAL_WAREHOUSE`、`OTHER_STORE` 四类位置，`inventory_batch_balance` 以 `(batch_id, location_id)` 唯一，并以复合外键校验批次 SKU 与门店位置一致；`inventory_movement` 保存 `store_id` 及位置间移动的原始业务单位、基准数量和单位成本，from/to 位置均以 `(location_id, store_id)` 复合外键绑定门店。
+
+`order_item` 仅增加可空的 `base_unit_id`、`base_quantity`、`unit_cost` 快照列，历史订单不回填；一旦写入，数量和成本必须严格大于 0。`order_item_batch_allocation` 允许一行多批次，保存 `store_id` 并以订单行、批次、移动、位置事实的复合外键同时校验 SKU 与门店，阻断跨 SKU/跨门店错配；区分 `SCANNED`、`FULFILLMENT_CONFIRMED`、`RULE_ALLOCATED`、`UNKNOWN` 证据等级，未知批次使用空批次引用，不伪造成本。`order_item_price_audit` 的商品快照非空并与订单行及销售单位复合关联；`order_item_price_audit` 和 `inventory_decision_log` 通过数据库触发器禁止 UPDATE/DELETE，只追加价格及风险处置事实，风险记录不自动停售、报损、调拨或采购。
+
 ## 3. 索引设计原则
 
 ### 3.1 主键索引
@@ -845,5 +854,6 @@
 - **支付风控模块**：1张（wallet_auth_code）
 - **赊销相关表**：2张（credit_account, credit_statement）
 - **员工绩效相关表**：1张（staff_performance）
+- **零售事实链相关表**：10张（product_unit, inventory_receipt, inventory_receipt_line, inventory_receipt_batch, inventory_location, inventory_batch_balance, inventory_movement, order_item_batch_allocation, order_item_price_audit, inventory_decision_log）
 
-**总计：31张表**
+**总计：41张表**（原有 31 张 + 零售事实链 10 张；`product_unit` 仅在零售事实链分类中计数一次）

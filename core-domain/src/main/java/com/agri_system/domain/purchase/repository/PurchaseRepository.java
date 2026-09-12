@@ -21,6 +21,11 @@ public interface PurchaseRepository {
      * 根据ID查找采购订单
      */
     Optional<PurchaseOrder> findById(Long id);
+
+    /**
+     * 在当前事务中锁定采购单行；收货必须在该锁内读取状态和累计数量，防止并发超收。
+     */
+    Optional<PurchaseOrder> findByIdForUpdate(Long id);
     
     /**
      * 根据采购单号查找采购订单

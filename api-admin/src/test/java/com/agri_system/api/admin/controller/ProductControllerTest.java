@@ -1,7 +1,10 @@
 package com.agri_system.api.admin.controller;
 
+import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.agri_system.api.admin.config.TestApplication;
 import com.agri_system.application.product.dto.command.PriceRuleCreateCommand;
+import com.agri_system.application.product.dto.command.ProductUnitUpsertCommand;
+import com.agri_system.application.product.dto.vo.ProductUnitVO;
 import com.agri_system.application.product.service.ProductApplicationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -15,8 +18,13 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.math.BigDecimal;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -55,10 +63,40 @@ class ProductControllerTest {
                 .content(objectMapper.writeValueAsString(command)))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    void testGetProductUnitsReturnsConfiguredUnits() throws Exception {
+        ProductUnitVO unit = new ProductUnitVO();
+        unit.setUnitName("瓶");
+        when(productService.getProductUnits(10L)).thenReturn(java.util.List.of(unit));
+
+        mockMvc.perform(get("/api/admin/products/10/units"))
+                .andExpect(status().isOk());
+        verify(productService).getProductUnits(10L);
+    }
+
+    @Test
+    void testReplaceProductUnitsAcceptsCompleteSet() throws Exception {
+        ProductUnitUpsertCommand unit = new ProductUnitUpsertCommand();
+        unit.setUnitName("瓶");
+        unit.setBaseQuantityPerUnit(new BigDecimal("1"));
+        unit.setIsBaseUnit(1);
+
+        mockMvc.perform(put("/api/admin/products/10/units")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(java.util.List.of(unit))))
+                .andExpect(status().isOk());
+        verify(productService).replaceProductUnits(eq(10L), anyList());
+    }
+
+    @Test
+    void replaceUnitsUsesInitializedUnitCreatePermission() throws Exception {
+        SaCheckPermission permission = ProductController.class
+                .getMethod("replaceProductUnits", Long.class, java.util.List.class)
+                .getAnnotation(SaCheckPermission.class);
+        org.assertj.core.api.Assertions.assertThat(permission.value()).containsExactly("product:unit:create");
+    }
 }
-
-
-
 
 
 

@@ -6,6 +6,8 @@ import com.agri_system.application.inventory.dto.command.InventoryAdjustCommand;
 import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.dto.command.InventoryOutCommand;
 import com.agri_system.application.inventory.dto.command.InventoryTransferCommand;
+import com.agri_system.application.inventory.dto.command.InventoryLocationCommand;
+import com.agri_system.application.inventory.dto.command.InventoryMoveCommand;
 import com.agri_system.application.inventory.dto.query.InventoryQuery;
 import com.agri_system.application.inventory.dto.query.InventoryTransferRecordQuery;
 import com.agri_system.application.inventory.dto.query.InventoryTransactionQuery;
@@ -15,6 +17,7 @@ import com.agri_system.application.inventory.dto.vo.InventoryTransferRecordVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransactionVO;
 import com.agri_system.application.inventory.service.InventoryApplicationService;
 import com.agri_system.domain.inventory.vo.InventoryPageVO;
+import com.agri_system.domain.inventory.model.InventoryMovement;
 import com.mybatisflex.core.paginate.Page;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -45,6 +48,22 @@ import java.util.Map;
 public class InventoryController {
     
     private final InventoryApplicationService inventoryService;
+
+    @PostMapping("/locations")
+    @Operation(summary = "创建库存位置")
+    @SaCheckPermission("inventory:adjust")
+    public ResponseEntity<Map<String, Object>> createLocation(@Valid @RequestBody InventoryLocationCommand command) {
+        return ResponseEntity.ok(Map.of("code", "200", "message", "创建成功",
+                "data", Map.of("locationId", inventoryService.createLocation(command))));
+    }
+
+    @PostMapping("/moves")
+    @Operation(summary = "批次货位移动")
+    @SaCheckPermission("inventory:adjust")
+    public ResponseEntity<Map<String, Object>> move(@Valid @RequestBody InventoryMoveCommand command) {
+        InventoryMovement movement = inventoryService.move(command, getCurrentUserId());
+        return ResponseEntity.ok(Map.of("code", "200", "message", "移动成功", "data", movement));
+    }
     
     // ==================== 入库 ====================
     
@@ -222,7 +241,6 @@ public class InventoryController {
         throw new IllegalArgumentException("无法获取用户ID");
     }
 }
-
 
 
 

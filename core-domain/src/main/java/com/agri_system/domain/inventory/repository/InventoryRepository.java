@@ -32,6 +32,15 @@ public interface InventoryRepository {
      * @param quantity 新数量
      */
     void updateSnapshot(Long storeId, Long productId, BigDecimal quantity);
+
+    /**
+     * 悲观锁查询库存快照(FOR UPDATE),串行化同门店同商品的并发投影
+     *
+     * @param storeId 门店ID
+     * @param productId 商品ID
+     * @return 已加锁的库存快照
+     */
+    Optional<Inventory> findByStoreAndProductForUpdate(Long storeId, Long productId);
     
     /**
      * 如果不存在则创建库存快照

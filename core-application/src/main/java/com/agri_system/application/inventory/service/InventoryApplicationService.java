@@ -4,6 +4,8 @@ import com.agri_system.application.inventory.dto.command.InventoryAdjustCommand;
 import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.dto.command.InventoryOutCommand;
 import com.agri_system.application.inventory.dto.command.InventoryTransferCommand;
+import com.agri_system.application.inventory.dto.command.InventoryLocationCommand;
+import com.agri_system.application.inventory.dto.command.InventoryMoveCommand;
 import com.agri_system.application.inventory.dto.query.InventoryQuery;
 import com.agri_system.application.inventory.dto.query.InventoryTransferRecordQuery;
 import com.agri_system.application.inventory.dto.query.InventoryTransactionQuery;
@@ -19,11 +21,19 @@ import com.agri_system.domain.inventory.model.InventoryBatch;
 import com.agri_system.domain.inventory.model.InventoryTransferOrder;
 import com.agri_system.domain.inventory.model.InventoryTransferOrderDetail;
 import com.agri_system.domain.inventory.model.InventoryTransaction;
+import com.agri_system.domain.inventory.model.InventoryLocation;
+import com.agri_system.domain.inventory.model.InventoryMovement;
+import com.agri_system.domain.inventory.model.InventoryReceiptBatch;
 import com.agri_system.domain.inventory.repository.InventoryBatchRepository;
 import com.agri_system.domain.inventory.repository.InventoryRepository;
 import com.agri_system.domain.inventory.repository.InventoryTransferOrderDetailRepository;
 import com.agri_system.domain.inventory.repository.InventoryTransferOrderRepository;
 import com.agri_system.domain.inventory.repository.InventoryTransactionRepository;
+import com.agri_system.domain.inventory.repository.InventoryLocationRepository;
+import com.agri_system.domain.inventory.repository.InventoryReceiptBatchRepository;
+import com.agri_system.domain.inventory.service.BatchBalanceService;
+import com.agri_system.application.product.service.ProductUnitService;
+import com.agri_system.application.product.service.UnitConversionSnapshot;
 import com.agri_system.domain.inventory.service.InventoryDomainService;
 import com.agri_system.domain.inventory.vo.InventoryPageVO;
 import com.agri_system.domain.order.repository.OrderRepository;
@@ -75,6 +85,82 @@ public class InventoryApplicationService {
     private final StaffRepository staffRepository;
     private final PurchaseRepository purchaseRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final BatchBalanceService batchBalanceService;
+    private final InventoryLocationRepository locationRepository;
+    private final InventoryReceiptBatchRepository receiptBatchRepository;
+    private final ProductUnitService productUnitService;
+
+    @Transactional(rollbackFor = Exception.class)
+    public Long createLocation(InventoryLocationCommand command) {
+        InventoryLocation.LocationType type;
+        try {
+            type = InventoryLocation.LocationType.valueOf(command.getLocationType().trim());
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("库存位置类型无效");
+        }
+        InventoryLocation location = new InventoryLocation();
+        location.setStoreId(command.getStoreId());
+        location.setLocationType(type.name());
+        location.setCode(StringUtils.hasText(command.getCode()) ? command.getCode().trim() : null);
+        location.setName(command.getName().trim());
+        location.setStatus(1);
+        location.setCreatedAt(LocalDateTime.now());
+        location.setUpdatedAt(location.getCreatedAt());
+        locationRepository.save(location);
+        return location.getId();
+    }
+
+    /** 新单位链路移动；调用者提供原始数量，基准数量和快照由服务统一生成。 */
+    @Transactional(rollbackFor = Exception.class)
+    public InventoryMovement move(InventoryMoveCommand command, Long createdBy) {
+        InventoryReceiptBatch batch = receiptBatchRepository.findById(command.getBatchId())
+                .orElseThrow(() -> new IllegalArgumentException("收货批次不存在"));
+        BatchBalanceService.MovementPurpose purpose;
+        try {
+            purpose = BatchBalanceService.MovementPurpose.valueOf(command.getPurpose().trim());
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("移动用途无效");
+        }
+        ProductUnitService.UnitOperation operation = purpose == BatchBalanceService.MovementPurpose.TRANSFER
+                ? ProductUnitService.UnitOperation.TRANSFER : ProductUnitService.UnitOperation.INVENTORY;
+        var unit = productUnitService.requireEnabledUnit(batch.getProductId(), command.getOriginalUnit(), operation);
+        UnitConversionSnapshot converted = productUnitService.toBaseQuantity(
+                batch.getProductId(), command.getOriginalUnit(), command.getOriginalQuantity());
+        if (purpose == BatchBalanceService.MovementPurpose.TRANSFER) {
+            // 跨店调拨必须走 transfer 拆成同 transferId 的出/入两条事实,禁止外部直接单边 move(Critical 1)
+            if (command.getDestinationBatchId() == null) {
+                throw new IllegalArgumentException("跨店调拨必须提供目的门店已收货批次destinationBatchId");
+            }
+            return batchBalanceService.transfer(new BatchBalanceService.TransferRequest(
+                    batch.getId(), command.getDestinationBatchId(), command.getFromLocationId(), command.getToLocationId(),
+                    command.getTransferId(), unit.getId(), converted.unitName(), converted.originalQuantity(),
+                    converted.baseQuantity(), command.getReferenceType(), command.getReferenceId(), createdBy,
+                    command.getRemark())).outbound();
+        }
+        return batchBalanceService.move(new BatchBalanceService.MoveRequest(
+                batch.getId(), command.getFromLocationId(), command.getToLocationId(), purpose,
+                command.getTransferId(), unit.getId(), converted.unitName(), converted.originalQuantity(),
+                converted.baseQuantity(), batch.getBaseUnitCost(), command.getReferenceType(),
+                command.getReferenceId(), createdBy, command.getRemark(), parseDirection(command.getDirection()),
+                command.getIdempotencyKey()));
+    }
+
+    private BatchBalanceService.Direction parseDirection(String direction) {
+        if (!StringUtils.hasText(direction)) return null;
+        try {
+            return BatchBalanceService.Direction.valueOf(direction.trim());
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("移动方向无效,仅支持IN/OUT");
+        }
+    }
+
+    /** 已切换到批次货位余额模式的 SKU 禁止走 legacy 路径,避免快照双写与批次余额背离(Critical 2 安全闸门)。 */
+    private void assertNotCutOver(Long storeId, Long productId, String legacyOperation) {
+        if (batchBalanceService.isBatchLocationEnabled(storeId, productId)) {
+            throw new IllegalArgumentException(
+                    "该SKU已切换到批次货位余额模式,禁止走传统" + legacyOperation + "路径,请使用新单位链路");
+        }
+    }
     
     /**
      * 入库
@@ -85,6 +171,7 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long inbound(InventoryInCommand command, Long createdBy) {
+        assertNotCutOver(command.getStoreId(), command.getProductId(), "入库");
         // 校验商品是否存在并获取单位
         Product product = productRepository.findById(command.getProductId())
                 .orElseThrow(() -> new IllegalArgumentException(
@@ -122,6 +209,7 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public List<BatchDetailVO> outbound(InventoryOutCommand command, Long createdBy) {
+        assertNotCutOver(command.getStoreId(), command.getProductId(), "出库");
         // 1. 校验商品是否存在并获取单位信息
         Product product = productRepository.findById(command.getProductId())
                 .orElseThrow(() -> new IllegalArgumentException(
@@ -211,6 +299,8 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public InventoryDomainService.TransferDetail transfer(InventoryTransferCommand command, Long createdBy) {
+        assertNotCutOver(command.getFromStoreId(), command.getProductId(), "调拨");
+        assertNotCutOver(command.getToStoreId(), command.getProductId(), "调拨");
         if (Objects.equals(command.getFromStoreId(), command.getToStoreId())) {
             throw new IllegalArgumentException(InventoryErrorCode.TARGET_STORE_UNAVAILABLE + ": 调出门店和调入门店不能相同");
         }
@@ -477,6 +567,7 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void adjust(InventoryAdjustCommand command, Long createdBy) {
+        assertNotCutOver(command.getStoreId(), command.getProductId(), "盘点");
         // 校验商品是否存在并获取单位
         Product product = productRepository.findById(command.getProductId())
                 .orElseThrow(() -> new IllegalArgumentException(

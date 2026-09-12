@@ -111,13 +111,18 @@ public class ProductDetailVO {
     @Schema(description = "建议补货数量", example = "100.00")
     private BigDecimal reorderQuantity;
 
+    @Schema(description = "单位模型状态：LEGACY、NEW_CHAIN_ENABLED")
+    private String unitModelStatus;
+
+    @Schema(description = "SKU 业务单位列表")
+    private java.util.List<ProductUnitVO> units;
+
     @Schema(description = "创建时间")
     private LocalDateTime createdAt;
 
     @Schema(description = "更新时间")
     private LocalDateTime updatedAt;
 }
-
 
 
 

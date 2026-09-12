@@ -8,6 +8,12 @@ import com.agri_system.domain.customer.service.CustomerDomainService;
 import com.agri_system.domain.inventory.repository.InventoryBatchRepository;
 import com.agri_system.domain.inventory.repository.InventoryRepository;
 import com.agri_system.domain.inventory.repository.InventoryTransactionRepository;
+import com.agri_system.domain.inventory.repository.InventoryLocationRepository;
+import com.agri_system.domain.inventory.repository.InventoryBatchBalanceRepository;
+import com.agri_system.domain.inventory.repository.InventoryMovementRepository;
+import com.agri_system.domain.inventory.repository.InventoryReceiptBatchRepository;
+import com.agri_system.domain.inventory.repository.InventoryBalanceFeatureStatusRepository;
+import com.agri_system.domain.inventory.service.BatchBalanceService;
 import com.agri_system.domain.inventory.service.InventoryDomainService;
 import com.agri_system.domain.marketing.points.repository.PointsExchangeOrderRepository;
 import com.agri_system.domain.marketing.points.service.PointsDomainService;
@@ -44,6 +50,18 @@ public class DomainServiceConfig {
             InventoryRepository inventoryRepository,
             InventoryTransactionRepository transactionRepository) {
         return new InventoryDomainService(batchRepository, inventoryRepository, transactionRepository);
+    }
+
+    @Bean
+    public BatchBalanceService batchBalanceService(
+            InventoryLocationRepository locationRepository,
+            InventoryBatchBalanceRepository balanceRepository,
+            InventoryMovementRepository movementRepository,
+            InventoryReceiptBatchRepository receiptBatchRepository,
+            InventoryBalanceFeatureStatusRepository featureStatusRepository,
+            InventoryRepository inventoryRepository) {
+        return new BatchBalanceService(locationRepository, balanceRepository, movementRepository,
+                receiptBatchRepository, featureStatusRepository, inventoryRepository);
     }
     
     @Bean

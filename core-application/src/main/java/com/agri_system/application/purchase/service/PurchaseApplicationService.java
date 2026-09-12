@@ -1,15 +1,22 @@
 package com.agri_system.application.purchase.service;
 
-import com.agri_system.application.inventory.dto.command.InventoryInCommand;
-import com.agri_system.application.inventory.service.InventoryApplicationService;
+import com.agri_system.domain.inventory.service.BatchBalanceService;
+import com.agri_system.application.product.service.ProductUnitService;
+import com.agri_system.application.product.service.UnitConversionSnapshot;
 import com.agri_system.application.purchase.dto.command.*;
 import com.agri_system.application.purchase.dto.query.PurchasePageQuery;
 import com.agri_system.application.purchase.dto.vo.PurchaseDetailVO;
 import com.agri_system.application.purchase.dto.vo.PurchaseItemVO;
 import com.agri_system.application.purchase.dto.vo.PurchasePageVO;
 import com.agri_system.application.purchase.exception.PurchaseErrorCode;
-import com.agri_system.domain.inventory.repository.InventoryBatchRepository;
+import com.agri_system.domain.inventory.model.InventoryReceipt;
+import com.agri_system.domain.inventory.model.InventoryReceiptBatch;
+import com.agri_system.domain.inventory.model.InventoryReceiptLine;
+import com.agri_system.domain.inventory.repository.InventoryReceiptBatchRepository;
+import com.agri_system.domain.inventory.repository.InventoryReceiptLineRepository;
+import com.agri_system.domain.inventory.repository.InventoryReceiptRepository;
 import com.agri_system.domain.product.model.Product;
+import com.agri_system.domain.product.model.ProductUnit;
 import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.purchase.model.PurchaseOrder;
 import com.agri_system.domain.purchase.model.PurchaseOrderItem;
@@ -20,13 +27,19 @@ import com.agri_system.domain.purchase.service.PurchaseDomainService;
 import com.agri_system.domain.store.repository.StoreRepository;
 import com.mybatisflex.core.paginate.Page;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -42,11 +55,14 @@ public class PurchaseApplicationService {
     private final PurchaseRepository purchaseRepository;
     private final PurchaseItemRepository itemRepository;
     private final PurchaseDomainService domainService;
-    private final InventoryApplicationService inventoryService;
     private final ProductRepository productRepository;
     private final StoreRepository storeRepository;
     private final SupplierRepository supplierRepository;
-    private final InventoryBatchRepository batchRepository;
+    private final ProductUnitService productUnitService;
+    private final InventoryReceiptRepository receiptRepository;
+    private final InventoryReceiptLineRepository receiptLineRepository;
+    private final InventoryReceiptBatchRepository receiptBatchRepository;
+    private final ObjectProvider<BatchBalanceService> batchBalanceServiceProvider;
     
     /**
      * 创建采购单
@@ -196,147 +212,293 @@ public class PurchaseApplicationService {
     }
     
     /**
-     * 采购入库
-     * 必须开启事务，涉及：
-     * - 更新采购单状态
-     * - 写入库存批次
-     * - 更新库存快照
-     * - 更新商品平均成本
+     * 旧入库接口只适配无歧义的单采购行、单实际批次；复杂收货必须使用 receive。
      */
     @Transactional(rollbackFor = Exception.class)
     public void inbound(PurchaseInboundCommand command, Long createdBy) {
-        // 1. 查询采购单
-        PurchaseOrder order = purchaseRepository.findById(command.getOrderId())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        PurchaseErrorCode.PURCHASE_ORDER_NOT_FOUND + ": 采购单不存在"));
-        
-        // 2. 检查是否已入库
-        if (order.isInbound()) {
-            throw new IllegalArgumentException(
-                    PurchaseErrorCode.PURCHASE_ORDER_ALREADY_INBOUND + ": 采购单已入库，禁止重复入库");
-        }
-        
-        // 3. 检查是否可以入库
-        if (!domainService.checkCanInbound(order)) {
-            throw new IllegalArgumentException(
-                    PurchaseErrorCode.PURCHASE_ORDER_STATUS_INVALID + ": 采购单状态不允许入库");
-        }
-        
-        // 4. 查询明细
+        PurchaseOrder order = lockPurchaseOrder(command.getOrderId());
+        checkCanReceive(order);
         List<PurchaseOrderItem> items = itemRepository.findByOrderId(order.getId());
-        if (items == null || items.isEmpty()) {
+        if (items == null || items.size() != 1) {
+            throw new IllegalArgumentException("旧入库接口只支持一条采购明细，请使用采购收货接口");
+        }
+        PurchaseOrderItem item = items.get(0);
+        PurchaseInboundCommand.InboundItem inboundItem = legacyInboundItem(command, item);
+        ReceiptBatchCommand batch = new ReceiptBatchCommand();
+        batch.setOriginalUnit(item.getUnit());
+        batch.setOriginalQuantity(inboundItem == null ? item.getQuantity() : inboundItem.getQuantity());
+        batch.setOriginalUnitCost(inboundItem == null ? item.getBuyPrice() : inboundItem.getCostPrice());
+        batch.setProductionDate(inboundItem == null ? null : inboundItem.getProductionDate());
+        batch.setExpiryDate(inboundItem == null ? null : inboundItem.getExpireDate());
+
+        ReceivePurchaseCommand receiveCommand = new ReceivePurchaseCommand();
+        receiveCommand.setPurchaseOrderId(order.getId());
+        ReceivePurchaseCommand.ReceiptLineCommand line = new ReceivePurchaseCommand.ReceiptLineCommand();
+        line.setPurchaseOrderItemId(item.getId());
+        line.setProductId(item.getProductId());
+        line.setBatches(List.of(batch));
+        receiveCommand.setLines(List.of(line));
+        receiveLocked(receiveCommand, createdBy, order, items);
+    }
+
+    /** 保存收货事实；余额服务只可在所有 header/line/batch 事实写入之后调用。 */
+    @Transactional(rollbackFor = Exception.class)
+    public Long receive(ReceivePurchaseCommand command, Long receiverId) {
+        PurchaseOrder order = lockPurchaseOrder(command.getPurchaseOrderId());
+        checkCanReceive(order);
+        List<PurchaseOrderItem> orderItems = itemRepository.findByOrderId(order.getId());
+        return receiveLocked(command, receiverId, order, orderItems);
+    }
+
+    /** 调用方必须先持有 purchase_order 的行锁，避免 legacy adapter 二次锁定。 */
+    private Long receiveLocked(ReceivePurchaseCommand command, Long receiverId,
+                               PurchaseOrder order, List<PurchaseOrderItem> orderItems) {
+        if (orderItems == null || orderItems.isEmpty()) {
             throw new IllegalArgumentException("采购单明细为空");
         }
-        
-        // 5. 处理入库明细：优先使用传入的 items，否则使用原采购明细
-        boolean hasCustomItems = command.getItems() != null && !command.getItems().isEmpty();
-        java.util.Map<Long, com.agri_system.application.purchase.dto.command.PurchaseInboundCommand.InboundItem> inboundMap =
-                hasCustomItems ? command.getItems().stream()
-                        .collect(java.util.stream.Collectors.toMap(
-                                com.agri_system.application.purchase.dto.command.PurchaseInboundCommand.InboundItem::getProductId,
-                                i -> i)) : java.util.Collections.emptyMap();
-        
-        for (PurchaseOrderItem item : items) {
-            // 5.1 校验商品并获取单位/换算
-            Product product = productRepository.findById(item.getProductId())
-                    .orElseThrow(() -> new IllegalArgumentException(
-                            PurchaseErrorCode.PRODUCT_OR_STORE_NOT_FOUND + ": 商品不存在，ID=" + item.getProductId()));
-            
-            // 5.2 计算本次入库数量与成本价（允许与原采购单不一致）
-            BigDecimal inboundQty = item.getQuantity();
-            BigDecimal inboundCost = item.getBuyPrice();
-            java.time.LocalDate inboundProductionDate = null;
-            java.time.LocalDate inboundExpireDate = null;
-            if (hasCustomItems) {
-                com.agri_system.application.purchase.dto.command.PurchaseInboundCommand.InboundItem inboundItem =
-                        inboundMap.get(item.getProductId());
-                if (inboundItem == null) {
-                    throw new IllegalArgumentException("入库明细缺少商品：" + item.getProductId());
-                }
-                inboundQty = inboundItem.getQuantity();
-                inboundCost = inboundItem.getCostPrice();
-                inboundProductionDate = inboundItem.getProductionDate();
-                inboundExpireDate = inboundItem.getExpireDate();
-            }
+        if (command.getLines() == null || command.getLines().isEmpty()) {
+            throw new IllegalArgumentException("收货行不能为空");
+        }
 
-            // 5.2.1 如果采购单位为辅单位，换算为主单位后入库
-            String itemUnit = item.getUnit();
-            BigDecimal ratio = product.getMainToAuxRatio();
-            if (itemUnit != null
-                    && product.getAuxUnit() != null
-                    && itemUnit.equals(product.getAuxUnit())
-                    && ratio != null
-                    && ratio.compareTo(BigDecimal.ZERO) > 0) {
-                inboundQty = inboundQty.divide(ratio, 4, java.math.RoundingMode.HALF_UP);
-                inboundCost = inboundCost.multiply(ratio).setScale(2, java.math.RoundingMode.HALF_UP);
+        Set<Long> referencedPurchaseItemIds = new HashSet<>();
+        List<PreparedReceiptLine> preparedLines = new ArrayList<>();
+        boolean overReceipt = false;
+        for (ReceivePurchaseCommand.ReceiptLineCommand lineCommand : command.getLines()) {
+            if (lineCommand == null || !referencedPurchaseItemIds.add(lineCommand.getPurchaseOrderItemId())) {
+                throw new IllegalArgumentException("同一采购明细只能对应一条收货行");
             }
-            
-            // 5.3 调用库存模块入库
-            InventoryInCommand inventoryCommand = new InventoryInCommand();
-            inventoryCommand.setStoreId(order.getStoreId());
-            inventoryCommand.setProductId(item.getProductId());
-            inventoryCommand.setBatchNo(order.getPurchaseNo()); // 批次号 = 采购单号
-            inventoryCommand.setQuantity(inboundQty);
-            inventoryCommand.setCostPrice(inboundCost);
-            inventoryCommand.setProductionDate(inboundProductionDate);
-            inventoryCommand.setExpireDate(inboundExpireDate);
-            inventoryCommand.setSourceType("PURCHASE");
-            inventoryCommand.setSourceId(order.getId());
-            inventoryCommand.setSourceLineNo(item.getId() != null ? item.getId().intValue() : null);
-            
-            inventoryService.inbound(inventoryCommand, createdBy);
-            
-            // 5.4 更新商品平均成本（使用实际入库数量与成本）
-            updateProductAvgCostPrice(item.getProductId(), inboundQty, inboundCost);
+            PurchaseOrderItem purchaseItem = findPurchaseItem(orderItems, lineCommand.getPurchaseOrderItemId());
+            if (!purchaseItem.getProductId().equals(lineCommand.getProductId())) {
+                throw new IllegalArgumentException("收货商品与采购明细SKU不一致");
+            }
+            Product product = productRepository.findById(lineCommand.getProductId())
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            PurchaseErrorCode.PRODUCT_OR_STORE_NOT_FOUND + ": 商品不存在，ID=" + lineCommand.getProductId()));
+            requirePurchasableUnit(product.getId(), purchaseItem.getUnit());
+            ProductUnit baseUnit = requireBaseUnit(product.getId());
+            UnitConversionSnapshot expected = productUnitService.toBaseQuantity(
+                    product.getId(), purchaseItem.getUnit(), purchaseItem.getQuantity());
+            PreparedReceiptLine preparedLine = new PreparedReceiptLine(lineCommand, purchaseItem, baseUnit);
+            if (lineCommand.getBatches() == null || lineCommand.getBatches().isEmpty()) {
+                throw new IllegalArgumentException("收货批次不能为空");
+            }
+            for (ReceiptBatchCommand batchCommand : lineCommand.getBatches()) {
+                PreparedReceiptBatch preparedBatch = prepareBatch(product.getId(), baseUnit, batchCommand);
+                preparedLine.batches.add(preparedBatch);
+            }
+            BigDecimal previouslyReceived = zero(receiptBatchRepository
+                    .sumBaseQuantityByPurchaseOrderItemId(purchaseItem.getId()));
+            if (previouslyReceived.add(preparedLine.totalBaseQuantity()).compareTo(expected.baseQuantity()) > 0) {
+                overReceipt = true;
+            }
+            preparedLines.add(preparedLine);
         }
-        
-        // 6. 更新采购单状态为已入库
-        order.completeInbound();
-        order.setUpdatedAt(LocalDateTime.now());
-        purchaseRepository.save(order);
+        if (overReceipt && !hasText(command.getExceptionReason())) {
+            throw new IllegalArgumentException("累计收货超过采购数量，必须填写exceptionReason");
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        InventoryReceipt receipt = new InventoryReceipt();
+        receipt.setReceiptNo(newReceiptNo(now));
+        receipt.setPurchaseOrderId(order.getId());
+        receipt.setSupplierId(order.getSupplierId());
+        receipt.setStoreId(order.getStoreId());
+        receipt.setStatus("RECEIVED");
+        receipt.setReceivedAt(now);
+        receipt.setReceiverId(receiverId);
+        receipt.setRemark(overReceipt ? appendAuditReason(command.getRemark(), command.getExceptionReason()) : command.getRemark());
+        receipt.setCreatedAt(now);
+        receipt.setUpdatedAt(now);
+        receiptRepository.save(receipt);
+
+        List<InventoryReceiptBatch> persistedBatches = new ArrayList<>();
+        int lineNo = 1;
+        int batchNo = 1;
+        for (PreparedReceiptLine preparedLine : preparedLines) {
+            InventoryReceiptLine receiptLine = new InventoryReceiptLine();
+            receiptLine.setReceiptId(receipt.getId());
+            receiptLine.setLineNo(lineNo++);
+            receiptLine.setPurchaseOrderItemId(preparedLine.purchaseItem.getId());
+            receiptLine.setProductId(preparedLine.purchaseItem.getProductId());
+            receiptLine.setStoreId(order.getStoreId());
+            receiptLine.setRemark(preparedLine.command.getRemark());
+            receiptLine.setCreatedAt(now);
+            receiptLineRepository.save(receiptLine);
+            for (PreparedReceiptBatch preparedBatch : preparedLine.batches) {
+                InventoryReceiptBatch receiptBatch = new InventoryReceiptBatch();
+                receiptBatch.setReceiptLineId(receiptLine.getId());
+                receiptBatch.setProductId(preparedLine.purchaseItem.getProductId());
+                receiptBatch.setStoreId(order.getStoreId());
+                receiptBatch.setSupplierBatchNo(preparedBatch.command.getSupplierBatchNo());
+                receiptBatch.setInternalReceiptBatchNo("INTERNAL-RECEIPT-" + receipt.getReceiptNo() + "-" + batchNo++);
+                receiptBatch.setOriginalUnitId(preparedBatch.originalUnit.getId());
+                receiptBatch.setOriginalUnitName(preparedBatch.originalUnit.getUnitName());
+                receiptBatch.setOriginalQuantity(preparedBatch.command.getOriginalQuantity().setScale(8, RoundingMode.HALF_UP));
+                receiptBatch.setOriginalUnitCost(preparedBatch.command.getOriginalUnitCost().setScale(8, RoundingMode.HALF_UP));
+                receiptBatch.setBaseUnitId(preparedLine.baseUnit.getId());
+                receiptBatch.setBaseQuantity(preparedBatch.baseQuantity);
+                receiptBatch.setBaseUnitCost(preparedBatch.baseUnitCost);
+                receiptBatch.setDateStatus(preparedBatch.dateStatus);
+                receiptBatch.setProductionDate(preparedBatch.command.getProductionDate());
+                receiptBatch.setExpiryDate(preparedBatch.command.getExpiryDate());
+                receiptBatch.setInspectionReference(preparedBatch.command.getInspectionReference());
+                receiptBatch.setReceiverId(receiverId);
+                receiptBatch.setReceivedAt(now);
+                receiptBatch.setCreatedAt(now);
+                receiptBatchRepository.save(receiptBatch);
+                persistedBatches.add(receiptBatch);
+            }
+        }
+
+        BatchBalanceService balanceService = batchBalanceServiceProvider.getIfAvailable();
+        if (balanceService != null) {
+            for (InventoryReceiptBatch persistedBatch : persistedBatches) {
+                balanceService.increaseFromReceipt(receipt.getId(), persistedBatch);
+            }
+        }
+        // Task 4 尚未提供受事务保护的门店余额事实，当前不写 avgCostPrice 展示缓存。
+        if (isOrderFullyReceived(orderItems)) {
+            order.completeInbound();
+            order.setUpdatedAt(now);
+            purchaseRepository.save(order);
+        }
+        return receipt.getId();
     }
-    
-    /**
-     * 更新商品平均成本（移动加权平均）
-     * 
-     * 公式：
-     * avg_cost_price_new = (old_avg_cost_price * old_total_qty + item.qty * item.price) / (old_total_qty + item.qty)
-     * 
-     * 边界情况：若 old_total_qty = 0，则 avg_cost_price_new = price
-     */
-    private void updateProductAvgCostPrice(Long productId, BigDecimal qty, BigDecimal price) {
-        // 1. 查询商品当前平均成本
-        Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new IllegalArgumentException("商品不存在"));
-        
-        BigDecimal oldAvgCostPrice = product.getAvgCostPrice();
-        if (oldAvgCostPrice == null) {
-            oldAvgCostPrice = BigDecimal.ZERO;
-        }
-        
-        // 2. 查询商品在全门店的总库存数量
-        BigDecimal oldTotalQty = batchRepository.sumQuantityByProduct(productId);
-        if (oldTotalQty == null) {
-            oldTotalQty = BigDecimal.ZERO;
-        }
-        
-        // 3. 计算新的平均成本
-        BigDecimal newAvgCostPrice;
-        if (oldTotalQty.compareTo(BigDecimal.ZERO) == 0) {
-            // 边界情况：如果当前总库存为0，则新平均成本 = 本次进价
-            newAvgCostPrice = price;
-        } else {
-            // 移动加权平均公式
-            BigDecimal numerator = oldAvgCostPrice.multiply(oldTotalQty).add(qty.multiply(price));
-            BigDecimal denominator = oldTotalQty.add(qty);
-            newAvgCostPrice = numerator.divide(denominator, 2, RoundingMode.HALF_UP);
-        }
-        
-        // 4. 更新商品平均成本
-        product.setAvgCostPrice(newAvgCostPrice);
-        productRepository.save(product);
+
+    private PurchaseOrder lockPurchaseOrder(Long purchaseOrderId) {
+        // 收货事务以采购单行锁为边界，后续状态和累计读取均受该锁串行化保护。
+        return purchaseRepository.findByIdForUpdate(purchaseOrderId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        PurchaseErrorCode.PURCHASE_ORDER_NOT_FOUND + ": 采购单不存在"));
     }
-    
+
+    private void checkCanReceive(PurchaseOrder order) {
+        if (order.isInbound()) {
+            throw new IllegalArgumentException(PurchaseErrorCode.PURCHASE_ORDER_ALREADY_INBOUND + ": 采购单已全部收货");
+        }
+        if (!domainService.checkCanInbound(order)) {
+            throw new IllegalArgumentException(PurchaseErrorCode.PURCHASE_ORDER_STATUS_INVALID + ": 采购单状态不允许收货");
+        }
+    }
+
+    private PurchaseInboundCommand.InboundItem legacyInboundItem(PurchaseInboundCommand command, PurchaseOrderItem item) {
+        if (command.getItems() == null || command.getItems().isEmpty()) {
+            return null;
+        }
+        if (command.getItems().size() != 1 || !item.getProductId().equals(command.getItems().get(0).getProductId())) {
+            throw new IllegalArgumentException("旧入库接口的实际明细不唯一，请使用采购收货接口");
+        }
+        return command.getItems().get(0);
+    }
+
+    private PurchaseOrderItem findPurchaseItem(List<PurchaseOrderItem> items, Long purchaseOrderItemId) {
+        return items.stream().filter(item -> item.getId().equals(purchaseOrderItemId)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("采购明细不属于当前采购单: " + purchaseOrderItemId));
+    }
+
+    private ProductUnit requirePurchasableUnit(Long productId, String unit) {
+        ProductUnit productUnit = productUnitService.requireEnabledUnit(productId, unit, ProductUnitService.UnitOperation.PURCHASE);
+        if (productUnit.getId() == null) {
+            throw new IllegalArgumentException("SKU单位尚未确认，不能写入收货事实");
+        }
+        return productUnit;
+    }
+
+    private ProductUnit requireBaseUnit(Long productId) {
+        return productUnitService.getUnits(productId).stream()
+                .filter(ProductUnit::isBase)
+                .filter(unit -> unit.getId() != null)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("SKU缺少已确认的基准单位，不能写入收货事实"));
+    }
+
+    private PreparedReceiptBatch prepareBatch(Long productId, ProductUnit baseUnit, ReceiptBatchCommand batchCommand) {
+        if (batchCommand == null || !hasText(batchCommand.getOriginalUnit())
+                || batchCommand.getOriginalQuantity() == null || batchCommand.getOriginalQuantity().compareTo(BigDecimal.ZERO) <= 0
+                || batchCommand.getOriginalUnitCost() == null || batchCommand.getOriginalUnitCost().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("收货批次的单位、数量和单价必须完整且大于0");
+        }
+        boolean hasProductionDate = batchCommand.getProductionDate() != null;
+        boolean hasExpiryDate = batchCommand.getExpiryDate() != null;
+        if (hasProductionDate != hasExpiryDate) {
+            throw new IllegalArgumentException("生产日期和有效期必须同时提供，或同时缺失并记录UNKNOWN");
+        }
+        if (hasProductionDate && batchCommand.getProductionDate().isAfter(batchCommand.getExpiryDate())) {
+            throw new IllegalArgumentException("生产日期不能晚于有效期");
+        }
+        ProductUnit originalUnit = requirePurchasableUnit(productId, batchCommand.getOriginalUnit());
+        UnitConversionSnapshot conversion = productUnitService.toBaseQuantity(
+                productId, batchCommand.getOriginalUnit(), batchCommand.getOriginalQuantity());
+        BigDecimal baseUnitCost = batchCommand.getOriginalUnitCost()
+                .divide(conversion.baseQuantityPerUnit(), 8, RoundingMode.HALF_UP);
+        return new PreparedReceiptBatch(batchCommand, originalUnit, conversion.baseQuantity(), baseUnitCost,
+                hasProductionDate ? "KNOWN" : "UNKNOWN");
+    }
+
+    private boolean isOrderFullyReceived(List<PurchaseOrderItem> orderItems) {
+        for (PurchaseOrderItem item : orderItems) {
+            UnitConversionSnapshot expected = productUnitService.toBaseQuantity(item.getProductId(), item.getUnit(), item.getQuantity());
+            BigDecimal received = zero(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(item.getId()));
+            if (received.compareTo(expected.baseQuantity()) < 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String newReceiptNo(LocalDateTime now) {
+        return "RCV-" + now.format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")) + "-"
+                + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    }
+
+    private String appendAuditReason(String remark, String exceptionReason) {
+        String audit = "OVER_RECEIPT: " + exceptionReason.trim();
+        return hasText(remark) ? remark.trim() + " | " + audit : audit;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+
+    private BigDecimal zero(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
+    }
+
+    private static final class PreparedReceiptLine {
+        private final ReceivePurchaseCommand.ReceiptLineCommand command;
+        private final PurchaseOrderItem purchaseItem;
+        private final ProductUnit baseUnit;
+        private final List<PreparedReceiptBatch> batches = new ArrayList<>();
+
+        private PreparedReceiptLine(ReceivePurchaseCommand.ReceiptLineCommand command, PurchaseOrderItem purchaseItem,
+                                    ProductUnit baseUnit) {
+            this.command = command;
+            this.purchaseItem = purchaseItem;
+            this.baseUnit = baseUnit;
+        }
+
+        private BigDecimal totalBaseQuantity() {
+            return batches.stream().map(batch -> batch.baseQuantity).reduce(BigDecimal.ZERO, BigDecimal::add);
+        }
+    }
+
+    private static final class PreparedReceiptBatch {
+        private final ReceiptBatchCommand command;
+        private final ProductUnit originalUnit;
+        private final BigDecimal baseQuantity;
+        private final BigDecimal baseUnitCost;
+        private final String dateStatus;
+
+        private PreparedReceiptBatch(ReceiptBatchCommand command, ProductUnit originalUnit, BigDecimal baseQuantity,
+                                     BigDecimal baseUnitCost, String dateStatus) {
+            this.command = command;
+            this.originalUnit = originalUnit;
+            this.baseQuantity = baseQuantity;
+            this.baseUnitCost = baseUnitCost;
+            this.dateStatus = dateStatus;
+        }
+    }
+
     /**
      * 查询采购单详情
      */

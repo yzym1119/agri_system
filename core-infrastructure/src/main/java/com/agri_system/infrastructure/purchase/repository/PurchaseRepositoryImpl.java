@@ -41,6 +41,11 @@ public class PurchaseRepositoryImpl implements PurchaseRepository {
     public Optional<PurchaseOrder> findById(Long id) {
         return Optional.ofNullable(purchaseMapper.selectOneById(id));
     }
+
+    @Override
+    public Optional<PurchaseOrder> findByIdForUpdate(Long id) {
+        return Optional.ofNullable(purchaseMapper.findByIdForUpdate(id));
+    }
     
     @Override
     public Optional<PurchaseOrder> findByOrderNo(String orderNo) {

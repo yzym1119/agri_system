@@ -20,8 +20,10 @@ public interface PurchaseMapper extends BaseMapper<PurchaseOrder> {
      */
     @Select("SELECT `purchase_no` FROM `purchase_order` WHERE `purchase_no` LIKE CONCAT(#{prefix}, '%') ORDER BY `purchase_no` DESC LIMIT 1")
     String findMaxOrderNoByPrefix(@Param("prefix") String prefix);
+
+    @Select("SELECT * FROM purchase_order WHERE id = #{id} FOR UPDATE")
+    PurchaseOrder findByIdForUpdate(@Param("id") Long id);
     
     @Update("UPDATE purchase_order SET status = #{status}, updated_at = NOW() WHERE id = #{id}")
     int updateStatus(@Param("id") Long id, @Param("status") Integer status);
 }
-
