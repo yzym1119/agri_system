@@ -499,7 +499,11 @@ public class InventoryApplicationService {
         Inventory inventory = inventoryRepository.findByStoreAndProduct(storeId, productId)
                 .orElseGet(() -> {
                     // 如果快照不存在，创建并同步
-                    domainService.refreshTotalStock(storeId, productId);
+                    // 已切换 SKU 的快照由新链投影(从批次货位余额聚合)维护,禁止用 legacy inventory_batch 惰性物化,
+                    // 否则会写出与新链背离的快照(Critical 2 闸门补全:读路径的惰性写入同样受守卫)
+                    if (!batchBalanceService.isBatchLocationEnabled(storeId, productId)) {
+                        domainService.refreshTotalStock(storeId, productId);
+                    }
                     return inventoryRepository.findByStoreAndProduct(storeId, productId)
                             .orElse(new Inventory());
                 });
