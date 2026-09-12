@@ -260,6 +260,9 @@ public class BatchBalanceService {
     }
 
     private void projectInventory(Long storeId, Long productId) {
+        inventoryRepository.createIfNotExists(storeId, productId, BigDecimal.ZERO);
+        // 悲观锁串行化同门店同商品的并发投影,避免无锁 SUM 互相覆盖(Important 5)
+        inventoryRepository.findByStoreAndProductForUpdate(storeId, productId);
         inventoryRepository.updateSnapshot(storeId, productId,
                 zero(balanceRepository.sumBaseQuantityByStoreAndProduct(storeId, productId)));
     }

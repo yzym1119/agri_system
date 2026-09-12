@@ -135,7 +135,7 @@ class RetailFactChainMigrationTest {
 
     @Test
     void retailFactChainMigrationCreatesAllFactTablesAndSnapshots() throws SQLException {
-        assertEquals("121", flyway.info().current().getVersion().getVersion());
+        assertEquals("123", flyway.info().current().getVersion().getVersion());
 
         List.of(
                 "product_unit",
@@ -189,11 +189,12 @@ class RetailFactChainMigrationTest {
         assertEquals(migrationFiles.size(), versions.size(), "所有 V*.sql 文件都必须被枚举和解析");
         assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
         assertTrue(versions.stream().allMatch(version -> version.compareTo(MigrationVersion.fromVersion("1")) >= 0
-                        && version.compareTo(MigrationVersion.fromVersion("121")) <= 0),
-                "存在超出 V1..V121 范围的迁移版本");
+                        && version.compareTo(MigrationVersion.fromVersion("123")) <= 0),
+                "存在超出 V1..V123 范围的迁移版本");
         assertTrue(versions.containsAll(List.of(MigrationVersion.fromVersion("119"),
-                MigrationVersion.fromVersion("120"), MigrationVersion.fromVersion("121"))), "缺少 V119/V120/V121");
-        assertEquals("121", flyway.info().current().getVersion().getVersion());
+                MigrationVersion.fromVersion("120"), MigrationVersion.fromVersion("121"),
+                MigrationVersion.fromVersion("123"))), "缺少 V119/V120/V121/V123");
+        assertEquals("123", flyway.info().current().getVersion().getVersion());
     }
 
     @Test

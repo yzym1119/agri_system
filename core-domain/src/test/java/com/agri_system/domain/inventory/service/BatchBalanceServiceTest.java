@@ -60,6 +60,7 @@ class BatchBalanceServiceTest {
         verify(balanceRepository).save(source);
         verify(balanceRepository).save(destination);
         verify(movementRepository).append(any());
+        verify(inventoryRepository).findByStoreAndProductForUpdate(1L, 5L);
     }
 
     @Test
