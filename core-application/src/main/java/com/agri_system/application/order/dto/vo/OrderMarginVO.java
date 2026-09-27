@@ -40,11 +40,6 @@ public record OrderMarginVO(
     /** 估算或不可用口径：证据含 UNKNOWN 或成本缺失，不得计入实际毛利。 */
     public static final String COST_CONFIDENCE_ESTIMATED_OR_UNAVAILABLE = "ESTIMATED_OR_UNAVAILABLE";
 
-    /** 该销售是否既无实际成本又无可用估算成本（成本缺失口径）。 */
-    public boolean costUnavailable() {
-        return actualCost == null && estimatedCost == null;
-    }
-
     /** 由订单行及其批次归属事实派生毛利口径；无归属事实时退化为历史快照估算。 */
     public static OrderMarginVO from(OrderItem item, List<OrderItemBatchAllocation> allocations) {
         BigDecimal saleAmount = defaultZero(item.getUnitPrice()).multiply(defaultZero(item.getQuantity()));

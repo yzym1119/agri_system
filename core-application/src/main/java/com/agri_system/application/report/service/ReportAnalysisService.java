@@ -45,10 +45,9 @@ public class ReportAnalysisService {
     private final CustomerMapper customerMapper;
     private final ProductMapper productMapper;
     private final AfterSalesMapper afterSalesMapper;
-    /** 批次归属事实仓储；为 null 时等同全部订单走历史估算口径（兼容既有测试构造）。 */
+    /** 批次归属事实仓储，销售趋势按实际/估算/成本缺失三口径分别归集。 */
     private final OrderItemBatchAllocationRepository allocationRepository;
 
-    /** 生产构造：销售趋势按实际/估算/成本缺失三口径分别归集。 */
     @Autowired
     public ReportAnalysisService(OrderMapper orderMapper,
                                  OrderItemMapper orderItemMapper,
@@ -68,22 +67,6 @@ public class ReportAnalysisService {
         this.productMapper = productMapper;
         this.afterSalesMapper = afterSalesMapper;
         this.allocationRepository = allocationRepository;
-    }
-
-    /**
-     * 兼容既有测试的构造：无批次归属事实来源，等价于全部订单为历史估算口径；
-     * legacy 字段（costAmount/profit/profitRate）与既有实现数值一致。
-     */
-    ReportAnalysisService(OrderMapper orderMapper,
-                          OrderItemMapper orderItemMapper,
-                          InventoryBatchMapper inventoryBatchMapper,
-                          CreditAccountMapper creditAccountMapper,
-                          CreditRepaymentLogMapper repaymentLogMapper,
-                          CustomerMapper customerMapper,
-                          ProductMapper productMapper,
-                          AfterSalesMapper afterSalesMapper) {
-        this(orderMapper, orderItemMapper, inventoryBatchMapper, creditAccountMapper, repaymentLogMapper,
-                customerMapper, productMapper, afterSalesMapper, null);
     }
 
     /**
@@ -329,11 +312,9 @@ public class ReportAnalysisService {
 
         // 批次归属事实按订单批量加载（每单一次查询），避免逐行 N+1
         Map<Long, List<OrderItemBatchAllocation>> allocationsByOrder = new LinkedHashMap<>();
-        if (allocationRepository != null) {
-            for (Long orderId : orderIds) {
-                List<OrderItemBatchAllocation> orderAllocations = allocationRepository.findByOrderId(orderId);
-                allocationsByOrder.put(orderId, orderAllocations == null ? List.of() : orderAllocations);
-            }
+        for (Long orderId : orderIds) {
+            List<OrderItemBatchAllocation> orderAllocations = allocationRepository.findByOrderId(orderId);
+            allocationsByOrder.put(orderId, orderAllocations == null ? List.of() : orderAllocations);
         }
 
         // 按日期聚合：实际/估算/成本缺失三口径严格隔离，估算绝不并入实际；
@@ -372,6 +353,9 @@ public class ReportAnalysisService {
                 vo.setCostAmount(vo.getCostAmount().add(margin.estimatedCost()));
             } else {
                 vo.setCostUnavailableSaleAmount(vo.getCostUnavailableSaleAmount().add(sale));
+                // 恢复 legacy 字面表达式：快照缺失时按 0 × 数量 计入，保持聚合 costAmount 的原始精度
+                BigDecimal cost = defaultZero(item.getCostPriceSnapshot()).multiply(defaultZero(item.getQuantity()));
+                vo.setCostAmount(vo.getCostAmount().add(cost));
             }
         }
 

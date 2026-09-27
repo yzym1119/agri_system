@@ -79,6 +79,8 @@ public class OrderCostAllocationService {
         Long baseUnitId = resolvePersistedBaseUnitId(item.getProductId());
         if (baseUnitId == null) {
             // legacy 投影单位没有持久化ID，写入会破坏 (base_unit_id, product_id) 外键，宁缺毋滥
+            log.warn("刷新订单行批次成本快照跳过：无持久化基准单位, orderItemId={}, productId={}",
+                    orderItemId, item.getProductId());
             return;
         }
         BigDecimal unitCost = margin.actualCost().divide(totalBaseQuantity, UNIT_COST_SCALE, RoundingMode.HALF_UP);

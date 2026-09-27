@@ -3,6 +3,7 @@ package com.agri_system.application.report.service;
 import com.agri_system.application.report.dto.SalesTrendVO;
 import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.order.model.OrderItem;
+import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepository;
 import com.agri_system.infrastructure.after_sales.mapper.AfterSalesMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditAccountMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditRepaymentLogMapper;
@@ -48,6 +49,8 @@ class ProfitCalculationTest {
     private ProductMapper productMapper;
     @Mock
     private AfterSalesMapper afterSalesMapper;
+    @Mock
+    private OrderItemBatchAllocationRepository allocationRepository;
 
     private ReportAnalysisService reportAnalysisService;
 
@@ -55,7 +58,8 @@ class ProfitCalculationTest {
     void setUp() {
         reportAnalysisService = new ReportAnalysisService(
                 orderMapper, orderItemMapper, inventoryBatchMapper,
-                creditAccountMapper, repaymentLogMapper, customerMapper, productMapper, afterSalesMapper);
+                creditAccountMapper, repaymentLogMapper, customerMapper, productMapper, afterSalesMapper,
+                allocationRepository);
     }
 
     @Test
