@@ -354,9 +354,11 @@
                   {{ row.observationWindowDays != null ? row.observationWindowDays + ' 天' : '-' }}
                 </template>
               </el-table-column>
-              <el-table-column label="置信度" width="100" align="right">
+              <el-table-column label="置信度" width="110" align="center">
                 <template #default="{ row }">
-                  {{ row.confidence != null ? Math.round(row.confidence * 100) + '%' : '-' }}
+                  <el-tag v-if="row.confidence === 'SUFFICIENT_DATA'" type="success" size="small">数据充分</el-tag>
+                  <el-tag v-else-if="row.confidence === 'INSUFFICIENT_DATA'" type="info" size="small">数据不足</el-tag>
+                  <span v-else>{{ row.confidence || '-' }}</span>
                 </template>
               </el-table-column>
               <el-table-column prop="message" label="建议说明" min-width="220">

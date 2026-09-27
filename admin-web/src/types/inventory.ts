@@ -189,7 +189,7 @@ export interface InventoryRiskVO {
   daysToExpiry?: number | null
   observationWindowDays?: number | null
   evidenceCount?: number | null
-  confidence?: number | null
+  confidence?: string | null
   message?: string | null
 }
 

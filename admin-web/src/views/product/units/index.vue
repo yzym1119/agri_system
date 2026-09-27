@@ -193,7 +193,7 @@ const openUnits = async (product: ProductDetailVO) => {
       barcode: unit.barcode ?? '',
       status: unit.status ?? 1,
       readOnly: unit.readOnly === true,
-      _projectionStatus: unit.projectionStatus
+      projectionStatus: unit.projectionStatus
     } as any))
     if (unitRows.value.length === 0) {
       // 无单位记录时给出基准单位占位行，便于直接维护
