@@ -108,6 +108,20 @@ ON DUPLICATE KEY UPDATE
 
 ## 4. 切换后验证
 
+**投影前提与顺序**（激活 ≠ 投影完成，本节验证须按序执行）：
+
+- 前提：`inventory.quantity` 快照在首次投影之前仍是 **legacy 主单位**口径；§3 的
+  纯 SQL 激活**不会**触发投影 —— `projectInventory` 只由新链写入触发
+  （`move` / `increaseFromReceipt` 两条路径），激活本身不产生任何事实。
+- 对 base≠main 的 SKU（例：主单位箱、基准单位瓶），激活后立即跑本节验证会出现
+  L1/L2 `[FAIL]`：这是**未投影窗口的预期形态，不是数据差异，不触发 §6 回滚**。
+- 正确顺序：§3 激活 → 对该 SKU 执行**一次受控新链操作**（真实业务留痕的最小
+  `move` 或收货）→ 确认快照已被改写为基准单位（`inventory.quantity` 等于
+  Σ`inventory_batch_balance.base_quantity`）→ 再跑本节基线验证；此后（含 §6
+  日常对账）任何 `[FAIL]` 均为真实差异，按 §6 回滚。
+- 若窗口内无法立即安排受控新链操作：**不得把窗口内 L1/L2 FAIL 当作验收结论**；
+  须待首次新链写入完成投影后重验，并在留证中注明「快照尚未投影（已知例外）」。
+
 对刚切换的范围跑三层对账（只读）：
 
 ```bash
@@ -122,7 +136,8 @@ scripts/verify-retail-fact-chain.sh --host 127.0.0.1 --port 3306 --user root --p
 - L1 换算口径（真实 schema，与 preflight B5 同源）：未启用 SKU 按 `product_unit`
   （`unit_name = product.main_unit` 且 `status=1`）的 `base_quantity_per_unit`
   把主单位存量换算为基准单位；商品无任何单位配置行时按 legacy 投影语义
-  主单位=基准（factor=1）；已启用 SKU 的快照已被投影改写为基准单位（factor=1）。
+  主单位=基准（factor=1）；已启用 SKU 的快照**在投影完成后**才被改写为基准单位
+  （factor=1，投影前提见本节「投影前提与顺序」）。
   解析不到会以 `UNRESOLVED` 报失败，绝不静默按 0 计。
 - 数据级验收证据（上线前执行）：10c 的 `RetailFactChainEndToEndTest`
   （`api-admin`，真实 MySQL，`-Dmysql.it=true` 门控）覆盖切换、守卫、L1–L3 对账与回滚；
@@ -157,7 +172,9 @@ scripts/verify-retail-fact-chain.sh --host 127.0.0.1 --port 3306 --user root --p
 
 - 建议默认：**每营业日营业前后各跑一次 `verify-retail-fact-chain.sh`**
   （范围 = 当前已启用的 SKU；`--tolerance` 默认 0）。
-- **任何一层出现非零差异即回滚并留证**（即回滚优先于继续观察）。
+- **任何一层出现非零差异即回滚并留证**（即回滚优先于继续观察）；该触发适用于
+  **投影完成后**的验证与日常对账，§4 定义的未投影窗口内 L1/L2 差异不作为回滚
+  触发（仍须尽快完成一次新链操作完成投影并复验）。
 - 每次运行输出（stdout/stderr、退出码）归档留证。
 - 频率、差异分级与容忍阈值当前均为占位建议：**真实阈值 defer 到上线时由业务与运营
   再次确认**（系统尚未上线，参数不得当作已定策略）。

@@ -41,6 +41,8 @@
 #
 # 提示: 日常对账请用 --stores/--products 限定到当前已切换范围。L1 对未完成
 # 历史初始化的 SKU 会如实报告差异 (它们尚未进入新链)。
+# 刚激活但尚无任何新链写入(未投影)的 SKU: L1/L2 会如实报告主/基准单位差异,
+# 先完成一次新链操作触发投影后再验 (见 runbook §4「投影前提与顺序」)。
 # =====================================================================
 
 set -euo pipefail
@@ -64,10 +66,10 @@ die() {
     exit 2
 }
 
-value_of() { # $@ = 完整参数序列; 校验其后至少有一个取值
+value_of() { # $@ = 完整参数序列; 校验其后至少有一个取值 (拒绝把下一个选项当作取值)
     local name="$1"
     shift
-    if [[ $# -lt 1 ]]; then
+    if [[ $# -lt 1 || "$1" == --* ]]; then
         die "参数 $name 缺少取值"
     fi
 }
@@ -102,7 +104,11 @@ MYSQL_BIN="${MYSQL_BIN:-mysql}"
 command -v "$MYSQL_BIN" >/dev/null 2>&1 || die "找不到 mysql 客户端 (可用 MYSQL_BIN 指定路径)"
 
 MYSQL_ARGS=("--host=$HOST" "--port=$PORT" "--user=$DB_USER" "--batch" "--raw" "-N")
-[[ -n "$DB_PASSWORD" ]] && export MYSQL_PWD="$DB_PASSWORD"
+if [[ -n "$DB_PASSWORD" ]]; then
+    export MYSQL_PWD="$DB_PASSWORD"
+else
+    unset MYSQL_PWD
+fi
 
 run_sql() {
     "$MYSQL_BIN" "${MYSQL_ARGS[@]}" "--database=$DATABASE" -e "$1"

@@ -249,7 +249,7 @@ WHERE l.unresolved_rows > 0
    OR (l.legacy_base_total IS NULL AND COALESCE(n.new_base_total, 0) <> 0)
    OR (l.legacy_base_total IS NOT NULL
        AND ABS(l.legacy_base_total - COALESCE(n.new_base_total, 0)) > @tolerance)
-ORDER BY severity DESC, pr.store_id, pr.product_id;
+ORDER BY CASE severity WHEN 'BLOCKER' THEN 0 ELSE 1 END, pr.store_id, pr.product_id;
 
 -- ---------------------------------------------------------------------
 -- B6 重复默认货位 (BLOCKER)

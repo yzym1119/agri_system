@@ -74,7 +74,7 @@ SELECT s.id AS product_id,
        END AS reason,
        CASE WHEN s.proposal_status = 'AUTO_READY'
             THEN CONCAT('INSERT INTO product_unit (product_id, unit_name, base_quantity_per_unit, is_base_unit, allow_purchase, allow_sale, allow_inventory, allow_transfer, status) VALUES (',
-                        s.id, ', ''', REPLACE(TRIM(s.main_unit), '''', ''''''), ''', 1, 1, 1, 1, 1, 1, 1);')
+                        s.id, ', ', QUOTE(TRIM(s.main_unit)), ', 1, 1, 1, 1, 1, 1, 1);')
             ELSE NULL
        END AS apply_sql
 FROM scoped s
