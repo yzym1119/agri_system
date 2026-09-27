@@ -271,7 +271,170 @@
           <el-empty v-if="!smartLoading && smartList.length === 0" description="暂无推荐数据（需要有历史销售记录）" />
         </el-card>
       </el-tab-pane>
+
+      <!-- 风险建议（只提示，不自动执行） -->
+      <el-tab-pane label="风险建议" name="risks">
+        <el-card shadow="never">
+          <template #header>
+            <div class="toolbar">
+              <div class="toolbar-left">
+                <el-select
+                  v-model="riskStoreId"
+                  placeholder="请选择门店"
+                  clearable
+                  style="width: 200px"
+                  @change="loadRisks"
+                >
+                  <el-option
+                    v-for="store in stores"
+                    :key="store.id"
+                    :label="store.name"
+                    :value="store.id"
+                  />
+                </el-select>
+                <el-button
+                  type="primary"
+                  style="margin-left: 12px"
+                  :disabled="!riskStoreId"
+                  :loading="riskLoading"
+                  @click="loadRisks"
+                >
+                  <el-icon><Refresh /></el-icon>
+                  刷新
+                </el-button>
+              </div>
+              <div class="toolbar-right">
+                <el-tag type="info" effect="plain">建议仅供参考，不自动执行任何动作</el-tag>
+              </div>
+            </div>
+          </template>
+
+          <el-alert
+            v-if="!riskStoreId"
+            type="info"
+            :closable="false"
+            show-icon
+            title="请先选择门店"
+            description="风险建议按门店查询，选择门店后展示该门店的日期与库存风险提示。"
+          />
+
+          <template v-else>
+            <el-table :data="riskList" v-loading="riskLoading" stripe border style="width: 100%">
+              <el-table-column label="风险类型" width="130">
+                <template #default="{ row }">
+                  <el-tag :type="riskKindTag(row.kind)" size="small" effect="plain">
+                    {{ riskKindText(row.kind) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="商品/批次" min-width="200">
+                <template #default="{ row }">
+                  <div>{{ row.productName || '-' }}</div>
+                  <div class="risk-sub-text">
+                    {{ row.productCode || '' }}
+                    <span v-if="row.internalReceiptBatchNo">｜批次 {{ row.internalReceiptBatchNo }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="当前库存" width="110" align="right">
+                <template #default="{ row }">
+                  {{ row.currentStock != null ? row.currentStock : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column label="日期情况" width="180">
+                <template #default="{ row }">
+                  <div>{{ riskDateText(row) }}</div>
+                  <div v-if="row.daysToExpiry != null" class="risk-sub-text">
+                    距有效期 {{ row.daysToExpiry }} 天
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="观测窗口" width="110" align="right">
+                <template #default="{ row }">
+                  {{ row.observationWindowDays != null ? row.observationWindowDays + ' 天' : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column label="置信度" width="100" align="right">
+                <template #default="{ row }">
+                  {{ row.confidence != null ? Math.round(row.confidence * 100) + '%' : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="message" label="建议说明" min-width="220">
+                <template #default="{ row }">
+                  {{ row.message || '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="130" fixed="right">
+                <template #default="{ row }">
+                  <el-button
+                    type="primary"
+                    link
+                    size="small"
+                    :disabled="!riskEntityId(row)"
+                    @click="openDecisionDialog(row)"
+                  >
+                    记录处理决策
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+
+            <el-empty v-if="!riskLoading && riskList.length === 0" description="暂无风险建议" />
+          </template>
+        </el-card>
+      </el-tab-pane>
     </el-tabs>
+
+    <!-- 记录处理决策（仅追加留痕，不触发任何自动动作） -->
+    <el-dialog v-model="decisionVisible" title="记录处理决策" width="520px">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="仅记录人工决策留痕"
+        description="保存后不会自动执行任何动作，请按实际情况线下处理。"
+        class="decision-alert"
+      />
+      <el-descriptions v-if="decisionRisk" :column="1" border size="small" class="decision-summary">
+        <el-descriptions-item label="风险类型">
+          {{ riskKindText(decisionRisk.kind) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="商品">
+          {{ decisionRisk.productName || '-' }}（{{ decisionRisk.productCode || '-' }}）
+        </el-descriptions-item>
+        <el-descriptions-item label="建议说明">
+          {{ decisionRisk.message || '-' }}
+        </el-descriptions-item>
+      </el-descriptions>
+      <el-form label-width="90px">
+        <el-form-item label="决策动作" required>
+          <el-select v-model="decisionForm.decisionAction" placeholder="请选择" style="width: 100%">
+            <el-option
+              v-for="option in decisionActions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="决策原因" required>
+          <el-input
+            v-model="decisionForm.decisionReason"
+            type="textarea"
+            :rows="3"
+            maxlength="200"
+            show-word-limit
+            placeholder="请填写处理原因（必填）"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="decisionVisible = false">取消</el-button>
+        <el-button type="primary" :loading="decisionSubmitting" @click="submitDecision">
+          保存决策
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -279,11 +442,19 @@
 import { ref, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, QuestionFilled, Right } from '@element-plus/icons-vue'
-import { getLowStockWarnings, getOverstockWarnings, type LowStockWarningItem, type OverstockWarningItem } from '@/api/inventory-warning'
+import {
+  getInventoryRisks,
+  getLowStockWarnings,
+  getOverstockWarnings,
+  recordInventoryDecision,
+  type LowStockWarningItem,
+  type OverstockWarningItem
+} from '@/api/inventory-warning'
 import { getSmartThresholdRecommendations } from '@/api/inventory'
 import { updateProduct } from '@/api/product'
 import { getStoreList } from '@/api/store'
 import type { StoreDetailVO } from '@/types/store'
+import type { InventoryDecisionRequest, InventoryRiskVO } from '@/types/inventory'
 
 interface SmartRecommendation {
   productId: number
@@ -304,7 +475,7 @@ interface SmartRecommendation {
   _applying?: boolean
 }
 
-const activeTab = ref<'low-stock' | 'overstock' | 'smart'>('low-stock')
+const activeTab = ref<'low-stock' | 'overstock' | 'smart' | 'risks'>('low-stock')
 const storeId = ref<number | undefined>(undefined)
 const stores = ref<StoreDetailVO[]>([])
 
@@ -324,6 +495,146 @@ const smartLoading = ref(false)
 const applyLoading = ref(false)
 const selectedRows = ref<SmartRecommendation[]>([])
 const smartTableRef = ref()
+
+// 风险建议（只提示，不自动执行）
+const riskStoreId = ref<number | undefined>(undefined)
+const riskList = ref<InventoryRiskVO[]>([])
+const riskLoading = ref(false)
+
+interface DecisionFormState {
+  riskKind: string
+  entityType: 'PRODUCT' | 'BATCH'
+  entityId: number
+  decisionAction: string
+  decisionReason: string
+}
+
+const decisionVisible = ref(false)
+const decisionRisk = ref<InventoryRiskVO | null>(null)
+const decisionSubmitting = ref(false)
+const decisionForm = ref<DecisionFormState>({
+  riskKind: '',
+  entityType: 'PRODUCT',
+  entityId: 0,
+  decisionAction: '',
+  decisionReason: ''
+})
+
+const decisionActions: Array<{ label: string; value: string }> = [
+  { label: '继续销售', value: 'CONTINUE_SALE' },
+  { label: '检查处理', value: 'INSPECT' },
+  { label: '补货', value: 'REPLENISH' },
+  { label: '调拨', value: 'TRANSFER' },
+  { label: '退货给供应商', value: 'RETURN_TO_VENDOR' },
+  { label: '报损', value: 'WRITE_OFF' },
+  { label: '暂停补货', value: 'PAUSE_REPLENISHMENT' },
+  { label: '暂不处理', value: 'NO_ACTION' }
+]
+
+const RISK_KIND_TEXT: Record<string, string> = {
+  DATE_UNKNOWN: '日期未知',
+  EXPIRING: '临期',
+  EXPIRED: '已过期',
+  LOW_STOCK: '低库存',
+  OVERSTOCK: '积压',
+  LOW_MARGIN: '低毛利',
+  DATA_INSUFFICIENT: '数据不足'
+}
+
+const riskKindText = (kind: string): string => RISK_KIND_TEXT[kind] || kind || '-'
+
+const riskKindTag = (kind: string): 'danger' | 'warning' | 'info' | 'success' => {
+  switch (kind) {
+    case 'EXPIRED': return 'danger'
+    case 'EXPIRING':
+    case 'LOW_STOCK':
+    case 'OVERSTOCK':
+      return 'warning'
+    case 'DATE_UNKNOWN':
+    case 'DATA_INSUFFICIENT':
+    default:
+      return 'info'
+  }
+}
+
+const riskDateText = (row: InventoryRiskVO): string => {
+  const parts: string[] = []
+  if (row.productionDate) parts.push(`生产 ${row.productionDate}`)
+  if (row.expiryDate) parts.push(`到期 ${row.expiryDate}`)
+  if (parts.length > 0) return parts.join(' / ')
+  if (row.batchId != null || row.internalReceiptBatchNo) return '日期未知'
+  return '-'
+}
+
+const riskEntityId = (row: InventoryRiskVO): number | null => {
+  if (row.batchId != null) return row.batchId
+  return row.productId ?? null
+}
+
+const loadRisks = async () => {
+  if (!riskStoreId.value) {
+    // 风险建议必须按门店口径查询，未选择门店时不请求、不展示汇总数据
+    riskList.value = []
+    return
+  }
+  riskLoading.value = true
+  try {
+    const data = await getInventoryRisks(riskStoreId.value)
+    riskList.value = Array.isArray(data) ? data : []
+  } catch (e: any) {
+    ElMessage.error(e?.message || '加载风险建议失败')
+    riskList.value = []
+  } finally {
+    riskLoading.value = false
+  }
+}
+
+const openDecisionDialog = (row: InventoryRiskVO) => {
+  const entityId = riskEntityId(row)
+  if (entityId == null) {
+    ElMessage.warning('该风险缺少可留痕的实体信息')
+    return
+  }
+  decisionRisk.value = row
+  decisionForm.value = {
+    riskKind: row.kind,
+    entityType: row.batchId != null ? 'BATCH' : 'PRODUCT',
+    entityId,
+    decisionAction: '',
+    decisionReason: ''
+  }
+  decisionVisible.value = true
+}
+
+const submitDecision = async () => {
+  if (!decisionRisk.value) return
+  const reason = (decisionForm.value.decisionReason || '').trim()
+  if (!decisionForm.value.decisionAction) {
+    ElMessage.warning('请选择决策动作')
+    return
+  }
+  if (!reason) {
+    ElMessage.warning('请填写决策原因')
+    return
+  }
+  decisionSubmitting.value = true
+  try {
+    await recordInventoryDecision({
+      riskKind: decisionForm.value.riskKind,
+      entityType: decisionForm.value.entityType,
+      entityId: decisionForm.value.entityId,
+      decisionAction: decisionForm.value.decisionAction,
+      decisionReason: reason
+    })
+    ElMessage.success('决策已记录（仅留痕，不自动执行任何动作）')
+    decisionVisible.value = false
+    decisionRisk.value = null
+  } catch (e: any) {
+    ElMessage.error(e?.message || '保存决策失败')
+  } finally {
+    decisionSubmitting.value = false
+  }
+}
 
 const loadStores = async () => {
   try {
@@ -484,6 +795,8 @@ watch(activeTab, (tab) => {
     loadOverstock()
   } else if (tab === 'smart') {
     loadSmartRecommendations()
+  } else if (tab === 'risks' && riskStoreId.value) {
+    loadRisks()
   }
 })
 
@@ -542,5 +855,18 @@ onMounted(() => {
   font-size: 12px;
   margin-left: 2px;
   font-weight: normal;
+}
+
+.risk-sub-text {
+  color: #909399;
+  font-size: 12px;
+}
+
+.decision-alert {
+  margin-bottom: 12px;
+}
+
+.decision-summary {
+  margin-bottom: 16px;
 }
 </style>

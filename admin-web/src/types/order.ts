@@ -110,3 +110,42 @@ export interface OrderPageResponse {
   pageSize?: number
   pageNumber?: number
 }
+
+/**
+ * 取货待办工作项VO（零售事实链 Task9：库房取货待办）
+ */
+export interface PickupWorkItemVO {
+  /** 取货请求ID */
+  id: number
+  orderId?: number | null
+  /** 订单号；订单缺失时为 null */
+  orderNo?: string | null
+  orderItemId?: number | null
+  productId?: number | null
+  productCode?: string | null
+  productName?: string | null
+  /** 请求拣货数量（基准单位） */
+  requestedBaseQuantity?: number | null
+  sourceLocationId?: number | null
+  sourceLocationName?: string | null
+  /** PENDING/FULFILLED */
+  status?: string | null
+  createdAt?: string | null
+}
+
+/**
+ * 创建库房取货请求（零售事实链 Task5）
+ */
+export interface PickupRequestCreateDTO {
+  orderItemId: number
+  sourceLocationId?: number | null
+}
+
+/**
+ * 完成库房取货（扫描内部批次标签或显式确认批次与货位）
+ */
+export interface PickupFulfillmentDTO {
+  scannedCode?: string | null
+  batchId?: number | null
+  locationId?: number | null
+}

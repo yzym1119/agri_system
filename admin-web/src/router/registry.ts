@@ -163,6 +163,16 @@ const routeDefinitions: RouteDefinition[] = [
     menuPath: '/product/supplier'
   },
   {
+    name: 'ProductUnit',
+    path: 'units',
+    component: () => import('@/views/product/units/index.vue'),
+    permissions: ['product:unit:query'],
+    title: '单位设置',
+    icon: 'ScaleToOriginal',
+    parentKey: 'product',
+    menuPath: '/product/units'
+  },
+  {
     name: 'PurchaseOrder',
     path: 'purchase/order',
     component: () => import('@/views/purchase/order/index.vue'),
@@ -211,6 +221,36 @@ const routeDefinitions: RouteDefinition[] = [
     icon: 'Warning',
     parentKey: 'inventory',
     menuPath: '/inventory/warning'
+  },
+  {
+    name: 'PurchaseReceipt',
+    path: 'purchase/receipt',
+    component: () => import('@/views/purchase/receipt/index.vue'),
+    permissions: ['purchase:inbound'],
+    title: '收货',
+    icon: 'Van',
+    parentKey: 'inventory',
+    menuPath: '/purchase/receipt'
+  },
+  {
+    name: 'InventoryLocations',
+    path: 'locations',
+    component: () => import('@/views/inventory/locations/index.vue'),
+    permissions: ['inventory:view'],
+    title: '货位',
+    icon: 'Grid',
+    parentKey: 'inventory',
+    menuPath: '/inventory/locations'
+  },
+  {
+    name: 'InventoryPickup',
+    path: 'pickup',
+    component: () => import('@/views/inventory/pickup/index.vue'),
+    permissions: ['order:pickup:verify'],
+    title: '取货',
+    icon: 'Box',
+    parentKey: 'inventory',
+    menuPath: '/inventory/pickup'
   },
   {
     name: 'CustomerList',

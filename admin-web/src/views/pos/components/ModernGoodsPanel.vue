@@ -2,20 +2,29 @@
   <div class="modern-goods-panel">
     <!-- 顶部搜索和Tab -->
     <div class="goods-header">
-      <el-input
-        ref="searchInputRef"
-        v-model="searchKeyword"
-        placeholder="搜索商品/套餐（F1聚焦）"
-        clearable
-        size="large"
-        @keyup.enter="handleSearch"
-        @clear="handleSearch"
-        class="search-input"
-      >
-        <template #prefix>
-          <el-icon><Search /></el-icon>
-        </template>
-      </el-input>
+      <div class="scan-field">
+        <span class="scan-field-label">商品编码（SKU）</span>
+        <el-input
+          ref="searchInputRef"
+          v-model="searchKeyword"
+          placeholder="扫描/搜索商品编码（SKU），F1聚焦"
+          clearable
+          size="large"
+          @keyup.enter="handleSearch"
+          @input="handleKeywordInput"
+          @clear="handleSearch"
+          class="search-input"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <!-- 扫码解析结果：说明识别到的编码类型，商品编码不会打开批次选择 -->
+        <div v-if="scanResult" class="scan-result" :class="`scan-result-${scanResult.type.toLowerCase()}`">
+          <span class="scan-result-type">{{ scanResult.typeText }}</span>
+          <span class="scan-result-text">{{ scanResult.text }}</span>
+        </div>
+      </div>
 
       <div class="goods-tabs">
         <div
@@ -430,9 +439,64 @@ const loadInventory = async () => {
   }
 }
 
-// 搜索
+// 扫码/搜索解析结果（编码类型：商品编码 / 内部批次标签 / 货位编码）
+const BATCH_LABEL_PREFIX = 'INTERNAL-RECEIPT-'
+const scanResult = ref<{
+  type: 'SKU' | 'BATCH' | 'LOCATION'
+  typeText: string
+  text: string
+} | null>(null)
+
+const handleKeywordInput = () => {
+  // 手动修改关键词后清除上一次扫码解析结果
+  if (scanResult.value) {
+    scanResult.value = null
+  }
+}
+
+// 搜索/扫码：SKU 优先，商品编码不会打开批次选择
 const handleSearch = () => {
-  // 搜索逻辑已在 computed 中实现
+  const code = (searchKeyword.value || '').trim()
+  if (!code) {
+    scanResult.value = null
+    return
+  }
+
+  // 内部批次标签（后仓/取货使用）：POS 按商品编码销售，不做批次选择
+  if (code.toUpperCase().startsWith(BATCH_LABEL_PREFIX)) {
+    scanResult.value = {
+      type: 'BATCH',
+      typeText: '批次标签',
+      text: '内部批次标签在 POS 不作为销售编码，请扫描商品编码（SKU）；批次/货位请在「取货」工作台确认。'
+    }
+    searchKeyword.value = ''
+    ElMessage.warning('识别为内部批次标签：POS 按商品编码销售，请扫描商品编码')
+    return
+  }
+
+  const matched = filteredGoods.value
+  if (matched.length === 1) {
+    scanResult.value = {
+      type: 'SKU',
+      typeText: '商品编码（SKU）',
+      text: `已定位：${matched[0].name}，点击商品卡片加入购物车（无需选择批次）`
+    }
+    return
+  }
+  if (matched.length === 0) {
+    scanResult.value = {
+      type: 'SKU',
+      typeText: '商品编码（SKU）',
+      text: '未匹配到商品，请核对编码或改用商品名称搜索。'
+    }
+    ElMessage.warning('未找到匹配的商品编码')
+    return
+  }
+  scanResult.value = {
+    type: 'SKU',
+    typeText: '商品编码（SKU）',
+    text: `匹配到 ${matched.length} 个商品，请选择商品卡片加入购物车。`
+  }
 }
 
 // Tab 切换
@@ -647,9 +711,35 @@ defineExpose({
   background: #fff;
   padding: 16px;
   border-bottom: 1px solid #e5e7eb;
-  
+
+  .scan-field-label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: #6b7280;
+  }
+
   .search-input {
     margin-bottom: 12px;
+  }
+
+  .scan-result {
+    display: flex;
+    gap: 8px;
+    margin: -4px 0 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #6b7280;
+
+    .scan-result-type {
+      flex-shrink: 0;
+      font-weight: 600;
+      color: #409eff;
+    }
+
+    &.scan-result-batch .scan-result-type {
+      color: #e6a23c;
+    }
   }
   
   .goods-tabs {

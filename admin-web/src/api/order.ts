@@ -1,6 +1,13 @@
 import request from '@/utils/request'
 import type {POSOrderCreateRequest} from '@/types/pos'
-import type {OrderDetail, OrderListQuery, OrderPageResponse} from '@/types/order'
+import type {
+  OrderDetail,
+  OrderListQuery,
+  OrderPageResponse,
+  PickupFulfillmentDTO,
+  PickupRequestCreateDTO,
+  PickupWorkItemVO
+} from '@/types/order'
 
 /**
  * 订单管理 API
@@ -101,5 +108,48 @@ export function confirmReceipt(orderId: number): Promise<void> {
   return request({
     url: `/api/admin/orders/${orderId}/confirm-receipt`,
     method: 'post'
+  })
+}
+
+/**
+ * 查询门店取货待办工作项（零售事实链 Task9：库房取货工作台）
+ * status 缺省为 PENDING
+ */
+export function getPickupWorkItems(storeId: number, status?: string): Promise<PickupWorkItemVO[]> {
+  return request({
+    url: '/api/admin/orders/pickup/requests',
+    method: 'get',
+    params: { storeId, status: status ?? undefined }
+  }).then((response: any) => {
+    if (Array.isArray(response)) return response
+    if (response && Array.isArray(response.data)) return response.data
+    return []
+  })
+}
+
+/**
+ * 创建库房取货请求（货架缺货或顾客要求后仓拣货时登记）
+ */
+export function createPickupRequest(orderId: number, data: PickupRequestCreateDTO): Promise<number> {
+  return request({
+    url: `/api/admin/orders/${orderId}/pickup/requests`,
+    method: 'post',
+    data
+  }).then((response: any) => {
+    if (response && typeof response === 'object' && 'data' in response) {
+      return response.data
+    }
+    return response
+  })
+}
+
+/**
+ * 完成库房取货：扫描内部批次标签或显式确认批次与货位
+ */
+export function fulfillPickupRequest(requestId: number, data: PickupFulfillmentDTO): Promise<void> {
+  return request({
+    url: `/api/admin/orders/pickup/requests/${requestId}/fulfill`,
+    method: 'post',
+    data
   })
 }

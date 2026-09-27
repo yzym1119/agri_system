@@ -6,7 +6,8 @@ import type {
     PurchaseInboundRequest,
     PurchasePageQuery,
     PurchasePageVO,
-    PurchaseSubmitRequest
+    PurchaseSubmitRequest,
+    ReceivePurchaseRequest
 } from '@/types/purchase'
 import type { PageResponse } from '@/types/store'
 
@@ -77,6 +78,17 @@ export function getPurchaseDetail(orderId: number): Promise<PurchaseDetailVO> {
   return request({
     url: `/api/admin/purchase/${orderId}`,
     method: 'get'
+  }).then((response: any) => response?.data || response)
+}
+
+/**
+ * 采购实际收货（零售事实链 Task9：按批次登记原始单位数量/单价，支持日期未知）
+ */
+export function receivePurchase(data: ReceivePurchaseRequest): Promise<{ receiptId: number }> {
+  return request({
+    url: '/api/admin/purchase/receipts',
+    method: 'post',
+    data
   }).then((response: any) => response?.data || response)
 }
 

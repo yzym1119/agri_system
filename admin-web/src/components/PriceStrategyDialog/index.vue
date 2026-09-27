@@ -147,6 +147,23 @@
             </el-form-item>
           </el-col>
         </el-row>
+        <el-row :gutter="20">
+          <el-col :span="8">
+            <el-form-item label="销售单位" prop="saleUnit">
+              <el-input v-model="formData.saleUnit" placeholder="可留空（如：瓶）" clearable />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="渠道" prop="channel">
+              <el-input v-model="formData.channel" placeholder="可留空（如：POS）" clearable />
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="规则版本" prop="ruleVersion">
+              <el-input v-model="formData.ruleVersion" placeholder="留空默认 1" clearable />
+            </el-form-item>
+          </el-col>
+        </el-row>
       </el-form>
     </div>
 
@@ -205,7 +222,10 @@ const formData = reactive<Partial<ProductPriceRuleCreateRequest>>({
   price: 0,
   status: 1,
   effectiveDate: undefined,
-  expiryDate: undefined
+  expiryDate: undefined,
+  saleUnit: '',
+  channel: '',
+  ruleVersion: ''
 })
 
 const validTimeRange = ref<[string, string] | null>(null)
@@ -264,6 +284,9 @@ const resetForm = () => {
   formData.status = 1
   formData.effectiveDate = undefined
   formData.expiryDate = undefined
+  formData.saleUnit = ''
+  formData.channel = ''
+  formData.ruleVersion = ''
   validTimeRange.value = null
   formRef.value?.clearValidate()
 }
@@ -275,6 +298,9 @@ const handleEdit = (row: ProductPriceRuleVO) => {
   formData.vipLevel = row.vipLevel ?? null
   formData.price = row.price
   formData.status = row.status
+  formData.saleUnit = row.saleUnit ?? ''
+  formData.channel = row.channel ?? ''
+  formData.ruleVersion = row.ruleVersion ?? ''
   if (row.effectiveDate && row.expiryDate) {
     validTimeRange.value = [row.effectiveDate, row.expiryDate]
     formData.effectiveDate = row.effectiveDate
@@ -334,6 +360,12 @@ const handleValidTimeChange = (val: [string, string] | null) => {
   }
 }
 
+// 可选文本：去除首尾空白，留空返回 undefined（提交时省略该字段）
+const normalizeOptional = (value?: string | null): string | undefined => {
+  const trimmed = (value ?? '').trim()
+  return trimmed ? trimmed : undefined
+}
+
 // 提交表单
 const handleSubmit = async () => {
   if (!formRef.value) return
@@ -364,6 +396,10 @@ const handleSubmit = async () => {
       const customerType = isVipLevel ? 2 : 1
       const priceType = isVipLevel ? 2 : 1
 
+      const saleUnit = normalizeOptional(formData.saleUnit)
+      const channel = normalizeOptional(formData.channel)
+      const ruleVersion = normalizeOptional(formData.ruleVersion)
+
       if (editingId.value) {
         // 更新
         const updateData: ProductPriceRuleUpdateRequest = {
@@ -373,6 +409,9 @@ const handleSubmit = async () => {
           expiryDate: formData.expiryDate,
           status: formData.status
         }
+        if (saleUnit) updateData.saleUnit = saleUnit
+        if (channel) updateData.channel = channel
+        if (ruleVersion) updateData.ruleVersion = ruleVersion
         await updateProductPriceRule(editingId.value, updateData)
         ElMessage.success('更新成功')
       } else {
@@ -388,6 +427,10 @@ const handleSubmit = async () => {
           expiryDate: formData.expiryDate,
           status: formData.status
         }
+        if (saleUnit) createData.saleUnit = saleUnit
+        if (channel) createData.channel = channel
+        // 规则版本留空不提交，由后端默认 "1"
+        if (ruleVersion) createData.ruleVersion = ruleVersion
         await createProductPriceRule(createData)
         ElMessage.success('创建成功')
       }

@@ -9,7 +9,8 @@ import type {
     InventoryTransactionQuery,
     InventoryTransactionVO,
     InventoryTransferResult,
-    InventoryTransferRequest
+    InventoryTransferRequest,
+    InventoryLocationVO
 } from '@/types/inventory'
 import type { PageResponse } from '@/types/store'
 
@@ -123,6 +124,22 @@ export function getSmartThresholdRecommendations(params?: {
     url: '/api/admin/inventory/warning/smart-threshold',
     method: 'get',
     params
+  })
+}
+
+/**
+ * 查询门店货位列表（零售事实链 Task9：货位作业界面）
+ * 返回门店全部货位（含停用），按 id 升序
+ */
+export function getInventoryLocations(storeId: number): Promise<InventoryLocationVO[]> {
+  return request({
+    url: '/api/admin/inventory/locations',
+    method: 'get',
+    params: { storeId }
+  }).then((response: any) => {
+    if (Array.isArray(response)) return response
+    if (response && Array.isArray(response.data)) return response.data
+    return []
   })
 }
 

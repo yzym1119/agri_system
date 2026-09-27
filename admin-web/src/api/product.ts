@@ -10,6 +10,8 @@ import type {
     ProductPriceRuleUpdateRequest,
     ProductPriceRuleVO,
     ProductQueryParams,
+    ProductUnitUpsertCommand,
+    ProductUnitVO,
     ProductUpdateRequest
 } from '@/types/product'
 
@@ -206,5 +208,32 @@ export function deleteProductPriceRule(id: number): Promise<void> {
   return request({
     url: `/api/admin/products/price-rules/${id}`,
     method: 'delete'
+  })
+}
+
+// ==================== 商品单位管理（零售事实链 Task9） ====================
+
+/**
+ * 查询商品单位列表（含基准单位与直接换算系数）
+ */
+export function getProductUnits(productId: number): Promise<ProductUnitVO[]> {
+  return request({
+    url: `/api/admin/products/${productId}/units`,
+    method: 'get'
+  }).then((response: any) => {
+    if (Array.isArray(response)) return response
+    if (response && Array.isArray(response.data)) return response.data
+    return []
+  })
+}
+
+/**
+ * 全量替换商品单位列表
+ */
+export function replaceProductUnits(productId: number, data: ProductUnitUpsertCommand[]): Promise<void> {
+  return request({
+    url: `/api/admin/products/${productId}/units`,
+    method: 'put',
+    data
   })
 }
