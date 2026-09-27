@@ -23,4 +23,8 @@ public interface InventoryReceiptBatchMapper extends BaseMapper<InventoryReceipt
 
     @Select("SELECT * FROM inventory_receipt_batch WHERE internal_receipt_batch_no = #{internalReceiptBatchNo}")
     InventoryReceiptBatch findByInternalReceiptBatchNo(@Param("internalReceiptBatchNo") String internalReceiptBatchNo);
+
+    /** 门店全部收货批次（日期风险提示用，一次查询取全量）。 */
+    @Select("SELECT * FROM inventory_receipt_batch WHERE store_id = #{storeId} ORDER BY id")
+    List<InventoryReceiptBatch> findByStore(@Param("storeId") Long storeId);
 }

@@ -17,5 +17,8 @@ public interface InventoryReceiptBatchRepository {
 
     List<InventoryReceiptBatch> findByReceiptId(Long receiptId);
 
+    /** 门店全部收货批次（按 id 升序），一次查询。 */
+    List<InventoryReceiptBatch> findByStore(Long storeId);
+
     BigDecimal sumBaseQuantityByPurchaseOrderItemId(Long purchaseOrderItemId);
 }

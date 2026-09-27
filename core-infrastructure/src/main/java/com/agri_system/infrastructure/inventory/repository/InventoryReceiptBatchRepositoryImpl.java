@@ -35,6 +35,11 @@ public class InventoryReceiptBatchRepositoryImpl implements InventoryReceiptBatc
     }
 
     @Override
+    public List<InventoryReceiptBatch> findByStore(Long storeId) {
+        return mapper.findByStore(storeId);
+    }
+
+    @Override
     public BigDecimal sumBaseQuantityByPurchaseOrderItemId(Long purchaseOrderItemId) {
         return mapper.sumBaseQuantityByPurchaseOrderItemId(purchaseOrderItemId);
     }

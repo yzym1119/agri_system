@@ -678,6 +678,12 @@ class PickupFulfillmentServiceTest {
                     .filter(row -> orderItemId.equals(row.getOrderItemId()))
                     .toList();
         }
+
+        @Override
+        public List<WindowMargin> sumWindowMarginByProduct(int days, Long storeId) {
+            // 毛利窗口聚合与提货履约无关，测试替身返回空集
+            return List.of();
+        }
     }
 
     private static class InMemoryPickupRequestRepository implements OrderPickupRequestRepository {

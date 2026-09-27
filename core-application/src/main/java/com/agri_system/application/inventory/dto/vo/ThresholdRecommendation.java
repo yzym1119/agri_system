@@ -45,6 +45,12 @@ public class ThresholdRecommendation {
     /** 当前手动设置的补货量 */
     private BigDecimal currentReorderQuantity;
 
-    /** 状态：LOW=低库存, OVER=积压, NORMAL=正常 */
+    /** 状态：LOW=低库存, OVER=积压, NORMAL=在推荐区间内, DATA_INSUFFICIENT=样本不足 */
     private String status;
+
+    /** 置信度：SUFFICIENT_DATA=样本充足, INSUFFICIENT_DATA=样本不足（推荐值仅供参考） */
+    private String confidence;
+
+    /** 观察窗口天数（本次推荐使用的统计天数） */
+    private Integer observationDays;
 }

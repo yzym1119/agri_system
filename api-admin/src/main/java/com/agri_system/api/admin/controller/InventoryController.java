@@ -3,6 +3,7 @@ package com.agri_system.api.admin.controller;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.dev33.satoken.stp.StpUtil;
 import com.agri_system.application.inventory.dto.command.InventoryAdjustCommand;
+import com.agri_system.application.inventory.dto.command.InventoryDecisionCommand;
 import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.dto.command.InventoryOutCommand;
 import com.agri_system.application.inventory.dto.command.InventoryTransferCommand;
@@ -16,6 +17,7 @@ import com.agri_system.application.inventory.dto.vo.InventoryDetailVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransferRecordVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransactionVO;
 import com.agri_system.application.inventory.service.InventoryApplicationService;
+import com.agri_system.application.inventory.service.InventoryRiskService;
 import com.agri_system.domain.inventory.vo.InventoryPageVO;
 import com.agri_system.domain.inventory.model.InventoryMovement;
 import com.mybatisflex.core.paginate.Page;
@@ -48,6 +50,7 @@ import java.util.Map;
 public class InventoryController {
     
     private final InventoryApplicationService inventoryService;
+    private final InventoryRiskService inventoryRiskService;
 
     @PostMapping("/locations")
     @Operation(summary = "创建库存位置")
@@ -225,6 +228,22 @@ public class InventoryController {
         return ResponseEntity.ok(result);
     }
     
+    // ==================== 风险决策留痕 ====================
+
+    @PostMapping("/decisions")
+    @Operation(summary = "记录库存风险人工决策", description = "仅追加留痕：记录人工对风险提示的决定，不触发任何自动动作")
+    @SaCheckPermission("inventory:warning:query")
+    public ResponseEntity<Map<String, Object>> recordDecision(@Valid @RequestBody InventoryDecisionCommand command) {
+        Long decisionId = inventoryRiskService.recordDecision(command, getCurrentUserId());
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", "200");
+        result.put("message", "已记录人工决定");
+        Map<String, Object> data = new HashMap<>();
+        data.put("decisionId", decisionId);
+        result.put("data", data);
+        return ResponseEntity.ok(result);
+    }
+
     // ==================== 私有方法 ====================
     
     /**
