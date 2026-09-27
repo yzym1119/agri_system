@@ -77,7 +77,9 @@ legacy 遗留缺口。注：全量迁移后的库中 `inventory` 无 `unit` 列�
 ## 3. 单 SKU / 门店切换（唯一受控激活途径）
 
 前提（全部满足才可执行）：preflight 该范围 BLOCKER=0；单位配置与历史初始化完成且
-L1 干净；legacy 快照行存在（B7）；业务/运营对门店、SKU 集合人工确认并留证。
+L1 干净；legacy 快照行存在（B7）；业务/运营对门店、SKU 集合人工确认并留证；
+**该 SKU 不依赖未路由的 legacy 链路**（小程序支付回调 / 退款回库 / 售后回库，见 §7 ——
+路由完成前激活会使这些业务硬失败）。
 
 > **唯一受控的 `enable` 途径**：应用内的激活写路径已在 Task 10a（commit `950ebff`，
 > `InventoryBalanceFeatureStatusRepository.enable` + 实现）落地，但**没有任何
@@ -192,3 +194,24 @@ scripts/verify-retail-fact-chain.sh --host 127.0.0.1 --port 3306 --user root --p
   （Task 9b carry），需要真实前后端环境；本次交付未运行，上线前必须补跑。
 - 上线前复核：preflight 全范围 BLOCKER=0、回填提案无遗留 `PENDING_CONFIRMATION`、
   对账频率/阈值已由人工确认并写入本文档（替换占位符）。
+- **未路由 legacy 链路披露（最终审查 Final-I1）——路由完成前不得激活会走这些链路的 SKU**：
+  以下生产链路仍直接调用 legacy `inventoryService.inbound/outbound`，对已激活 SKU 会触发
+  切换守卫（`assertNotCutOver`）硬失败，使对应业务不可用（守卫为 fail-safe：拒绝执行且
+  事务回滚，不会产生脏写）：
+  1. 小程序支付回调出库 `OrderApplicationService.finalizeClientOrderPayment`
+     （`core-application/src/main/java/com/agri_system/application/order/service/OrderApplicationService.java:1351`）
+  2. 整单退款回库 `OrderApplicationService.restockOrderItemsForRefund`（同文件 :1375）
+  3. 部分退款回库 `OrderApplicationService.restockOrderItemsForRefund`（同文件 :1404）
+  4. 售后审核回库 `AfterSalesApplicationService.triggerRestock`
+     （`core-application/src/main/java/com/agri_system/application/after_sales/service/AfterSalesApplicationService.java:465`）
+
+  因此激活范围必须排除会走上述链路的 SKU（如支持小程序支付 / 退款 / 售后的 SKU），或明确
+  接受对应业务在该 SKU 上不可用；把这些链路路由到新链（批次归属）需先补业务决策（退款 /
+  售后退回批次的分配规则），属后续计划。
+- **非超管角色授权（最终审查 M2）**：V127 新菜单（2703 单位设置 / 2704 收货 / 2705 货位 /
+  2706 取货）仅默认授予 SUPER_ADMIN（role 1）；其他角色需由管理员在角色管理中按需授权，
+  否则菜单不可见或接口 403。各页所需权限码：
+  - 单位设置：菜单 `product:unit:query`，保存另需 `product:unit:create`
+  - 收货：`purchase:inbound`
+  - 货位：`inventory:view`
+  - 取货：`order:pickup:verify`
