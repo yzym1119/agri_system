@@ -53,6 +53,11 @@ public class OrderItemRepositoryImpl implements OrderItemRepository {
     }
 
     @Override
+    public Optional<OrderItem> findByIdForUpdate(Long id) {
+        return Optional.ofNullable(mapper.findByIdForUpdate(id));
+    }
+
+    @Override
     public long countByProductId(Long productId) {
         return mapper.selectCountByQuery(
                 QueryWrapper.create().where("product_id = ?", productId)

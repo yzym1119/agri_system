@@ -10,4 +10,8 @@ public interface OrderPickupRequestRepository {
     OrderPickupRequest save(OrderPickupRequest request);
 
     Optional<OrderPickupRequest> findById(Long id);
+
+    Optional<OrderPickupRequest> findByIdForUpdate(Long id);
+
+    Optional<OrderPickupRequest> findPendingByOrderItemId(Long orderItemId);
 }

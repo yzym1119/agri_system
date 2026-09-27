@@ -16,6 +16,9 @@ import java.util.Map;
 @Mapper
 public interface OrderItemMapper extends BaseMapper<OrderItem> {
 
+    @Select("SELECT * FROM order_item WHERE id = #{id} FOR UPDATE")
+    OrderItem findByIdForUpdate(@Param("id") Long id);
+
     /**
      * 查询商品销售速度摘要（近N天）
      * 返回每个商品的总销量和日均销量

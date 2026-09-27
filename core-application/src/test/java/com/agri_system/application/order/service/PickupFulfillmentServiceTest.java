@@ -42,6 +42,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -63,6 +64,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -198,6 +201,7 @@ class PickupFulfillmentServiceTest {
         String batchBarcode = INTERNAL_BATCH_NO;
         when(receiptBatchRepository.findByInternalReceiptBatchNo(batchBarcode))
                 .thenReturn(Optional.of(receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00")));
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
         when(batchBalanceService.move(any(BatchBalanceService.MoveRequest.class)))
                 .thenReturn(movement(MOVEMENT_ID));
 
@@ -274,6 +278,7 @@ class PickupFulfillmentServiceTest {
     @Test
     void skuOnlyBarcodeMustNeverBecomeScannedEvidence() {
         Long requestId = seedPendingRequest(null);
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
         when(receiptBatchRepository.findByInternalReceiptBatchNo(SKU_ONLY_EAN)).thenReturn(Optional.empty());
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
@@ -291,6 +296,7 @@ class PickupFulfillmentServiceTest {
         Long requestId = seedPendingRequest(null);
         InventoryReceiptBatch foreignBatch = receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00");
         foreignBatch.setProductId(PRODUCT_ID + 1);
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
         when(receiptBatchRepository.findByInternalReceiptBatchNo(INTERNAL_BATCH_NO))
                 .thenReturn(Optional.of(foreignBatch));
 
@@ -304,6 +310,7 @@ class PickupFulfillmentServiceTest {
     @Test
     void explicitBatchAndLocationConfirmationCreatesFulfillmentConfirmedEvidence() {
         Long requestId = seedPendingRequest(BACKROOM_LOCATION_ID);
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
         when(receiptBatchRepository.findById(BATCH_ID))
                 .thenReturn(Optional.of(receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00")));
         when(locationRepository.findById(BACKROOM_LOCATION_ID))
@@ -373,6 +380,97 @@ class PickupFulfillmentServiceTest {
         assertThat(pickupRequestRepository.all()).isEmpty();
         verify(locationRepository, never()).save(any(InventoryLocation.class));
         verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
+    }
+
+    @Test
+    void createRequestRejectsSecondPendingRequestForSameItem() {
+        Long existingRequestId = seedPendingRequest(BACKROOM_LOCATION_ID);
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(itemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        when(batchBalanceService.isBatchLocationEnabled(STORE_ID, PRODUCT_ID)).thenReturn(true);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID));
+
+        assertThat(ex.getMessage()).contains("未完成的库房取货请求");
+        assertThat(pickupRequestRepository.all()).hasSize(1);
+        assertThat(pickupRequestRepository.findById(existingRequestId).orElseThrow().getStatus())
+                .isEqualTo(OrderPickupRequest.Status.PENDING.name());
+    }
+
+    @Test
+    void createRequestRejectsRequestWhenItemAlreadyHasFinalEvidence() {
+        seedAllocation(SCANNED.name());
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(itemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        when(batchBalanceService.isBatchLocationEnabled(STORE_ID, PRODUCT_ID)).thenReturn(true);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID));
+
+        assertThat(ex.getMessage()).contains("最终批次证据");
+        assertThat(pickupRequestRepository.all()).isEmpty();
+    }
+
+    @Test
+    void fulfillRejectsWhenItemAlreadyHasFinalEvidenceAllocation() {
+        Long requestId = seedPendingRequest(BACKROOM_LOCATION_ID);
+        seedAllocation(FULFILLMENT_CONFIRMED.name());
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> fulfillmentService.fulfill(requestId, scannedBatch(INTERNAL_BATCH_NO), 8L));
+
+        assertThat(ex.getMessage()).contains("最终批次证据");
+        verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
+        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus())
+                .isEqualTo(OrderPickupRequest.Status.PENDING.name());
+        assertThat(allocationRepository.findByOrderItemId(ITEM_ID)).hasSize(1);
+        assertThat(allocationRepository.findByOrderItemId(ITEM_ID).get(0).getEvidenceLevel())
+                .isEqualTo(FULFILLMENT_CONFIRMED.name());
+    }
+
+    @Test
+    void fulfillLocksRequestAndOrderItemRows() {
+        OrderPickupRequestRepository requestRepository = mock(OrderPickupRequestRepository.class);
+        OrderItemRepository orderItemRepository = mock(OrderItemRepository.class);
+        when(requestRepository.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(pendingRequest(null)));
+        when(orderItemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        when(receiptBatchRepository.findByInternalReceiptBatchNo(INTERNAL_BATCH_NO))
+                .thenReturn(Optional.of(receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00")));
+        when(locationRepository.findEnabledByStoreAndType(STORE_ID, InventoryLocation.LocationType.STORE_BACKROOM.name()))
+                .thenReturn(Optional.of(location(BACKROOM_LOCATION_ID, InventoryLocation.LocationType.STORE_BACKROOM.name())));
+        when(locationRepository.findEnabledByStoreAndType(STORE_ID, InventoryLocation.LocationType.SALES_FLOOR.name()))
+                .thenReturn(Optional.of(location(FLOOR_LOCATION_ID, InventoryLocation.LocationType.SALES_FLOOR.name())));
+        when(batchBalanceService.move(any(BatchBalanceService.MoveRequest.class)))
+                .thenReturn(movement(MOVEMENT_ID));
+        PickupFulfillmentService service = new PickupFulfillmentService(
+                allocationRepository, requestRepository, batchBalanceService, productUnitService,
+                locationRepository, batchBalanceRepository, receiptBatchRepository, orderRepository,
+                orderItemRepository);
+
+        service.fulfill(REQUEST_ID, scannedBatch(INTERNAL_BATCH_NO), 8L);
+
+        InOrder inOrder = inOrder(requestRepository, orderItemRepository, batchBalanceService);
+        inOrder.verify(requestRepository).findByIdForUpdate(REQUEST_ID);
+        inOrder.verify(orderItemRepository).findByIdForUpdate(ITEM_ID);
+        inOrder.verify(batchBalanceService).move(any(BatchBalanceService.MoveRequest.class));
+    }
+
+    @Test
+    void fulfillWithoutSourceLocationAndBackroomFailsWithClearMessage() {
+        Long requestId = seedPendingRequest(null);
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        when(receiptBatchRepository.findByInternalReceiptBatchNo(INTERNAL_BATCH_NO))
+                .thenReturn(Optional.of(receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00")));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> fulfillmentService.fulfill(requestId, scannedBatch(INTERNAL_BATCH_NO), 8L));
+
+        assertThat(ex.getMessage()).isEqualTo("门店未配置库房货位，无法完成库房取货");
+        verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
+        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus())
+                .isEqualTo(OrderPickupRequest.Status.PENDING.name());
     }
 
     @Test
@@ -452,6 +550,10 @@ class PickupFulfillmentServiceTest {
     }
 
     private Long seedPendingRequest(Long sourceLocationId) {
+        return pickupRequestRepository.save(pendingRequest(sourceLocationId)).getId();
+    }
+
+    private OrderPickupRequest pendingRequest(Long sourceLocationId) {
         OrderPickupRequest request = new OrderPickupRequest();
         request.setOrderId(ORDER_ID);
         request.setOrderItemId(ITEM_ID);
@@ -460,7 +562,17 @@ class PickupFulfillmentServiceTest {
         request.setRequestedBaseQuantity(new BigDecimal("5"));
         request.setSourceLocationId(sourceLocationId);
         request.setStatus(OrderPickupRequest.Status.PENDING.name());
-        return pickupRequestRepository.save(request).getId();
+        return request;
+    }
+
+    private void seedAllocation(String evidenceLevel) {
+        OrderItemBatchAllocation allocation = new OrderItemBatchAllocation();
+        allocation.setOrderItemId(ITEM_ID);
+        allocation.setProductId(PRODUCT_ID);
+        allocation.setStoreId(STORE_ID);
+        allocation.setAllocatedBaseQuantity(new BigDecimal("5"));
+        allocation.setEvidenceLevel(evidenceLevel);
+        allocationRepository.save(allocation);
     }
 
     private Order order() {
@@ -580,6 +692,19 @@ class PickupFulfillmentServiceTest {
         @Override
         public Optional<OrderPickupRequest> findById(Long id) {
             return rows.stream().filter(row -> row.getId().equals(id)).findFirst();
+        }
+
+        @Override
+        public Optional<OrderPickupRequest> findByIdForUpdate(Long id) {
+            return findById(id);
+        }
+
+        @Override
+        public Optional<OrderPickupRequest> findPendingByOrderItemId(Long orderItemId) {
+            return rows.stream()
+                    .filter(row -> orderItemId.equals(row.getOrderItemId()))
+                    .filter(row -> OrderPickupRequest.Status.PENDING.name().equals(row.getStatus()))
+                    .findFirst();
         }
 
         List<OrderPickupRequest> all() {

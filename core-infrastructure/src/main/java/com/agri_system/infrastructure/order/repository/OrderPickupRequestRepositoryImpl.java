@@ -31,4 +31,14 @@ public class OrderPickupRequestRepositoryImpl implements OrderPickupRequestRepos
     public Optional<OrderPickupRequest> findById(Long id) {
         return Optional.ofNullable(mapper.selectOneById(id));
     }
+
+    @Override
+    public Optional<OrderPickupRequest> findByIdForUpdate(Long id) {
+        return Optional.ofNullable(mapper.findByIdForUpdate(id));
+    }
+
+    @Override
+    public Optional<OrderPickupRequest> findPendingByOrderItemId(Long orderItemId) {
+        return Optional.ofNullable(mapper.findPendingByOrderItemId(orderItemId));
+    }
 }

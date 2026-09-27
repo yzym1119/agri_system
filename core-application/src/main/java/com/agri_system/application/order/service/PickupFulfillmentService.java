@@ -134,6 +134,12 @@ public class PickupFulfillmentService {
                 || !batchBalanceService.isBatchLocationEnabled(order.getStoreId(), item.getProductId())) {
             throw new IllegalStateException("该SKU未启用批次货位余额，不能创建库房取货请求");
         }
+        if (pickupRequestRepository.findPendingByOrderItemId(orderItemId).isPresent()) {
+            throw new IllegalStateException("该订单明细已有未完成的库房取货请求");
+        }
+        if (hasFinalEvidence(allocationRepository.findByOrderItemId(orderItemId))) {
+            throw new IllegalStateException("该订单明细已有最终批次证据，不能重复创建取货请求");
+        }
         if (sourceLocationId != null && locationRepository.findById(sourceLocationId).isEmpty()) {
             throw new IllegalArgumentException("库存位置不存在: " + sourceLocationId);
         }
@@ -150,10 +156,17 @@ public class PickupFulfillmentService {
     @Transactional(rollbackFor = Exception.class)
     public List<OrderItemBatchAllocation> fulfill(Long pickupRequestId, PickupFulfillmentCommand command,
                                                   Long operatorId) {
-        OrderPickupRequest request = pickupRequestRepository.findById(pickupRequestId)
+        // 必须先锁请求行再锁订单明细行：请求行锁串行化同一请求的并发履约，明细行锁串行化同一明细上
+        // 不同请求的并发履约；此后普通读才能看到最新已提交的最终证据，最终证据校验才是安全的
+        OrderPickupRequest request = pickupRequestRepository.findByIdForUpdate(pickupRequestId)
                 .orElseThrow(() -> new IllegalArgumentException("库房取货请求不存在: " + pickupRequestId));
         if (!OrderPickupRequest.Status.PENDING.name().equals(request.getStatus())) {
             throw new IllegalStateException("库房取货请求状态不允许拣货: " + request.getStatus());
+        }
+        itemRepository.findByIdForUpdate(request.getOrderItemId())
+                .orElseThrow(() -> new IllegalStateException("订单明细不存在: " + request.getOrderItemId()));
+        if (hasFinalEvidence(allocationRepository.findByOrderItemId(request.getOrderItemId()))) {
+            throw new IllegalStateException("该订单明细已有最终批次证据，不能重复拣货");
         }
         if (command == null) {
             throw new IllegalArgumentException("拣货命令不能为空");
@@ -192,6 +205,9 @@ public class PickupFulfillmentService {
         }
         if (!batch.getProductId().equals(request.getProductId())) {
             throw new IllegalArgumentException("批次商品与订单明细不一致，批次ID: " + batch.getId());
+        }
+        if (sourceLocationId == null) {
+            throw new IllegalArgumentException("门店未配置库房货位，无法完成库房取货");
         }
 
         InventoryLocation floor = salesFloor(request.getStoreId())
@@ -290,5 +306,12 @@ public class PickupFulfillmentService {
 
     private List<InventoryBatchBalance> safeBalances(List<InventoryBatchBalance> balances) {
         return balances == null ? List.of() : balances;
+    }
+
+    private boolean hasFinalEvidence(List<OrderItemBatchAllocation> allocations) {
+        return allocations.stream()
+                .map(OrderItemBatchAllocation::getEvidenceLevel)
+                .anyMatch(level -> BatchEvidenceLevel.SCANNED.name().equals(level)
+                        || BatchEvidenceLevel.FULFILLMENT_CONFIRMED.name().equals(level));
     }
 }

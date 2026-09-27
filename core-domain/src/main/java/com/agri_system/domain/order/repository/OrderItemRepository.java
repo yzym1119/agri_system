@@ -32,6 +32,8 @@ public interface OrderItemRepository {
      */
     Optional<OrderItem> findById(Long id);
 
+    Optional<OrderItem> findByIdForUpdate(Long id);
+
     /**
      * 统计商品被订单明细引用次数
      */
