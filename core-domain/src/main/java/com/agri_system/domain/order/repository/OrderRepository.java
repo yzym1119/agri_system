@@ -83,6 +83,11 @@ public interface OrderRepository {
      * 统计客户进行中的订单数量
      */
     long countActiveOrdersByCustomerId(Long customerId);
+
+    /**
+     * 按 ID 集合批量查询订单（单条 IN 查询）
+     */
+    java.util.List<Order> findByIds(java.util.Collection<Long> ids);
 }
 
 

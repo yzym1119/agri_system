@@ -1,10 +1,13 @@
 package com.agri_system.application.report.service;
 
+import com.agri_system.application.order.dto.vo.OrderMarginVO;
 import com.agri_system.application.report.dto.*;
 import com.agri_system.domain.customer.model.Customer;
 import com.agri_system.domain.inventory.model.InventoryBatch;
 import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.order.model.OrderItem;
+import com.agri_system.domain.order.model.OrderItemBatchAllocation;
+import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepository;
 import com.agri_system.infrastructure.after_sales.mapper.AfterSalesMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditAccountMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditRepaymentLogMapper;
@@ -14,7 +17,7 @@ import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
 import com.agri_system.infrastructure.order.mapper.OrderMapper;
 import com.agri_system.infrastructure.product.mapper.ProductMapper;
 import com.mybatisflex.core.query.QueryWrapper;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,7 +35,6 @@ import java.util.stream.Collectors;
  * 统计报表聚合查询服务（纯读，不新增任何报表表）
  */
 @Service
-@RequiredArgsConstructor
 public class ReportAnalysisService {
 
     private final OrderMapper orderMapper;
@@ -43,6 +45,29 @@ public class ReportAnalysisService {
     private final CustomerMapper customerMapper;
     private final ProductMapper productMapper;
     private final AfterSalesMapper afterSalesMapper;
+    /** 批次归属事实仓储，销售趋势按实际/估算/成本缺失三口径分别归集。 */
+    private final OrderItemBatchAllocationRepository allocationRepository;
+
+    @Autowired
+    public ReportAnalysisService(OrderMapper orderMapper,
+                                 OrderItemMapper orderItemMapper,
+                                 InventoryBatchMapper inventoryBatchMapper,
+                                 CreditAccountMapper creditAccountMapper,
+                                 CreditRepaymentLogMapper repaymentLogMapper,
+                                 CustomerMapper customerMapper,
+                                 ProductMapper productMapper,
+                                 AfterSalesMapper afterSalesMapper,
+                                 OrderItemBatchAllocationRepository allocationRepository) {
+        this.orderMapper = orderMapper;
+        this.orderItemMapper = orderItemMapper;
+        this.inventoryBatchMapper = inventoryBatchMapper;
+        this.creditAccountMapper = creditAccountMapper;
+        this.repaymentLogMapper = repaymentLogMapper;
+        this.customerMapper = customerMapper;
+        this.productMapper = productMapper;
+        this.afterSalesMapper = afterSalesMapper;
+        this.allocationRepository = allocationRepository;
+    }
 
     /**
      * 今日经营驾驶舱
@@ -235,6 +260,18 @@ public class ReportAnalysisService {
         return v == null ? 0L : v;
     }
 
+    /** 从按订单批量加载的归属事实中筛出当前订单行的事实；无来源或订单行ID缺失时返回空。 */
+    private List<OrderItemBatchAllocation> itemAllocations(
+            OrderItem item, Map<Long, List<OrderItemBatchAllocation>> allocationsByOrder) {
+        List<OrderItemBatchAllocation> orderAllocations = allocationsByOrder.get(item.getOrderId());
+        if (orderAllocations == null || orderAllocations.isEmpty() || item.getId() == null) {
+            return List.of();
+        }
+        return orderAllocations.stream()
+                .filter(allocation -> allocation != null && item.getId().equals(allocation.getOrderItemId()))
+                .collect(Collectors.toList());
+    }
+
     /**
      * 销售与毛利趋势分析
      * 
@@ -268,36 +305,66 @@ public class ReportAnalysisService {
             itemQw.where("order_id in (" + placeholders + ")", orderIds.toArray());
         }
         List<OrderItem> items = orderItemMapper.selectListByQuery(itemQw);
-        
+
         // 获取订单创建时间映射
         Map<Long, LocalDateTime> orderTimeMap = orders.stream()
                 .collect(Collectors.toMap(Order::getId, Order::getCreatedAt));
-        
-        // 按日期聚合
+
+        // 批次归属事实按订单批量加载（每单一次查询），避免逐行 N+1
+        Map<Long, List<OrderItemBatchAllocation>> allocationsByOrder = new LinkedHashMap<>();
+        for (Long orderId : orderIds) {
+            List<OrderItemBatchAllocation> orderAllocations = allocationRepository.findByOrderId(orderId);
+            allocationsByOrder.put(orderId, orderAllocations == null ? List.of() : orderAllocations);
+        }
+
+        // 按日期聚合：实际/估算/成本缺失三口径严格隔离，估算绝不并入实际；
+        // legacy 口径不变：costAmount = 实际 + 估算，profit/profitRate 公式不变
         Map<LocalDate, SalesTrendVO> trendMap = new LinkedHashMap<>();
         for (OrderItem item : items) {
             LocalDateTime orderTime = orderTimeMap.get(item.getOrderId());
             if (orderTime == null) continue;
             LocalDate date = orderTime.toLocalDate();
-            
+
             SalesTrendVO vo = trendMap.computeIfAbsent(date, d -> {
                 SalesTrendVO v = new SalesTrendVO();
                 v.setDate(d);
                 v.setSaleAmount(BigDecimal.ZERO);
                 v.setCostAmount(BigDecimal.ZERO);
+                v.setActualSaleAmount(BigDecimal.ZERO);
+                v.setActualCostAmount(BigDecimal.ZERO);
+                v.setActualProfit(BigDecimal.ZERO);
+                v.setEstimatedSaleAmount(BigDecimal.ZERO);
+                v.setEstimatedCostAmount(BigDecimal.ZERO);
+                v.setEstimatedProfit(BigDecimal.ZERO);
+                v.setCostUnavailableSaleAmount(BigDecimal.ZERO);
                 return v;
             });
-            
-            BigDecimal sale = defaultZero(item.getUnitPrice()).multiply(defaultZero(item.getQuantity()));
-            BigDecimal cost = defaultZero(item.getCostPriceSnapshot()).multiply(defaultZero(item.getQuantity()));
+
+            OrderMarginVO margin = OrderMarginVO.from(item, itemAllocations(item, allocationsByOrder));
+            BigDecimal sale = margin.saleAmount();
             vo.setSaleAmount(vo.getSaleAmount().add(sale));
-            vo.setCostAmount(vo.getCostAmount().add(cost));
+            if (margin.actualCost() != null) {
+                vo.setActualSaleAmount(vo.getActualSaleAmount().add(sale));
+                vo.setActualCostAmount(vo.getActualCostAmount().add(margin.actualCost()));
+                vo.setCostAmount(vo.getCostAmount().add(margin.actualCost()));
+            } else if (margin.estimatedCost() != null) {
+                vo.setEstimatedSaleAmount(vo.getEstimatedSaleAmount().add(sale));
+                vo.setEstimatedCostAmount(vo.getEstimatedCostAmount().add(margin.estimatedCost()));
+                vo.setCostAmount(vo.getCostAmount().add(margin.estimatedCost()));
+            } else {
+                vo.setCostUnavailableSaleAmount(vo.getCostUnavailableSaleAmount().add(sale));
+                // 恢复 legacy 字面表达式：快照缺失时按 0 × 数量 计入，保持聚合 costAmount 的原始精度
+                BigDecimal cost = defaultZero(item.getCostPriceSnapshot()).multiply(defaultZero(item.getQuantity()));
+                vo.setCostAmount(vo.getCostAmount().add(cost));
+            }
         }
-        
+
         // 计算毛利和毛利率
         return trendMap.values().stream()
                 .peek(vo -> {
                     vo.setProfit(vo.getSaleAmount().subtract(vo.getCostAmount()));
+                    vo.setActualProfit(vo.getActualSaleAmount().subtract(vo.getActualCostAmount()));
+                    vo.setEstimatedProfit(vo.getEstimatedSaleAmount().subtract(vo.getEstimatedCostAmount()));
                     if (vo.getSaleAmount().compareTo(BigDecimal.ZERO) > 0) {
                         BigDecimal rate = vo.getProfit()
                                 .divide(vo.getSaleAmount(), 4, java.math.RoundingMode.HALF_UP)

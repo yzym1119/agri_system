@@ -214,6 +214,9 @@ public class BatchBalanceService {
         balance.setBaseQuantity(BigDecimal.ZERO);
         balance.setReservedBaseQuantity(BigDecimal.ZERO);
         balance.setVersion(0);
+        LocalDateTime now = LocalDateTime.now();
+        balance.setCreatedAt(now);
+        balance.setUpdatedAt(now);
         return balance;
     }
 
@@ -226,6 +229,9 @@ public class BatchBalanceService {
         balance.setBaseQuantity(BigDecimal.ZERO);
         balance.setReservedBaseQuantity(BigDecimal.ZERO);
         balance.setVersion(0);
+        LocalDateTime now = LocalDateTime.now();
+        balance.setCreatedAt(now);
+        balance.setUpdatedAt(now);
         return balance;
     }
 

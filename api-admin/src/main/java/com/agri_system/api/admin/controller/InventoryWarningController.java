@@ -2,6 +2,7 @@ package com.agri_system.api.admin.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.agri_system.application.inventory.dto.vo.ThresholdRecommendation;
+import com.agri_system.application.inventory.service.InventoryRiskService;
 import com.agri_system.application.inventory.service.SmartThresholdService;
 import com.agri_system.domain.inventory.repository.InventoryRepository;
 import com.agri_system.domain.product.model.Product;
@@ -27,6 +28,18 @@ public class InventoryWarningController {
     private final ProductRepository productRepository;
     private final InventoryRepository inventoryRepository;
     private final SmartThresholdService smartThresholdService;
+    private final InventoryRiskService inventoryRiskService;
+
+    @GetMapping("/risks")
+    @Operation(summary = "查询库存风险建议", description = "只提示、不自动执行：日期未知/临期/过期、低库存/积压、低毛利")
+    @SaCheckPermission("inventory:warning:query")
+    public ResponseEntity<Map<String, Object>> risks(@RequestParam(required = false) Long storeId) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("code", "200");
+        result.put("message", "查询成功");
+        result.put("data", inventoryRiskService.list(storeId));
+        return ResponseEntity.ok(result);
+    }
 
     @GetMapping("/low-stock")
     @Operation(summary = "查询低库存预警商品")

@@ -3,6 +3,7 @@ package com.agri_system.api.admin.controller;
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.dev33.satoken.stp.StpUtil;
 import com.agri_system.application.inventory.dto.command.InventoryAdjustCommand;
+import com.agri_system.application.inventory.dto.command.InventoryDecisionCommand;
 import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.dto.command.InventoryOutCommand;
 import com.agri_system.application.inventory.dto.command.InventoryTransferCommand;
@@ -13,9 +14,11 @@ import com.agri_system.application.inventory.dto.query.InventoryTransferRecordQu
 import com.agri_system.application.inventory.dto.query.InventoryTransactionQuery;
 import com.agri_system.application.inventory.dto.vo.BatchDetailVO;
 import com.agri_system.application.inventory.dto.vo.InventoryDetailVO;
+import com.agri_system.application.inventory.dto.vo.InventoryLocationVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransferRecordVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransactionVO;
 import com.agri_system.application.inventory.service.InventoryApplicationService;
+import com.agri_system.application.inventory.service.InventoryRiskService;
 import com.agri_system.domain.inventory.vo.InventoryPageVO;
 import com.agri_system.domain.inventory.model.InventoryMovement;
 import com.mybatisflex.core.paginate.Page;
@@ -48,6 +51,7 @@ import java.util.Map;
 public class InventoryController {
     
     private final InventoryApplicationService inventoryService;
+    private final InventoryRiskService inventoryRiskService;
 
     @PostMapping("/locations")
     @Operation(summary = "创建库存位置")
@@ -55,6 +59,18 @@ public class InventoryController {
     public ResponseEntity<Map<String, Object>> createLocation(@Valid @RequestBody InventoryLocationCommand command) {
         return ResponseEntity.ok(Map.of("code", "200", "message", "创建成功",
                 "data", Map.of("locationId", inventoryService.createLocation(command))));
+    }
+
+    @GetMapping("/locations")
+    @Operation(summary = "查询门店货位列表", description = "查询门店全部货位（含停用），按 id 升序")
+    @SaCheckPermission("inventory:view")
+    public ResponseEntity<Map<String, Object>> listLocations(@RequestParam Long storeId) {
+        List<InventoryLocationVO> locations = inventoryService.listLocations(storeId);
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", "200");
+        result.put("message", "查询成功");
+        result.put("data", locations);
+        return ResponseEntity.ok(result);
     }
 
     @PostMapping("/moves")
@@ -225,6 +241,22 @@ public class InventoryController {
         return ResponseEntity.ok(result);
     }
     
+    // ==================== 风险决策留痕 ====================
+
+    @PostMapping("/decisions")
+    @Operation(summary = "记录库存风险人工决策", description = "仅追加留痕：记录人工对风险提示的决定，不触发任何自动动作")
+    @SaCheckPermission("inventory:warning:query")
+    public ResponseEntity<Map<String, Object>> recordDecision(@Valid @RequestBody InventoryDecisionCommand command) {
+        Long decisionId = inventoryRiskService.recordDecision(command, getCurrentUserId());
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", "200");
+        result.put("message", "已记录人工决定");
+        Map<String, Object> data = new HashMap<>();
+        data.put("decisionId", decisionId);
+        result.put("data", data);
+        return ResponseEntity.ok(result);
+    }
+
     // ==================== 私有方法 ====================
     
     /**

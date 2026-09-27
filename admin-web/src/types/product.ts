@@ -187,6 +187,12 @@ export interface ProductPriceRuleVO {
   effectiveDate?: string
   expiryDate?: string
   status: number // 1-启用，0-停用
+  /** 销售单位（零售事实链 Task7/9：按销售单位报价，可空） */
+  saleUnit?: string | null
+  /** 渠道（可空） */
+  channel?: string | null
+  /** 规则版本（空则后端默认 "1"） */
+  ruleVersion?: string | null
   createdAt?: string
   updatedAt?: string
 }
@@ -204,6 +210,12 @@ export interface ProductPriceRuleCreateRequest {
   effectiveDate?: string
   expiryDate?: string
   status?: number
+  /** 销售单位（可空，空则由后端按基准单位处理） */
+  saleUnit?: string | null
+  /** 渠道（可空） */
+  channel?: string | null
+  /** 规则版本（留空不提交，由后端默认 "1"） */
+  ruleVersion?: string | null
 }
 
 /**
@@ -214,5 +226,49 @@ export interface ProductPriceRuleUpdateRequest {
   price: number
   effectiveDate?: string
   expiryDate?: string
+  status?: number
+  /** 销售单位（非空时更新） */
+  saleUnit?: string | null
+  /** 渠道（非空时更新） */
+  channel?: string | null
+  /** 规则版本（留空不提交，不覆盖） */
+  ruleVersion?: string | null
+}
+
+/**
+ * 商品单位VO（零售事实链 Task9：多单位作业界面）
+ */
+export interface ProductUnitVO {
+  id?: number
+  productId?: number
+  unitName: string
+  /** 1 个该单位 = N 个基准单位 */
+  baseQuantityPerUnit: number
+  /** 1-基准单位 0-非基准单位 */
+  isBaseUnit: number
+  allowPurchase?: number
+  allowSale?: number
+  allowInventory?: number
+  allowTransfer?: number
+  barcode?: string | null
+  status?: number
+  /** 历史单位（只读，不可修改） */
+  readOnly?: boolean
+  projectionStatus?: string
+}
+
+/**
+ * 商品单位新增/替换请求（PUT 全量替换）
+ */
+export interface ProductUnitUpsertCommand {
+  id?: number | null
+  unitName: string
+  baseQuantityPerUnit: number
+  isBaseUnit: number
+  allowPurchase?: number
+  allowSale?: number
+  allowInventory?: number
+  allowTransfer?: number
+  barcode?: string | null
   status?: number
 }

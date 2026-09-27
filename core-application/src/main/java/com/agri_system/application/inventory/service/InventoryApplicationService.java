@@ -11,6 +11,7 @@ import com.agri_system.application.inventory.dto.query.InventoryTransferRecordQu
 import com.agri_system.application.inventory.dto.query.InventoryTransactionQuery;
 import com.agri_system.application.inventory.dto.vo.BatchDetailVO;
 import com.agri_system.application.inventory.dto.vo.InventoryDetailVO;
+import com.agri_system.application.inventory.dto.vo.InventoryLocationVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransferRecordVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransactionVO;
 import com.agri_system.application.inventory.exception.InventoryErrorCode;
@@ -108,6 +109,28 @@ public class InventoryApplicationService {
         location.setUpdatedAt(location.getCreatedAt());
         locationRepository.save(location);
         return location.getId();
+    }
+
+    /** 查询门店全部货位（管理端货位作业界面用）。 */
+    public List<InventoryLocationVO> listLocations(Long storeId) {
+        if (storeId == null) {
+            throw new IllegalArgumentException("storeId 不能为空");
+        }
+        return locationRepository.findByStoreId(storeId).stream()
+                .map(this::toLocationVO)
+                .collect(Collectors.toList());
+    }
+
+    private InventoryLocationVO toLocationVO(InventoryLocation location) {
+        InventoryLocationVO vo = new InventoryLocationVO();
+        vo.setId(location.getId());
+        vo.setStoreId(location.getStoreId());
+        vo.setLocationType(location.getLocationType());
+        vo.setCode(location.getCode());
+        vo.setName(location.getName());
+        vo.setStatus(location.getStatus());
+        vo.setCreatedAt(location.getCreatedAt());
+        return vo;
     }
 
     /** 新单位链路移动；调用者提供原始数量，基准数量和快照由服务统一生成。 */

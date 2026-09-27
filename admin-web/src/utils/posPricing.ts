@@ -1,5 +1,6 @@
 import type { ProductDetailVO, ProductPriceRuleVO } from '@/types/product'
 import type { POSCustomerInfo } from '@/types/pos'
+import request from '@/utils/request'
 
 type NullableNumber = number | null | undefined
 
@@ -162,4 +163,57 @@ export const resolvePackageUnitPrice = ({
     return toPositiveNumber(vipPrice) ?? toPositiveNumber(packagePrice) ?? toPositiveNumber(fallbackPrice)
   }
   return toPositiveNumber(packagePrice) ?? toPositiveNumber(fallbackPrice) ?? toPositiveNumber(vipPrice)
+}
+
+// ==================== 服务端报价（人工改价审计依据） ====================
+
+/** 服务端报价请求参数：除 productId 外均可选 */
+export interface ServerPriceQuoteParams {
+  productId: number
+  storeId?: NullableNumber
+  channel?: string | null
+  customerType?: NullableNumber
+  vipLevel?: NullableNumber
+  saleUnit?: string | null
+  /** 业务日期（yyyy-MM-dd，为空表示今天） */
+  businessDate?: string | null
+}
+
+/** 服务端报价结果（对应后端 PriceQuote） */
+export interface ServerPriceQuote {
+  quoteId: string
+  orderItemId: number | null
+  productId: number
+  storeId: number | null
+  channel: string | null
+  customerType: number | null
+  vipLevel: number | null
+  saleUnit: string | null
+  saleUnitId: number | null
+  businessDate: string | null
+  suggestedUnitPrice: number
+  ruleVersion: string | null
+  referenceFloor: number | null
+  belowReference: boolean
+  legacyDerived: boolean
+}
+
+/**
+ * 查询服务端报价（按销售单位/渠道/客户分层解析，POS 改价审计的唯一价格依据）。
+ * 报价失败时由调用方决定降级策略（例如回退本地规则），此处直接向上抛出错误。
+ */
+export const fetchServerPriceQuote = (params: ServerPriceQuoteParams): Promise<ServerPriceQuote> => {
+  const { productId, storeId, channel, customerType, vipLevel, saleUnit, businessDate } = params
+  return request({
+    url: `/api/admin/products/${productId}/price-quote`,
+    method: 'get',
+    params: {
+      storeId,
+      channel: channel ?? undefined,
+      customerType,
+      vipLevel,
+      saleUnit: saleUnit ?? undefined,
+      businessDate: businessDate ?? undefined
+    }
+  }).then((response: any) => response as ServerPriceQuote)
 }

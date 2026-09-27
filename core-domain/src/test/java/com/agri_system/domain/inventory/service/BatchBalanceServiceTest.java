@@ -11,6 +11,7 @@ import com.agri_system.domain.inventory.repository.InventoryReceiptBatchReposito
 import com.agri_system.domain.inventory.repository.InventoryRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -18,9 +19,11 @@ import java.math.BigDecimal;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -140,6 +143,49 @@ class BatchBalanceServiceTest {
         assertEquals("盘点调整或退货必须提供幂等键防止重复提交", exception.getMessage());
         verify(balanceRepository, never()).save(any());
         verify(movementRepository, never()).append(any());
+    }
+
+    @Test
+    void moveCreatedDestinationBalanceCarriesTimestampsRequiredByRealMysql() {
+        InventoryLocation backroom = location(10L, 1L, "STORE_BACKROOM");
+        InventoryLocation floor = location(11L, 1L, "SALES_FLOOR");
+        when(locationRepository.findById(10L)).thenReturn(Optional.of(backroom));
+        when(locationRepository.findById(11L)).thenReturn(Optional.of(floor));
+        when(balanceRepository.findByBatchAndLocationForUpdate(100L, 10L))
+                .thenReturn(Optional.of(balance(100L, 1L, 10L, "72")));
+        when(balanceRepository.findByBatchAndLocationForUpdate(100L, 11L)).thenReturn(Optional.empty());
+        when(featureStatusRepository.findByStoreAndProduct(1L, 5L))
+                .thenReturn(Optional.of(featureEnabled()));
+
+        service().move(move(100L, 10L, 11L, "2", "48"));
+
+        ArgumentCaptor<InventoryBatchBalance> captor = ArgumentCaptor.forClass(InventoryBatchBalance.class);
+        verify(balanceRepository, times(2)).save(captor.capture());
+        InventoryBatchBalance created = captor.getAllValues().stream()
+                .filter(b -> Long.valueOf(11L).equals(b.getLocationId())).findFirst().orElseThrow();
+        assertNotNull(created.getCreatedAt(), "created_at 为 NOT NULL 列，余额工厂必须显式落值");
+        assertNotNull(created.getUpdatedAt(), "updated_at 为 NOT NULL 列，余额工厂必须显式落值");
+    }
+
+    @Test
+    void receiptCreatedBalanceCarriesTimestampsRequiredByRealMysql() {
+        InventoryReceiptBatch receiptBatch = new InventoryReceiptBatch();
+        receiptBatch.setId(100L);
+        receiptBatch.setStoreId(1L);
+        receiptBatch.setProductId(5L);
+        receiptBatch.setBaseQuantity(new BigDecimal("48"));
+        when(featureStatusRepository.findByStoreAndProduct(1L, 5L))
+                .thenReturn(Optional.of(featureEnabled()));
+        when(locationRepository.findEnabledByStoreAndType(1L, "STORE_BACKROOM"))
+                .thenReturn(Optional.of(location(10L, 1L, "STORE_BACKROOM")));
+        when(balanceRepository.findByBatchAndLocationForUpdate(100L, 10L)).thenReturn(Optional.empty());
+
+        service().increaseFromReceipt(20L, receiptBatch);
+
+        ArgumentCaptor<InventoryBatchBalance> captor = ArgumentCaptor.forClass(InventoryBatchBalance.class);
+        verify(balanceRepository).save(captor.capture());
+        assertNotNull(captor.getValue().getCreatedAt(), "created_at 为 NOT NULL 列，余额工厂必须显式落值");
+        assertNotNull(captor.getValue().getUpdatedAt(), "updated_at 为 NOT NULL 列，余额工厂必须显式落值");
     }
 
     private BatchBalanceService service() {

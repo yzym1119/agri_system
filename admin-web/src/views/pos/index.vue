@@ -31,10 +31,17 @@
             :selected-customer="selectedCustomer"
             :store-id="storeId"
             @update="handleCartUpdate"
+            @unit-change="handleUnitChange"
             @customer-change="handleCustomerChange"
           />
         </div>
         
+        <!-- 服务端报价降级提示：仅提示，不阻断收款 -->
+        <div v-if="hasPriceFallback" class="price-fallback-hint">
+          <el-icon><WarningFilled /></el-icon>
+          <span>服务端报价暂不可用，本单已按本地价格计算，可继续收款。</span>
+        </div>
+
         <div class="settlement-wrapper">
           <ModernSettlementBar
             ref="settlementBarRef"
@@ -60,13 +67,40 @@
       :submitting="submittingOrder"
       @submit="handleSubmitOrder"
     />
+
+    <!-- 库房取货待确认（后仓拣货，不即时出库） -->
+    <el-dialog v-model="pickupVisible" title="库房取货" width="520px">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="本单含库房取货商品"
+        description="已随订单生成取货请求，请在「取货」工作台扫描批次标签或货位编码确认。若工作台未见该订单的取货请求，可点击补登记。"
+        class="pickup-alert"
+      />
+      <div v-for="item in pickupItems" :key="item.productId" class="pickup-row">
+        <span class="pickup-name">{{ item.name }}</span>
+        <el-button
+          size="small"
+          :loading="pickupSubmittingId === item.productId"
+          @click="handleRegisterPickup(item)"
+        >
+          补登记取货请求
+        </el-button>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="pickupVisible = false">知道了</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import {computed, onMounted, onUnmounted, ref} from 'vue'
 import {ElMessage} from 'element-plus'
+import { WarningFilled } from '@element-plus/icons-vue'
 import { getProductPriceRules } from '@/api/product'
+import { createPickupRequest, createPOSOrder, getOrderDetail } from '@/api/order'
 import {useUserStore} from '@/store/user'
 import CategorySidebar from './components/CategorySidebar.vue'
 import ModernGoodsPanel from './components/ModernGoodsPanel.vue'
@@ -75,7 +109,7 @@ import ModernSettlementBar from './components/ModernSettlementBar.vue'
 import CheckoutDialog from './components/CheckoutDialog.vue'
 import type {CartItem, POSCustomerInfo} from '@/types/pos'
 import type { ProductDetailVO, ProductPriceRuleVO } from '@/types/product'
-import { resolvePackageUnitPrice, resolveProductCartUnitPrice } from '@/utils/posPricing'
+import { fetchServerPriceQuote, resolvePackageUnitPrice, resolveProductCartUnitPrice } from '@/utils/posPricing'
 
 const userStore = useUserStore()
 
@@ -109,6 +143,12 @@ const categoryTree = ref<any[]>([])
 // 结算弹窗
 const checkoutVisible = ref(false)
 const submittingOrder = ref(false)
+
+// 库房取货（后仓拣货）待确认状态
+const pickupVisible = ref(false)
+const pickupOrderId = ref<number | null>(null)
+const pickupItems = ref<{ productId: number; name: string }[]>([])
+const pickupSubmittingId = ref<number | null>(null)
 const checkoutData = ref<{
   paymentType: number
   discountAmount: number
@@ -123,6 +163,9 @@ const checkoutData = ref<{
 const totalAmount = computed(() => {
   return cartItems.value.reduce((sum, item) => sum + item.subtotal, 0)
 })
+
+// 是否存在服务端报价降级（仅提示，不阻断收款）
+const hasPriceFallback = computed(() => cartItems.value.some((item) => item.priceFallback))
 
 // 初始化
 onMounted(async () => {
@@ -195,8 +238,48 @@ const getCachedProductPriceRules = async (productId: number): Promise<ProductPri
   }
 }
 
+/** 记录服务端报价结果（单据审计依据），报价失败时标记降级提示 */
+const applyServerQuote = (item: CartItem, quote: Awaited<ReturnType<typeof fetchServerPriceQuote>>) => {
+  item.quoteId = quote.quoteId ?? null
+  item.belowReference = !!quote.belowReference
+  item.referenceFloor = quote.referenceFloor ?? null
+  item.priceFallback = false
+}
+
+const markPriceFallback = (item: CartItem) => {
+  item.quoteId = null
+  item.belowReference = false
+  item.referenceFloor = null
+  item.priceFallback = true
+}
+
+/**
+ * 解析购物车行单价：
+ * 商品优先取服务端报价（按销售单位/渠道/客户分层）；报价失败回退本地价格并提示，不阻断收款。
+ */
 const resolveCartItemUnitPrice = async (item: CartItem): Promise<number | null> => {
   if (item.itemType === 1 && item.productId) {
+    try {
+      const quote = await fetchServerPriceQuote({
+        productId: item.productId,
+        storeId: storeId.value,
+        channel: 'POS',
+        customerType: selectedCustomer.value?.type,
+        vipLevel: selectedCustomer.value?.vipLevel,
+        saleUnit: item.currentUnit
+      })
+      const quotedPrice = typeof quote?.suggestedUnitPrice === 'number' ? quote.suggestedUnitPrice : null
+      if (quotedPrice !== null && quotedPrice > 0) {
+        applyServerQuote(item, quote)
+        return quotedPrice
+      }
+      markPriceFallback(item)
+    } catch (error) {
+      // 报价失败不阻断销售：回退本地价格并在购物车给出 WARN 提示
+      console.warn('服务端报价获取失败，已回退本地价格:', error)
+      markPriceFallback(item)
+    }
+
     return resolveProductCartUnitPrice({
       product: getProductSnapshot(item),
       rules: await getCachedProductPriceRules(item.productId),
@@ -279,9 +362,23 @@ const handleCustomerChange = async (customer: POSCustomerInfo | null) => {
   await recalculateCartPrices()
 }
 
-// 购物车更新
+// 购物车更新：数量/删除/库房取货等本地变更，仅同步数组引用
 const handleCartUpdate = (items: CartItem[]) => {
   cartItems.value = items
+}
+
+// 单位切换：按新的销售单位重新取服务端报价，并刷新行内标记（低于参考下限/本地价降级）
+const handleUnitChange = async (payload: { id: string; oldUnit: string; newUnit: string }) => {
+  const item = cartItems.value.find((cartItem) => cartItem.id === payload.id)
+  if (item && item.itemType === 1 && item.productId) {
+    const newPrice = await resolveCartItemUnitPrice(item)
+    if (newPrice !== null && Math.abs(newPrice - item.unitPrice) > 0.01) {
+      item.unitPrice = newPrice
+      item.subtotal = item.quantity * item.unitPrice
+    }
+  }
+  // 无论报价结果如何都重新赋值，确保 belowReference/priceFallback 标签按最新报价结果刷新
+  cartItems.value = [...cartItems.value]
 }
 
 // 分类变更
@@ -347,9 +444,13 @@ const handleSubmitOrder = async (orderData: any) => {
 
   submittingOrder.value = true
 
+  // 提交前收集库房取货商品（订单创建后购物车会被清空）
+  const pickupFlaggedItems = cartItems.value
+    .filter((item) => item.warehousePickup && item.itemType === 1 && item.productId)
+    .map((item) => ({ productId: item.productId as number, name: item.name }))
+
   try {
-    const { createPOSOrder } = await import('@/api/order')
-    await createPOSOrder({
+    const createdOrder: any = await createPOSOrder({
       ...orderData,
       storeId: storeId.value!,
       staffId: staffId.value!
@@ -366,6 +467,14 @@ const handleSubmitOrder = async (orderData: any) => {
 
     // 刷新商品列表（更新库存）
     goodsPanelRef.value?.refresh()
+
+    // 库房取货提示：后端已随订单自动生成取货请求，此处仅提示并提供补登记入口
+    const createdOrderId = createdOrder?.id ?? createdOrder?.orderId ?? null
+    if (pickupFlaggedItems.length > 0 && createdOrderId) {
+      pickupOrderId.value = Number(createdOrderId)
+      pickupItems.value = pickupFlaggedItems
+      pickupVisible.value = true
+    }
   } catch (error: any) {
     console.error('订单创建失败:', error)
     const errorMessage = error?.response?.data?.message || error?.message || '未知错误'
@@ -374,6 +483,30 @@ const handleSubmitOrder = async (orderData: any) => {
   } finally {
     // 确保状态重置，即使出错也要重置
     submittingOrder.value = false
+  }
+}
+
+/**
+ * 补登记取货请求：正常情况后端已自动生成，仅在工作台未见请求时使用。
+ * 重复登记会被后端拒绝（已有未完成请求），按提示信息处理即可。
+ */
+const handleRegisterPickup = async (item: { productId: number; name: string }) => {
+  if (!pickupOrderId.value) return
+  pickupSubmittingId.value = item.productId
+  try {
+    const detail: any = await getOrderDetail(pickupOrderId.value)
+    const orderItem = (detail?.items || []).find((row: any) => row.productId === item.productId)
+    if (!orderItem?.id) {
+      ElMessage.warning(`未找到「${item.name}」的订单明细，无法登记取货请求`)
+      return
+    }
+    await createPickupRequest(pickupOrderId.value, { orderItemId: orderItem.id })
+    ElMessage.success('取货请求已登记')
+  } catch (error) {
+    // 请求拦截器已提示失败原因（如已有未完成的库房取货请求）
+    console.warn('补登记取货请求失败:', error)
+  } finally {
+    pickupSubmittingId.value = null
   }
 }
 </script>
@@ -428,5 +561,39 @@ const handleSubmitOrder = async (orderData: any) => {
   border-top: 1px solid #e5e7eb;
   box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
   z-index: 10;
+}
+
+.price-fallback-hint {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #fdf6ec;
+  color: #e6a23c;
+  font-size: 12px;
+  line-height: 1.4;
+  border-top: 1px solid #faecd8;
+}
+
+.pickup-alert {
+  margin-bottom: 12px;
+}
+
+.pickup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px dashed #ebeef5;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.pickup-name {
+  font-size: 14px;
+  color: #303133;
 }
 </style>

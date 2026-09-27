@@ -152,3 +152,57 @@ export interface InventoryTransferRecordVO {
   createdAt?: string
   remark?: string
 }
+
+/**
+ * 货位VO（零售事实链 Task9：货位作业界面）
+ */
+export interface InventoryLocationVO {
+  id: number
+  storeId?: number
+  /** 货位类型：SALES_FLOOR/STORE_BACKROOM/CENTRAL_WAREHOUSE/OTHER_STORE */
+  locationType?: string
+  /** 货位编码（门店内唯一，扫码解析用） */
+  code?: string
+  name?: string
+  /** 状态：1启用 0停用 */
+  status?: number
+  createdAt?: string
+}
+
+/**
+ * 库存风险建议VO（零售事实链 Task8/Task9：只提示，不自动执行）
+ */
+export interface InventoryRiskVO {
+  kind: string
+  productId?: number | null
+  productName?: string | null
+  productCode?: string | null
+  storeId?: number | null
+  batchId?: number | null
+  internalReceiptBatchNo?: string | null
+  currentStock?: number | null
+  minStock?: number | null
+  maxStock?: number | null
+  dateStatus?: string | null
+  productionDate?: string | null
+  expiryDate?: string | null
+  daysToExpiry?: number | null
+  observationWindowDays?: number | null
+  evidenceCount?: number | null
+  confidence?: string | null
+  message?: string | null
+}
+
+/**
+ * 库存风险人工决策请求（仅追加留痕，不触发自动动作）
+ */
+export interface InventoryDecisionRequest {
+  riskKind: string
+  /** PRODUCT/BATCH */
+  entityType: string
+  entityId: number
+  suggestedAction?: string | null
+  /** CONTINUE_SALE/INSPECT/REPLENISH/TRANSFER/RETURN_TO_VENDOR/WRITE_OFF/PAUSE_REPLENISHMENT/NO_ACTION */
+  decisionAction: string
+  decisionReason: string
+}

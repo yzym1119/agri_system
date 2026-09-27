@@ -71,6 +71,27 @@ class RetailFactChainMigrationTest {
                     `status` TINYINT NOT NULL DEFAULT 2,
                     `freeze_until` DATETIME NULL
                 );
+                -- V126(按销售单位报价)对 product_price 加列,基线(V118)早于 V7 建表路径,需最小投影
+                CREATE TABLE `product_price` (
+                    `id` BIGINT PRIMARY KEY
+                );
+                -- V127(作业界面菜单)向 sys_menu/sys_role_menu 写入菜单行,基线(V118)无这两张表,需最小投影
+                CREATE TABLE `sys_menu` (
+                    `id` BIGINT PRIMARY KEY,
+                    `parent_id` BIGINT,
+                    `name` VARCHAR(64) NOT NULL,
+                    `permission` VARCHAR(64),
+                    `type` TINYINT NOT NULL DEFAULT 1,
+                    `sort_order` INT NOT NULL DEFAULT 0,
+                    `path` VARCHAR(128),
+                    `icon` VARCHAR(64),
+                    `visible` TINYINT NOT NULL DEFAULT 1
+                );
+                CREATE TABLE `sys_role_menu` (
+                    `role_id` BIGINT NOT NULL,
+                    `menu_id` BIGINT NOT NULL,
+                    PRIMARY KEY (`role_id`, `menu_id`)
+                );
                 INSERT INTO `store` (`id`) VALUES (1), (2);
                 INSERT INTO `staff` (`id`) VALUES (1);
                 INSERT INTO `supplier` (`id`) VALUES (1);
@@ -103,6 +124,7 @@ class RetailFactChainMigrationTest {
         jdbc.update("DELETE FROM order_item_price_audit");
         jdbc.update("DELETE FROM inventory_decision_log");
         jdbc.update("DELETE FROM order_item_batch_allocation");
+        jdbc.update("DELETE FROM order_pickup_request");
         jdbc.update("DELETE FROM inventory_movement");
         jdbc.update("DELETE FROM inventory_batch_balance");
         jdbc.update("DELETE FROM inventory_balance_feature_status");
@@ -139,11 +161,13 @@ class RetailFactChainMigrationTest {
         assertIndex("inventory_movement", "idx_inventory_movement_reference", "reference_type", "reference_id");
         assertIndex("inventory_movement", "idx_inventory_movement_transfer", "transfer_id", "occurred_at");
         assertUniqueIndex("inventory_movement", "uk_inventory_movement_idempotency", "idempotency_key");
+        assertIndex("order_item_batch_allocation", "idx_order_item_batch_allocation_pickup", "pickup_request_id");
+        assertIndex("order_pickup_request", "idx_order_pickup_request_status", "store_id", "status");
     }
 
     @Test
     void retailFactChainMigrationCreatesAllFactTablesAndSnapshots() throws SQLException {
-        assertEquals("124", flyway.info().current().getVersion().getVersion());
+        assertEquals("127", flyway.info().current().getVersion().getVersion());
 
         List.of(
                 "product_unit",
@@ -154,6 +178,7 @@ class RetailFactChainMigrationTest {
                 "inventory_batch_balance",
                 "inventory_balance_feature_status",
                 "inventory_movement",
+                "order_pickup_request",
                 "order_item_batch_allocation",
                 "order_item_price_audit",
                 "inventory_decision_log"
@@ -162,6 +187,7 @@ class RetailFactChainMigrationTest {
         assertColumnExists("order_item", "base_unit_id");
         assertColumnExists("order_item", "base_quantity");
         assertColumnExists("order_item", "unit_cost");
+        assertColumnExists("order_item_batch_allocation", "pickup_request_id");
     }
 
     @Test
@@ -171,6 +197,40 @@ class RetailFactChainMigrationTest {
         assertColumnExists("product", "main_to_aux_ratio");
         assertColumnExists("inventory_batch", "quantity");
         assertColumnExists("order_item", "unit");
+    }
+
+    @Test
+    void retailPricingUnitChannelMigrationAddsQuoteColumns() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        assertInformationSchemaColumn(jdbc, "product_price", "sale_unit");
+        assertInformationSchemaColumn(jdbc, "product_price", "channel");
+        assertInformationSchemaColumn(jdbc, "product_price", "rule_version");
+        assertInformationSchemaColumn(jdbc, "order_item_price_audit", "quote_id");
+    }
+
+    @Test
+    void workScreenMenuMigrationRegistersFourMenusAndRoleGrants() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        assertEquals(Integer.valueOf(4), jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sys_menu WHERE id IN (2703, 2704, 2705, 2706)", Integer.class));
+        assertMenuRow(jdbc, 2703L, 2000L, "单位设置", "product:unit:query", "/product/units");
+        assertMenuRow(jdbc, 2704L, 2100L, "收货", "purchase:inbound", "/purchase/receipt");
+        assertMenuRow(jdbc, 2705L, 2100L, "货位", "inventory:view", "/inventory/locations");
+        assertMenuRow(jdbc, 2706L, 2100L, "取货", "order:pickup:verify", "/inventory/pickup");
+        assertEquals(Integer.valueOf(4), jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = 1 AND menu_id IN (2703, 2704, 2705, 2706)",
+                Integer.class));
+    }
+
+    private void assertMenuRow(JdbcTemplate jdbc, Long id, Long parentId, String name, String permission, String path) {
+        assertEquals(parentId, jdbc.queryForObject("SELECT parent_id FROM sys_menu WHERE id = ?", Long.class, id));
+        assertEquals(name, jdbc.queryForObject("SELECT name FROM sys_menu WHERE id = ?", String.class, id));
+        assertEquals(permission, jdbc.queryForObject("SELECT permission FROM sys_menu WHERE id = ?", String.class, id));
+        assertEquals(path, jdbc.queryForObject("SELECT path FROM sys_menu WHERE id = ?", String.class, id));
+        assertEquals(Integer.valueOf(1), jdbc.queryForObject("SELECT type FROM sys_menu WHERE id = ?", Integer.class, id));
+        assertEquals(Integer.valueOf(1), jdbc.queryForObject("SELECT visible FROM sys_menu WHERE id = ?", Integer.class, id));
+        assertEquals(Integer.valueOf(1), jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = 1 AND menu_id = ?", Integer.class, id));
     }
 
     @Test
@@ -197,13 +257,15 @@ class RetailFactChainMigrationTest {
         assertEquals(migrationFiles.size(), versions.size(), "所有 V*.sql 文件都必须被枚举和解析");
         assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
         assertTrue(versions.stream().allMatch(version -> version.compareTo(MigrationVersion.fromVersion("1")) >= 0
-                        && version.compareTo(MigrationVersion.fromVersion("124")) <= 0),
-                "存在超出 V1..V124 范围的迁移版本");
+                        && version.compareTo(MigrationVersion.fromVersion("127")) <= 0),
+                "存在超出 V1..V127 范围的迁移版本");
         assertTrue(versions.containsAll(List.of(MigrationVersion.fromVersion("119"),
                 MigrationVersion.fromVersion("120"), MigrationVersion.fromVersion("121"),
-                MigrationVersion.fromVersion("123"), MigrationVersion.fromVersion("124"))),
-                "缺少 V119/V120/V121/V123/V124");
-        assertEquals("124", flyway.info().current().getVersion().getVersion());
+                MigrationVersion.fromVersion("123"), MigrationVersion.fromVersion("124"),
+                MigrationVersion.fromVersion("125"), MigrationVersion.fromVersion("126"),
+                MigrationVersion.fromVersion("127"))),
+                "缺少 V119/V120/V121/V123/V124/V125/V126/V127");
+        assertEquals("127", flyway.info().current().getVersion().getVersion());
     }
 
     @Test
@@ -424,6 +486,17 @@ class RetailFactChainMigrationTest {
         return jdbc.queryForObject("SELECT id FROM inventory_location WHERE code = ?", Long.class, code);
     }
 
+    private long insertPickupRequest(JdbcTemplate jdbc, long orderId, long orderItemId, long storeId,
+                                     long productId, int requestedBaseQuantity, Long sourceLocationId) {
+        jdbc.update("""
+                INSERT INTO order_pickup_request
+                    (order_id, order_item_id, store_id, product_id, requested_base_quantity, source_location_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, orderId, orderItemId, storeId, productId, requestedBaseQuantity, sourceLocationId);
+        return jdbc.queryForObject("SELECT id FROM order_pickup_request WHERE order_item_id = ?",
+                Long.class, orderItemId);
+    }
+
     private static void createH2AppendOnlyTriggers() {
         createH2AppendOnlyTriggers(new JdbcTemplate(dataSource));
     }
@@ -532,6 +605,46 @@ class RetailFactChainMigrationTest {
                 """, batch, unit);
     }
 
+    @Test
+    void pickupRequestIsLinkedFromAllocationAndEnforcesStatusQuantityAndCrossSkuGuards() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        long location = insertLocation(jdbc, 1, "L-PICKUP");
+        long requestId = insertPickupRequest(jdbc, 1, 1, 1, 1, 5, null);
+
+        // 合法：PENDING 请求可被批次归属引用（货架缺货/库房取货场景）
+        jdbc.update("""
+                INSERT INTO order_item_batch_allocation
+                    (order_item_id, product_id, store_id, allocated_base_quantity, pickup_request_id, evidence_level)
+                VALUES (1, 1, 1, 5, ?, 'UNKNOWN')
+                """, requestId);
+
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_pickup_request
+                    (order_id, order_item_id, store_id, product_id, requested_base_quantity, status)
+                VALUES (1, 1, 1, 1, 5, 'DONE')
+                """));
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_pickup_request
+                    (order_id, order_item_id, store_id, product_id, requested_base_quantity)
+                VALUES (1, 1, 1, 1, 0)
+                """));
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_pickup_request
+                    (order_id, order_item_id, store_id, product_id, requested_base_quantity)
+                VALUES (1, 1, 1, 2, 5)
+                """));
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_pickup_request
+                    (order_id, order_item_id, store_id, product_id, requested_base_quantity, source_location_id)
+                VALUES (1, 1, 2, 1, 5, ?)
+                """, location));
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_item_batch_allocation
+                    (order_item_id, product_id, store_id, allocated_base_quantity, pickup_request_id, evidence_level)
+                VALUES (1, 1, 1, 5, 999999, 'UNKNOWN')
+                """));
+    }
+
     private void assertTableExistsUnchecked(String tableName) {
         try {
             assertTableExists(tableName);
@@ -552,6 +665,14 @@ class RetailFactChainMigrationTest {
              ResultSet columns = connection.getMetaData().getColumns(null, null, tableName, columnName)) {
             assertTrue(columns.next(), () -> "缺少列: " + tableName + "." + columnName);
         }
+    }
+
+    private void assertInformationSchemaColumn(JdbcTemplate jdbc, String tableName, String columnName) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE UPPER(TABLE_NAME) = UPPER(?) AND UPPER(COLUMN_NAME) = UPPER(?)
+                """, Integer.class, tableName, columnName);
+        assertEquals(1, count == null ? 0 : count.intValue(), "缺少列: " + tableName + "." + columnName);
     }
 
     private void assertUniqueIndex(String tableName, String indexName, String... expectedColumns)

@@ -39,6 +39,34 @@
           <span v-if="item.specification" class="item-spec">{{ item.specification }}</span>
           <span v-if="item.manufacturer" class="item-manufacturer">{{ item.manufacturer }}</span>
         </div>
+
+        <!-- 服务端报价提示：低于参考下限 / 本地价降级；库房取货标记 -->
+        <div v-if="item.belowReference || item.priceFallback || item.itemType === 1" class="cart-item-flags">
+          <el-tag v-if="item.belowReference" type="danger" size="small" effect="plain">
+            低于参考下限{{ item.referenceFloor ? ` ¥${item.referenceFloor.toFixed(2)}` : '' }}
+          </el-tag>
+          <el-tag v-else-if="item.priceFallback" type="warning" size="small" effect="plain">
+            本地价
+          </el-tag>
+          <el-checkbox
+            v-if="item.itemType === 1"
+            :model-value="!!item.warehousePickup"
+            size="small"
+            @change="(checked: any) => handlePickupChange(item, !!checked)"
+          >
+            库房取货
+          </el-checkbox>
+        </div>
+
+        <!-- 低于参考下限时记录人工原因（选填，随单留痕） -->
+        <div v-if="item.belowReference" class="cart-item-reason">
+          <el-input
+            v-model="item.priceChangeReason"
+            size="small"
+            placeholder="低于参考价原因（选填）"
+            @change="emit('update', [...props.cartItems])"
+          />
+        </div>
         
         <!-- 第三行：单价 + 数量控制器 + 单位 + 删除 -->
         <div class="cart-item-footer">
@@ -101,6 +129,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   update: [items: CartItem[]]
   customerChange: [customer: POSCustomerInfo | null]
+  unitChange: [payload: { id: string; oldUnit: string; newUnit: string }]
 }>()
 
 const customerBarRef = ref<InstanceType<typeof CustomerBar> | null>(null)
@@ -148,6 +177,15 @@ const handleUnitChange = (item: CartItem, newUnit: string) => {
 
   // 重新计算小计
   item.subtotal = item.quantity * item.unitPrice
+
+  // 显式上报单位变更：购物车对象已被就地修改，父级无法通过前后对比推断变更项
+  emit('unitChange', { id: item.id, oldUnit, newUnit })
+  emit('update', [...props.cartItems])
+}
+
+// 库房取货标记（后仓拣货，下单后由后端生成取货请求）
+const handlePickupChange = (item: CartItem, checked: boolean) => {
+  item.warehousePickup = checked
   emit('update', [...props.cartItems])
 }
 
@@ -273,6 +311,18 @@ defineExpose({
   .item-manufacturer {
     color: #9ca3af;
   }
+}
+
+.cart-item-flags {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.cart-item-reason {
+  margin-bottom: 8px;
 }
 
 .cart-item-footer {

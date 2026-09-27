@@ -39,7 +39,7 @@ public class ProductPriceRepositoryImpl implements ProductPriceRepository {
     public List<ProductPrice> findByProductId(Long productId) {
         QueryWrapper queryWrapper = QueryWrapper.create()
                 .where("product_id = ?", productId)
-                .orderBy("created_at DESC");
+                .orderBy("created_at DESC, id DESC");
         return priceMapper.selectListByQuery(queryWrapper);
     }
     

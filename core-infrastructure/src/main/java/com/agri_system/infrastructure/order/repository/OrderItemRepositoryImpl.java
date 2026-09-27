@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 订单明细仓储实现
@@ -47,8 +48,13 @@ public class OrderItemRepositoryImpl implements OrderItemRepository {
     }
     
     @Override
-    public OrderItem findById(Long id) {
-        return mapper.selectOneById(id);
+    public Optional<OrderItem> findById(Long id) {
+        return Optional.ofNullable(mapper.selectOneById(id));
+    }
+
+    @Override
+    public Optional<OrderItem> findByIdForUpdate(Long id) {
+        return Optional.ofNullable(mapper.findByIdForUpdate(id));
     }
 
     @Override

@@ -558,7 +558,9 @@ public class AfterSalesApplicationService {
         vo.setQuantity(item.getQuantity());
         vo.setRefundAmount(item.getRefundAmount());
 
-        OrderItem orderItem = item.getOrderItemId() != null ? orderItemRepository.findById(item.getOrderItemId()) : null;
+        OrderItem orderItem = item.getOrderItemId() != null
+                ? orderItemRepository.findById(item.getOrderItemId()).orElse(null)
+                : null;
         if (orderItem != null) {
             vo.setProductName(orderItem.getProductName());
             vo.setUnit(orderItem.getUnit());

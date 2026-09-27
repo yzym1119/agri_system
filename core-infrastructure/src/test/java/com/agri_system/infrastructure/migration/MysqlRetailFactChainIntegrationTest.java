@@ -106,7 +106,8 @@ class MysqlRetailFactChainIntegrationTest {
                 .locations("classpath:db/migration")
                 .baselineOnMigrate(true)
                 .baselineVersion("118")
-                .target(MigrationVersion.LATEST)
+                // 本 IT 的最小 legacy 投影只支撑到 V124;V125+ 的真库全链迁移验证归门控 E2E RetailFactChainEndToEndTest
+                .target(MigrationVersion.fromVersion("124"))
                 .load()
                 .migrate();
     }

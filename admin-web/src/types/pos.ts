@@ -29,6 +29,8 @@ export interface POSOrderItemDTO {
   quantity: number
   unit?: string
   unitPrice?: number // 单价（可选，如果不提供则从价格体系查询）
+  warehousePickup?: boolean // 是否库房取货（true 时后端生成取货请求）
+  priceChangeReason?: string // 人工改价原因（提交价与服务端报价不一致时留痕）
 }
 
 export interface POSPaymentDetail {
@@ -66,6 +68,13 @@ export interface CartItem {
   stock?: number // 当前门店库存（商品）
   _expanded?: boolean // 套餐是否展开（仅前端使用）
   fromPackage?: string // 标记来自哪个套餐（用于UI显示分组）
+  // 服务端报价（零售事实链 Task7/Task9，仅商品）
+  quoteId?: string | null // 服务端报价ID（后端返回字符串标识）
+  belowReference?: boolean // 报价低于参考下限（需人工确认）
+  referenceFloor?: number | null // 参考下限价格（低于下限时展示）
+  priceChangeReason?: string // 人工改价原因（提交时留痕）
+  priceFallback?: boolean // 服务端报价失败，已回退本地价（仅提示）
+  warehousePickup?: boolean // 库房取货（后仓拣货，不即时出库）
 }
 
 /**

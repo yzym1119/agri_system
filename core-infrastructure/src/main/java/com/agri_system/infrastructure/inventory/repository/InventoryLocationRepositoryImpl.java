@@ -7,6 +7,7 @@ import com.mybatisflex.core.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -28,6 +29,19 @@ public class InventoryLocationRepositoryImpl implements InventoryLocationReposit
     public Optional<InventoryLocation> findEnabledByStoreAndType(Long storeId, String locationType) {
         QueryWrapper query = QueryWrapper.create().where("store_id = ?", storeId)
                 .and("location_type = ?", locationType).and("status = 1");
+        return Optional.ofNullable(mapper.selectOneByQuery(query));
+    }
+
+    @Override
+    public List<InventoryLocation> findByStoreId(Long storeId) {
+        QueryWrapper query = QueryWrapper.create().where("store_id = ?", storeId).orderBy("id ASC");
+        return mapper.selectListByQuery(query);
+    }
+
+    @Override
+    public Optional<InventoryLocation> findByStoreIdAndCode(Long storeId, String code) {
+        QueryWrapper query = QueryWrapper.create().where("store_id = ?", storeId)
+                .and("code = ?", code).and("status = 1");
         return Optional.ofNullable(mapper.selectOneByQuery(query));
     }
 }

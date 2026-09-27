@@ -741,7 +741,11 @@ const handleConfirm = () => {
       itemType: item.itemType,
       quantity: item.quantity,
       unit: item.currentUnit,
-      unitPrice: item.unitPrice
+      unitPrice: item.unitPrice,
+      // 库房取货：由后端生成取货请求（后仓拣货，不即时出库）
+      warehousePickup: item.warehousePickup === true ? true : undefined,
+      // 低于参考下限等原因留痕
+      priceChangeReason: item.priceChangeReason?.trim() || undefined
     })),
     // 默认支付类型
     paymentType: paymentType.value,

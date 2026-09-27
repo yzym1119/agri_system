@@ -73,6 +73,11 @@ public interface ProductRepository {
      * 查询所有设置了最高库存阈值的商品
      */
     java.util.List<Product> findAllWithMaxStock();
+
+    /**
+     * 按 ID 集合批量查询商品（单条 IN 查询）
+     */
+    java.util.List<Product> findByIds(java.util.Collection<Long> ids);
 }
 
 

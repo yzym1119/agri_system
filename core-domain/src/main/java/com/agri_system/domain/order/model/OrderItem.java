@@ -47,6 +47,15 @@ public class OrderItem {
     /** 成本快照（元） */
     private BigDecimal costPriceSnapshot;
 
+    /** 基准单位ID（展示快照，仅在批次归属成本为 ACTUAL 时由归属事实回填） */
+    private Long baseUnitId;
+
+    /** 归属基准数量合计（展示快照，与 base_unit_id、unit_cost 同源同批写入） */
+    private BigDecimal baseQuantity;
+
+    /** 基准单位加权成本（元，展示快照 = Σ归属成本 / Σ归属基准数量） */
+    private BigDecimal unitCost;
+
     /** 小计金额（元） */
     private BigDecimal totalPrice;
     
