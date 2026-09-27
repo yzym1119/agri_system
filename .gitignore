@@ -25,3 +25,4 @@ deploy/.env
 deploy/ssl/*.pem
 deploy/ssl/*.key
 deploy/ssl/*.crt
+.wt-task*/
