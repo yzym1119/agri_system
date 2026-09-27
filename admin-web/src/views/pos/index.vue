@@ -31,6 +31,7 @@
             :selected-customer="selectedCustomer"
             :store-id="storeId"
             @update="handleCartUpdate"
+            @unit-change="handleUnitChange"
             @customer-change="handleCustomerChange"
           />
         </div>
@@ -361,30 +362,23 @@ const handleCustomerChange = async (customer: POSCustomerInfo | null) => {
   await recalculateCartPrices()
 }
 
-// 购物车更新：单位发生切换时按新的销售单位重新取服务端报价
-const handleCartUpdate = async (items: CartItem[]) => {
-  const previousUnits = new Map<string, string>()
-  cartItems.value.forEach((item) => previousUnits.set(item.id, item.currentUnit))
-
+// 购物车更新：数量/删除/库房取货等本地变更，仅同步数组引用
+const handleCartUpdate = (items: CartItem[]) => {
   cartItems.value = items
+}
 
-  const unitChangedItems = items.filter(
-    (item) => previousUnits.has(item.id) && previousUnits.get(item.id) !== item.currentUnit
-  )
-  if (unitChangedItems.length === 0) return
-
-  let hasChanges = false
-  for (const item of unitChangedItems) {
+// 单位切换：按新的销售单位重新取服务端报价，并刷新行内标记（低于参考下限/本地价降级）
+const handleUnitChange = async (payload: { id: string; oldUnit: string; newUnit: string }) => {
+  const item = cartItems.value.find((cartItem) => cartItem.id === payload.id)
+  if (item && item.itemType === 1 && item.productId) {
     const newPrice = await resolveCartItemUnitPrice(item)
     if (newPrice !== null && Math.abs(newPrice - item.unitPrice) > 0.01) {
       item.unitPrice = newPrice
       item.subtotal = item.quantity * item.unitPrice
-      hasChanges = true
     }
   }
-  if (hasChanges) {
-    cartItems.value = [...items]
-  }
+  // 无论报价结果如何都重新赋值，确保 belowReference/priceFallback 标签按最新报价结果刷新
+  cartItems.value = [...cartItems.value]
 }
 
 // 分类变更

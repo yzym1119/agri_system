@@ -378,6 +378,9 @@ const submit = async () => {
 }
 
 const doPrint = () => {
+  // 打印期间临时挂 body class：全局打印样式仅在本页打印时生效，避免影响其他页面后续打印
+  document.body.classList.add('label-printing')
+  window.addEventListener('afterprint', () => document.body.classList.remove('label-printing'), { once: true })
   window.print()
 }
 
@@ -459,15 +462,22 @@ loadOrders()
 .label-foot {
   color: #666;
 }
+</style>
+
+<!--
+  打印样式必须放在非 scoped 块：标签区域位于 el-dialog 内，弹窗被传送到 body，
+  scoped 选择器无法命中；用 body.label-printing 限定，仅在收货页触发打印时生效。
+-->
+<style>
 @media print {
-  body * {
+  body.label-printing * {
     visibility: hidden;
   }
-  .label-print-area,
-  .label-print-area * {
+  body.label-printing .label-print-area,
+  body.label-printing .label-print-area * {
     visibility: visible;
   }
-  .label-print-area {
+  body.label-printing .label-print-area {
     position: absolute;
     left: 0;
     top: 0;

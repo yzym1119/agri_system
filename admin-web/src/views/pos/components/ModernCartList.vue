@@ -129,6 +129,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   update: [items: CartItem[]]
   customerChange: [customer: POSCustomerInfo | null]
+  unitChange: [payload: { id: string; oldUnit: string; newUnit: string }]
 }>()
 
 const customerBarRef = ref<InstanceType<typeof CustomerBar> | null>(null)
@@ -176,6 +177,9 @@ const handleUnitChange = (item: CartItem, newUnit: string) => {
 
   // 重新计算小计
   item.subtotal = item.quantity * item.unitPrice
+
+  // 显式上报单位变更：购物车对象已被就地修改，父级无法通过前后对比推断变更项
+  emit('unitChange', { id: item.id, oldUnit, newUnit })
   emit('update', [...props.cartItems])
 }
 

@@ -224,7 +224,8 @@ const routeDefinitions: RouteDefinition[] = [
   },
   {
     name: 'PurchaseReceipt',
-    path: 'purchase/receipt',
+    // 故意使用绝对路径：与 V127 菜单 path /purchase/receipt 对齐，父级分组仅作结构归属
+    path: '/purchase/receipt',
     component: () => import('@/views/purchase/receipt/index.vue'),
     permissions: ['purchase:inbound'],
     title: '收货',
