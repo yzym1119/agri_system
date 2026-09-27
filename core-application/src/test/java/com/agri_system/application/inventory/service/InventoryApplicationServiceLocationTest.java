@@ -1,10 +1,13 @@
 package com.agri_system.application.inventory.service;
 
 import com.agri_system.application.inventory.dto.command.InventoryMoveCommand;
+import com.agri_system.application.inventory.dto.vo.InventoryLocationVO;
 import com.agri_system.application.product.service.ProductUnitService;
 import com.agri_system.application.product.service.UnitConversionSnapshot;
+import com.agri_system.domain.inventory.model.InventoryLocation;
 import com.agri_system.domain.inventory.model.InventoryMovement;
 import com.agri_system.domain.inventory.model.InventoryReceiptBatch;
+import com.agri_system.domain.inventory.repository.InventoryLocationRepository;
 import com.agri_system.domain.inventory.repository.InventoryReceiptBatchRepository;
 import com.agri_system.domain.inventory.service.BatchBalanceService;
 import com.agri_system.domain.product.model.ProductUnit;
@@ -16,11 +19,13 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -32,6 +37,8 @@ class InventoryApplicationServiceLocationTest {
     private InventoryReceiptBatchRepository receiptBatchRepository;
     @Mock
     private ProductUnitService productUnitService;
+    @Mock
+    private InventoryLocationRepository locationRepository;
     @InjectMocks
     private InventoryApplicationService service;
 
@@ -60,6 +67,38 @@ class InventoryApplicationServiceLocationTest {
         assertEquals(0, request.getValue().baseQuantity().compareTo(new BigDecimal("48")));
         assertEquals(0, request.getValue().unitCost().compareTo(new BigDecimal("2.50")));
         assertEquals("IDEM-REPLENISH-1", request.getValue().idempotencyKey());
+    }
+
+    @Test
+    void listLocationsRejectsMissingStoreId() {
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> service.listLocations(null));
+
+        assertEquals("storeId 不能为空", ex.getMessage());
+    }
+
+    @Test
+    void listLocationsMapsEveryFieldToVO() {
+        InventoryLocation location = new InventoryLocation();
+        location.setId(31L);
+        location.setStoreId(3L);
+        location.setLocationType("STORE_BACKROOM");
+        location.setCode("BR-01");
+        location.setName("后仓01");
+        location.setStatus(1);
+        location.setCreatedAt(LocalDateTime.of(2026, 9, 27, 10, 0));
+        when(locationRepository.findByStoreId(3L)).thenReturn(List.of(location));
+
+        List<InventoryLocationVO> result = service.listLocations(3L);
+
+        assertEquals(1, result.size());
+        InventoryLocationVO vo = result.get(0);
+        assertEquals(31L, vo.getId());
+        assertEquals(3L, vo.getStoreId());
+        assertEquals("STORE_BACKROOM", vo.getLocationType());
+        assertEquals("BR-01", vo.getCode());
+        assertEquals("后仓01", vo.getName());
+        assertEquals(1, vo.getStatus());
+        assertEquals(LocalDateTime.of(2026, 9, 27, 10, 0), vo.getCreatedAt());
     }
 
     private InventoryMoveCommand moveCommand() {

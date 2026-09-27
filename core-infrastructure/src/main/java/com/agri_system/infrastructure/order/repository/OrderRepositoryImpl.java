@@ -159,6 +159,15 @@ public class OrderRepositoryImpl implements OrderRepository {
     }
 
     @Override
+    public java.util.List<Order> findByIds(java.util.Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return java.util.List.of();
+        }
+        QueryWrapper query = QueryWrapper.create().in("id", ids);
+        return mapper.selectListByQuery(query);
+    }
+
+    @Override
     public java.math.BigDecimal sumPayAmountByStaffAndDateRange(Long staffId, java.time.LocalDateTime start, java.time.LocalDateTime end) {
         QueryWrapper query = QueryWrapper.create()
                 .select("COALESCE(SUM(pay_amount), 0) AS total")

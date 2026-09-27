@@ -155,7 +155,7 @@ class InventoryRiskServiceTest {
                 afterSalesRepository, afterSalesItemRepository, eventPublisher, walletAuthCodeRepository,
                 new PickupFulfillmentService(allocationRepository, pickupRequestRepository, batchBalanceService,
                         productUnitService, locationRepository, batchBalanceRepository, receiptBatchRepository,
-                        orderRepository, itemRepository, orderCostAllocationService),
+                        orderRepository, itemRepository, orderCostAllocationService, productRepository),
                 manualPriceAuditService);
     }
 

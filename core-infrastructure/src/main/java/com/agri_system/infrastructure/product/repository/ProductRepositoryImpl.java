@@ -178,5 +178,14 @@ public class ProductRepositoryImpl implements ProductRepository {
                 .and("(deleted IS NULL OR deleted = 0)");
         return productMapper.selectListByQuery(query);
     }
+
+    @Override
+    public java.util.List<Product> findByIds(java.util.Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return java.util.List.of();
+        }
+        QueryWrapper query = QueryWrapper.create().in("id", ids);
+        return productMapper.selectListByQuery(query);
+    }
 }
 

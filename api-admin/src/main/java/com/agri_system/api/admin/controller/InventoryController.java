@@ -14,6 +14,7 @@ import com.agri_system.application.inventory.dto.query.InventoryTransferRecordQu
 import com.agri_system.application.inventory.dto.query.InventoryTransactionQuery;
 import com.agri_system.application.inventory.dto.vo.BatchDetailVO;
 import com.agri_system.application.inventory.dto.vo.InventoryDetailVO;
+import com.agri_system.application.inventory.dto.vo.InventoryLocationVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransferRecordVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransactionVO;
 import com.agri_system.application.inventory.service.InventoryApplicationService;
@@ -58,6 +59,18 @@ public class InventoryController {
     public ResponseEntity<Map<String, Object>> createLocation(@Valid @RequestBody InventoryLocationCommand command) {
         return ResponseEntity.ok(Map.of("code", "200", "message", "创建成功",
                 "data", Map.of("locationId", inventoryService.createLocation(command))));
+    }
+
+    @GetMapping("/locations")
+    @Operation(summary = "查询门店货位列表", description = "查询门店全部货位（含停用），按 id 升序")
+    @SaCheckPermission("inventory:view")
+    public ResponseEntity<Map<String, Object>> listLocations(@RequestParam Long storeId) {
+        List<InventoryLocationVO> locations = inventoryService.listLocations(storeId);
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", "200");
+        result.put("message", "查询成功");
+        result.put("data", locations);
+        return ResponseEntity.ok(result);
     }
 
     @PostMapping("/moves")

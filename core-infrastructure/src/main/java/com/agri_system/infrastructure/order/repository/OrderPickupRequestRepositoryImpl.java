@@ -3,9 +3,11 @@ package com.agri_system.infrastructure.order.repository;
 import com.agri_system.domain.order.model.OrderPickupRequest;
 import com.agri_system.domain.order.repository.OrderPickupRequestRepository;
 import com.agri_system.infrastructure.order.mapper.OrderPickupRequestMapper;
+import com.mybatisflex.core.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -40,5 +42,12 @@ public class OrderPickupRequestRepositoryImpl implements OrderPickupRequestRepos
     @Override
     public Optional<OrderPickupRequest> findPendingByOrderItemId(Long orderItemId) {
         return Optional.ofNullable(mapper.findPendingByOrderItemId(orderItemId));
+    }
+
+    @Override
+    public List<OrderPickupRequest> findByStoreIdAndStatus(Long storeId, String status) {
+        QueryWrapper query = QueryWrapper.create().where("store_id = ?", storeId)
+                .and("status = ?", status).orderBy("id ASC");
+        return mapper.selectListByQuery(query);
     }
 }
