@@ -65,12 +65,12 @@ legacy 遗留缺口。注：全量迁移后的库中 `inventory` 无 `unit` 列�
 3. 初始化完成后重跑 preflight：BLOCKER 必须为 0；随后切换到「验证」口径用
    `verify-retail-fact-chain.sh` 对同一范围跑一次 L1，必须 `[OK]`。
 4. 注意（换算与投影口径）：全量迁移后的 `inventory` 无 `unit` 列（V6_1 起已删除），
-   `inventory.quantity` 按**主单位**记录（见列注释）；激活后投影会把快照改写为
+   `inventory.quantity` 按**主单位**记录（见列注释）；激活后投影**经一次新链写入触发**会把快照改写为
    基准单位量（`projectInventory` 回写 Σ `base_quantity`）。因此 verify 的 L1 口径为：
    - 未启用 SKU：factor = `product_unit` 中 `unit_name = product.main_unit` 且
      `status=1` 的启用行的 `base_quantity_per_unit`；商品无任何单位配置行时按
      legacy 投影语义主单位=基准单位（factor=1）。解析不到记为 `UNRESOLVED` 失败。
-   - 已启用 SKU：快照已被投影改写为基准单位，factor 按 1 处理。
+   - 已启用 SKU：快照已被投影改写为基准单位**（投影完成后）**，factor 按 1 处理。
    - 历史初始化时须确保 Σ 批次余额 = legacy 存量 × 人工确认的换算系数，否则 L1
      会如实报差异；换算系数的确认属人工初始化步骤，不在本目录脚本内。
 
