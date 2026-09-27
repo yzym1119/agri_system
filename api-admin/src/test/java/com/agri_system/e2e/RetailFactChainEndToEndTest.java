@@ -19,14 +19,10 @@ import com.agri_system.application.purchase.dto.command.ReceiptBatchCommand;
 import com.agri_system.application.purchase.dto.command.ReceivePurchaseCommand;
 import com.agri_system.application.purchase.service.PurchaseApplicationService;
 import com.agri_system.domain.inventory.model.InventoryBalanceFeatureStatus;
-import com.agri_system.domain.inventory.model.InventoryBatchBalance;
 import com.agri_system.domain.inventory.model.InventoryMovement;
 import com.agri_system.domain.inventory.repository.InventoryBalanceFeatureStatusRepository;
-import com.agri_system.domain.inventory.repository.InventoryBatchBalanceRepository;
 import com.agri_system.domain.inventory.service.BatchBalanceService;
 import com.agri_system.infrastructure.auth.config.SaTokenConfigure;
-import com.agri_system.infrastructure.inventory.mapper.InventoryBatchBalanceMapper;
-import com.agri_system.infrastructure.inventory.repository.InventoryBatchBalanceRepositoryImpl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.flywaydb.core.Flyway;
@@ -108,7 +104,7 @@ class RetailFactChainEndToEndTest {
 
     private static final String DB_NAME = "agri_retail_e2e";
 
-    private static boolean databaseReady = false;
+    private static boolean databaseCreated = false;
     private static String serverUrl;
     private static String jdbcUrl;
     private static String dbUser;
@@ -153,6 +149,7 @@ class RetailFactChainEndToEndTest {
              Statement st = conn.createStatement()) {
             st.execute("DROP DATABASE IF EXISTS " + DB_NAME);
             st.execute("CREATE DATABASE " + DB_NAME + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+            databaseCreated = true;
             log("[db] 已重建一次性测试库 " + DB_NAME + "（未触碰 agri_system / tlcloud_* / agri_retail_it）");
         } catch (SQLException e) {
             throw new IllegalStateException("E2E 验收需要可达的真实 MySQL（-Dmysql.it=true，"
@@ -173,7 +170,6 @@ class RetailFactChainEndToEndTest {
         registry.add("spring.datasource.username", () -> dbUser);
         registry.add("spring.datasource.password", () -> dbPassword);
         registry.add("spring.flyway.enabled", () -> "false");
-        databaseReady = true;
     }
 
     private static void selfCheckFlywayHistory() {
@@ -252,7 +248,7 @@ class RetailFactChainEndToEndTest {
 
     @AfterAll
     static void dropOnetimeDatabase() {
-        if (!databaseReady) {
+        if (!databaseCreated) {
             log("[cleanup] 数据库未建立，无需 drop");
             return;
         }
@@ -357,6 +353,9 @@ class RetailFactChainEndToEndTest {
                 null, 1L, "瓶", new BigDecimal("10"), new BigDecimal("10"), new BigDecimal("5.00"),
                 null, null, 1L, "E2E 前仓补货", null, null));
         assertNotNull(m1.getId(), "补货移动应落库");
+        assertEquals("REPLENISHMENT", m1.getMovementType());
+        assertEquals(Long.valueOf(2L), m1.getFromLocationId());
+        assertEquals(Long.valueOf(1L), m1.getToLocationId());
         assertDecimal("R1 后仓 40→30",
                 "30", jdbcDecimal("SELECT base_quantity FROM inventory_batch_balance WHERE batch_id=" + r1BatchId + " AND location_id=2"));
         assertDecimal("R1 前仓 0→10",
@@ -624,6 +623,7 @@ class RetailFactChainEndToEndTest {
         assertNotNull(cutoverBefore, "回滚前 cutover_at 应已落值");
         assertNotNull(updatedBefore);
 
+        // updated_at 为秒级精度 DATETIME：推进时钟，保证回滚写入严格晚于激活写入，供下方 after 断言
         Thread.sleep(1100);
         InventoryBalanceFeatureStatus feature = featureStatusRepository.findByStoreAndProduct(1L, 101L).orElseThrow();
         feature.setBalanceMode(InventoryBalanceFeatureStatus.LEGACY);
@@ -924,38 +924,6 @@ class RetailFactChainEndToEndTest {
                 @Override
                 public List<String> getRoleList(Object loginId, String loginType) {
                     return List.of("E2E");
-                }
-            };
-        }
-
-        /**
-         * 测试范围的“表默认值补偿”——对应一个已发现的**生产缺陷**（不属本任务可改范围，src/main 禁改，报告 Concerns 详述）：
-         * {@code BatchBalanceService.receiptBalance(...)} 与同文件另一处 FLOOR 余额工厂创建
-         * {@link InventoryBatchBalance} 新行时未设置 {@code createdAt}/{@code updatedAt}，而 MyBatis-Flex
-         * {@code mapper.insert(entity)} 会把实体全部列（含 null）写入 SQL，导致真实 MySQL 下
-         * 报 {@code Column 'created_at' cannot be null}（V119 中该列声明为 {@code DATETIME NOT NULL
-         * DEFAULT CURRENT_TIMESTAMP}——即“未提供时取当前时间”的表语义，此处按此语义补齐，使生产服务原样可跑）。
-         * 本补偿仅在测试上下文生效：src/main 修复后可直接删除。每次触发都会打印 KNOWN-DEFECT 警告，
-         * surefire output 中留痕。
-         */
-        @Bean
-        @Primary
-        InventoryBatchBalanceRepository e2eBalanceRepositoryWithSchemaDefaultFill(InventoryBatchBalanceMapper mapper) {
-            return new InventoryBatchBalanceRepositoryImpl(mapper) {
-                @Override
-                public void save(InventoryBatchBalance balance) {
-                    if (balance.getId() == null) {
-                        LocalDateTime now = LocalDateTime.now();
-                        if (balance.getCreatedAt() == null) {
-                            balance.setCreatedAt(now);
-                        }
-                        if (balance.getUpdatedAt() == null) {
-                            balance.setUpdatedAt(now);
-                        }
-                        log("[E2E][KNOWN-DEFECT] inventory_batch_balance 新行时间戳由测试补偿：生产 BatchBalanceService"
-                                + " 的余额工厂未设置 createdAt/updatedAt，真实 MySQL 下将报 Column 'created_at' cannot be null");
-                    }
-                    super.save(balance);
                 }
             };
         }
