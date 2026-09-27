@@ -34,9 +34,13 @@
 #   L2 投影一致（快照回写）: 仅 balance_mode='BATCH_LOCATION' 的 (store, product):
 #      Σ inventory.quantity (快照) vs Σ base_quantity。
 #      未启用 SKU 以 N/A (LEGACY) 行报告, 不计入失败; 未启用且无余额的 SKU 不出现。
-#   L3 事实可重建（movements ↔ balance）: 逐 (batch, location):
-#      balance.base_quantity vs 移动事实净额
+#   L3 事实可重建（收货项 + 移动净额 ↔ balance）: 逐 (batch, location):
+#      balance.base_quantity vs 收货项 + 移动事实净额
 #      (+base_quantity 当 to_location_id=loc, -base_quantity 当 from_location_id=loc);
+#      收货项只记在该批次门店**启用的 STORE_BACKROOM**
+#      (location_type='STORE_BACKROOM' AND status=1) 上, 其余货位记 0;
+#      收货不补写收货 movement (补写会双计); 运营约定: 每个门店只允许一个
+#      启用的 STORE_BACKROOM (多启用会破坏记账货位映射)。
 #      另报告"无余额行的移动孤儿组"。不枚举 movement_type。
 #
 # 提示: 日常对账请用 --stores/--products 限定到当前已切换范围。L1 对未完成
@@ -252,6 +256,17 @@ mv AS (
     FROM mv_parts
     GROUP BY batch_id, product_id, store_id, location_id
 ),
+receipt_terms AS (
+    SELECT rb.id AS batch_id, rb.product_id, rb.store_id, loc.id AS location_id,
+           rb.base_quantity AS receipt_base_quantity
+    FROM inventory_receipt_batch rb
+    JOIN inventory_location loc
+      ON loc.store_id = rb.store_id
+     AND loc.location_type = 'STORE_BACKROOM'
+     AND loc.status = 1
+    WHERE (@store_ids = '' OR FIND_IN_SET(rb.store_id, @store_ids) > 0)
+      AND (@product_ids = '' OR FIND_IN_SET(rb.product_id, @product_ids) > 0)
+),
 bal AS (
     SELECT b.batch_id, b.product_id, b.store_id, b.location_id, b.base_quantity
     FROM inventory_batch_balance b
@@ -259,11 +274,13 @@ bal AS (
       AND (@product_ids = '' OR FIND_IN_SET(b.product_id, @product_ids) > 0)
 )
 SELECT 'BALANCE_DIFF' AS kind, bal.store_id, bal.product_id, bal.batch_id, bal.location_id,
-       bal.base_quantity, COALESCE(mv.net_base_quantity, 0) AS net_base_quantity,
-       (bal.base_quantity - COALESCE(mv.net_base_quantity, 0)) AS diff
+       bal.base_quantity,
+       COALESCE(rt.receipt_base_quantity, 0) + COALESCE(mv.net_base_quantity, 0) AS net_base_quantity,
+       (bal.base_quantity - (COALESCE(rt.receipt_base_quantity, 0) + COALESCE(mv.net_base_quantity, 0))) AS diff
 FROM bal
 LEFT JOIN mv ON mv.batch_id = bal.batch_id AND mv.location_id = bal.location_id
-WHERE ABS(bal.base_quantity - COALESCE(mv.net_base_quantity, 0)) > @tolerance
+LEFT JOIN receipt_terms rt ON rt.batch_id = bal.batch_id AND rt.location_id = bal.location_id
+WHERE ABS(bal.base_quantity - (COALESCE(rt.receipt_base_quantity, 0) + COALESCE(mv.net_base_quantity, 0))) > @tolerance
 UNION ALL
 SELECT 'ORPHAN_MOVEMENT' AS kind, mv.store_id, mv.product_id, mv.batch_id, mv.location_id,
        NULL AS base_quantity, mv.net_base_quantity, NULL AS diff

@@ -59,8 +59,9 @@ legacy 遗留缺口。注：全量迁移后的库中 `inventory` 无 `unit` 列�
    - `SKIP_ALREADY_CONFIGURED`：已有单位配置（可能来自单位设置页），仅确认不重复录入。
    - `PENDING_CONFIRMATION`：存在辅单位/换算比例证据、比例非正或主单位空白；
      **必须在单位设置页人工录入**。脚本不会推断箱/瓶或任何换算方向，禁止照抄猜测换算。
-2. 按「人工确认 + 无歧义半自动」完成该范围的历史初始化：批次事实 + 货位余额 +
-   移动事实（对应 B5 的 `MISMATCH` 修复），使 Σ 批次余额 = Σ legacy 换算基准量。
+2. 按「人工确认 + 无歧义半自动」完成该范围的历史初始化：批次事实 + 后仓余额
+   （批次 `base_quantity` 与后仓余额相等），**不补写移动事实**（补写会造成 L3 双计），
+   使 Σ 批次余额 = Σ legacy 换算基准量（对应 B5 的 `MISMATCH` 修复）。
 3. 初始化完成后重跑 preflight：BLOCKER 必须为 0；随后切换到「验证」口径用
    `verify-retail-fact-chain.sh` 对同一范围跑一次 L1，必须 `[OK]`。
 4. 注意（换算与投影口径）：全量迁移后的 `inventory` 无 `unit` 列（V6_1 起已删除），
@@ -139,6 +140,12 @@ scripts/verify-retail-fact-chain.sh --host 127.0.0.1 --port 3306 --user root --p
   主单位=基准（factor=1）；已启用 SKU 的快照**在投影完成后**才被改写为基准单位
   （factor=1，投影前提见本节「投影前提与顺序」）。
   解析不到会以 `UNRESOLVED` 报失败，绝不静默按 0 计。
+- L3 事实重建口径（R9 修正）：`receipt_term` 按 (batch, location) 定义 —— 当且仅当该
+  location 是该批次门店**启用的 `STORE_BACKROOM`**（`location_type='STORE_BACKROOM'
+  AND status=1`）时，取 `inventory_receipt_batch.base_quantity`，否则为 0；L3 等式为
+  `balance == receipt_term + net_movements`（`net_movements` = `to_location_id=loc` 加 /
+  `from_location_id=loc` 减）。收货不补写 movement，补写会与收货项双计。运营约定：
+  **每个门店只允许一个启用的 `STORE_BACKROOM`**（多启用会破坏记账货位映射）。
 - 数据级验收证据（上线前执行）：10c 的 `RetailFactChainEndToEndTest`
   （`api-admin`，真实 MySQL，`-Dmysql.it=true` 门控）覆盖切换、守卫、L1–L3 对账与回滚；
   本 runbook 只负责运营侧对账。
