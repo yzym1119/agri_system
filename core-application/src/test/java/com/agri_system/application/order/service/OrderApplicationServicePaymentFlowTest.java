@@ -95,6 +95,8 @@ class OrderApplicationServicePaymentFlowTest {
     private ApplicationEventPublisher eventPublisher;
     @Mock
     private WalletAuthCodeRepository walletAuthCodeRepository;
+    @Mock
+    private PickupFulfillmentService pickupFulfillmentService;
 
     @InjectMocks
     private OrderApplicationService orderService;
@@ -280,6 +282,94 @@ class OrderApplicationServicePaymentFlowTest {
         verify(walletService, never()).deductSpecialFund(any(), any(), any(), any(), any(), any());
         verify(walletService, never()).deductBalance(any(), any(), any(), any(), any(), any());
         verify(inventoryService, never()).outbound(any(), any());
+    }
+
+    @Test
+    void createPosOrderDelegatesSaleEvidenceToNewChainWhenSkuActivated() {
+        POSOrderCreateCommand command = cashPosCommand(false);
+        stubCashPosOrderPersistence();
+        when(pickupFulfillmentService.recordDirectSaleEvidence(
+                any(Order.class), any(OrderItem.class), eq(false), eq(8L))).thenReturn(true);
+
+        Long orderId = orderService.createPOSOrder(command, 8L);
+
+        assertEquals(500L, orderId);
+        verify(pickupFulfillmentService).recordDirectSaleEvidence(
+                any(Order.class), any(OrderItem.class), eq(false), eq(8L));
+        verify(inventoryService, never()).outbound(any(), any());
+    }
+
+    @Test
+    void createPosOrderKeepsLegacyOutboundWhenSkuNotActivated() {
+        POSOrderCreateCommand command = cashPosCommand(false);
+        stubCashPosOrderPersistence();
+
+        Long orderId = orderService.createPOSOrder(command, 8L);
+
+        assertEquals(500L, orderId);
+        verify(pickupFulfillmentService).recordDirectSaleEvidence(
+                any(Order.class), any(OrderItem.class), eq(false), eq(8L));
+        verify(inventoryService).outbound(any(), eq(8L));
+    }
+
+    @Test
+    void createPosOrderForwardsWarehousePickupChoiceToNewChain() {
+        POSOrderCreateCommand command = cashPosCommand(true);
+        stubCashPosOrderPersistence();
+        when(pickupFulfillmentService.recordDirectSaleEvidence(
+                any(Order.class), any(OrderItem.class), eq(true), eq(8L))).thenReturn(true);
+
+        Long orderId = orderService.createPOSOrder(command, 8L);
+
+        assertEquals(500L, orderId);
+        verify(pickupFulfillmentService).recordDirectSaleEvidence(
+                any(Order.class), any(OrderItem.class), eq(true), eq(8L));
+        verify(inventoryService, never()).outbound(any(), any());
+    }
+
+    private POSOrderCreateCommand cashPosCommand(boolean warehousePickup) {
+        POSOrderCreateCommand command = new POSOrderCreateCommand();
+        command.setStaffId(8L);
+        command.setPaymentType(1);
+        OrderItemDTO item = new OrderItemDTO();
+        item.setProductId(99L);
+        item.setQuantity(BigDecimal.ONE);
+        item.setUnit("袋");
+        item.setUnitPrice(new BigDecimal("100.00"));
+        item.setWarehousePickup(warehousePickup);
+        command.setItems(Collections.singletonList(item));
+        return command;
+    }
+
+    private void stubCashPosOrderPersistence() {
+        Staff staff = new Staff();
+        staff.setId(8L);
+        staff.setStoreId(3L);
+        Product product = new Product();
+        product.setId(99L);
+        product.setName("复合肥");
+        product.setMainUnit("袋");
+        product.setAvgCostPrice(new BigDecimal("40.00"));
+        product.setAllowSpecialFund(0);
+
+        when(staffRepository.findById(8L)).thenReturn(Optional.of(staff));
+        when(orderDomainService.generateOrderNo()).thenReturn("SO202609120001");
+        when(productRepository.findById(99L)).thenReturn(Optional.of(product));
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
+            Order saved = invocation.getArgument(0);
+            if (saved.getId() == null) {
+                saved.setId(500L);
+            }
+            return saved;
+        });
+        when(itemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> {
+            OrderItem saved = invocation.getArgument(0);
+            if (saved.getId() == null) {
+                saved.setId(900L);
+            }
+            return saved;
+        });
+        when(paymentRepository.findByOrderId(500L)).thenReturn(Collections.emptyList());
     }
 
     private Order mockPendingClientOrder() {

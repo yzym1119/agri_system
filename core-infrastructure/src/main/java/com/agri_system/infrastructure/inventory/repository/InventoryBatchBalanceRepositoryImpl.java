@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -32,5 +33,10 @@ public class InventoryBatchBalanceRepositoryImpl implements InventoryBatchBalanc
     @Override
     public BigDecimal sumBaseQuantityByStoreAndProduct(Long storeId, Long productId) {
         return mapper.sumBaseQuantityByStoreAndProduct(storeId, productId);
+    }
+
+    @Override
+    public List<InventoryBatchBalance> findByLocationAndProduct(Long locationId, Long productId) {
+        return mapper.findByLocationAndProduct(locationId, productId);
     }
 }

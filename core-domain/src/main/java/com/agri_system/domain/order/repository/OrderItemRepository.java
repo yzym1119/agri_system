@@ -3,6 +3,7 @@ package com.agri_system.domain.order.repository;
 import com.agri_system.domain.order.model.OrderItem;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 订单明细仓储接口
@@ -29,7 +30,7 @@ public interface OrderItemRepository {
     /**
      * 根据ID查询明细
      */
-    OrderItem findById(Long id);
+    Optional<OrderItem> findById(Long id);
 
     /**
      * 统计商品被订单明细引用次数

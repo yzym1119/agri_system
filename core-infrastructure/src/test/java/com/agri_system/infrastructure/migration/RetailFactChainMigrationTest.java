@@ -103,6 +103,7 @@ class RetailFactChainMigrationTest {
         jdbc.update("DELETE FROM order_item_price_audit");
         jdbc.update("DELETE FROM inventory_decision_log");
         jdbc.update("DELETE FROM order_item_batch_allocation");
+        jdbc.update("DELETE FROM order_pickup_request");
         jdbc.update("DELETE FROM inventory_movement");
         jdbc.update("DELETE FROM inventory_batch_balance");
         jdbc.update("DELETE FROM inventory_balance_feature_status");
@@ -139,11 +140,13 @@ class RetailFactChainMigrationTest {
         assertIndex("inventory_movement", "idx_inventory_movement_reference", "reference_type", "reference_id");
         assertIndex("inventory_movement", "idx_inventory_movement_transfer", "transfer_id", "occurred_at");
         assertUniqueIndex("inventory_movement", "uk_inventory_movement_idempotency", "idempotency_key");
+        assertIndex("order_item_batch_allocation", "idx_order_item_batch_allocation_pickup", "pickup_request_id");
+        assertIndex("order_pickup_request", "idx_order_pickup_request_status", "store_id", "status");
     }
 
     @Test
     void retailFactChainMigrationCreatesAllFactTablesAndSnapshots() throws SQLException {
-        assertEquals("124", flyway.info().current().getVersion().getVersion());
+        assertEquals("125", flyway.info().current().getVersion().getVersion());
 
         List.of(
                 "product_unit",
@@ -154,6 +157,7 @@ class RetailFactChainMigrationTest {
                 "inventory_batch_balance",
                 "inventory_balance_feature_status",
                 "inventory_movement",
+                "order_pickup_request",
                 "order_item_batch_allocation",
                 "order_item_price_audit",
                 "inventory_decision_log"
@@ -162,6 +166,7 @@ class RetailFactChainMigrationTest {
         assertColumnExists("order_item", "base_unit_id");
         assertColumnExists("order_item", "base_quantity");
         assertColumnExists("order_item", "unit_cost");
+        assertColumnExists("order_item_batch_allocation", "pickup_request_id");
     }
 
     @Test
@@ -197,13 +202,14 @@ class RetailFactChainMigrationTest {
         assertEquals(migrationFiles.size(), versions.size(), "所有 V*.sql 文件都必须被枚举和解析");
         assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
         assertTrue(versions.stream().allMatch(version -> version.compareTo(MigrationVersion.fromVersion("1")) >= 0
-                        && version.compareTo(MigrationVersion.fromVersion("124")) <= 0),
-                "存在超出 V1..V124 范围的迁移版本");
+                        && version.compareTo(MigrationVersion.fromVersion("125")) <= 0),
+                "存在超出 V1..V125 范围的迁移版本");
         assertTrue(versions.containsAll(List.of(MigrationVersion.fromVersion("119"),
                 MigrationVersion.fromVersion("120"), MigrationVersion.fromVersion("121"),
-                MigrationVersion.fromVersion("123"), MigrationVersion.fromVersion("124"))),
-                "缺少 V119/V120/V121/V123/V124");
-        assertEquals("124", flyway.info().current().getVersion().getVersion());
+                MigrationVersion.fromVersion("123"), MigrationVersion.fromVersion("124"),
+                MigrationVersion.fromVersion("125"))),
+                "缺少 V119/V120/V121/V123/V124/V125");
+        assertEquals("125", flyway.info().current().getVersion().getVersion());
     }
 
     @Test
@@ -424,6 +430,17 @@ class RetailFactChainMigrationTest {
         return jdbc.queryForObject("SELECT id FROM inventory_location WHERE code = ?", Long.class, code);
     }
 
+    private long insertPickupRequest(JdbcTemplate jdbc, long orderId, long orderItemId, long storeId,
+                                     long productId, int requestedBaseQuantity, Long sourceLocationId) {
+        jdbc.update("""
+                INSERT INTO order_pickup_request
+                    (order_id, order_item_id, store_id, product_id, requested_base_quantity, source_location_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, orderId, orderItemId, storeId, productId, requestedBaseQuantity, sourceLocationId);
+        return jdbc.queryForObject("SELECT id FROM order_pickup_request WHERE order_item_id = ?",
+                Long.class, orderItemId);
+    }
+
     private static void createH2AppendOnlyTriggers() {
         createH2AppendOnlyTriggers(new JdbcTemplate(dataSource));
     }
@@ -530,6 +547,46 @@ class RetailFactChainMigrationTest {
                      original_unit_id, original_unit_name, original_quantity, unit_cost, base_quantity)
                 VALUES ('M-NULL-2', ?, 1, 1, 'REPLENISHMENT', ?, '瓶', 1, 1, 1)
                 """, batch, unit);
+    }
+
+    @Test
+    void pickupRequestIsLinkedFromAllocationAndEnforcesStatusQuantityAndCrossSkuGuards() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        long location = insertLocation(jdbc, 1, "L-PICKUP");
+        long requestId = insertPickupRequest(jdbc, 1, 1, 1, 1, 5, null);
+
+        // 合法：PENDING 请求可被批次归属引用（货架缺货/库房取货场景）
+        jdbc.update("""
+                INSERT INTO order_item_batch_allocation
+                    (order_item_id, product_id, store_id, allocated_base_quantity, pickup_request_id, evidence_level)
+                VALUES (1, 1, 1, 5, ?, 'UNKNOWN')
+                """, requestId);
+
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_pickup_request
+                    (order_id, order_item_id, store_id, product_id, requested_base_quantity, status)
+                VALUES (1, 1, 1, 1, 5, 'DONE')
+                """));
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_pickup_request
+                    (order_id, order_item_id, store_id, product_id, requested_base_quantity)
+                VALUES (1, 1, 1, 1, 0)
+                """));
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_pickup_request
+                    (order_id, order_item_id, store_id, product_id, requested_base_quantity)
+                VALUES (1, 1, 1, 2, 5)
+                """));
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_pickup_request
+                    (order_id, order_item_id, store_id, product_id, requested_base_quantity, source_location_id)
+                VALUES (1, 1, 2, 1, 5, ?)
+                """, location));
+        assertThrows(DataAccessException.class, () -> jdbc.update("""
+                INSERT INTO order_item_batch_allocation
+                    (order_item_id, product_id, store_id, allocated_base_quantity, pickup_request_id, evidence_level)
+                VALUES (1, 1, 1, 5, 999999, 'UNKNOWN')
+                """));
     }
 
     private void assertTableExistsUnchecked(String tableName) {

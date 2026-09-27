@@ -817,11 +817,12 @@ CREATE TABLE `staff_performance` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='员工绩效记录表';
 
 -- ============================================
--- 零售事实链（V119/V120/V121 增量参考结构）
+-- 零售事实链（V119/V120/V121/V125 增量参考结构）
 -- ============================================
 DROP TABLE IF EXISTS `inventory_decision_log`;
 DROP TABLE IF EXISTS `order_item_price_audit`;
 DROP TABLE IF EXISTS `order_item_batch_allocation`;
+DROP TABLE IF EXISTS `order_pickup_request`;
 DROP TABLE IF EXISTS `inventory_movement`;
 DROP TABLE IF EXISTS `inventory_batch_balance`;
 DROP TABLE IF EXISTS `inventory_balance_feature_status`;
@@ -1049,6 +1050,33 @@ ALTER TABLE `order_item`
     ADD CONSTRAINT `chk_order_item_base_quantity` CHECK (`base_quantity` IS NULL OR `base_quantity` > 0),
     ADD CONSTRAINT `chk_order_item_unit_cost` CHECK (`unit_cost` IS NULL OR `unit_cost` > 0);
 
+CREATE TABLE `order_pickup_request` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT,
+    `order_id` BIGINT NOT NULL,
+    `order_item_id` BIGINT NOT NULL,
+    `store_id` BIGINT NOT NULL,
+    `product_id` BIGINT NOT NULL,
+    `requested_base_quantity` DECIMAL(20,8) NOT NULL,
+    `source_location_id` BIGINT,
+    `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `created_by` BIGINT,
+    `fulfilled_at` DATETIME,
+    `fulfilled_by` BIGINT,
+    PRIMARY KEY (`id`),
+    KEY `idx_order_pickup_request_order` (`order_id`),
+    KEY `idx_order_pickup_request_item` (`order_item_id`),
+    KEY `idx_order_pickup_request_status` (`store_id`, `status`),
+    CONSTRAINT `fk_order_pickup_request_item` FOREIGN KEY (`order_item_id`) REFERENCES `order_item` (`id`),
+    CONSTRAINT `fk_order_pickup_request_item_product` FOREIGN KEY (`order_item_id`, `product_id`) REFERENCES `order_item` (`id`, `product_id`),
+    CONSTRAINT `fk_order_pickup_request_product` FOREIGN KEY (`product_id`) REFERENCES `product` (`id`),
+    CONSTRAINT `fk_order_pickup_request_location` FOREIGN KEY (`source_location_id`, `store_id`) REFERENCES `inventory_location` (`id`, `store_id`),
+    CONSTRAINT `fk_order_pickup_request_creator` FOREIGN KEY (`created_by`) REFERENCES `staff` (`id`),
+    CONSTRAINT `fk_order_pickup_request_fulfiller` FOREIGN KEY (`fulfilled_by`) REFERENCES `staff` (`id`),
+    CONSTRAINT `chk_order_pickup_request_quantity` CHECK (`requested_base_quantity` > 0),
+    CONSTRAINT `chk_order_pickup_request_status` CHECK (`status` IN ('PENDING', 'FULFILLED'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='库房取货请求';
+
 CREATE TABLE `order_item_batch_allocation` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `order_item_id` BIGINT NOT NULL,
@@ -1056,6 +1084,7 @@ CREATE TABLE `order_item_batch_allocation` (
     `store_id` BIGINT NOT NULL,
     `batch_id` BIGINT,
     `location_id` BIGINT,
+    `pickup_request_id` BIGINT,
     `allocated_base_quantity` DECIMAL(20,8) NOT NULL,
     `batch_unit_cost` DECIMAL(20,8),
     `allocated_cost` DECIMAL(20,8),
@@ -1069,10 +1098,12 @@ CREATE TABLE `order_item_batch_allocation` (
     KEY `idx_order_item_batch_allocation_item` (`order_item_id`),
     KEY `idx_order_item_batch_allocation_batch` (`batch_id`),
     KEY `idx_order_item_batch_allocation_evidence` (`evidence_level`),
+    KEY `idx_order_item_batch_allocation_pickup` (`pickup_request_id`),
     CONSTRAINT `fk_order_item_batch_allocation_item` FOREIGN KEY (`order_item_id`) REFERENCES `order_item` (`id`),
     CONSTRAINT `fk_order_item_batch_allocation_item_product` FOREIGN KEY (`order_item_id`, `product_id`) REFERENCES `order_item` (`id`, `product_id`),
     CONSTRAINT `fk_order_item_batch_allocation_batch` FOREIGN KEY (`batch_id`, `product_id`, `store_id`) REFERENCES `inventory_receipt_batch` (`id`, `product_id`, `store_id`),
     CONSTRAINT `fk_order_item_batch_allocation_location` FOREIGN KEY (`location_id`, `store_id`) REFERENCES `inventory_location` (`id`, `store_id`),
+    CONSTRAINT `fk_order_item_batch_allocation_pickup` FOREIGN KEY (`pickup_request_id`) REFERENCES `order_pickup_request` (`id`),
     CONSTRAINT `fk_order_item_batch_allocation_movement` FOREIGN KEY (`source_movement_id`, `product_id`, `store_id`) REFERENCES `inventory_movement` (`id`, `product_id`, `store_id`),
     CONSTRAINT `chk_order_item_batch_allocation_quantity` CHECK (`allocated_base_quantity` > 0),
     CONSTRAINT `chk_order_item_batch_allocation_cost` CHECK ((`batch_unit_cost` IS NULL OR `batch_unit_cost` > 0) AND (`allocated_cost` IS NULL OR `allocated_cost` > 0)),

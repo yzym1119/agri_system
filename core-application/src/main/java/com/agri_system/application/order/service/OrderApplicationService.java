@@ -89,6 +89,7 @@ public class OrderApplicationService {
     private final AfterSalesItemRepository afterSalesItemRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final WalletAuthCodeRepository walletAuthCodeRepository;
+    private final PickupFulfillmentService pickupFulfillmentService;
     
     /**
      * 创建小程序订单
@@ -573,9 +574,20 @@ public class OrderApplicationService {
         
         // 11. 扣减库存（POS订单立即扣减，使用操作员所属门店ID）
         // 重要：订单已保存，更新所有库存扣减命令的 referenceId
-        for (InventoryOutCommand outCommand : inventoryOutCommands) {
+        // 零售事实链（Task5）：优先由新链路登记销售批次证据；
+        // 仅当 SKU 未启用批次/库位管理（新链路返回 false）时，保留原有 outbound 行为（逐字节一致）
+        List<OrderItemDTO> itemDTOs = command.getItems();
+        for (int i = 0; i < inventoryOutCommands.size(); i++) {
+            InventoryOutCommand outCommand = inventoryOutCommands.get(i);
             outCommand.setReferenceId(order.getId()); // 确保使用已保存的订单ID
-            inventoryService.outbound(outCommand, createdBy);
+            boolean handledByNewChain = pickupFulfillmentService.recordDirectSaleEvidence(
+                    order,
+                    items.get(i),
+                    Boolean.TRUE.equals(itemDTOs.get(i).getWarehousePickup()),
+                    createdBy);
+            if (!handledByNewChain) {
+                inventoryService.outbound(outCommand, createdBy);
+            }
         }
         
         // 12. ⛔️ 赊销记账（Critical Fix）

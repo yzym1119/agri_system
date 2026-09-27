@@ -38,4 +38,9 @@ public class InventoryReceiptBatchRepositoryImpl implements InventoryReceiptBatc
     public BigDecimal sumBaseQuantityByPurchaseOrderItemId(Long purchaseOrderItemId) {
         return mapper.sumBaseQuantityByPurchaseOrderItemId(purchaseOrderItemId);
     }
+
+    @Override
+    public Optional<InventoryReceiptBatch> findByInternalReceiptBatchNo(String internalReceiptBatchNo) {
+        return Optional.ofNullable(mapper.findByInternalReceiptBatchNo(internalReceiptBatchNo));
+    }
 }

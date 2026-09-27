@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Mapper
 public interface InventoryBatchBalanceMapper extends BaseMapper<InventoryBatchBalance> {
@@ -21,4 +22,9 @@ public interface InventoryBatchBalanceMapper extends BaseMapper<InventoryBatchBa
     @Select("SELECT COALESCE(SUM(base_quantity), 0) FROM inventory_batch_balance "
             + "WHERE store_id = #{storeId} AND product_id = #{productId}")
     BigDecimal sumBaseQuantityByStoreAndProduct(@Param("storeId") Long storeId, @Param("productId") Long productId);
+
+    @Select("SELECT * FROM inventory_batch_balance WHERE location_id = #{locationId} AND product_id = #{productId} "
+            + "ORDER BY batch_id")
+    List<InventoryBatchBalance> findByLocationAndProduct(@Param("locationId") Long locationId,
+                                                         @Param("productId") Long productId);
 }

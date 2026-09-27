@@ -6,10 +6,13 @@ import com.agri_system.application.order.dto.command.OrderPickupVerifyCommand;
 import com.agri_system.application.order.dto.command.OrderRefundCommand;
 import com.agri_system.application.order.dto.command.OrderShipCommand;
 import com.agri_system.application.order.dto.command.POSOrderCreateCommand;
+import com.agri_system.application.order.dto.command.PickupFulfillmentCommand;
+import com.agri_system.application.order.dto.command.PickupRequestCommand;
 import com.agri_system.application.order.dto.query.OrderPageQuery;
 import com.agri_system.application.order.dto.vo.OrderDetailVO;
 import com.agri_system.application.order.dto.vo.OrderPageVO;
 import com.agri_system.application.order.service.OrderApplicationService;
+import com.agri_system.application.order.service.PickupFulfillmentService;
 import com.agri_system.domain.order.enums.OrderMainPaymentMethod;
 import com.agri_system.infrastructure.common.util.RedisDistributedLock;
 import com.mybatisflex.core.paginate.Page;
@@ -37,6 +40,7 @@ public class OrderAdminController {
     private static final Logger logger = LoggerFactory.getLogger(OrderAdminController.class);
 
     private final OrderApplicationService orderService;
+    private final PickupFulfillmentService pickupFulfillmentService;
     private final RedisDistributedLock redisLock;
     
     /**
@@ -215,6 +219,42 @@ public class OrderAdminController {
             }
         }
         orderService.confirmReceipt(orderId, staffId);
+        return ResponseEntity.ok().build();
+    }
+
+    /**
+     * 创建库房取货请求（零售事实链 Task5：货架缺货或选择库房取货时登记后仓拣货）
+     */
+    @PostMapping("/{orderId}/pickup/requests")
+    @Operation(summary = "创建库房取货请求", description = "为订单明细登记库房（后仓）拣货请求，返回取货请求ID")
+    @SaCheckPermission("order:pickup:verify")
+    public ResponseEntity<Long> createPickupRequest(@PathVariable Long orderId,
+                                                    @Valid @RequestBody PickupRequestCommand command) {
+        command.setOrderId(orderId);
+        Long requestId = pickupFulfillmentService.createRequest(
+                orderId, command.getOrderItemId(), command.getSourceLocationId());
+        return ResponseEntity.ok(requestId);
+    }
+
+    /**
+     * 完成库房取货（零售事实链 Task5：扫码或显式确认批次与货位，产生批次成本证据）
+     */
+    @PostMapping("/pickup/requests/{requestId}/fulfill")
+    @Operation(summary = "完成库房取货", description = "扫描内部批次标签或显式确认批次与货位，回填实际批次与成本证据")
+    @SaCheckPermission("order:pickup:verify")
+    public ResponseEntity<Void> fulfillPickupRequest(@PathVariable Long requestId,
+                                                     @Valid @RequestBody PickupFulfillmentCommand command) {
+        // 从 Sa-Token 获取当前登录员工 ID
+        String loginId = StpUtil.getLoginIdAsString();
+        Long staffId = null;
+        if (loginId != null && loginId.startsWith("STAFF_")) {
+            try {
+                staffId = Long.parseLong(loginId.substring("STAFF_".length()));
+            } catch (NumberFormatException e) {
+                // 解析失败时保持 null
+            }
+        }
+        pickupFulfillmentService.fulfill(requestId, command, staffId);
         return ResponseEntity.ok().build();
     }
 }

@@ -42,6 +42,9 @@ public class OrderItemDTO {
     
     @Schema(description = "单价（元，可选，如果不提供则从价格体系查询）", example = "50.00")
     private BigDecimal unitPrice;
+
+    @Schema(description = "是否库房取货（POS可选，true 时由新链路生成取货请求，不改走即时出库）", example = "false")
+    private Boolean warehousePickup;
 }
 
 
