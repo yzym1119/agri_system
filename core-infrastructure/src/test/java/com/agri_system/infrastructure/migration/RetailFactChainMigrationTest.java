@@ -71,6 +71,10 @@ class RetailFactChainMigrationTest {
                     `status` TINYINT NOT NULL DEFAULT 2,
                     `freeze_until` DATETIME NULL
                 );
+                -- V126(按销售单位报价)对 product_price 加列,基线(V118)早于 V7 建表路径,需最小投影
+                CREATE TABLE `product_price` (
+                    `id` BIGINT PRIMARY KEY
+                );
                 INSERT INTO `store` (`id`) VALUES (1), (2);
                 INSERT INTO `staff` (`id`) VALUES (1);
                 INSERT INTO `supplier` (`id`) VALUES (1);
@@ -146,7 +150,7 @@ class RetailFactChainMigrationTest {
 
     @Test
     void retailFactChainMigrationCreatesAllFactTablesAndSnapshots() throws SQLException {
-        assertEquals("125", flyway.info().current().getVersion().getVersion());
+        assertEquals("126", flyway.info().current().getVersion().getVersion());
 
         List.of(
                 "product_unit",
@@ -179,6 +183,15 @@ class RetailFactChainMigrationTest {
     }
 
     @Test
+    void retailPricingUnitChannelMigrationAddsQuoteColumns() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        assertInformationSchemaColumn(jdbc, "product_price", "sale_unit");
+        assertInformationSchemaColumn(jdbc, "product_price", "channel");
+        assertInformationSchemaColumn(jdbc, "product_price", "rule_version");
+        assertInformationSchemaColumn(jdbc, "order_item_price_audit", "quote_id");
+    }
+
+    @Test
     void migrationDirectoryHasUniqueVersionsThroughRetailFactChain() throws Exception {
         Path migrationDirectory = Paths.get(getClass().getClassLoader()
                 .getResource("db/migration").toURI());
@@ -202,14 +215,14 @@ class RetailFactChainMigrationTest {
         assertEquals(migrationFiles.size(), versions.size(), "所有 V*.sql 文件都必须被枚举和解析");
         assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
         assertTrue(versions.stream().allMatch(version -> version.compareTo(MigrationVersion.fromVersion("1")) >= 0
-                        && version.compareTo(MigrationVersion.fromVersion("125")) <= 0),
-                "存在超出 V1..V125 范围的迁移版本");
+                        && version.compareTo(MigrationVersion.fromVersion("126")) <= 0),
+                "存在超出 V1..V126 范围的迁移版本");
         assertTrue(versions.containsAll(List.of(MigrationVersion.fromVersion("119"),
                 MigrationVersion.fromVersion("120"), MigrationVersion.fromVersion("121"),
                 MigrationVersion.fromVersion("123"), MigrationVersion.fromVersion("124"),
-                MigrationVersion.fromVersion("125"))),
-                "缺少 V119/V120/V121/V123/V124/V125");
-        assertEquals("125", flyway.info().current().getVersion().getVersion());
+                MigrationVersion.fromVersion("125"), MigrationVersion.fromVersion("126"))),
+                "缺少 V119/V120/V121/V123/V124/V125/V126");
+        assertEquals("126", flyway.info().current().getVersion().getVersion());
     }
 
     @Test
@@ -609,6 +622,14 @@ class RetailFactChainMigrationTest {
              ResultSet columns = connection.getMetaData().getColumns(null, null, tableName, columnName)) {
             assertTrue(columns.next(), () -> "缺少列: " + tableName + "." + columnName);
         }
+    }
+
+    private void assertInformationSchemaColumn(JdbcTemplate jdbc, String tableName, String columnName) {
+        Integer count = jdbc.queryForObject("""
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE UPPER(TABLE_NAME) = UPPER(?) AND UPPER(COLUMN_NAME) = UPPER(?)
+                """, Integer.class, tableName, columnName);
+        assertEquals(1, count == null ? 0 : count.intValue(), "缺少列: " + tableName + "." + columnName);
     }
 
     private void assertUniqueIndex(String tableName, String indexName, String... expectedColumns)

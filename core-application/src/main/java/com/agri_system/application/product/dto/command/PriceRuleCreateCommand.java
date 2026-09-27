@@ -45,6 +45,15 @@ public class PriceRuleCreateCommand {
     @Schema(description = "失效日期", example = "2024-12-31")
     private LocalDate expiryDate;
 
+    @Schema(description = "销售单位（可选，为空表示旧链路按主单位换算）", example = "箱")
+    private String saleUnit;
+
+    @Schema(description = "销售渠道（可选，为空表示通用规则）", example = "POS")
+    private String channel;
+
+    @Schema(description = "规则版本（可选，为空默认 1）", example = "1")
+    private String ruleVersion;
+
     @Schema(description = "状态：1-启用，0-停用", example = "1")
     private Integer status;
 }

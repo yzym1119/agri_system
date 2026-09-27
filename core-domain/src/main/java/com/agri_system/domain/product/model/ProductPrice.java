@@ -60,18 +60,34 @@ public class ProductPrice {
     /** 创建人ID */
     private Long createdBy;
     
+    /** 销售单位（为空表示旧链路按主单位换算） */
+    private String saleUnit;
+    
+    /** 销售渠道（为空表示通用规则） */
+    private String channel;
+    
+    /** 规则版本（报价审计追溯用） */
+    private String ruleVersion;
+    
     /**
      * 检查价格规则是否有效
      */
     public boolean isActive() {
+        return isActiveOn(LocalDate.now());
+    }
+    
+    /**
+     * 检查价格规则在指定业务日期是否有效
+     */
+    public boolean isActiveOn(LocalDate businessDate) {
         if (status == null || status != 1) {
             return false;
         }
-        LocalDate now = LocalDate.now();
-        if (effectiveDate != null && now.isBefore(effectiveDate)) {
+        LocalDate date = businessDate != null ? businessDate : LocalDate.now();
+        if (effectiveDate != null && date.isBefore(effectiveDate)) {
             return false;
         }
-        if (expiryDate != null && now.isAfter(expiryDate)) {
+        if (expiryDate != null && date.isAfter(expiryDate)) {
             return false;
         }
         return true;

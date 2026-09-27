@@ -10,6 +10,8 @@ import com.agri_system.application.order.dto.vo.*;
 import com.agri_system.application.order.exception.OrderErrorCode;
 import com.agri_system.application.performance.event.OrderFinishedEvent;
 import com.agri_system.application.performance.event.OrderRefundedEvent;
+import com.agri_system.application.product.dto.vo.PriceContext;
+import com.agri_system.application.product.dto.vo.PriceQuote;
 import com.agri_system.application.product.service.ProductPricingService;
 import com.agri_system.application.wallet.service.WalletApplicationService;
 import com.agri_system.domain.after_sales.repository.AfterSalesRepository;
@@ -44,6 +46,7 @@ import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -90,6 +93,7 @@ public class OrderApplicationService {
     private final ApplicationEventPublisher eventPublisher;
     private final WalletAuthCodeRepository walletAuthCodeRepository;
     private final PickupFulfillmentService pickupFulfillmentService;
+    private final ManualPriceAuditService manualPriceAuditService;
     
     /**
      * 创建小程序订单
@@ -251,8 +255,15 @@ public class OrderApplicationService {
         // ✅ 优化：前端已将套餐炸开为商品，后端统一处理商品类型
         List<OrderItem> items = new ArrayList<>();
         List<InventoryOutCommand> inventoryOutCommands = new ArrayList<>();
+        List<PendingPriceChange> pendingPriceChanges = new ArrayList<>();
         BigDecimal totalAmount = BigDecimal.ZERO;
         int sortOrder = 0;
+
+        // 价格分层取自订单客户档案（无客户时为通用档），报价渠道固定 POS、业务日期为当日
+        ProductPricingService.CustomerPriceContext customerContext =
+                productPricingService.resolveCustomerContext(command.getCustomerId());
+        Integer quoteCustomerType = customerContext != null ? customerContext.customerType() : null;
+        Integer quoteVipLevel = customerContext != null ? customerContext.vipLevel() : null;
         
         for (OrderItemDTO itemDTO : command.getItems()) {
             // 校验必填字段
@@ -265,9 +276,23 @@ public class OrderApplicationService {
                     .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 商品不存在"));
             
             String itemUnit = StringUtils.hasText(itemDTO.getUnit()) ? itemDTO.getUnit() : product.getMainUnit();
-            // 计算价格
-            BigDecimal unitPrice = itemDTO.getUnitPrice();
-            if (unitPrice == null) {
+            // 服务端始终先报价；报价失败沿用旧行为放行（改价只留痕，不自动拒单）
+            PriceQuote quote = null;
+            try {
+                quote = productPricingService.quote(new PriceContext(product.getId(), actualStoreId, "POS",
+                        quoteCustomerType, quoteVipLevel, itemUnit, LocalDate.now()));
+            } catch (RuntimeException ex) {
+                logger.warn("POS 服务端报价失败，按客户端提交价处理: productId={}, unit={}, 原因={}",
+                        product.getId(), itemUnit, ex.getMessage());
+            }
+
+            BigDecimal submittedUnitPrice = itemDTO.getUnitPrice();
+            BigDecimal unitPrice;
+            if (submittedUnitPrice != null) {
+                unitPrice = submittedUnitPrice;
+            } else if (quote != null) {
+                unitPrice = quote.suggestedUnitPrice();
+            } else {
                 unitPrice = productPricingService.resolveOrderItemUnitPrice(
                         product,
                         actualStoreId,
@@ -294,6 +319,13 @@ public class OrderApplicationService {
             item.setAllowSpecialFund(product.getAllowSpecialFund() != null ? product.getAllowSpecialFund() : 0);
             item.setSortOrder(sortOrder++);
             items.add(item);
+
+            // 提交价与报价不一致：明细保存拿到 orderItemId 后补记人工改价审计（保留人工成交价）
+            if (submittedUnitPrice != null && quote != null
+                    && submittedUnitPrice.compareTo(quote.suggestedUnitPrice()) != 0) {
+                pendingPriceChanges.add(new PendingPriceChange(item, quote, submittedUnitPrice,
+                        resolvePriceChangeReason(itemDTO)));
+            }
             
             // 准备库存扣减命令（传递单位信息用于换算）
             InventoryOutCommand outCommand = new InventoryOutCommand();
@@ -329,6 +361,16 @@ public class OrderApplicationService {
         for (OrderItem item : items) {
             item.setOrderId(order.getId());
             itemRepository.save(item);
+        }
+
+        // 人工改价只留痕不拒单：明细落库拿到 orderItemId 后写入价格审计（与建议价差价、原因、操作人）
+        for (PendingPriceChange pending : pendingPriceChanges) {
+            manualPriceAuditService.record(
+                    pending.quote().withOrderItemId(pending.item().getId()),
+                    pending.submittedUnitPrice(),
+                    pending.reason(),
+                    createdBy,
+                    createdBy);
         }
         
         boolean paymentsRecorded = false;
@@ -1893,6 +1935,19 @@ public class OrderApplicationService {
                 }
             }
         }
+    }
+
+    /**
+     * 人工改价原因：客户端留空时按现场人工改价兜底。
+     */
+    private String resolvePriceChangeReason(OrderItemDTO itemDTO) {
+        return StringUtils.hasText(itemDTO.getPriceChangeReason()) ? itemDTO.getPriceChangeReason() : "POS手动改价";
+    }
+
+    /**
+     * 待落库的人工改价审计：明细保存拿到 orderItemId 后再记录（改价只留痕不拒单）。
+     */
+    private record PendingPriceChange(OrderItem item, PriceQuote quote, BigDecimal submittedUnitPrice, String reason) {
     }
 
 }

@@ -10,6 +10,8 @@ import com.agri_system.application.order.dto.command.PaymentDetailDTO;
 import com.agri_system.application.order.dto.vo.OrderExternalPaymentIntentVO;
 import com.agri_system.application.order.dto.vo.OrderPayPreviewVO;
 import com.agri_system.application.performance.event.OrderFinishedEvent;
+import com.agri_system.application.product.dto.vo.PriceContext;
+import com.agri_system.application.product.dto.vo.PriceQuote;
 import com.agri_system.application.product.service.ProductPricingService;
 import com.agri_system.application.wallet.service.WalletApplicationService;
 import com.agri_system.domain.after_sales.repository.AfterSalesItemRepository;
@@ -33,12 +35,14 @@ import com.agri_system.domain.wallet.repository.WalletAuthCodeRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.Optional;
@@ -50,6 +54,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -97,6 +102,8 @@ class OrderApplicationServicePaymentFlowTest {
     private WalletAuthCodeRepository walletAuthCodeRepository;
     @Mock
     private PickupFulfillmentService pickupFulfillmentService;
+    @Mock
+    private ManualPriceAuditService manualPriceAuditService;
 
     @InjectMocks
     private OrderApplicationService orderService;
@@ -325,6 +332,35 @@ class OrderApplicationServicePaymentFlowTest {
         verify(pickupFulfillmentService).recordDirectSaleEvidence(
                 any(Order.class), any(OrderItem.class), eq(true), eq(8L));
         verify(inventoryService, never()).outbound(any(), any());
+    }
+
+    @Test
+    void createPosOrderRecordsManualPriceChangeAfterItemSaveAndKeepsSubmittedPrice() {
+        POSOrderCreateCommand command = cashPosCommand(false);
+        stubCashPosOrderPersistence();
+        PriceQuote quote = new PriceQuote("quote-pos-1", null, 99L, 3L, "POS", null, null, "袋", 11L,
+                LocalDate.now(), new BigDecimal("90.00"), "v1", new BigDecimal("80.00"), false, false);
+        when(productPricingService.quote(any(PriceContext.class))).thenReturn(quote);
+
+        Long orderId = orderService.createPOSOrder(command, 8L);
+
+        assertEquals(500L, orderId);
+        ArgumentCaptor<PriceQuote> quoteCaptor = ArgumentCaptor.forClass(PriceQuote.class);
+        ArgumentCaptor<BigDecimal> priceCaptor = ArgumentCaptor.forClass(BigDecimal.class);
+        ArgumentCaptor<String> reasonCaptor = ArgumentCaptor.forClass(String.class);
+        InOrder inOrder = inOrder(itemRepository, manualPriceAuditService);
+        inOrder.verify(itemRepository).save(any(OrderItem.class));
+        inOrder.verify(manualPriceAuditService).record(quoteCaptor.capture(), priceCaptor.capture(),
+                reasonCaptor.capture(), eq(8L), eq(8L));
+
+        assertEquals(900L, quoteCaptor.getValue().orderItemId());
+        assertEquals("quote-pos-1", quoteCaptor.getValue().quoteId());
+        assertEquals(0, priceCaptor.getValue().compareTo(new BigDecimal("100.00")));
+        assertEquals("POS手动改价", reasonCaptor.getValue());
+
+        ArgumentCaptor<OrderItem> itemCaptor = ArgumentCaptor.forClass(OrderItem.class);
+        verify(itemRepository).save(itemCaptor.capture());
+        assertEquals(0, itemCaptor.getValue().getUnitPrice().compareTo(new BigDecimal("100.00")));
     }
 
     private POSOrderCreateCommand cashPosCommand(boolean warehousePickup) {

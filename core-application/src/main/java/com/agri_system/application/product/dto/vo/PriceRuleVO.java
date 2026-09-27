@@ -46,6 +46,15 @@ public class PriceRuleVO {
     @Schema(description = "状态：1-启用，0-停用", example = "1")
     private Integer status;
     
+    @Schema(description = "销售单位（为空表示旧链路按主单位换算）", example = "箱")
+    private String saleUnit;
+    
+    @Schema(description = "销售渠道（为空表示通用规则）", example = "POS")
+    private String channel;
+    
+    @Schema(description = "规则版本", example = "1")
+    private String ruleVersion;
+    
     @Schema(description = "创建时间")
     private LocalDateTime createdAt;
     

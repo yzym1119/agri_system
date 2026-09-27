@@ -30,6 +30,15 @@ public class PriceRuleUpdateCommand {
     
     @Schema(description = "失效日期", example = "2024-12-31")
     private LocalDate expiryDate;
+
+    @Schema(description = "销售单位（可选，不传则保持原值）", example = "箱")
+    private String saleUnit;
+
+    @Schema(description = "销售渠道（可选，不传则保持原值）", example = "POS")
+    private String channel;
+
+    @Schema(description = "规则版本（可选，不传则保持原值）", example = "2")
+    private String ruleVersion;
     
     @Schema(description = "状态：1-启用，0-停用", example = "1")
     private Integer status;

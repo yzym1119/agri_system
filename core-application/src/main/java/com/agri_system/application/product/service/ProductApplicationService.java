@@ -4,6 +4,8 @@ import cn.dev33.satoken.stp.StpUtil;
 import com.agri_system.application.product.dto.command.*;
 import com.agri_system.application.product.dto.query.ProductQuery;
 import com.agri_system.application.product.dto.vo.CategoryTreeVO;
+import com.agri_system.application.product.dto.vo.PriceContext;
+import com.agri_system.application.product.dto.vo.PriceQuote;
 import com.agri_system.application.product.dto.vo.PriceRuleVO;
 import com.agri_system.application.product.dto.vo.ProductDetailVO;
 import com.agri_system.application.product.dto.vo.ProductUnitVO;
@@ -29,6 +31,7 @@ import com.mybatisflex.core.paginate.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -62,6 +65,7 @@ public class ProductApplicationService {
     private final PurchaseItemRepository purchaseItemRepository;
     private final InventoryBatchRepository inventoryBatchRepository;
     private final ProductUnitService productUnitService;
+    private final ProductPricingService productPricingService;
     
     // ==================== 商品基本档案 ====================
     
@@ -628,6 +632,9 @@ public class ProductApplicationService {
         price.setVipLevel(command.getVipLevel());
         price.setPriceType(command.getPriceType());
         price.setPrice(command.getPrice());
+        price.setSaleUnit(command.getSaleUnit());
+        price.setChannel(command.getChannel());
+        price.setRuleVersion(StringUtils.hasText(command.getRuleVersion()) ? command.getRuleVersion() : "1");
         price.setEffectiveDate(command.getEffectiveDate());
         price.setExpiryDate(command.getExpiryDate());
         price.setStatus(command.getStatus() != null ? command.getStatus() : 1);
@@ -648,6 +655,15 @@ public class ProductApplicationService {
         
         if (command.getPrice() != null) {
             price.setPrice(command.getPrice());
+        }
+        if (command.getSaleUnit() != null) {
+            price.setSaleUnit(command.getSaleUnit());
+        }
+        if (command.getChannel() != null) {
+            price.setChannel(command.getChannel());
+        }
+        if (command.getRuleVersion() != null) {
+            price.setRuleVersion(command.getRuleVersion());
         }
         price.setEffectiveDate(command.getEffectiveDate());
         price.setExpiryDate(command.getExpiryDate());
@@ -680,6 +696,22 @@ public class ProductApplicationService {
         return prices.stream()
                 .map(this::convertToPriceRuleVO)
                 .collect(Collectors.toList());
+    }
+    
+    /**
+     * 服务端报价：按商品/门店/渠道/客户分层与销售单位解析单价
+     */
+    public PriceQuote quoteProductPrice(Long productId, Long storeId, String channel, Integer customerType,
+                                        Integer vipLevel, String saleUnit, LocalDate businessDate) {
+        return productPricingService.quote(new PriceContext(
+                productId,
+                storeId,
+                channel,
+                customerType,
+                vipLevel,
+                saleUnit,
+                businessDate
+        ));
     }
     
     // ==================== 私有方法：转换 ====================
@@ -791,6 +823,9 @@ public class ProductApplicationService {
         vo.setEffectiveDate(price.getEffectiveDate());
         vo.setExpiryDate(price.getExpiryDate());
         vo.setStatus(price.getStatus());
+        vo.setSaleUnit(price.getSaleUnit());
+        vo.setChannel(price.getChannel());
+        vo.setRuleVersion(price.getRuleVersion());
         vo.setCreatedAt(price.getCreatedAt());
         vo.setUpdatedAt(price.getUpdatedAt());
         return vo;

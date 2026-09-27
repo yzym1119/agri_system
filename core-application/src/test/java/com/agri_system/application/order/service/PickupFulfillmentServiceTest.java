@@ -144,6 +144,8 @@ class PickupFulfillmentServiceTest {
     private InventoryReceiptBatchRepository receiptBatchRepository;
     @Mock
     private OrderCostAllocationService orderCostAllocationService;
+    @Mock
+    private ManualPriceAuditService manualPriceAuditService;
 
     private InMemoryAllocationRepository allocationRepository;
     private InMemoryPickupRequestRepository pickupRequestRepository;
@@ -163,7 +165,7 @@ class PickupFulfillmentServiceTest {
                 orderDomainService, paymentService, inventoryService, walletService, creditService,
                 productRepository, productPricingService, staffRepository, storeRepository, customerRepository,
                 afterSalesRepository, afterSalesItemRepository, eventPublisher, walletAuthCodeRepository,
-                fulfillmentService);
+                fulfillmentService, manualPriceAuditService);
     }
 
     @Test

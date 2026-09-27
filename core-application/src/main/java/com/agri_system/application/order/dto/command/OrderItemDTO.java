@@ -45,6 +45,9 @@ public class OrderItemDTO {
 
     @Schema(description = "是否库房取货（POS可选，true 时由新链路生成取货请求，不改走即时出库）", example = "false")
     private Boolean warehousePickup;
+
+    @Schema(description = "人工改价原因（POS可选，客户端提交价与服务端报价不一致时随审计一起留痕）", example = "老客户议价")
+    private String priceChangeReason;
 }
 
 

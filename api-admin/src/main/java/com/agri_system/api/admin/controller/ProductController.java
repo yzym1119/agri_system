@@ -4,6 +4,7 @@ import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.agri_system.application.product.dto.command.*;
 import com.agri_system.application.product.dto.query.ProductQuery;
 import com.agri_system.application.product.dto.vo.CategoryTreeVO;
+import com.agri_system.application.product.dto.vo.PriceQuote;
 import com.agri_system.application.product.dto.vo.PriceRuleVO;
 import com.agri_system.application.product.dto.vo.ProductDetailVO;
 import com.agri_system.application.product.dto.vo.ProductUnitVO;
@@ -20,11 +21,13 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -377,6 +380,31 @@ public class ProductController {
         result.put("code", "200");
         result.put("message", "查询成功");
         result.put("data", priceRules);
+        return ResponseEntity.ok(result);
+    }
+    
+    @GetMapping("/{productId}/price-quote")
+    @Operation(summary = "查询服务端报价", description = "按商品/门店/渠道/客户分层与销售单位解析单价（用于 POS 报价与人工改价审计）")
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "报价成功"),
+        @ApiResponse(responseCode = "400", description = "参数错误或商品不存在", content = @Content(schema = @Schema(implementation = Map.class)))
+    })
+    @SaCheckPermission("product:price:query")
+    public ResponseEntity<Map<String, Object>> quoteProductPrice(
+            @Parameter(description = "商品ID", required = true) @PathVariable Long productId,
+            @Parameter(description = "门店ID（可选）") @RequestParam(required = false) Long storeId,
+            @Parameter(description = "销售渠道（可选，如 POS/小程序）") @RequestParam(required = false) String channel,
+            @Parameter(description = "客户类型（可选）") @RequestParam(required = false) Integer customerType,
+            @Parameter(description = "VIP等级（可选）") @RequestParam(required = false) Integer vipLevel,
+            @Parameter(description = "销售单位（可选，为空表示按商品主单位）") @RequestParam(required = false) String saleUnit,
+            @Parameter(description = "业务日期（可选，为空表示今天）") @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDate) {
+        PriceQuote quote = productService.quoteProductPrice(productId, storeId, channel, customerType,
+                vipLevel, saleUnit, businessDate);
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", "200");
+        result.put("message", "报价成功");
+        result.put("data", quote);
         return ResponseEntity.ok(result);
     }
 }
