@@ -142,6 +142,8 @@ class PickupFulfillmentServiceTest {
     private InventoryBatchBalanceRepository batchBalanceRepository;
     @Mock
     private InventoryReceiptBatchRepository receiptBatchRepository;
+    @Mock
+    private OrderCostAllocationService orderCostAllocationService;
 
     private InMemoryAllocationRepository allocationRepository;
     private InMemoryPickupRequestRepository pickupRequestRepository;
@@ -154,7 +156,8 @@ class PickupFulfillmentServiceTest {
         pickupRequestRepository = new InMemoryPickupRequestRepository();
         fulfillmentService = new PickupFulfillmentService(
                 allocationRepository, pickupRequestRepository, batchBalanceService, productUnitService,
-                locationRepository, batchBalanceRepository, receiptBatchRepository, orderRepository, itemRepository);
+                locationRepository, batchBalanceRepository, receiptBatchRepository, orderRepository, itemRepository,
+                orderCostAllocationService);
         orderService = new OrderApplicationService(
                 orderRepository, itemRepository, paymentRepository, paymentIntentRepository, deliveryRepository,
                 orderDomainService, paymentService, inventoryService, walletService, creditService,
@@ -447,7 +450,7 @@ class PickupFulfillmentServiceTest {
         PickupFulfillmentService service = new PickupFulfillmentService(
                 allocationRepository, requestRepository, batchBalanceService, productUnitService,
                 locationRepository, batchBalanceRepository, receiptBatchRepository, orderRepository,
-                orderItemRepository);
+                orderItemRepository, orderCostAllocationService);
 
         service.fulfill(REQUEST_ID, scannedBatch(INTERNAL_BATCH_NO), 8L);
 

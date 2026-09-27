@@ -64,6 +64,7 @@ public class PickupFulfillmentService {
     private final InventoryReceiptBatchRepository receiptBatchRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository itemRepository;
+    private final OrderCostAllocationService orderCostAllocationService;
 
     /**
      * POS 直接销售时的批次证据归属。
@@ -102,6 +103,8 @@ public class PickupFulfillmentService {
             allocation.setAllocationRule(RULE_FLOOR_SINGLE_BATCH);
             allocation.setAllocationRuleVersion(ALLOCATION_RULE_VERSION);
             allocationRepository.save(allocation);
+            // 事实链最终确定后刷新订单行批次成本展示快照（仅 ACTUAL 口径写入，重跑幂等）
+            orderCostAllocationService.refreshOrderItemSnapshot(item.getId(), operatorId);
             return true;
         }
 
@@ -117,6 +120,8 @@ public class PickupFulfillmentService {
             allocation.setPickupRequestId(requestId);
             allocationRepository.save(allocation);
         }
+        // 事实链最终确定后刷新订单行批次成本展示快照（UNKNOWN 证据不写，保持估算边界）
+        orderCostAllocationService.refreshOrderItemSnapshot(item.getId(), operatorId);
         return true;
     }
 
@@ -246,6 +251,9 @@ public class PickupFulfillmentService {
         request.setFulfilledAt(LocalDateTime.now());
         request.setFulfilledBy(operatorId);
         pickupRequestRepository.save(request);
+
+        // 归属事实最终确定后刷新订单行批次成本展示快照（base_unit_id/base_quantity/unit_cost）
+        orderCostAllocationService.refreshOrderItemSnapshot(request.getOrderItemId(), operatorId);
 
         return List.of(allocation);
     }
