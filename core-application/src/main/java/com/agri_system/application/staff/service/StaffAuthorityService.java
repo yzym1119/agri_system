@@ -99,9 +99,7 @@ public class StaffAuthorityService {
         SysRole role = roleRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("角色不存在"));
         role.setName(command.getName());
-        if (StringUtils.hasText(command.getCode())) {
-            role.setCode(command.getCode().trim());
-        }
+        // 角色编码决定管理员身份与数据隔离，编辑时一律保留原编码
         if (command.getStatus() != null) {
             role.setStatus(command.getStatus());
         }

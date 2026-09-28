@@ -69,6 +69,20 @@ class StaffAuthorityServiceRoleUpdateTest {
     }
 
     @Test
+    void updateRoleIgnoresSubmittedCode() {
+        when(roleRepository.findById(5L)).thenReturn(Optional.of(existingRole()));
+        RoleSaveCommand command = new RoleSaveCommand();
+        command.setName("门店店长");
+        command.setCode("SUPER_ADMIN");
+
+        service.updateRole(5L, command);
+
+        ArgumentCaptor<SysRole> saved = ArgumentCaptor.forClass(SysRole.class);
+        verify(roleRepository).save(saved.capture());
+        assertEquals("ROLE_0005", saved.getValue().getCode());
+    }
+
+    @Test
     void updateRoleIgnoresNonEmptyMenuIds() {
         when(roleRepository.findById(5L)).thenReturn(Optional.of(existingRole()));
         RoleSaveCommand command = new RoleSaveCommand();

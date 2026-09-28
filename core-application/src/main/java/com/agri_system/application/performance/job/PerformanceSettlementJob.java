@@ -45,7 +45,7 @@ public class PerformanceSettlementJob {
 
             StaffSalaryBill bill = salaryBillRepository.findByStaffAndMonth(staffId, target.toString())
                     .orElse(new StaffSalaryBill());
-            if (Integer.valueOf(1).equals(bill.getStatus())) {
+            if (bill.getStatus() != null && bill.getStatus() != 0) {
                 log.warn("Salary bill already confirmed, skip re-settlement: staffId={}, month={}", staffId, target);
                 continue;
             }

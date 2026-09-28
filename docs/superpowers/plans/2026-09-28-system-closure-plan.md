@@ -51,7 +51,8 @@
 - Create: `api-admin/src/test/java/com/agri_system/api/admin/controller/RoleControllerTest.java`
 
 **Interfaces:**
-- Produces: `public void updateRole(Long id, RoleSaveCommand command)`。角色不存在时抛 `IllegalArgumentException("角色不存在")`。保留原 code，除非 `command.getCode()` 有值。`command.getMenuIds() != null` 时整体替换菜单授权。
+- Produces: `public void updateRole(Long id, RoleSaveCommand command)`。角色不存在时抛 `IllegalArgumentException("角色不存在")`。
+- **执行裁定（覆盖本任务下方的代码块）：** `updateRole` 一律保留原 code，忽略 `command.getCode()`，因为 code 决定管理员身份，改 code 就能提权。它也从不改动菜单授权，因为前端编辑总是发 `menuIds=[]`，照原方案会清空授权；菜单只经 `role:assign` 维护。下方测试与实现代码块是原方案，以仓库实际代码为准。
 - Produces: `PUT /api/admin/roles/{id}`，请求体 `RoleSaveCommand`，权限码 `role:save`（V49:30 的「编辑角色」按钮就是 `role:save`），返回 `R<Void>`。
 
 - [ ] **Step 1：写失败的服务层测试**
@@ -550,6 +551,8 @@ payment:
 ```
 
 追加前先用 `grep -n "^payment:" api-client/src/main/resources/application-dev.yml` 确认文件里还没有顶层 `payment:` 键。如果已经存在，就把 `client-confirm` 合并到那个键下面，不要重复声明。
+
+**执行裁定：** api-client 未指定 profile 时默认落到 dev，所以 dev 的值最终改为 `${PAYMENT_CLIENT_CONFIRM_ENABLED:false}`，本地联调需要显式开启。
 
 - [ ] **Step 5：确认通过**：用 Step 2 的命令，Expected exit=0，`OrderApplicationServicePaymentFlowTest` Failures 0、Errors 0。
 
