@@ -53,7 +53,7 @@ wechat:
   subscribe-message:
     enabled: false
     miniprogram-state: formal
-    templates:
+    templates: {}
       # order-finished:
       #   template-id:        # 在 mp.weixin.qq.com 申请模板后填入
       #   page: pages/order/detail?id={orderId}
@@ -81,3 +81,9 @@ aliyun:
     access-key-id: ${ALIYUN_OSS_AK:}
     access-key-secret: ${ALIYUN_OSS_SK:}
     bucket-name: ${ALIYUN_OSS_BUCKET:agriculture-store}
+
+# 客户端自行确认外部支付：仅限本地联调，需显式设 PAYMENT_CLIENT_CONFIRM_ENABLED=true。
+# 未指定 profile 时默认落到 dev，故这里同样默认关闭；prod/test 不配置即关闭
+payment:
+  client-confirm:
+    enabled: ${PAYMENT_CLIENT_CONFIRM_ENABLED:false}
