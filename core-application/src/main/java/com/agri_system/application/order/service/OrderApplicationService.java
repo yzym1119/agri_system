@@ -39,6 +39,7 @@ import com.agri_system.domain.store.model.Store;
 import com.agri_system.domain.store.repository.StaffRepository;
 import com.agri_system.domain.store.repository.StoreRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -94,6 +95,9 @@ public class OrderApplicationService {
     private final WalletAuthCodeRepository walletAuthCodeRepository;
     private final PickupFulfillmentService pickupFulfillmentService;
     private final ManualPriceAuditService manualPriceAuditService;
+
+    @Value("${payment.client-confirm.enabled:false}")
+    private boolean clientPaymentConfirmEnabled;
     
     /**
      * 创建小程序订单
@@ -725,6 +729,9 @@ public class OrderApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void confirmExternalPayment(OrderExternalPaymentConfirmCommand command, Long customerId) {
+        if (!clientPaymentConfirmEnabled) {
+            throw new IllegalStateException("客户端确认支付已关闭，请等待支付平台回调确认");
+        }
         OrderPaymentIntent intent = loadPaymentIntent(command.getIntentNo());
         if (intent.getCustomerId() == null || !intent.getCustomerId().equals(customerId)) {
             throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 无权确认此支付");

@@ -40,6 +40,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -150,6 +151,7 @@ class OrderApplicationServicePaymentFlowTest {
 
     @Test
     void confirmExternalPaymentFinalizesOrderWhenPreviewMatches() {
+        ReflectionTestUtils.setField(orderService, "clientPaymentConfirmEnabled", true);
         Order order = mockPendingClientOrder();
         OrderPaymentIntent intent = mockPendingIntent(order);
         OrderItem item = new OrderItem();
@@ -196,6 +198,7 @@ class OrderApplicationServicePaymentFlowTest {
 
     @Test
     void confirmExternalPaymentRejectsWhenExternalAmountChanged() {
+        ReflectionTestUtils.setField(orderService, "clientPaymentConfirmEnabled", true);
         Order order = mockPendingClientOrder();
         OrderPaymentIntent intent = mockPendingIntent(order);
         intent.setExternalAmount(new BigDecimal("39.99"));
@@ -216,6 +219,7 @@ class OrderApplicationServicePaymentFlowTest {
 
     @Test
     void confirmExternalPaymentReturnsWhenIntentAlreadyConfirmedWithSameTransaction() {
+        ReflectionTestUtils.setField(orderService, "clientPaymentConfirmEnabled", true);
         Order order = mockPendingClientOrder();
         order.setOrderStatus(3);
         OrderPaymentIntent intent = mockPendingIntent(order);
@@ -231,6 +235,19 @@ class OrderApplicationServicePaymentFlowTest {
 
         verify(paymentService, never()).executePayment(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any());
         verify(orderRepository, never()).findById(any());
+    }
+
+    @Test
+    void confirmExternalPaymentRejectedWhenClientConfirmDisabled() {
+        OrderExternalPaymentConfirmCommand command = new OrderExternalPaymentConfirmCommand();
+        command.setIntentNo("PI-ANY");
+        command.setExternalTransactionNo("forged-transaction");
+
+        assertThrows(IllegalStateException.class,
+                () -> orderService.confirmExternalPayment(command, 1L));
+        verify(paymentIntentRepository, never()).findByIntentNo(any());
+        verify(paymentService, never()).executePayment(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any());
+        verify(inventoryService, never()).outbound(any(), any());
     }
 
     @Test

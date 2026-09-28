@@ -81,3 +81,8 @@ aliyun:
     access-key-id: ${ALIYUN_OSS_AK:}
     access-key-secret: ${ALIYUN_OSS_SK:}
     bucket-name: ${ALIYUN_OSS_BUCKET:agriculture-store}
+
+# 客户端自行确认外部支付：仅限本地联调。未接入真实支付网关前，prod/test 必须保持关闭（默认 false）
+payment:
+  client-confirm:
+    enabled: true
