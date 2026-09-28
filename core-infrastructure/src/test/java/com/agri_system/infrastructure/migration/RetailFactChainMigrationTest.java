@@ -92,6 +92,13 @@ class RetailFactChainMigrationTest {
                     `menu_id` BIGINT NOT NULL,
                     PRIMARY KEY (`role_id`, `menu_id`)
                 );
+                -- V128(补页面菜单)按「已持有按钮权限的角色」推导授权,基线需含对应按钮与授权行
+                INSERT INTO `sys_menu` (`id`, `parent_id`, `name`, `permission`, `type`, `sort_order`, `path`, `icon`, `visible`) VALUES
+                    (203, 200, '调拨', 'inventory:transfer', 2, 30, NULL, NULL, 1),
+                    (206, 200, '库存日志', 'inventory:log:list', 2, 60, NULL, NULL, 1),
+                    (1409, 0, '客户跟进管理', 'customer:followup:manage', 2, 130, NULL, NULL, 1),
+                    (2600, 0, '工作台', 'report:dashboard', 1, 10, '/dashboard', 'Odometer', 1);
+                INSERT INTO `sys_role_menu` (`role_id`, `menu_id`) VALUES (3, 203), (3, 206), (4, 1409);
                 INSERT INTO `store` (`id`) VALUES (1), (2);
                 INSERT INTO `staff` (`id`) VALUES (1);
                 INSERT INTO `supplier` (`id`) VALUES (1);
@@ -167,7 +174,7 @@ class RetailFactChainMigrationTest {
 
     @Test
     void retailFactChainMigrationCreatesAllFactTablesAndSnapshots() throws SQLException {
-        assertEquals("127", flyway.info().current().getVersion().getVersion());
+        assertEquals("128", flyway.info().current().getVersion().getVersion());
 
         List.of(
                 "product_unit",
@@ -222,6 +229,24 @@ class RetailFactChainMigrationTest {
                 Integer.class));
     }
 
+    @Test
+    void restoreMissingPageMenusRegistersPagesAndDerivesGrants() {
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        assertMenuRow(jdbc, 2707L, 2100L, "库存日志", "inventory:log:list", "/inventory/log");
+        assertMenuRow(jdbc, 2708L, 2100L, "库存调拨", "inventory:transfer", "/inventory/transfer");
+        assertMenuRow(jdbc, 2709L, 2300L, "客户跟进", "customer:followup:manage", "/marketing/customer/follow-up");
+        assertEquals(Integer.valueOf(1), jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = 1 AND menu_id = 2600", Integer.class));
+        assertEquals(Integer.valueOf(1), jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = 3 AND menu_id = 2707", Integer.class));
+        assertEquals(Integer.valueOf(1), jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = 3 AND menu_id = 2708", Integer.class));
+        assertEquals(Integer.valueOf(1), jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = 4 AND menu_id = 2709", Integer.class));
+        assertEquals(Integer.valueOf(0), jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sys_role_menu WHERE role_id = 4 AND menu_id IN (2707, 2708)", Integer.class));
+    }
+
     private void assertMenuRow(JdbcTemplate jdbc, Long id, Long parentId, String name, String permission, String path) {
         assertEquals(parentId, jdbc.queryForObject("SELECT parent_id FROM sys_menu WHERE id = ?", Long.class, id));
         assertEquals(name, jdbc.queryForObject("SELECT name FROM sys_menu WHERE id = ?", String.class, id));
@@ -257,15 +282,15 @@ class RetailFactChainMigrationTest {
         assertEquals(migrationFiles.size(), versions.size(), "所有 V*.sql 文件都必须被枚举和解析");
         assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
         assertTrue(versions.stream().allMatch(version -> version.compareTo(MigrationVersion.fromVersion("1")) >= 0
-                        && version.compareTo(MigrationVersion.fromVersion("127")) <= 0),
-                "存在超出 V1..V127 范围的迁移版本");
+                        && version.compareTo(MigrationVersion.fromVersion("128")) <= 0),
+                "存在超出 V1..V128 范围的迁移版本");
         assertTrue(versions.containsAll(List.of(MigrationVersion.fromVersion("119"),
                 MigrationVersion.fromVersion("120"), MigrationVersion.fromVersion("121"),
                 MigrationVersion.fromVersion("123"), MigrationVersion.fromVersion("124"),
                 MigrationVersion.fromVersion("125"), MigrationVersion.fromVersion("126"),
-                MigrationVersion.fromVersion("127"))),
-                "缺少 V119/V120/V121/V123/V124/V125/V126/V127");
-        assertEquals("127", flyway.info().current().getVersion().getVersion());
+                MigrationVersion.fromVersion("127"), MigrationVersion.fromVersion("128"))),
+                "缺少 V119/V120/V121/V123/V124/V125/V126/V127/V128");
+        assertEquals("128", flyway.info().current().getVersion().getVersion());
     }
 
     @Test
