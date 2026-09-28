@@ -45,13 +45,19 @@ public class PerformanceSettlementJob {
 
             StaffSalaryBill bill = salaryBillRepository.findByStaffAndMonth(staffId, target.toString())
                     .orElse(new StaffSalaryBill());
+            if (Integer.valueOf(1).equals(bill.getStatus())) {
+                log.warn("Salary bill already confirmed, skip re-settlement: staffId={}, month={}", staffId, target);
+                continue;
+            }
             bill.setStaffId(staffId);
             bill.setMonth(target.toString());
             bill.setTotalCommission(commission);
             bill.setTotalSales(sales);
             bill.setNewCustomerCount((int) newCustomer);
             bill.setStatus(0);
-            bill.setCreatedAt(LocalDateTime.now());
+            if (bill.getCreatedAt() == null) {
+                bill.setCreatedAt(LocalDateTime.now());
+            }
             salaryBillRepository.save(bill);
         }
         log.info("Performance settlement completed for {}", target);
