@@ -105,11 +105,8 @@ public class StaffAuthorityService {
         if (command.getStatus() != null) {
             role.setStatus(command.getStatus());
         }
+        // 菜单授权只经 POST /{id}/menus（role:assign）维护，编辑角色不改动授权
         roleRepository.save(role);
-        if (command.getMenuIds() != null) {
-            roleMenuRepository.deleteByRoleId(id);
-            roleMenuRepository.batchInsert(id, command.getMenuIds());
-        }
     }
 
     @Transactional(rollbackFor = Exception.class)

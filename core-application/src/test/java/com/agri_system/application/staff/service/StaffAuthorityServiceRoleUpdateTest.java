@@ -21,7 +21,6 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -49,12 +48,13 @@ class StaffAuthorityServiceRoleUpdateTest {
     }
 
     @Test
-    void updateRoleKeepsExistingCodeAndReplacesMenus() {
+    void updateRoleWithFrontendEditPayloadKeepsCodeAndLeavesMenusUntouched() {
         when(roleRepository.findById(5L)).thenReturn(Optional.of(existingRole()));
         RoleSaveCommand command = new RoleSaveCommand();
         command.setName("门店店长");
+        command.setCode(null);
         command.setStatus(0);
-        command.setMenuIds(List.of(100L, 200L));
+        command.setMenuIds(List.of());
 
         service.updateRole(5L, command);
 
@@ -65,8 +65,21 @@ class StaffAuthorityServiceRoleUpdateTest {
         assertEquals("ROLE_0005", saved.getValue().getCode());
         assertEquals(0, saved.getValue().getStatus());
         verifyNoInteractions(codeGenerationService);
-        verify(roleMenuRepository).deleteByRoleId(5L);
-        verify(roleMenuRepository).batchInsert(5L, List.of(100L, 200L));
+        verifyNoInteractions(roleMenuRepository);
+    }
+
+    @Test
+    void updateRoleIgnoresNonEmptyMenuIds() {
+        when(roleRepository.findById(5L)).thenReturn(Optional.of(existingRole()));
+        RoleSaveCommand command = new RoleSaveCommand();
+        command.setName("门店店长");
+        command.setStatus(1);
+        command.setMenuIds(List.of(100L, 200L));
+
+        service.updateRole(5L, command);
+
+        verify(roleRepository).save(any());
+        verifyNoInteractions(roleMenuRepository);
     }
 
     @Test
@@ -77,8 +90,7 @@ class StaffAuthorityServiceRoleUpdateTest {
 
         service.updateRole(5L, command);
 
-        verify(roleMenuRepository, never()).deleteByRoleId(anyLong());
-        verify(roleMenuRepository, never()).batchInsert(anyLong(), any());
+        verifyNoInteractions(roleMenuRepository);
     }
 
     @Test
