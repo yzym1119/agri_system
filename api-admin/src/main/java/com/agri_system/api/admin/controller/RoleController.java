@@ -39,6 +39,14 @@ public class RoleController {
         return R.success(authorityService.saveRole(command));
     }
 
+    @PutMapping("/{id}")
+    @Operation(summary = "编辑角色")
+    @SaCheckPermission("role:save")
+    public R<Void> update(@PathVariable Long id, @Valid @RequestBody RoleSaveCommand command) {
+        authorityService.updateRole(id, command);
+        return R.success();
+    }
+
     @DeleteMapping("/{id}")
     @Operation(summary = "删除角色")
     @SaCheckPermission("role:delete")

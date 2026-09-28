@@ -95,6 +95,24 @@ public class StaffAuthorityService {
     }
 
     @Transactional(rollbackFor = Exception.class)
+    public void updateRole(Long id, RoleSaveCommand command) {
+        SysRole role = roleRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("角色不存在"));
+        role.setName(command.getName());
+        if (StringUtils.hasText(command.getCode())) {
+            role.setCode(command.getCode().trim());
+        }
+        if (command.getStatus() != null) {
+            role.setStatus(command.getStatus());
+        }
+        roleRepository.save(role);
+        if (command.getMenuIds() != null) {
+            roleMenuRepository.deleteByRoleId(id);
+            roleMenuRepository.batchInsert(id, command.getMenuIds());
+        }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
     public void assignRoleMenus(RoleAssignCommand command) {
         roleMenuRepository.deleteByRoleId(command.getRoleId());
         roleMenuRepository.batchInsert(command.getRoleId(), command.getMenuIds());
