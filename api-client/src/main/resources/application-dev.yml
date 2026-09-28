@@ -53,7 +53,7 @@ wechat:
   subscribe-message:
     enabled: false
     miniprogram-state: formal
-    templates:
+    templates: {}
       # order-finished:
       #   template-id:        # 在 mp.weixin.qq.com 申请模板后填入
       #   page: pages/order/detail?id={orderId}
