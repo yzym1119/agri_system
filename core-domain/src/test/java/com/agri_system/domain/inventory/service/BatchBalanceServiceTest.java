@@ -3,7 +3,6 @@ package com.agri_system.domain.inventory.service;
 import com.agri_system.domain.inventory.model.InventoryBatchBalance;
 import com.agri_system.domain.inventory.model.InventoryLocation;
 import com.agri_system.domain.inventory.model.InventoryReceiptBatch;
-import com.agri_system.domain.inventory.repository.InventoryBalanceFeatureStatusRepository;
 import com.agri_system.domain.inventory.repository.InventoryBatchBalanceRepository;
 import com.agri_system.domain.inventory.repository.InventoryLocationRepository;
 import com.agri_system.domain.inventory.repository.InventoryMovementRepository;
@@ -39,8 +38,6 @@ class BatchBalanceServiceTest {
     @Mock
     private InventoryReceiptBatchRepository receiptBatchRepository;
     @Mock
-    private InventoryBalanceFeatureStatusRepository featureStatusRepository;
-    @Mock
     private InventoryRepository inventoryRepository;
 
     @Test
@@ -53,8 +50,7 @@ class BatchBalanceServiceTest {
         when(locationRepository.findById(11L)).thenReturn(Optional.of(floor));
         when(balanceRepository.findByBatchAndLocationForUpdate(100L, 10L)).thenReturn(Optional.of(source));
         when(balanceRepository.findByBatchAndLocationForUpdate(100L, 11L)).thenReturn(Optional.of(destination));
-        when(featureStatusRepository.findByStoreAndProduct(1L, 5L))
-                .thenReturn(Optional.of(featureEnabled()));
+        when(receiptBatchRepository.findById(100L)).thenReturn(Optional.of(receiptBatch()));
 
         service().move(move(100L, 10L, 11L, "2", "48"));
 
@@ -63,7 +59,7 @@ class BatchBalanceServiceTest {
         verify(balanceRepository).save(source);
         verify(balanceRepository).save(destination);
         verify(movementRepository).append(any());
-        verify(inventoryRepository).findByStoreAndProductForUpdate(1L, 5L);
+        verify(inventoryRepository, times(2)).findByStoreAndProductForUpdate(1L, 5L);
     }
 
     @Test
@@ -74,8 +70,7 @@ class BatchBalanceServiceTest {
         when(locationRepository.findById(11L)).thenReturn(Optional.of(floor));
         when(balanceRepository.findByBatchAndLocationForUpdate(100L, 10L))
                 .thenReturn(Optional.of(balance(100L, 1L, 10L, "72")));
-        when(featureStatusRepository.findByStoreAndProduct(1L, 5L))
-                .thenReturn(Optional.of(featureEnabled()));
+        when(receiptBatchRepository.findById(100L)).thenReturn(Optional.of(receiptBatch()));
 
         IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
                 () -> service().move(move(100L, 10L, 11L, "73", "73")));
@@ -86,18 +81,27 @@ class BatchBalanceServiceTest {
     }
 
     @Test
-    void receiptDoesNotCreateBatchLocationBalanceUntilSkuHasExplicitlyCutOver() {
-        InventoryReceiptBatch receiptBatch = new InventoryReceiptBatch();
-        receiptBatch.setId(100L);
-        receiptBatch.setStoreId(1L);
-        receiptBatch.setProductId(5L);
-        receiptBatch.setBaseQuantity(new BigDecimal("48"));
-        when(featureStatusRepository.findByStoreAndProduct(1L, 5L)).thenReturn(Optional.empty());
+    void receiptAlwaysCreatesBatchBalanceAndReceiptMovement() {
+        InventoryReceiptBatch receiptBatch = receiptBatch();
+        when(receiptBatchRepository.findById(100L)).thenReturn(Optional.of(receiptBatch));
+        when(locationRepository.defaultBackroom(1L))
+                .thenReturn(location(10L, 1L, "STORE_BACKROOM"));
+        when(locationRepository.findById(10L)).thenReturn(Optional.of(location(10L, 1L, "STORE_BACKROOM")));
+        when(balanceRepository.sumBaseQuantityByStoreAndProduct(1L, 5L)).thenReturn(new BigDecimal("48"));
 
         service().increaseFromReceipt(20L, receiptBatch);
 
-        verify(locationRepository, never()).findEnabledByStoreAndType(any(), any());
-        verify(balanceRepository, never()).save(any());
+        ArgumentCaptor<InventoryBatchBalance> balance = ArgumentCaptor.forClass(InventoryBatchBalance.class);
+        verify(balanceRepository).save(balance.capture());
+        assertEquals(0, balance.getValue().getBaseQuantity().compareTo(new BigDecimal("48")));
+        ArgumentCaptor<com.agri_system.domain.inventory.model.InventoryMovement> movement =
+                ArgumentCaptor.forClass(com.agri_system.domain.inventory.model.InventoryMovement.class);
+        verify(movementRepository).append(movement.capture());
+        assertEquals("RECEIPT", movement.getValue().getMovementType());
+        assertEquals(20L, movement.getValue().getReferenceId());
+        assertEquals("RECEIPT:100", movement.getValue().getIdempotencyKey());
+        assertEquals(0, movement.getValue().getBaseQuantity().compareTo(new BigDecimal("48")));
+        verify(inventoryRepository).updateBaseSnapshot(1L, 5L, new BigDecimal("48"));
     }
 
     @Test
@@ -154,8 +158,7 @@ class BatchBalanceServiceTest {
         when(balanceRepository.findByBatchAndLocationForUpdate(100L, 10L))
                 .thenReturn(Optional.of(balance(100L, 1L, 10L, "72")));
         when(balanceRepository.findByBatchAndLocationForUpdate(100L, 11L)).thenReturn(Optional.empty());
-        when(featureStatusRepository.findByStoreAndProduct(1L, 5L))
-                .thenReturn(Optional.of(featureEnabled()));
+        when(receiptBatchRepository.findById(100L)).thenReturn(Optional.of(receiptBatch()));
 
         service().move(move(100L, 10L, 11L, "2", "48"));
 
@@ -169,15 +172,11 @@ class BatchBalanceServiceTest {
 
     @Test
     void receiptCreatedBalanceCarriesTimestampsRequiredByRealMysql() {
-        InventoryReceiptBatch receiptBatch = new InventoryReceiptBatch();
-        receiptBatch.setId(100L);
-        receiptBatch.setStoreId(1L);
-        receiptBatch.setProductId(5L);
-        receiptBatch.setBaseQuantity(new BigDecimal("48"));
-        when(featureStatusRepository.findByStoreAndProduct(1L, 5L))
-                .thenReturn(Optional.of(featureEnabled()));
-        when(locationRepository.findEnabledByStoreAndType(1L, "STORE_BACKROOM"))
-                .thenReturn(Optional.of(location(10L, 1L, "STORE_BACKROOM")));
+        InventoryReceiptBatch receiptBatch = receiptBatch();
+        when(receiptBatchRepository.findById(100L)).thenReturn(Optional.of(receiptBatch()));
+        when(locationRepository.defaultBackroom(1L))
+                .thenReturn(location(10L, 1L, "STORE_BACKROOM"));
+        when(locationRepository.findById(10L)).thenReturn(Optional.of(location(10L, 1L, "STORE_BACKROOM")));
         when(balanceRepository.findByBatchAndLocationForUpdate(100L, 10L)).thenReturn(Optional.empty());
 
         service().increaseFromReceipt(20L, receiptBatch);
@@ -190,7 +189,7 @@ class BatchBalanceServiceTest {
 
     private BatchBalanceService service() {
         return new BatchBalanceService(locationRepository, balanceRepository, movementRepository,
-                receiptBatchRepository, featureStatusRepository, inventoryRepository);
+                receiptBatchRepository, inventoryRepository);
     }
 
     private BatchBalanceService.MoveRequest move(Long batchId, Long fromLocationId, Long toLocationId,
@@ -228,10 +227,16 @@ class BatchBalanceServiceTest {
         return balance;
     }
 
-    private com.agri_system.domain.inventory.model.InventoryBalanceFeatureStatus featureEnabled() {
-        com.agri_system.domain.inventory.model.InventoryBalanceFeatureStatus status =
-                new com.agri_system.domain.inventory.model.InventoryBalanceFeatureStatus();
-        status.setBalanceMode("BATCH_LOCATION");
-        return status;
+    private InventoryReceiptBatch receiptBatch() {
+        InventoryReceiptBatch batch = new InventoryReceiptBatch();
+        batch.setId(100L);
+        batch.setStoreId(1L);
+        batch.setProductId(5L);
+        batch.setBaseQuantity(new BigDecimal("48"));
+        batch.setOriginalUnitId(101L);
+        batch.setOriginalUnitName("箱");
+        batch.setOriginalQuantity(new BigDecimal("2"));
+        batch.setBaseUnitCost(new BigDecimal("10"));
+        return batch;
     }
 }

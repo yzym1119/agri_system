@@ -84,6 +84,7 @@ class CouponOneTimeUseTest {
     void testCouponOneTimeUse_Order50_Coupon100() {
         // Given
         when(couponRepository.findById(1L)).thenReturn(java.util.Optional.of(coupon));
+        when(couponRepository.findByIdForUpdate(1L)).thenReturn(java.util.Optional.of(coupon));
         when(itemRepository.findByOrderId(1L)).thenReturn(java.util.Collections.emptyList());
         when(paymentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         
@@ -124,6 +125,7 @@ class CouponOneTimeUseTest {
         // Given
         order.setPayAmount(new BigDecimal("150.00"));
         when(couponRepository.findById(1L)).thenReturn(java.util.Optional.of(coupon));
+        when(couponRepository.findByIdForUpdate(1L)).thenReturn(java.util.Optional.of(coupon));
         when(itemRepository.findByOrderId(1L)).thenReturn(java.util.Collections.emptyList());
         when(paymentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         

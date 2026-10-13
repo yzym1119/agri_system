@@ -83,9 +83,7 @@ public class OrderApplicationService {
     private final CreditApplicationService creditService;
     private final ProductRepository productRepository;
     private final ProductPricingService productPricingService;
-    // ✅ 优化：移除套餐仓储依赖（前端已处理套餐炸开）
-    // private final ProductPackageRepository packageRepository;
-    // private final ProductPackageItemRepository packageItemRepository;
+    private final com.agri_system.application.productpackage.service.PackagePricingService packagePricingService;
     private final StaffRepository staffRepository;
     private final StoreRepository storeRepository;
     private final CustomerRepository customerRepository;
@@ -141,6 +139,9 @@ public class OrderApplicationService {
         int sortOrder = 0;
         
         for (OrderItemDTO itemDTO : command.getItems()) {
+            if (itemDTO.getPackageId() != null || Integer.valueOf(2).equals(itemDTO.getItemType())) {
+                throw new IllegalArgumentException("套餐销售价格尚未统一，请按单品开单");
+            }
             Product product = productRepository.findById(itemDTO.getProductId())
                     .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 商品不存在"));
             
@@ -153,7 +154,8 @@ public class OrderApplicationService {
                     itemUnit
             );
             
-            BigDecimal itemTotal = unitPrice.multiply(itemDTO.getQuantity());
+            BigDecimal itemTotal = unitPrice.multiply(itemDTO.getQuantity()).setScale(2, RoundingMode.HALF_UP);
+            if (itemTotal.signum() <= 0) throw new IllegalArgumentException("明细金额不足一分，请调整销售数量");
             totalAmount = totalAmount.add(itemTotal);
             
             OrderItem item = new OrderItem();
@@ -209,14 +211,15 @@ public class OrderApplicationService {
     }
     
     /**
-     * 创建POS订单（记账模式）
+     * 创建POS订单
      * 
      * @param command POS订单创建命令
      * @param createdBy 操作人ID
      * @return 订单ID
      */
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public Long createPOSOrder(POSOrderCreateCommand command, Long createdBy) {
+        validatePosPayments(command);
         Long operatorStaffId = createdBy != null ? createdBy : command.getStaffId();
         if (operatorStaffId == null) {
             throw new IllegalArgumentException("未获取到当前登录员工，无法创建POS订单");
@@ -233,6 +236,14 @@ public class OrderApplicationService {
             throw new IllegalArgumentException("员工未分配门店，无法创建POS订单");
         }
         
+        BigDecimal manualDiscount = command.getDiscountAmount();
+        if (manualDiscount != null && (manualDiscount.signum() < 0 || manualDiscount.scale() > 2)) {
+            throw new IllegalArgumentException("整单优惠不能为负且最多两位小数");
+        }
+        if (manualDiscount != null && manualDiscount.signum() > 0) {
+            manualPriceAuditService.validateDiscount(manualDiscount, command.getRemark(), operatorStaffId);
+        }
+
         // 2. 赊销风控：已放宽，允许部分赊销及混合支付，具体支付金额由 payments 或前端 paymentType/receiveAmount 指定
 
 
@@ -246,17 +257,17 @@ public class OrderApplicationService {
         order.setCustomerId(command.getCustomerId());
         order.setOrderType(1); // POS订单
         order.setOrderStatus(6); // 已完成（POS订单支付成功即完成，线下即时交易）
-        order.setOrderStatus(6); // 已完成（POS订单支付成功即完成，线下即时交易）
         order.setDiscountAmount(BigDecimal.ZERO);
         order.setCouponAmount(BigDecimal.ZERO);
         order.setStaffId(operatorStaffId);
-        order.setRemark(command.getRemark());
+        order.setRemark(manualDiscount != null && manualDiscount.signum() > 0
+                ? "整单优惠原因：" + command.getRemark().trim() : command.getRemark());
         order.setCreatedAt(LocalDateTime.now());
         order.setUpdatedAt(LocalDateTime.now());
         order.setCreatedBy(createdBy);
         
         // 5. 创建订单明细并计算总金额
-        // ✅ 优化：前端已将套餐炸开为商品，后端统一处理商品类型
+        // 套餐由后端展开为物料行，成交金额使用套餐分摊结果。
         List<OrderItem> items = new ArrayList<>();
         List<InventoryOutCommand> inventoryOutCommands = new ArrayList<>();
         List<PendingPriceChange> pendingPriceChanges = new ArrayList<>();
@@ -269,7 +280,11 @@ public class OrderApplicationService {
         Integer quoteCustomerType = customerContext != null ? customerContext.customerType() : null;
         Integer quoteVipLevel = customerContext != null ? customerContext.vipLevel() : null;
         
-        for (OrderItemDTO itemDTO : command.getItems()) {
+        Map<OrderItemDTO, PackageLineContext> packageLines = new java.util.IdentityHashMap<>();
+        List<OrderItemDTO> pricedInputs = expandPackageSales(command.getItems(), actualStoreId,
+                command.getCustomerId(), operatorStaffId, packageLines);
+        for (OrderItemDTO itemDTO : pricedInputs) {
+            PackageLineContext packageLine = packageLines.get(itemDTO);
             // 校验必填字段
             if (itemDTO.getProductId() == null) {
                 throw new IllegalArgumentException("商品ID不能为空");
@@ -280,32 +295,36 @@ public class OrderApplicationService {
                     .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 商品不存在"));
             
             String itemUnit = StringUtils.hasText(itemDTO.getUnit()) ? itemDTO.getUnit() : product.getMainUnit();
-            // 服务端始终先报价；报价失败沿用旧行为放行（改价只留痕，不自动拒单）
-            PriceQuote quote = null;
-            try {
+            PriceQuote quote;
+            BigDecimal unitPrice;
+            BigDecimal itemTotal;
+            boolean changedPrice;
+            boolean belowFloor;
+            if (packageLine != null) {
+                var allocation = packageLine.material();
+                unitPrice = allocation.unitPrice();
+                itemTotal = allocation.totalPrice();
+                quote = new PriceQuote(packageLine.quote().quoteId(), null, product.getId(), actualStoreId, "POS",
+                        quoteCustomerType, null, itemUnit, allocation.saleUnitId(), LocalDate.now(),
+                        allocation.suggestedUnitPrice(), "PACKAGE", null, false, false);
+                changedPrice = packageLine.quote().dealUnitPrice().compareTo(packageLine.quote().suggestedUnitPrice()) != 0;
+                belowFloor = packageLine.quote().belowReference();
+            } else {
                 quote = productPricingService.quote(new PriceContext(product.getId(), actualStoreId, "POS",
                         quoteCustomerType, quoteVipLevel, itemUnit, LocalDate.now()));
-            } catch (RuntimeException ex) {
-                logger.warn("POS 服务端报价失败，按客户端提交价处理: productId={}, unit={}, 原因={}",
-                        product.getId(), itemUnit, ex.getMessage());
+                if (itemDTO.getQuotedUnitPrice() != null
+                        && itemDTO.getQuotedUnitPrice().compareTo(quote.suggestedUnitPrice()) != 0) {
+                    throw new IllegalArgumentException("商品价格已变化，请重新报价后结算: " + product.getName());
+                }
+                unitPrice = itemDTO.getUnitPrice() != null ? itemDTO.getUnitPrice() : quote.suggestedUnitPrice();
+                changedPrice = unitPrice.compareTo(quote.suggestedUnitPrice()) != 0;
+                belowFloor = quote.referenceFloor() != null && unitPrice.compareTo(quote.referenceFloor()) < 0;
+                if (changedPrice || belowFloor) {
+                    manualPriceAuditService.validateChange(quote, unitPrice, itemDTO.getPriceChangeReason(), operatorStaffId);
+                }
+                itemTotal = unitPrice.multiply(itemDTO.getQuantity()).setScale(2, RoundingMode.HALF_UP);
+                if (itemTotal.signum() <= 0) throw new IllegalArgumentException("明细金额不足一分，请调整销售数量");
             }
-
-            BigDecimal submittedUnitPrice = itemDTO.getUnitPrice();
-            BigDecimal unitPrice;
-            if (submittedUnitPrice != null) {
-                unitPrice = submittedUnitPrice;
-            } else if (quote != null) {
-                unitPrice = quote.suggestedUnitPrice();
-            } else {
-                unitPrice = productPricingService.resolveOrderItemUnitPrice(
-                        product,
-                        actualStoreId,
-                        command.getCustomerId(),
-                        itemUnit
-                );
-            }
-            
-            BigDecimal itemTotal = unitPrice.multiply(itemDTO.getQuantity());
             totalAmount = totalAmount.add(itemTotal);
             
             // 创建订单明细
@@ -313,6 +332,13 @@ public class OrderApplicationService {
             item.setOrderId(null);
             item.setProductId(itemDTO.getProductId());
             item.setPackageId(itemDTO.getPackageId());
+            if (packageLine != null) {
+                item.setPackageGroupNo(packageLine.groupNo());
+                item.setPackageName(packageLine.quote().packageName());
+                item.setPackageQuantity(packageLine.quote().quantity());
+                item.setPackageUnitPrice(packageLine.quote().dealUnitPrice());
+            }
+
             item.setItemType(1); // 统一为商品类型
             item.setProductName(product.getName());
             item.setQuantity(itemDTO.getQuantity());
@@ -325,10 +351,9 @@ public class OrderApplicationService {
             items.add(item);
 
             // 提交价与报价不一致：明细保存拿到 orderItemId 后补记人工改价审计（保留人工成交价）
-            if (submittedUnitPrice != null && quote != null
-                    && submittedUnitPrice.compareTo(quote.suggestedUnitPrice()) != 0) {
-                pendingPriceChanges.add(new PendingPriceChange(item, quote, submittedUnitPrice,
-                        resolvePriceChangeReason(itemDTO)));
+            if (changedPrice || belowFloor) {
+                pendingPriceChanges.add(new PendingPriceChange(item, quote, unitPrice,
+                        itemDTO.getPriceChangeReason(), packageLine != null));
             }
             
             // 准备库存扣减命令（传递单位信息用于换算）
@@ -341,12 +366,6 @@ public class OrderApplicationService {
             outCommand.setReferenceId(order.getId());
             inventoryOutCommands.add(outCommand);
         }
-        
-        // ✅ 优化说明：
-        // 1. 移除了 itemType=2（套餐）的处理分支
-        // 2. 移除了套餐拆解逻辑（前端已处理）
-        // 3. 统一使用商品库存扣减逻辑
-        // 4. 代码更简洁，逻辑更清晰
         
         // 6. 计算订单金额（总额、优惠、优惠券、实付）
         BigDecimal discountAmount = command.getDiscountAmount() != null ? command.getDiscountAmount() : BigDecimal.ZERO;
@@ -369,42 +388,19 @@ public class OrderApplicationService {
 
         // 人工改价只留痕不拒单：明细落库拿到 orderItemId 后写入价格审计（与建议价差价、原因、操作人）
         for (PendingPriceChange pending : pendingPriceChanges) {
-            manualPriceAuditService.record(
-                    pending.quote().withOrderItemId(pending.item().getId()),
-                    pending.submittedUnitPrice(),
-                    pending.reason(),
-                    createdBy,
-                    createdBy);
-        }
-        
-        boolean paymentsRecorded = false;
-        // 7. 处理优惠券（如果有）
-        // POS订单支付方式：1-现金, 2-微信, 3-支付宝, 4-余额, 6-赊销
-        // 只有余额支付（4）才使用余额，支付宝（3）是外部支付
-        if (command.getCouponId() != null && order.getCustomerId() != null) {
-            // 使用支付服务预览优惠券抵扣额
-            OrderPayPreviewVO preview = paymentService.previewPayment(order, 
-                    command.getPaymentType().equals(OrderMainPaymentMethod.BALANCE.getCode()),
-                    command.getUseSpecialFund(), 
-                    command.getCouponId());
-            couponAmount = preview.getCouponAmount();
-            
-            // 如果优惠券可用，执行核销
-            if (couponAmount.compareTo(BigDecimal.ZERO) > 0) {
-                // executePayment 会执行实际的扣减并保存支付流水，避免后续重复记录
-                paymentService.executePayment(order, 
-                        command.getPaymentType().equals(OrderMainPaymentMethod.BALANCE.getCode()),
-                        command.getUseSpecialFund(), 
-                        command.getCouponId(), 
-                        createdBy,
-                        true,
-                        command.getPaymentType(),
-                        null,
-                        null);
-                paymentsRecorded = true;
+            PriceQuote savedQuote = pending.quote().withOrderItemId(pending.item().getId());
+            if (pending.packageAllocation()) {
+                manualPriceAuditService.recordAllocation(savedQuote, pending.submittedUnitPrice(), pending.reason(), operatorStaffId);
+            } else {
+                manualPriceAuditService.record(savedQuote, pending.submittedUnitPrice(), pending.reason(), operatorStaffId, operatorStaffId);
             }
         }
-        
+
+        // 7. 只核销优惠券；净应付更新后，POS自己的收款流程执行一次。
+        if (command.getCouponId() != null) {
+            couponAmount = paymentService.applyCouponToOrder(order, order.getCustomerId(), command.getCouponId());
+        }
+
         // 8. 重新计算实付金额并更新订单
         BigDecimal payAmount = totalAmount.subtract(discountAmount).subtract(couponAmount);
         if (payAmount.compareTo(BigDecimal.ZERO) < 0) {
@@ -505,6 +501,7 @@ public class OrderApplicationService {
                 }
                 BigDecimal specialUsed = specialCanUse.min(combinedBalanceRequested);
                 BigDecimal balanceUsed = combinedBalanceRequested.subtract(specialUsed);
+                consumePosWalletAuthorization(order, command, balanceUsed);
 
                 if (specialUsed.compareTo(BigDecimal.ZERO) > 0) {
                     walletService.deductSpecialFund(order.getCustomerId(), specialUsed, "ORDER", order.getId(), createdBy, "POS订单支付");
@@ -526,8 +523,6 @@ public class OrderApplicationService {
                 }
             }
 
-            paymentsRecorded = true;
-
             // 计算订单实际记录的支付方式：如果只有一种非优惠券支付方式则写该类型，否则写混合支付
             java.util.Set<Integer> paymentTypesUsed = new java.util.HashSet<>();
             for (PaymentDetailDTO pd : command.getPayments()) {
@@ -547,18 +542,12 @@ public class OrderApplicationService {
             order.setPaymentMethod(effectivePaymentMethod);
             orderRepository.save(order);
 
-        } else {
-            // 若前面已通过 paymentService.executePayment 保存了流水（如优惠券场景），则跳过，避免重复写入
-            if (!paymentsRecorded) {
-                savePaymentRecords(order, command, createdBy);
-            }
+        } else if (command.getPaymentType() != OrderMainPaymentMethod.BALANCE.getCode()) {
+            savePaymentRecords(order, command, createdBy);
         }
 
         // 10. 处理内部支付扣减（只在未由 payments 明细处理时执行）
-        if (!paymentsProvided && ((command.getPaymentType().equals(OrderMainPaymentMethod.BALANCE.getCode())
-                || command.getPaymentType().equals(OrderMainPaymentMethod.MIXED.getCode())
-                || command.getWalletAuthCode() != null)
-                && order.getCustomerId() != null)) {
+        if (!paymentsProvided && command.getPaymentType().equals(OrderMainPaymentMethod.BALANCE.getCode())) {
             // 计算专用金和本金余额的分配（先算出将要从余额扣减的金额）
             List<OrderItem> orderItems = itemRepository.findByOrderId(order.getId());
             BigDecimal maxSpecialFund = orderDomainService.calculateMaxSpecialFundAmount(orderItems);
@@ -588,54 +577,38 @@ public class OrderApplicationService {
                 }
             }
 
-            // 如果需要从本金余额扣减，则必须提供钱包验证码
-            if (balanceAmount.compareTo(BigDecimal.ZERO) > 0) {
-                if (!StringUtils.hasText(command.getWalletAuthCode())) {
-                    throw new IllegalArgumentException(OrderErrorCode.WALLET_AUTH_CODE_INVALID + ": 钱包验证码不能为空");
-                }
-                BigDecimal normalizedBalanceAmount = balanceAmount.setScale(2, RoundingMode.HALF_UP);
-                int updated = walletAuthCodeRepository.consumeAuthCode(
-                        order.getCustomerId(),
-                        command.getWalletAuthCode(),
-                        normalizedBalanceAmount,
-                        order.getId()
-                );
-                if (updated == 0) {
-                    throw new IllegalStateException("验证码核销失败：验证码无效、已过期、金额不匹配或已被使用");
-                }
-            }
+            consumePosWalletAuthorization(order, command, balanceAmount);
 
             // 执行扣减：专用金优先，随后本金
             if (specialFundAmount.compareTo(BigDecimal.ZERO) > 0) {
-                walletService.deductSpecialFund(order.getCustomerId(), specialFundAmount, 
+                walletService.deductSpecialFund(order.getCustomerId(), specialFundAmount,
                     "ORDER", order.getId(), createdBy, "POS订单支付");
+                recordPosPayment(order.getId(), PaymentMethod.SPECIAL_FUND.getCode(), specialFundAmount);
             }
             if (balanceAmount.compareTo(BigDecimal.ZERO) > 0) {
                 logger.info("About to deduct balance for customerId={} orderId={} amount={}", order.getCustomerId(), order.getId(), balanceAmount);
-                walletService.deductBalance(order.getCustomerId(), balanceAmount, 
+                walletService.deductBalance(order.getCustomerId(), balanceAmount,
                     "ORDER", order.getId(), createdBy, "POS订单支付");
+                recordPosPayment(order.getId(), PaymentMethod.BALANCE.getCode(), balanceAmount);
                 logger.info("Deducted balance for customerId={} orderId={} amount={}", order.getCustomerId(), order.getId(), balanceAmount);
             }
         }
         
         // 11. 扣减库存（POS订单立即扣减，使用操作员所属门店ID）
         // 重要：订单已保存，更新所有库存扣减命令的 referenceId
-        // 零售事实链（Task5）：优先由新链路登记销售批次证据；
-        // 仅当 SKU 未启用批次/库位管理（新链路返回 false）时，保留原有 outbound 行为（逐字节一致）
-        List<OrderItemDTO> itemDTOs = command.getItems();
-        for (int i = 0; i < inventoryOutCommands.size(); i++) {
+        inventoryService.lockProducts(order.getStoreId(), inventoryOutCommands.stream().map(InventoryOutCommand::getProductId).toList());
+        List<Integer> stockIndices = java.util.stream.IntStream.range(0, inventoryOutCommands.size()).boxed()
+                .sorted(java.util.Comparator.comparing(i -> inventoryOutCommands.get(i).getProductId())).toList();
+        for (int i : stockIndices) {
             InventoryOutCommand outCommand = inventoryOutCommands.get(i);
-            outCommand.setReferenceId(order.getId()); // 确保使用已保存的订单ID
-            boolean handledByNewChain = pickupFulfillmentService.recordDirectSaleEvidence(
-                    order,
-                    items.get(i),
-                    Boolean.TRUE.equals(itemDTOs.get(i).getWarehousePickup()),
-                    createdBy);
-            if (!handledByNewChain) {
-                inventoryService.outbound(outCommand, createdBy);
+            outCommand.setReferenceId(order.getId());
+            outCommand.setReferenceLineId(items.get(i).getId());
+            inventoryService.outbound(outCommand, createdBy);
+            if (Boolean.TRUE.equals(pricedInputs.get(i).getWarehousePickup())) {
+                pickupFulfillmentService.createRequest(order.getId(), items.get(i).getId(), null);
             }
         }
-        
+
         // 12. ⛔️ 赊销记账（Critical Fix）
         // 使用前面保留的 creditAmount（订单总额-折扣-优惠券），而非 order.getPayAmount()（赊销订单已清零为0）
         if (command.getPaymentType().equals(OrderMainPaymentMethod.CREDIT.getCode()) && order.getCustomerId() != null) {
@@ -912,11 +885,16 @@ public class OrderApplicationService {
         vo.setCreatedAt(order.getCreatedAt());
         
         // 转换明细
+        Map<Long, BigDecimal> refundBases = RefundAmountPolicy.refundableBaseAmounts(order, items);
         vo.setItems(items.stream().map(item -> {
             OrderItemVO itemVO = new OrderItemVO();
             itemVO.setId(item.getId());
             itemVO.setProductId(item.getProductId());
             itemVO.setPackageId(item.getPackageId());
+            itemVO.setPackageGroupNo(item.getPackageGroupNo());
+            itemVO.setPackageName(item.getPackageName());
+            itemVO.setPackageQuantity(item.getPackageQuantity());
+            itemVO.setPackageUnitPrice(item.getPackageUnitPrice());
             itemVO.setItemType(item.getItemType());
             itemVO.setProductName(item.getProductName());
             itemVO.setQuantity(item.getQuantity());
@@ -929,7 +907,7 @@ public class OrderApplicationService {
             itemVO.setRefundedQuantity(refundedQuantity);
             itemVO.setRefundedAmount(refundedAmount);
             itemVO.setRefundableQuantity(safeSubtract(item.getQuantity(), refundedQuantity));
-            itemVO.setRefundableAmount(safeSubtract(item.getTotalPrice(), refundedAmount));
+            itemVO.setRefundableAmount(safeSubtract(refundBases.getOrDefault(item.getId(), item.getTotalPrice()), refundedAmount));
             // attempt to enrich with product snapshot data (specification, manufacturer) when available
             try {
                 productRepository.findById(item.getProductId()).ifPresent(product -> {
@@ -1347,7 +1325,8 @@ public class OrderApplicationService {
         orderRepository.save(order);
 
         List<OrderItem> items = itemRepository.findByOrderId(order.getId());
-        for (OrderItem item : items) {
+        inventoryService.lockProducts(order.getStoreId(), items.stream().map(OrderItem::getProductId).toList());
+        for (OrderItem item : items.stream().sorted(java.util.Comparator.comparing(OrderItem::getProductId)).toList()) {
             InventoryOutCommand outCommand = new InventoryOutCommand();
             outCommand.setStoreId(order.getStoreId());
             outCommand.setProductId(item.getProductId());
@@ -1355,31 +1334,8 @@ public class OrderApplicationService {
             outCommand.setUnit(item.getUnit());
             outCommand.setReferenceType("ORDER");
             outCommand.setReferenceId(order.getId());
-            inventoryService.outbound(outCommand, customerId);
-        }
-    }
-
-    private void restockOrderItemsForRefund(Order order, Long createdBy) {
-        List<OrderItem> items = itemRepository.findByOrderId(order.getId());
-        for (OrderItem item : items) {
-            if (item.getProductId() == null || item.getQuantity() == null || item.getQuantity().compareTo(BigDecimal.ZERO) <= 0) {
-                continue;
-            }
-
-            Product product = productRepository.findById(item.getProductId())
-                    .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 商品不存在"));
-
-            InventoryInCommand inCommand = new InventoryInCommand();
-            inCommand.setStoreId(order.getStoreId());
-            inCommand.setProductId(item.getProductId());
-            inCommand.setBatchNo(buildRefundBatchNo(order, item));
-            inCommand.setQuantity(normalizeRefundQuantity(item, product));
-            inCommand.setCostPrice(resolveRefundCostPrice(item));
-            inCommand.setSourceType("ORDER_REFUND");
-            inCommand.setSourceId(order.getId());
-            inCommand.setSourceLineNo(Math.toIntExact(item.getId()));
-            inCommand.setRemark("订单退款回库");
-            inventoryService.inbound(inCommand, createdBy);
+            outCommand.setReferenceLineId(item.getId());
+            inventoryService.outbound(outCommand, null); // 客户不是员工，自动出库不冒用员工ID
         }
     }
 
@@ -1387,7 +1343,7 @@ public class OrderApplicationService {
         if (refundItems == null || refundItems.isEmpty()) {
             return;
         }
-        for (RefundOrderItem refundItem : refundItems) {
+        for (RefundOrderItem refundItem : refundItems.stream().sorted(java.util.Comparator.comparing(i -> i.orderItem().getProductId())).toList()) {
             OrderItem item = refundItem.orderItem();
             if (item.getProductId() == null
                     || refundItem.quantity() == null
@@ -1402,7 +1358,8 @@ public class OrderApplicationService {
             inCommand.setStoreId(order.getStoreId());
             inCommand.setProductId(item.getProductId());
             inCommand.setBatchNo(buildRefundBatchNo(order, item));
-            inCommand.setQuantity(normalizeRefundQuantity(item, product, refundItem.quantity()));
+            inCommand.setQuantity(refundItem.quantity());
+            inCommand.setUnit(item.getUnit());
             inCommand.setCostPrice(resolveRefundCostPrice(item));
             inCommand.setSourceType("ORDER_REFUND");
             inCommand.setSourceId(order.getId());
@@ -1410,21 +1367,6 @@ public class OrderApplicationService {
             inCommand.setRemark("订单部分退款回库");
             inventoryService.inbound(inCommand, createdBy);
         }
-    }
-
-    private BigDecimal normalizeRefundQuantity(OrderItem item, Product product) {
-        return normalizeRefundQuantity(item, product, item.getQuantity());
-    }
-
-    private BigDecimal normalizeRefundQuantity(OrderItem item, Product product, BigDecimal quantity) {
-        if (item.getUnit() != null
-                && product.getAuxUnit() != null
-                && item.getUnit().equals(product.getAuxUnit())
-                && product.getMainToAuxRatio() != null
-                && product.getMainToAuxRatio().compareTo(BigDecimal.ONE) > 0) {
-            return quantity.divide(product.getMainToAuxRatio(), 8, RoundingMode.HALF_UP);
-        }
-        return quantity;
     }
 
     private BigDecimal resolveRefundCostPrice(OrderItem item) {
@@ -1446,39 +1388,61 @@ public class OrderApplicationService {
     }
 
     private RefundPlan buildRefundPlan(Order order, List<OrderItem> orderItems, OrderRefundCommand command) {
+        BigDecimal alreadyRefunded = completedRefundAmount(order.getId());
+        BigDecimal remainingPaid = safeSubtract(order.getPayAmount(), alreadyRefunded);
+        Map<Long, RefundAggregate> existingRefunds = loadOrderItemRefundAggregates(order.getId());
+        Map<Long, BigDecimal> refundBases = RefundAmountPolicy.refundableBaseAmounts(order, orderItems);
         BigDecimal refundAmount = command.getRefundAmount();
         List<OrderRefundCommand.RefundItem> commandItems = command.getItems();
         boolean hasItemDetails = commandItems != null && !commandItems.isEmpty();
 
         if (!hasItemDetails) {
             if (refundAmount == null) {
-                refundAmount = order.getPayAmount();
+                refundAmount = remainingPaid;
             }
             if (refundAmount == null || refundAmount.compareTo(BigDecimal.ZERO) <= 0) {
                 throw new IllegalArgumentException(OrderErrorCode.ORDER_AMOUNT_INVALID + ": 退款金额必须大于0");
             }
-            if (refundAmount.compareTo(order.getPayAmount()) > 0) {
+            if (refundAmount.compareTo(remainingPaid) > 0) {
                 throw new IllegalArgumentException(OrderErrorCode.ORDER_AMOUNT_INVALID + ": 退款金额不能超过订单实付金额");
             }
-            if (refundAmount.compareTo(order.getPayAmount()) < 0) {
+            if (refundAmount.compareTo(remainingPaid) < 0) {
                 throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 部分退款必须指定退款商品明细");
             }
-            List<RefundOrderItem> refundItems = orderItems.stream()
-                    .filter(item -> item.getId() != null && item.getQuantity() != null)
-                    .map(item -> new RefundOrderItem(item, item.getQuantity(), defaultAmount(item.getTotalPrice())))
-                    .toList();
+            List<RefundOrderItem> refundItems = new ArrayList<>();
+            for (OrderItem item : orderItems) {
+                RefundAggregate history = existingRefunds.get(item.getId());
+                BigDecimal alreadyQty = history == null ? BigDecimal.ZERO : history.quantity;
+                BigDecimal alreadyAmount = history == null ? BigDecimal.ZERO : history.amount;
+                BigDecimal remainingQty = safeSubtract(item.getQuantity(), alreadyQty);
+                if (remainingQty.signum() <= 0) continue;
+                BigDecimal amount = RefundAmountPolicy.maximumForReturn(item, alreadyQty, alreadyAmount, remainingQty,
+                        refundBases.getOrDefault(item.getId(), item.getTotalPrice()));
+                refundItems.add(new RefundOrderItem(item, remainingQty, amount));
+            }
+            if (orderItems.stream().anyMatch(item -> item.getPackageId() != null)
+                    && refundItems.stream().map(RefundOrderItem::refundAmount).reduce(BigDecimal.ZERO, BigDecimal::add)
+                    .compareTo(refundAmount) != 0) {
+                throw new IllegalArgumentException("剩余退款金额与可退套餐物料不一致，请指定退货明细核对");
+            }
             return new RefundPlan(refundAmount, refundItems, true);
         }
 
         Map<Long, OrderItem> orderItemMap = orderItems.stream()
                 .filter(item -> item.getId() != null)
                 .collect(Collectors.toMap(OrderItem::getId, item -> item));
-        Map<Long, RefundAggregate> existingRefunds = loadOrderItemRefundAggregates(order.getId());
+
         Map<Long, RefundAggregate> requestedRefunds = new HashMap<>();
+        java.util.Set<Long> requestedIds = new java.util.HashSet<>();
         List<RefundOrderItem> refundItems = new ArrayList<>();
         BigDecimal totalRefundAmount = BigDecimal.ZERO;
+        boolean zeroReturnAllowed = true;
 
         for (OrderRefundCommand.RefundItem commandItem : commandItems) {
+            if (!requestedIds.add(commandItem.getOrderItemId())) throw new IllegalArgumentException("同一次退款不能重复提交订单行");
+            if (commandItem.getRefundAmount() == null || commandItem.getRefundAmount().signum() < 0) {
+                throw new IllegalArgumentException("明细退款金额不能为负数");
+            }
             OrderItem orderItem = Optional.ofNullable(orderItemMap.get(commandItem.getOrderItemId()))
                     .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 订单明细不存在"));
 
@@ -1487,8 +1451,10 @@ public class OrderApplicationService {
             BigDecimal refundedQuantity = aggregate != null ? aggregate.quantity : BigDecimal.ZERO;
             BigDecimal refundedAmount = aggregate != null ? aggregate.amount : BigDecimal.ZERO;
             BigDecimal refundableQuantity = safeSubtract(orderItem.getQuantity(), refundedQuantity);
-            BigDecimal refundableAmount = safeSubtract(resolveOrderItemTotalAmount(orderItem), refundedAmount);
+            BigDecimal refundableAmount = RefundAmountPolicy.maximumForReturn(orderItem, refundedQuantity, refundedAmount, commandItem.getQuantity(),
+                    refundBases.getOrDefault(orderItem.getId(), orderItem.getTotalPrice()));
 
+            zeroReturnAllowed &= orderItem.getPackageId() != null && refundableAmount.signum() == 0;
             BigDecimal cumulativeRequestedQuantity = requestedAggregate.quantity.add(commandItem.getQuantity());
             BigDecimal cumulativeRequestedAmount = requestedAggregate.amount.add(commandItem.getRefundAmount());
             if (cumulativeRequestedQuantity.compareTo(refundableQuantity) > 0) {
@@ -1510,26 +1476,23 @@ public class OrderApplicationService {
             throw new IllegalArgumentException(OrderErrorCode.PAYMENT_AMOUNT_MISMATCH + ": 退款明细金额之和与退款总金额不一致");
         }
 
-        if (refundAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException(OrderErrorCode.ORDER_AMOUNT_INVALID + ": 退款金额必须大于0");
+        if (refundAmount.signum() == 0 && !zeroReturnAllowed) {
+            throw new IllegalArgumentException("0元退款仅用于无现金可退的套餐物料退货");
         }
-        if (refundAmount.compareTo(order.getPayAmount()) > 0) {
+        RefundAmountPolicy.validateOrderRefund(order.getPayAmount(), alreadyRefunded, refundAmount);
+        if (refundAmount.compareTo(remainingPaid) > 0) {
             throw new IllegalArgumentException(OrderErrorCode.ORDER_AMOUNT_INVALID + ": 退款金额不能超过订单实付金额");
         }
 
-        boolean fullRefund = refundAmount.compareTo(order.getPayAmount()) >= 0;
+        boolean fullRefund = refundAmount.compareTo(remainingPaid) >= 0;
         return new RefundPlan(refundAmount, refundItems, fullRefund);
     }
 
-    private BigDecimal resolveOrderItemTotalAmount(OrderItem orderItem) {
-        BigDecimal totalPrice = defaultAmount(orderItem.getTotalPrice());
-        if (totalPrice.compareTo(BigDecimal.ZERO) > 0) {
-            return totalPrice;
-        }
-        if (orderItem.getUnitPrice() != null && orderItem.getQuantity() != null) {
-            return orderItem.getUnitPrice().multiply(orderItem.getQuantity());
-        }
-        return BigDecimal.ZERO;
+    private BigDecimal completedRefundAmount(Long orderId) {
+        List<com.agri_system.domain.after_sales.model.AfterSales> facts = afterSalesRepository.findByOrderId(orderId);
+        if (facts == null) return BigDecimal.ZERO;
+        return facts.stream().filter(f -> f != null && Integer.valueOf(com.agri_system.domain.after_sales.model.AfterSales.STATUS_FINISHED).equals(f.getStatus()))
+                .map(f -> defaultAmount(f.getRefundAmount())).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private java.util.Map<Long, BigDecimal> extractRefundItemQuantities(List<RefundOrderItem> refundItems) {
@@ -1544,22 +1507,6 @@ public class OrderApplicationService {
             quantities.merge(refundItem.orderItem().getId(), refundItem.quantity(), BigDecimal::add);
         }
         return quantities;
-    }
-
-    private String buildOrderRefundEventKey(Long orderId, RefundPlan refundPlan) {
-        StringBuilder builder = new StringBuilder("ORDER_REFUND:").append(orderId);
-        for (RefundOrderItem refundItem : refundPlan.refundItems()) {
-            if (refundItem.orderItem().getId() == null) {
-                continue;
-            }
-            builder.append(":")
-                    .append(refundItem.orderItem().getId())
-                    .append("=")
-                    .append(refundItem.quantity())
-                    .append("@")
-                    .append(refundItem.refundAmount());
-        }
-        return builder.toString();
     }
 
     private record RefundOrderItem(OrderItem orderItem, BigDecimal quantity, BigDecimal refundAmount) {
@@ -1743,39 +1690,48 @@ public class OrderApplicationService {
      * @param command 退款命令
      * @param createdBy 操作人ID
      */
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public void refundOrder(OrderRefundCommand command, Long createdBy) {
-        Order order = orderRepository.findById(command.getOrderId())
+        Order order = orderRepository.findByIdForUpdate(command.getOrderId())
                 .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
-        
-        if (!order.canRefund()) {
-            throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 订单不支持退款");
+        if (!order.canRefund()) throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 订单不支持退款");
+        if (afterSalesRepository.findProcessingByOrderId(order.getId()).isPresent()) {
+            throw new IllegalArgumentException("订单已有处理中售后，请先完成或取消该售后");
         }
         List<OrderItem> orderItems = itemRepository.findByOrderId(order.getId());
         RefundPlan refundPlan = buildRefundPlan(order, orderItems, command);
-        // 执行退款
-        paymentService.refund(order, refundPlan.refundAmount(), createdBy);
-
-        if (refundPlan.fullRefund()) {
-            restockOrderItemsForRefund(order, createdBy);
-        } else {
-            restockOrderItemsForRefund(order, refundPlan.refundItems(), createdBy);
-        }
-        
-        // 更新订单状态
-        if (refundPlan.fullRefund()) {
-            order.markAsRefunded();
-        } else {
-            order.markAsPartRefunded();
-        }
+        if (refundPlan.refundAmount().signum() > 0) paymentService.refund(order, refundPlan.refundAmount(), createdBy);
+        restockOrderItemsForRefund(order, refundPlan.refundItems(), createdBy);
+        Long refundFactId = saveDirectRefundFacts(order, refundPlan, command.getRefundReason(), createdBy);
+        if (refundPlan.fullRefund()) order.markAsRefunded(); else order.markAsPartRefunded();
         orderRepository.save(order);
-
-        eventPublisher.publishEvent(new OrderRefundedEvent(order.getId(),
-                refundPlan.refundAmount(),
-                extractRefundItemQuantities(refundPlan.refundItems()),
-                buildOrderRefundEventKey(order.getId(), refundPlan)));
+        eventPublisher.publishEvent(new OrderRefundedEvent(order.getId(), refundPlan.refundAmount(),
+                extractRefundItemQuantities(refundPlan.refundItems()), "AFTER_SALES:" + refundFactId));
     }
-    
+
+    /** 直退和售后共享既有退款事实；没有另一套可写退款来源。 */
+    private Long saveDirectRefundFacts(Order order, RefundPlan plan, String reason, Long operator) {
+        var fact = new com.agri_system.domain.after_sales.model.AfterSales();
+        fact.setAfterSalesNo("ASD" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+                + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12));
+        fact.setOrderId(order.getId()); fact.setCustomerId(order.getCustomerId()); fact.setStoreId(order.getStoreId());
+        fact.setType(com.agri_system.domain.after_sales.model.AfterSales.TYPE_ADMIN_RETURN);
+        fact.setStatus(com.agri_system.domain.after_sales.model.AfterSales.STATUS_FINISHED);
+        fact.setRefundAmount(plan.refundAmount()); fact.setReason(reason); fact.setAuditBy(operator);
+        fact.setRefundBy(operator); fact.setAuditTime(LocalDateTime.now()); fact.setRefundTime(LocalDateTime.now());
+        fact.setCreatedAt(LocalDateTime.now()); fact.setUpdatedAt(LocalDateTime.now());
+        afterSalesRepository.save(fact);
+        List<com.agri_system.domain.after_sales.model.AfterSalesItem> details = new ArrayList<>();
+        for (RefundOrderItem item : plan.refundItems()) {
+            var detail = new com.agri_system.domain.after_sales.model.AfterSalesItem();
+            detail.setAfterSalesId(fact.getId()); detail.setOrderItemId(item.orderItem().getId());
+            detail.setProductId(item.orderItem().getProductId()); detail.setQuantity(item.quantity());
+            detail.setRefundAmount(item.refundAmount()); detail.setCreatedAt(LocalDateTime.now()); details.add(detail);
+        }
+        afterSalesItemRepository.saveBatch(details);
+        return fact.getId();
+    }
+
     // ==================== 私有方法 ====================
     
     /**
@@ -1833,98 +1789,13 @@ public class OrderApplicationService {
             return; // 赊销订单不再记录其他支付方式
         }
 
-        // 优惠券抵扣（如果有）
-        if (order.getCouponAmount() != null && order.getCouponAmount().compareTo(BigDecimal.ZERO) > 0) {
-            BigDecimal amt = order.getCouponAmount();
-            boolean dup = existingPayments.stream().anyMatch(p -> p.getPaymentType() != null
-                    && p.getPaymentType().equals(PaymentMethod.COUPON.getCode())
-                    && p.getAmount() != null && p.getAmount().compareTo(amt) == 0);
-            if (!dup) {
-                OrderPayment payment = new OrderPayment();
-                payment.setOrderId(order.getId());
-                payment.setPaymentType(PaymentMethod.COUPON.getCode()); // 优惠券
-                payment.setAmount(amt);
-                payment.setCouponId(command.getCouponId());
-                payment.setCreatedAt(now);
-                paymentRepository.save(payment);
-            }
-        }
-        
-        // 专用金抵扣（如果使用）
-        if (Boolean.TRUE.equals(command.getUseSpecialFund()) && order.getCustomerId() != null) {
-            // 计算专用金可用额度
-            List<OrderItem> orderItems = itemRepository.findByOrderId(order.getId());
-            BigDecimal maxSpecialFund = orderDomainService.calculateMaxSpecialFundAmount(orderItems);
-            BigDecimal specialFundAmount = order.getPayAmount().min(maxSpecialFund);
-            
-            if (specialFundAmount.compareTo(BigDecimal.ZERO) > 0) {
-                final BigDecimal sfAmt = specialFundAmount;
-                boolean dup = existingPayments.stream().anyMatch(p -> p.getPaymentType() != null
-                        && p.getPaymentType().equals(PaymentMethod.SPECIAL_FUND.getCode())
-                        && p.getAmount() != null && p.getAmount().compareTo(sfAmt) == 0);
-                if (!dup) {
-                    OrderPayment payment = new OrderPayment();
-                    payment.setOrderId(order.getId());
-                    payment.setPaymentType(PaymentMethod.SPECIAL_FUND.getCode());
-                    payment.setAmount(specialFundAmount);
-                    payment.setCreatedAt(now);
-                    paymentRepository.save(payment);
-                }
-            }
-        }
-        
-        // 本金余额抵扣（余额支付时，或混合支付且使用余额时，扣除专用金后的剩余部分）
-        if ((command.getPaymentType().equals(OrderMainPaymentMethod.BALANCE.getCode())
-                || command.getPaymentType().equals(OrderMainPaymentMethod.MIXED.getCode())
-                || command.getWalletAuthCode() != null) && order.getCustomerId() != null) {
-            BigDecimal balanceAmount = BigDecimal.ZERO;
-            BigDecimal specialFundAmount = BigDecimal.ZERO;
-            BigDecimal payAmount = order.getPayAmount() == null ? BigDecimal.ZERO : order.getPayAmount();
-
-            // 如果已经使用了专用金，需要减去专用金金额
-            if (Boolean.TRUE.equals(command.getUseSpecialFund())) {
-                List<OrderItem> orderItems = itemRepository.findByOrderId(order.getId());
-                BigDecimal maxSpecialFund = orderDomainService.calculateMaxSpecialFundAmount(orderItems);
-                specialFundAmount = payAmount.min(maxSpecialFund);
-            }
-
-            BigDecimal remainingAfterSpecial = payAmount.subtract(specialFundAmount);
-
-            // 尝试从客户本金余额中扣减（不能超过客户当前余额）
-            try {
-                java.math.BigDecimal customerBalance = walletService.getBalance(order.getCustomerId());
-                balanceAmount = remainingAfterSpecial.min(customerBalance);
-            } catch (Exception ignore) {
-                balanceAmount = BigDecimal.ZERO;
-            }
-
-            // 专用金的支付记录已在上方处理，避免重复保存
-
-            if (balanceAmount.compareTo(BigDecimal.ZERO) > 0) {
-                final BigDecimal balAmt = balanceAmount;
-                boolean dup = existingPayments.stream().anyMatch(p -> p.getPaymentType() != null
-                        && p.getPaymentType().equals(PaymentMethod.BALANCE.getCode())
-                        && p.getAmount() != null && p.getAmount().compareTo(balAmt) == 0);
-                if (!dup) {
-                    OrderPayment payment = new OrderPayment();
-                    payment.setOrderId(order.getId());
-                    payment.setPaymentType(PaymentMethod.BALANCE.getCode());
-                    payment.setAmount(balanceAmount);
-                    payment.setCreatedAt(now);
-                    paymentRepository.save(payment);
-                }
-            }
-        }
-        
+        // 优惠券已由统一核销入口记录；钱包由实际扣减的同一金额记录流水。
         // 外部支付（现金、微信、支付宝）
         // 只有在非余额支付且非混合支付时才记录外部支付（混合支付不应保存一条总额为混合的记录）
         if (command.getPaymentType() != OrderMainPaymentMethod.BALANCE.getCode()
                 && command.getPaymentType() != OrderMainPaymentMethod.MIXED.getCode()) {
             BigDecimal externalAmount = order.getPayAmount();
-            // 减去优惠券金额
-            if (order.getCouponAmount() != null) {
-                externalAmount = externalAmount.subtract(order.getCouponAmount());
-            }
+            // payAmount 已经扣除优惠券，不能再次减券。
             
             if (externalAmount.compareTo(BigDecimal.ZERO) > 0) {
                 final BigDecimal extAmt = externalAmount;
@@ -1944,17 +1815,102 @@ public class OrderApplicationService {
         }
     }
 
-    /**
-     * 人工改价原因：客户端留空时按现场人工改价兜底。
-     */
-    private String resolvePriceChangeReason(OrderItemDTO itemDTO) {
-        return StringUtils.hasText(itemDTO.getPriceChangeReason()) ? itemDTO.getPriceChangeReason() : "POS手动改价";
+    private void recordPosPayment(Long orderId, int type, BigDecimal amount) {
+        OrderPayment payment = new OrderPayment();
+        payment.setOrderId(orderId); payment.setPaymentType(type); payment.setAmount(amount);
+        payment.setCreatedAt(LocalDateTime.now()); paymentRepository.save(payment);
     }
 
-    /**
-     * 待落库的人工改价审计：明细保存拿到 orderItemId 后再记录（改价只留痕不拒单）。
-     */
-    private record PendingPriceChange(OrderItem item, PriceQuote quote, BigDecimal submittedUnitPrice, String reason) {
+    /** 单一及混合钱包共用授权；条件更新同时校验客户、金额、有效期和未使用状态。 */
+    private void consumePosWalletAuthorization(Order order, POSOrderCreateCommand command, BigDecimal principalAmount) {
+        if (principalAmount.signum() <= 0) return;
+        String code = command.getWalletAuthCode();
+        java.util.Set<String> detailCodes = command.getPayments() == null ? java.util.Set.of()
+                : command.getPayments().stream().filter(p -> p.getPaymentType() == OrderMainPaymentMethod.BALANCE.getCode())
+                .map(PaymentDetailDTO::getAuthCode).filter(StringUtils::hasText).collect(Collectors.toSet());
+        if (detailCodes.size() > 1 || (StringUtils.hasText(code) && detailCodes.stream().anyMatch(value -> !value.equals(command.getWalletAuthCode())))) {
+            throw new IllegalArgumentException("同一次钱包支付只能使用同一个验证码");
+        }
+        if (!StringUtils.hasText(code) && !detailCodes.isEmpty()) code = detailCodes.iterator().next();
+        if (!StringUtils.hasText(code)) {
+            throw new IllegalArgumentException(OrderErrorCode.WALLET_AUTH_CODE_INVALID + ": 钱包验证码不能为空");
+        }
+        int updated = walletAuthCodeRepository.consumeAuthCode(order.getCustomerId(), code,
+                principalAmount.setScale(2, RoundingMode.UNNECESSARY), order.getId());
+        if (updated == 0) throw new IllegalStateException("验证码核销失败：验证码无效、已过期、金额不匹配或已被使用");
+    }
+
+    /** 下单只允许真实收款方式，优惠券及专用金拆分由后端产生。 */
+    private void validatePosPayments(POSOrderCreateCommand command) {
+        java.util.Set<Integer> mainTypes = java.util.Set.of(1, 2, 3, 4, 6, 10);
+        if (command.getPaymentType() == null || !mainTypes.contains(command.getPaymentType())) {
+            throw new IllegalArgumentException("POS支付方式不正确");
+        }
+        if (command.getPaymentType() == OrderMainPaymentMethod.BALANCE.getCode() && command.getCustomerId() == null) {
+            throw new IllegalArgumentException("余额支付必须指定客户");
+        }
+        if (command.getPayments() == null || command.getPayments().isEmpty()) {
+            if (command.getPaymentType() == OrderMainPaymentMethod.MIXED.getCode()) {
+                throw new IllegalArgumentException("混合支付必须提供支付明细");
+            }
+            return;
+        }
+        java.util.Set<Integer> tenderTypes = java.util.Set.of(1, 2, 3, 4, 6);
+        for (PaymentDetailDTO detail : command.getPayments()) {
+            if (detail == null || detail.getPaymentType() == null || !tenderTypes.contains(detail.getPaymentType())) {
+                throw new IllegalArgumentException("支付明细方式不正确");
+            }
+            if (detail.getAmount() == null || detail.getAmount().signum() <= 0
+                    || detail.getAmount().stripTrailingZeros().scale() > 2) {
+                throw new IllegalArgumentException("每笔支付明细金额必须大于0且精确到分");
+            }
+        }
+    }
+
+    private record PackageLineContext(int groupNo,
+            com.agri_system.application.productpackage.dto.vo.PackagePriceQuote quote,
+            com.agri_system.application.productpackage.dto.vo.PackagePriceQuote.Item material) {}
+
+    /** 前端只提交套餐与套数，物料组成与成交金额由当前后端报价生成。 */
+    private List<OrderItemDTO> expandPackageSales(List<OrderItemDTO> commands, Long storeId, Long customerId,
+                                                 Long operatorId, Map<OrderItemDTO, PackageLineContext> contexts) {
+        List<OrderItemDTO> expanded = new ArrayList<>();
+        int groupNo = 0;
+        for (OrderItemDTO command : commands) {
+            groupNo++;
+            if (!Integer.valueOf(2).equals(command.getItemType())) {
+                if (command.getPackageId() != null) throw new IllegalArgumentException("套餐必须整套提交，不能上传前端拆分商品");
+                expanded.add(command); continue;
+            }
+            if (command.getPackageId() == null || command.getProductId() != null) throw new IllegalArgumentException("套餐行只能指定套餐ID");
+            if (!StringUtils.hasText(command.getPackageQuoteId())) throw new IllegalArgumentException("套餐请先获取有效报价");
+            var quote = packagePricingService.quoteForSale(command.getPackageId(), customerId, storeId,
+                    command.getQuantity(), command.getUnitPrice());
+            if (!command.getPackageQuoteId().equals(quote.quoteId())
+                    || (command.getQuotedUnitPrice() != null && command.getQuotedUnitPrice().compareTo(quote.suggestedUnitPrice()) != 0)) {
+                throw new IllegalArgumentException("套餐价格或组成已变化，请重新报价后结算");
+            }
+            boolean override = quote.dealUnitPrice().compareTo(quote.suggestedUnitPrice()) != 0 || quote.belowReference();
+            if (override) {
+                var first = quote.items().get(0);
+                var packageQuote = new PriceQuote(quote.quoteId(), null, first.productId(), storeId, "POS", null,
+                        null, "套", null, LocalDate.now(), quote.suggestedUnitPrice(), "PACKAGE", quote.referenceFloor(),
+                        quote.belowReference(), false);
+                manualPriceAuditService.validateChange(packageQuote, quote.dealUnitPrice(), command.getPriceChangeReason(), operatorId);
+            }
+            for (var material : quote.items()) {
+                OrderItemDTO line = new OrderItemDTO();
+                line.setProductId(material.productId()); line.setPackageId(command.getPackageId()); line.setItemType(1);
+                line.setQuantity(material.quantity()); line.setUnit(material.unit()); line.setUnitPrice(material.unitPrice());
+                line.setWarehousePickup(command.getWarehousePickup()); line.setPriceChangeReason(command.getPriceChangeReason());
+                contexts.put(line, new PackageLineContext(groupNo, quote, material)); expanded.add(line);
+            }
+        }
+        return expanded;
+    }
+
+    /** 明细保存拿到 ID 后追加议价记录，成交价留在订单行，不随商品改价变化。 */
+    private record PendingPriceChange(OrderItem item, PriceQuote quote, BigDecimal submittedUnitPrice, String reason, boolean packageAllocation) {
     }
 
 }

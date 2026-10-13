@@ -40,7 +40,7 @@ public class ProductUnitService {
         PURCHASE, SALE, INVENTORY, TRANSFER
     }
 
-    /** 返回启用单位；没有新模型时返回 legacy 的只读内存投影。 */
+    /** 业务操作只使用持久化单位；历史投影仅供管理端展示。 */
     public List<ProductUnit> getUnits(Long productId) {
         List<ProductUnit> enabled = unitRepository.findEnabledByProductId(productId);
         if (enabled != null && !enabled.isEmpty()) {
@@ -50,7 +50,52 @@ public class ProductUnitService {
         if (persisted != null && !persisted.isEmpty()) {
             throw new IllegalStateException("无启用单位: 商品 " + productId);
         }
-        return projectLegacyUnits(productId);
+        throw new IllegalStateException("商品尚未配置持久化单位: " + productId);
+    }
+
+    /** 新商品与单位在同一事务中建立；有辅单位时以辅单位为基准，直接使用声明的换算比例。 */
+    @Transactional(rollbackFor = Exception.class)
+    public void initializeUnits(Product product) {
+        if (product.getMainUnit() == null || product.getMainUnit().isBlank()) {
+            throw new IllegalArgumentException("主单位不能为空");
+        }
+        List<ProductUnit> existing = unitRepository.findByProductId(product.getId());
+        if (existing != null && !existing.isEmpty()) {
+            throw new IllegalArgumentException("商品已配置单位，不能重复初始化");
+        }
+        List<ProductUnit> units = new ArrayList<>();
+        if (product.getAuxUnit() != null && !product.getAuxUnit().isBlank()) {
+            if (product.getMainUnit().trim().equalsIgnoreCase(product.getAuxUnit().trim())) {
+                throw new IllegalArgumentException("主辅单位名称不能相同");
+            }
+            BigDecimal ratio = product.getMainToAuxRatio();
+            if (ratio == null || ratio.signum() <= 0) {
+                throw new IllegalArgumentException("主辅单位换算比例必须大于0");
+            }
+            BigDecimal coefficient;
+            try {
+                coefficient = ratio.setScale(8, RoundingMode.UNNECESSARY);
+                if (coefficient.precision() > 20) throw new ArithmeticException("换算系数超出存储精度");
+            } catch (ArithmeticException error) {
+                throw new IllegalArgumentException("主辅单位比例无法精确表示为8位基准系数，请使用精确换算比例", error);
+            }
+            units.add(legacyUnit(product.getId(), product.getAuxUnit(), BigDecimal.ONE, true));
+            units.add(legacyUnit(product.getId(), product.getMainUnit(), coefficient, false));
+        } else if (product.getMainToAuxRatio() != null) {
+            throw new IllegalArgumentException("未配置辅单位时不能填写换算比例");
+        } else {
+            units.add(legacyUnit(product.getId(), product.getMainUnit(), BigDecimal.ONE, true));
+        }
+        LocalDateTime now = LocalDateTime.now();
+        for (ProductUnit unit : units) {
+            unit.setReadOnly(false);
+            unit.setProjectionStatus(null);
+            unit.setCreatedAt(now);
+            unit.setUpdatedAt(now);
+            unit.setCreatedBy(product.getCreatedBy());
+            unit.setUpdatedBy(product.getUpdatedBy());
+            unitRepository.save(unit);
+        }
     }
 
     /** 管理端读取完整持久化集合，包含停用单位；无新记录时返回 legacy 投影。 */
@@ -120,7 +165,7 @@ public class ProductUnitService {
     /** 完整替换单位集合。所有校验完成后才执行停用、更新和插入。 */
     @Transactional(rollbackFor = Exception.class)
     public void replaceUnits(Long productId, List<ProductUnitUpsertCommand> commands) {
-        productRepository.findById(productId)
+        Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new IllegalArgumentException("商品不存在: " + productId));
         if (commands == null || commands.isEmpty()) {
             throw new IllegalArgumentException("至少需要一个单位");
@@ -176,7 +221,7 @@ public class ProductUnitService {
             if (!names.add(name.toLowerCase(Locale.ROOT))) {
                 throw new IllegalArgumentException("单位名称重复: " + name);
             }
-            boolean enabled = Integer.valueOf(1).equals(command.getStatus());
+            boolean enabled = command.getStatus() == null || Integer.valueOf(1).equals(command.getStatus());
             if (Integer.valueOf(1).equals(command.getIsBaseUnit())) {
                 if (command.getBaseQuantityPerUnit().compareTo(BigDecimal.ONE) != 0) {
                     throw new IllegalArgumentException("基准单位换算系数必须为1");
@@ -197,7 +242,7 @@ public class ProductUnitService {
             ProductUnitUpsertCommand baseCommand = commands.stream()
                     .filter(command -> Objects.equals(command.getId(), persistedBase.getId()))
                     .findFirst().orElse(null);
-            if (baseCommand == null || !Integer.valueOf(1).equals(baseCommand.getStatus())
+            if (baseCommand == null || (baseCommand.getStatus() != null && !Integer.valueOf(1).equals(baseCommand.getStatus()))
                     || !Integer.valueOf(1).equals(baseCommand.getIsBaseUnit())) {
                 throw new IllegalArgumentException("已配置 SKU 的基准单位不可移除或停用");
             }
@@ -208,6 +253,24 @@ public class ProductUnitService {
             throw new IllegalArgumentException("已配置 SKU 缺少基准单位，不能在线重定义");
         }
 
+        // 持久化单位可能已经被采购、收货或库存事实引用，禁止重写其含义。
+        for (ProductUnitUpsertCommand command : commands) {
+            ProductUnit old = existingById.get(command.getId());
+            if (old == null) continue;
+            if (old.getBaseQuantityPerUnit().compareTo(command.getBaseQuantityPerUnit()) != 0) {
+                throw new IllegalArgumentException("已配置单位换算系数不可变更，请新增单位");
+            }
+            if (!old.getUnitName().trim().equals(command.getUnitName().trim())) {
+                throw new IllegalArgumentException("已配置单位名称不可变更，请新增单位");
+            }
+        }
+
+        ProductUnitUpsertCommand mainCommand = commands.stream()
+                .filter(c -> product.getMainUnit() != null && product.getMainUnit().trim().equals(c.getUnitName().trim()))
+                .findFirst().orElse(null);
+        if (mainCommand == null || (mainCommand.getStatus() != null && mainCommand.getStatus() != 1)) {
+            throw new IllegalArgumentException("商品主单位不可移除或停用");
+        }
         Long staffId = currentStaffId();
         LocalDateTime now = LocalDateTime.now();
         Set<Long> retainedIds = commands.stream().map(ProductUnitUpsertCommand::getId)

@@ -24,6 +24,9 @@ public class InventoryTransferOrderDetail {
 
     private Long toBatchId;
 
+    private Long fromReceiptBatchId;
+    private Long toReceiptBatchId;
+
     private BigDecimal quantity;
 
     private BigDecimal costPrice;

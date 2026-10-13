@@ -45,12 +45,14 @@ public class CommissionRuleRepositoryImpl implements CommissionRuleRepository {
     public Optional<CommissionRule> findBestSalesRule(Long productId, Long packageId, Long staffId) {
         QueryWrapper query = QueryWrapper.create()
                 .where("enabled = 1");
-        if (packageId != null) {
-            query.and("(rule_category = ? OR rule_category = ?)",
-                    CommissionRule.Category.SALES.getCode(),
-                    CommissionRule.Category.PACKAGE.getCode());
-            query.and("(target_id IS NULL OR target_id = ? OR target_id = ?)",
-                    productId, packageId);
+        if (packageId != null && productId != null) {
+            query.and("((rule_category = ? AND (target_id IS NULL OR target_id = ?))"
+                            + " OR (rule_category = ? AND (target_id IS NULL OR target_id = ?)))",
+                    CommissionRule.Category.SALES.getCode(), productId,
+                    CommissionRule.Category.PACKAGE.getCode(), packageId);
+        } else if (packageId != null) {
+            query.and("rule_category = ?", CommissionRule.Category.PACKAGE.getCode());
+            query.and("(target_id IS NULL OR target_id = ?)", packageId);
         } else {
             query.and("rule_category = ?", CommissionRule.Category.SALES.getCode());
             query.and("(target_id IS NULL OR target_id = ?)", productId);

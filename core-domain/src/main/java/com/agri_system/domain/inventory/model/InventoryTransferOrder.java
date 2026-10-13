@@ -18,6 +18,8 @@ public class InventoryTransferOrder {
     @Id(keyType = KeyType.Auto)
     private Long id;
 
+    private String requestKey;
+
     private String transferNo;
 
     private Long fromStoreId;

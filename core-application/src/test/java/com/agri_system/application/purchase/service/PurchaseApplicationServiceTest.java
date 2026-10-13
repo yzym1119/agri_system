@@ -30,7 +30,6 @@ import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.ObjectProvider;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -41,6 +40,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
@@ -79,8 +79,6 @@ class PurchaseApplicationServiceTest {
     @Mock
     private InventoryReceiptBatchRepository receiptBatchRepository;
 
-    @Mock
-    private ObjectProvider<BatchBalanceService> batchBalanceServiceProvider;
 
     @Mock
     private BatchBalanceService batchBalanceService;
@@ -339,7 +337,6 @@ class PurchaseApplicationServiceTest {
         when(productRepository.findById(1L)).thenReturn(Optional.of(product));
         stubPurchaseUnitConversion();
         when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
-        when(batchBalanceServiceProvider.getIfAvailable()).thenReturn(batchBalanceService);
 
         AtomicLong ids = new AtomicLong(100L);
         doAnswer(invocation -> {
@@ -358,9 +355,11 @@ class PurchaseApplicationServiceTest {
             return null;
         }).when(receiptBatchRepository).save(any());
 
-        Long receiptId = purchaseService.receive(receiveCommand(
+        ReceivePurchaseCommand command = receiveCommand(
                 batch("SUP-X", "6", "10.00", LocalDate.of(2026, 1, 1), LocalDate.of(2027, 1, 1)),
-                batch("SUP-Y", "4", "12.00", LocalDate.of(2026, 2, 1), LocalDate.of(2027, 2, 1))), 9L);
+                batch("SUP-Y", "4", "12.00", LocalDate.of(2026, 2, 1), LocalDate.of(2027, 2, 1)));
+        Long receiptId = purchaseService.receive(command, 9L);
+        verify(receiptRepository).save(argThat(receipt -> command.getRequestKey().equals(receipt.getRequestKey())));
 
         ArgumentCaptor<com.agri_system.domain.inventory.model.InventoryReceiptBatch> batchCaptor =
                 ArgumentCaptor.forClass(com.agri_system.domain.inventory.model.InventoryReceiptBatch.class);
@@ -409,6 +408,36 @@ class PurchaseApplicationServiceTest {
         assertEquals("UNKNOWN", batchCaptor.getValue().getDateStatus());
         assertNull(batchCaptor.getValue().getProductionDate());
         assertNull(batchCaptor.getValue().getExpiryDate());
+        assertTrue(batchCaptor.getValue().getInternalReceiptBatchNo().startsWith("INTERNAL-RECEIPT-"));
+    }
+
+    @Test
+    void recordsKnownExpiryWithoutInventingProductionDate() {
+        PurchaseOrder order = pendingInboundOrder();
+        PurchaseOrderItem item = purchaseItem();
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
+        when(domainService.checkCanInbound(order)).thenReturn(true);
+        when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        stubPurchaseUnitConversion();
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
+        doAnswer(invocation -> {
+            invocation.getArgument(0, com.agri_system.domain.inventory.model.InventoryReceipt.class).setId(100L);
+            return null;
+        }).when(receiptRepository).save(any());
+        doAnswer(invocation -> {
+            invocation.getArgument(0, com.agri_system.domain.inventory.model.InventoryReceiptLine.class).setId(101L);
+            return null;
+        }).when(receiptLineRepository).save(any());
+
+        purchaseService.receive(receiveCommand(batch(null, "3", "10.00", null, java.time.LocalDate.of(2028,1,1))), 9L);
+
+        ArgumentCaptor<com.agri_system.domain.inventory.model.InventoryReceiptBatch> batchCaptor =
+                ArgumentCaptor.forClass(com.agri_system.domain.inventory.model.InventoryReceiptBatch.class);
+        verify(receiptBatchRepository).save(batchCaptor.capture());
+        assertEquals("PARTIAL", batchCaptor.getValue().getDateStatus());
+        assertNull(batchCaptor.getValue().getProductionDate());
+        assertEquals(java.time.LocalDate.of(2028,1,1), batchCaptor.getValue().getExpiryDate());
         assertTrue(batchCaptor.getValue().getInternalReceiptBatchNo().startsWith("INTERNAL-RECEIPT-"));
     }
 
@@ -509,8 +538,33 @@ class PurchaseApplicationServiceTest {
     }
 
     @Test
-    void rejectsProductionDateWithoutExpiryBeforeWritingFacts() {
-        assertRejectedDateBatch(batch("DATE", "1", "10.00", LocalDate.of(2026, 1, 1), null));
+    void recordsKnownProductionWithoutInventingExpiryDate() {
+        PurchaseOrder order = pendingInboundOrder();
+        PurchaseOrderItem item = purchaseItem();
+        when(purchaseRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(order));
+        when(domainService.checkCanInbound(order)).thenReturn(true);
+        when(itemRepository.findByOrderId(1L)).thenReturn(List.of(item));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        stubPurchaseUnitConversion();
+        when(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(11L)).thenReturn(BigDecimal.ZERO);
+        doAnswer(invocation -> {
+            invocation.getArgument(0, com.agri_system.domain.inventory.model.InventoryReceipt.class).setId(100L);
+            return null;
+        }).when(receiptRepository).save(any());
+        doAnswer(invocation -> {
+            invocation.getArgument(0, com.agri_system.domain.inventory.model.InventoryReceiptLine.class).setId(101L);
+            return null;
+        }).when(receiptLineRepository).save(any());
+
+        purchaseService.receive(receiveCommand(batch(null, "3", "10.00", java.time.LocalDate.of(2026,1,1), null)), 9L);
+
+        ArgumentCaptor<com.agri_system.domain.inventory.model.InventoryReceiptBatch> batchCaptor =
+                ArgumentCaptor.forClass(com.agri_system.domain.inventory.model.InventoryReceiptBatch.class);
+        verify(receiptBatchRepository).save(batchCaptor.capture());
+        assertEquals("PARTIAL", batchCaptor.getValue().getDateStatus());
+        assertEquals(java.time.LocalDate.of(2026,1,1), batchCaptor.getValue().getProductionDate());
+        assertNull(batchCaptor.getValue().getExpiryDate());
+        assertTrue(batchCaptor.getValue().getInternalReceiptBatchNo().startsWith("INTERNAL-RECEIPT-"));
     }
 
     @Test
@@ -619,6 +673,7 @@ class PurchaseApplicationServiceTest {
     private ReceivePurchaseCommand receiveCommand(ReceiptBatchCommand... batches) {
         ReceivePurchaseCommand command = new ReceivePurchaseCommand();
         command.setPurchaseOrderId(1L);
+        command.setRequestKey(java.util.UUID.randomUUID().toString());
         ReceivePurchaseCommand.ReceiptLineCommand line = new ReceivePurchaseCommand.ReceiptLineCommand();
         line.setPurchaseOrderItemId(11L);
         line.setProductId(1L);

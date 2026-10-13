@@ -121,23 +121,65 @@ class OrderRefundFlowTest {
         refundItem.setRefundAmount(new BigDecimal("25.00"));
         command.setItems(List.of(refundItem));
 
-        when(orderRepository.findById(10L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
         when(itemRepository.findByOrderId(10L)).thenReturn(List.of(orderItem));
         when(productRepository.findById(501L)).thenReturn(Optional.of(product));
         when(afterSalesRepository.findByOrderId(10L)).thenReturn(List.of());
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         orderService.refundOrder(command, 7L);
+        ArgumentCaptor<List<com.agri_system.domain.after_sales.model.AfterSalesItem>> facts = ArgumentCaptor.forClass(List.class);
+        verify(afterSalesItemRepository).saveBatch(facts.capture());
+        assertEquals(101L, facts.getValue().get(0).getOrderItemId());
+        assertEquals(new BigDecimal("1"), facts.getValue().get(0).getQuantity());
+        assertEquals(new BigDecimal("25.00"), facts.getValue().get(0).getRefundAmount());
 
         verify(paymentService).refund(eq(order), eq(new BigDecimal("25.00")), eq(7L));
 
         ArgumentCaptor<InventoryInCommand> inventoryCaptor = ArgumentCaptor.forClass(InventoryInCommand.class);
         verify(inventoryService).inbound(inventoryCaptor.capture(), eq(7L));
-        assertEquals(new BigDecimal("0.25000000"), inventoryCaptor.getValue().getQuantity());
+        assertEquals(new BigDecimal("1"), inventoryCaptor.getValue().getQuantity());
+        assertEquals("瓶", inventoryCaptor.getValue().getUnit());
+        assertEquals(101, inventoryCaptor.getValue().getSourceLineNo());
+        assertEquals("ORDER_REFUND", inventoryCaptor.getValue().getSourceType());
+        assertEquals(10L, inventoryCaptor.getValue().getSourceId());
 
         ArgumentCaptor<OrderRefundedEvent> eventCaptor = ArgumentCaptor.forClass(OrderRefundedEvent.class);
         verify(eventPublisher).publishEvent(eventCaptor.capture());
         assertEquals(Map.of(101L, new BigDecimal("1")), eventCaptor.getValue().refundItems());
         assertEquals(new BigDecimal("25.00"), eventCaptor.getValue().refundAmount());
     }
+    @Test
+    void packageFirstReturnWithZeroCentLimitStillRestocksAndSavesFact() {
+        Order order = new Order(); order.setId(10L); order.setStoreId(2L); order.setOrderStatus(2);
+        order.setPayAmount(new BigDecimal("0.01")); order.setPaymentMethod(1);
+        OrderItem material = new OrderItem(); material.setId(101L); material.setOrderId(10L);
+        material.setPackageId(7L); material.setProductId(501L); material.setQuantity(new BigDecimal("3"));
+        material.setUnit("瓶"); material.setTotalPrice(new BigDecimal("0.01"));
+        Product product = new Product(); product.setId(501L);
+        when(orderRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(order));
+        when(itemRepository.findByOrderId(10L)).thenReturn(List.of(material));
+        when(productRepository.findById(501L)).thenReturn(Optional.of(product));
+        when(afterSalesRepository.save(any())).thenAnswer(invocation -> {
+            com.agri_system.domain.after_sales.model.AfterSales fact = invocation.getArgument(0);
+            fact.setId(300L); return fact;
+        });
+        OrderRefundCommand command = new OrderRefundCommand(); command.setOrderId(10L);
+        command.setRefundReason("逐件退货"); command.setRefundAmount(new BigDecimal("0.00"));
+        OrderRefundCommand.RefundItem requested = new OrderRefundCommand.RefundItem(); requested.setOrderItemId(101L);
+        requested.setQuantity(BigDecimal.ONE); requested.setRefundAmount(new BigDecimal("0.00")); command.setItems(List.of(requested));
+
+        orderService.refundOrder(command,7L);
+
+        org.mockito.Mockito.verifyNoInteractions(paymentService);
+        verify(inventoryService).inbound(any(),eq(7L));
+        ArgumentCaptor<List<com.agri_system.domain.after_sales.model.AfterSalesItem>> facts = ArgumentCaptor.forClass(List.class);
+        verify(afterSalesItemRepository).saveBatch(facts.capture());
+        assertEquals(300L,facts.getValue().get(0).getAfterSalesId());
+        assertEquals(BigDecimal.ONE,facts.getValue().get(0).getQuantity());
+        ArgumentCaptor<OrderRefundedEvent> event = ArgumentCaptor.forClass(OrderRefundedEvent.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertEquals("AFTER_SALES:300",event.getValue().refundKey());
+    }
+
 }

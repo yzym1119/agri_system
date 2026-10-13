@@ -273,6 +273,11 @@ const queryParams = reactive({
 // 计算属性
 const canRefund = (row: OrderPageItem) => {
   // 已支付但未履约走订单直退；已发货/已完成/部分退款走售后退货
+  if (row.orderStatus === 8) {
+    // 现金已退完可能仍有零金额物料未退回，按剩余数量显示退货入口。
+    return (row.items || []).some(item => Number(item.refundableQuantity
+      ?? Math.max(0, Number(item.quantity) - Number(item.refundedQuantity || 0))) > 0)
+  }
   return row.orderStatus === 2
     || row.orderStatus === 3
     || row.orderStatus === 4
@@ -298,6 +303,7 @@ const canShipByLocal = (row: OrderPageItem) => {
 }
 
 const getRefundActionText = (row: OrderPageItem) => {
+  if (row.orderStatus === 8) return '继续退货'
   if (row.orderStatus === 9) return '继续退款'
   if (row.orderStatus === 2 || row.orderStatus === 3 || row.orderStatus === 4) {
     return '订单退款'

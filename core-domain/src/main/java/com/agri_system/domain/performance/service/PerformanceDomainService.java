@@ -17,6 +17,16 @@ public class PerformanceDomainService {
                                                      CommissionRule rule,
                                                      boolean allowSalesPercent,
                                                      BigDecimal overrideRatio) {
+        // 旧调用没有数量证据，只能保守视为一行；不能用售价/成本推测卖出数量。
+        return calculateSalesCommission(saleAmount, costAmount, BigDecimal.ONE, rule, allowSalesPercent, overrideRatio);
+    }
+
+    public CommissionResult calculateSalesCommission(BigDecimal saleAmount,
+                                                     BigDecimal costAmount,
+                                                     BigDecimal quantity,
+                                                     CommissionRule rule,
+                                                     boolean allowSalesPercent,
+                                                     BigDecimal overrideRatio) {
         BigDecimal profit = saleAmount.subtract(costAmount);
         if (profit.compareTo(BigDecimal.ZERO) <= 0) {
             return CommissionResult.zero("毛利为负，不计提成");
@@ -27,7 +37,10 @@ public class PerformanceDomainService {
 
         switch (rule.getCalcMode()) {
             case "FIXED" -> {
-                commission = rule.getCalcValue().multiply(safeQuantity(saleAmount, costAmount));
+                if (quantity == null || quantity.signum() <= 0) {
+                    return CommissionResult.zero("缺少真实销售数量，不计固定提成");
+                }
+                commission = rule.getCalcValue().multiply(quantity);
                 desc.append("固定金额 * 数量");
             }
             case "PROFIT_PERCENT" -> {
@@ -69,14 +82,6 @@ public class PerformanceDomainService {
         }
 
         return new CommissionResult(commission.setScale(2, RoundingMode.HALF_UP), desc.toString(), needReview);
-    }
-
-    private BigDecimal safeQuantity(BigDecimal saleAmount, BigDecimal costAmount) {
-        // 避免历史数据缺少数量，简单使用 sale/cost 比例近似数量
-        if (costAmount == null || costAmount.compareTo(BigDecimal.ZERO) == 0) {
-            return BigDecimal.ONE;
-        }
-        return saleAmount.divide(costAmount, 4, RoundingMode.HALF_UP);
     }
 
     public record CommissionResult(BigDecimal amount, String desc, boolean needReview) {

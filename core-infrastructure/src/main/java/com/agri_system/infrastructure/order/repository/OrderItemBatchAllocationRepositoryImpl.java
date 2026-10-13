@@ -41,6 +41,14 @@ public class OrderItemBatchAllocationRepositoryImpl implements OrderItemBatchAll
     }
 
     @Override
+    public List<OrderItemBatchAllocation> findByRequestIds(java.util.Collection<Long> pickupRequestIds) {
+        if (pickupRequestIds == null || pickupRequestIds.isEmpty()) return List.of();
+        return mapper.selectListByQuery(com.mybatisflex.core.query.QueryWrapper.create()
+                .where("pickup_request_id IN (" + pickupRequestIds.stream().map(id -> "?").collect(java.util.stream.Collectors.joining(",")) + ")", pickupRequestIds.toArray())
+                .orderBy("id", true));
+    }
+
+    @Override
     public List<OrderItemBatchAllocation> findByOrderItemId(Long orderItemId) {
         return mapper.findByOrderItemId(orderItemId);
     }

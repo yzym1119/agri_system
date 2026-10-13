@@ -15,6 +15,9 @@ public interface OrderItemBatchAllocationRepository {
 
     List<OrderItemBatchAllocation> findByRequestId(Long pickupRequestId);
 
+    /** 待办列表批量查询，避免逐请求回查。 */
+    List<OrderItemBatchAllocation> findByRequestIds(java.util.Collection<Long> pickupRequestIds);
+
     List<OrderItemBatchAllocation> findByOrderItemId(Long orderItemId);
 
     /**

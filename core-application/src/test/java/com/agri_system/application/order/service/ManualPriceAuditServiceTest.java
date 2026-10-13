@@ -98,6 +98,88 @@ class ManualPriceAuditServiceTest {
         assertThat(row.getQuoteId()).isEqualTo(quote.quoteId());
     }
 
+    @Test
+    void finalDealBelowFloorRequiresConfirmerEvenWhenSuggestedPriceIsAboveFloor() {
+        assertThatThrownBy(() -> auditService.record(quote("220"), new BigDecimal("170"), "议价", 7L, null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("确认人");
+        verifyNoInteractions(auditRepository);
+    }
+
+    @Test
+    void priceChangeRequiresExplicitReason() {
+        assertThatThrownBy(() -> auditService.record(quote("220"), new BigDecimal("205"), " ", 7L, 7L))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("原因");
+        verifyNoInteractions(auditRepository);
+    }
+
+    @Test
+    void employeeWithoutNegotiationPermissionCannotChangePrice() {
+        withEmployee(7L, false, () -> assertThatThrownBy(() ->
+                auditService.validateChange(quote("220"), new BigDecimal("205"), "议价", 7L))
+                .isInstanceOf(cn.dev33.satoken.exception.NotPermissionException.class));
+        verifyNoInteractions(auditRepository);
+    }
+
+    @Test
+    void authorizedEmployeeCanNegotiateBelowFloorWithReason() {
+        withEmployee(7L, true, () -> auditService.validateChange(quote("220"), new BigDecimal("170"), "清仓议价", 7L));
+    }
+
+    @Test
+    void cannotBorrowAnotherEmployeesIdentityForNegotiation() {
+        withEmployee(8L, true, () -> assertThatThrownBy(() ->
+                auditService.validateChange(quote("220"), new BigDecimal("205"), "议价", 7L))
+                .hasMessageContaining("当前登录员工"));
+    }
+
+    @Test
+    void wholeOrderDiscountCannotBypassNegotiationPermission() {
+        withEmployee(7L, false, () -> assertThatThrownBy(() ->
+                auditService.validateDiscount(new BigDecimal("9.00"), "优惠", 7L))
+                .isInstanceOf(cn.dev33.satoken.exception.NotPermissionException.class));
+    }
+
+    @Test
+    void packageAllocationAuditKeepsZeroDealAndTwelveDecimalDifference() {
+        PriceQuote quote = new PriceQuote("package-quote",55L,1L,10L,"POS",null,null,
+                "瓶",12L,LocalDate.now(),new BigDecimal("1.428571428571"),"PACKAGE",null,false,false);
+        givenGeneratedId(101L);
+        auditService.recordAllocation(quote,BigDecimal.ZERO,"套餐议价",7L);
+        OrderItemPriceAudit row = capturedAudit();
+        assertThat(row.getFinalUnitPrice()).isEqualByComparingTo("0");
+        assertThat(row.getPriceDifference()).isEqualByComparingTo("-1.428571428571");
+        assertThat(row.getQuoteId()).isEqualTo("package-quote");
+        assertThat(row.getSaleUnitId()).isEqualTo(12L);
+    }
+
+    @Test
+    void packageAllocationCannotOmitOrderLineOrNegotiationReason() {
+        assertThatThrownBy(() -> auditService.recordAllocation(quote("220",null),BigDecimal.ZERO,"套餐议价",7L))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> auditService.recordAllocation(quote("220"),BigDecimal.ZERO," ",7L))
+                .isInstanceOf(IllegalArgumentException.class);
+        verifyNoInteractions(auditRepository);
+    }
+
+    private void withEmployee(Long id, boolean permitted, Runnable action) {
+        var previous = cn.dev33.satoken.SaManager.getStpInterface();
+        com.agri_system.application.support.SaTokenTestContext.setUp();
+        cn.dev33.satoken.SaManager.setStpInterface(new cn.dev33.satoken.stp.StpInterface() {
+            public java.util.List<String> getPermissionList(Object loginId, String type) {
+                return permitted ? java.util.List.of("order:price:override") : java.util.List.of();
+            }
+            public java.util.List<String> getRoleList(Object loginId, String type) { return java.util.List.of(); }
+        });
+        try {
+            cn.dev33.satoken.stp.StpUtil.login("STAFF_" + id);
+            action.run();
+        } finally {
+            cn.dev33.satoken.stp.StpUtil.logout();
+            cn.dev33.satoken.SaManager.setStpInterface(previous);
+            com.agri_system.application.support.SaTokenTestContext.tearDown();
+        }
+    }
+
     private PriceQuote quote(String price) {
         return quote(price, 55L);
     }

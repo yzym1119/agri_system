@@ -164,47 +164,16 @@ public class OrderPaymentService {
         // 先预运算
         OrderPayPreviewVO preview = previewPayment(order, useBalance, useSpecialFund, couponId);
 
-        // 显式校验优惠券：传入已用/无效券时直接报错，避免被 preview 的 couponAmount>0 守卫静默忽略
-        if (couponId != null) {
-            CustomerCoupon coupon = couponRepository.findById(couponId)
-                    .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券不存在"));
-            if (coupon.getStatus() == null || coupon.getStatus() != 1) {
-                throw new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券已使用或状态不正确");
-            }
-        }
-
         List<OrderPayment> payments = new ArrayList<>();
         BigDecimal totalPaid = BigDecimal.ZERO;
-        
-        // 1. 优惠券抵扣（一次性核销，不设找零）
-        if (preview.getCouponAmount().compareTo(BigDecimal.ZERO) > 0 && couponId != null) {
-            CustomerCoupon coupon = couponRepository.findById(couponId)
-                    .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券不存在"));
-            validateCouponOwnership(order, coupon);
-            
-            // 校验状态：必须是未使用
-            if (coupon.getStatus() == null || coupon.getStatus() != 1) {
-                throw new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券已使用或状态不正确");
-            }
-            
-            // 计算实际抵扣额：取订单待付金额和券面额的较小值
-            // 此时 totalPaid 为 0，订单待付金额就是订单总金额
-            BigDecimal pendingAmount = order.getPayAmount();
-            BigDecimal actualDeduct = coupon.use(order.getId(), pendingAmount);
-            
-            couponRepository.save(coupon);
-            
-            OrderPayment payment = new OrderPayment();
-            payment.setOrderId(order.getId());
-            payment.setPaymentType(PaymentMethod.COUPON.getCode());
-            payment.setAmount(actualDeduct);
-            payment.setCouponId(couponId);
-            payment.setCreatedAt(LocalDateTime.now());
-            payment = paymentRepository.save(payment);
-            payments.add(payment);
-            totalPaid = totalPaid.add(actualDeduct);
+
+        // 优惠券只核销一次。POS复用同一规则，但其现金/钱包收款由POS入口负责。
+        if (couponId != null) {
+            OrderPayment couponPayment = applyCouponPayment(order, order.getCustomerId(), couponId);
+            payments.add(couponPayment);
+            totalPaid = totalPaid.add(couponPayment.getAmount());
         }
-        
+
         // 2. 专用金抵扣
         if (preview.getSpecialFundAmount().compareTo(BigDecimal.ZERO) > 0) {
             walletService.deductSpecialFund(order.getCustomerId(), preview.getSpecialFundAmount(), 
@@ -257,6 +226,37 @@ public class OrderPaymentService {
         }
         
         return payments;
+    }
+
+    /** 仅核销优惠券并记录抵扣，不扣钱包、不生成其它收款流水。 */
+    @Transactional(rollbackFor = Exception.class)
+    public BigDecimal applyCouponToOrder(Order order, Long customerId, Long couponId) {
+        if (couponId == null) return BigDecimal.ZERO;
+        return applyCouponPayment(order, customerId, couponId).getAmount();
+    }
+
+    private OrderPayment applyCouponPayment(Order order, Long customerId, Long couponId) {
+        if (customerId == null || !customerId.equals(order.getCustomerId())) {
+            throw new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 使用优惠券必须指定订单客户");
+        }
+        CustomerCoupon coupon = couponRepository.findByIdForUpdate(couponId)
+                .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券不存在"));
+        validateCouponOwnership(order, coupon);
+        List<Long> productIds = itemRepository.findByOrderId(order.getId()).stream()
+                .map(OrderItem::getProductId).filter(java.util.Objects::nonNull).distinct().toList();
+        if (!coupon.isUsable(order.getPayAmount(), productIds, resolveCategoryIds(productIds))) {
+            throw new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券已失效或不满足使用条件");
+        }
+        BigDecimal amount = coupon.getAvailableAmount(order.getPayAmount()).min(order.getPayAmount());
+        if (amount.signum() <= 0 || amount.stripTrailingZeros().scale() > 2) {
+            throw new IllegalArgumentException(OrderErrorCode.COUPON_INVALID + ": 优惠券抵扣金额无效");
+        }
+        amount = coupon.use(order.getId(), order.getPayAmount());
+        couponRepository.save(coupon);
+        OrderPayment payment = new OrderPayment();
+        payment.setOrderId(order.getId()); payment.setPaymentType(PaymentMethod.COUPON.getCode());
+        payment.setAmount(amount); payment.setCouponId(couponId); payment.setCreatedAt(LocalDateTime.now());
+        return paymentRepository.save(payment);
     }
 
     private void validateCouponOwnership(Order order, CustomerCoupon coupon) {

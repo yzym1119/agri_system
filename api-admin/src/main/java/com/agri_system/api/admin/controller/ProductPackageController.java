@@ -34,7 +34,19 @@ import java.util.Map;
 public class ProductPackageController {
     
     private final ProductPackageApplicationService packageService;
+    private final com.agri_system.application.productpackage.service.PackagePricingService packagePricingService;
     
+    @GetMapping("/{id}/price-quote")
+    @Operation(summary = "套餐服务端报价", description = "按真实会员身份取得元/套价格、物料分摊与专用金可用金额")
+    @SaCheckPermission(value = {"package:query", "pos:order:create"}, mode = cn.dev33.satoken.annotation.SaMode.OR)
+    public ResponseEntity<Map<String, Object>> quotePackage(@PathVariable Long id,
+            @RequestParam(required = false) Long customerId, @RequestParam(required = false) Long storeId,
+            @RequestParam(defaultValue = "1") java.math.BigDecimal quantity,
+            @RequestParam(required = false) java.math.BigDecimal dealUnitPrice) {
+        var quote = packagePricingService.quote(id, customerId, storeId, quantity, dealUnitPrice);
+        return ResponseEntity.ok(Map.of("code", "200", "message", "查询成功", "data", quote));
+    }
+
     // ==================== 套餐主档管理 ====================
     
     @PostMapping
@@ -95,7 +107,7 @@ public class ProductPackageController {
         @ApiResponse(responseCode = "200", description = "查询成功"),
         @ApiResponse(responseCode = "404", description = "套餐不存在", content = @Content(schema = @Schema(implementation = Map.class)))
     })
-    @SaCheckPermission("package:query")
+    @SaCheckPermission(value = {"package:query", "pos:order:create"}, mode = cn.dev33.satoken.annotation.SaMode.OR)
     public ResponseEntity<Map<String, Object>> getPackageDetail(
             @Parameter(description = "套餐ID", required = true) @PathVariable Long id) {
         ProductPackageDetailVO vo = packageService.getPackageDetail(id);
@@ -111,7 +123,7 @@ public class ProductPackageController {
     @ApiResponses({
         @ApiResponse(responseCode = "200", description = "查询成功")
     })
-    @SaCheckPermission("package:query")
+    @SaCheckPermission(value = {"package:query", "pos:order:create"}, mode = cn.dev33.satoken.annotation.SaMode.OR)
     public ResponseEntity<Map<String, Object>> queryPackages(@Valid ProductPackageQuery query) {
         Page<ProductPackageDetailVO> page = packageService.queryPackages(query);
         Map<String, Object> result = new HashMap<>();

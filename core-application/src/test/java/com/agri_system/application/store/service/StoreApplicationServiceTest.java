@@ -5,6 +5,7 @@ import com.agri_system.application.store.exception.StoreErrorCode;
 import com.agri_system.domain.store.model.Staff;
 import com.agri_system.domain.store.model.Store;
 import com.agri_system.domain.store.repository.StaffRepository;
+import com.agri_system.domain.inventory.repository.InventoryLocationRepository;
 import com.agri_system.domain.store.repository.StoreRepository;
 import com.agri_system.domain.store.service.StoreDomainService;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,6 +38,9 @@ class StoreApplicationServiceTest {
     @Mock
     private StoreDomainService domainService;
     
+    @Mock
+    private InventoryLocationRepository locationRepository;
+
     @InjectMocks
     private StoreApplicationService storeService;
     
@@ -87,6 +91,7 @@ class StoreApplicationServiceTest {
         
         // Then: 验证 phone 和 support_pickup 正确入库
         assertNotNull(storeId);
+        verify(locationRepository).defaultBackroom(storeId);
         verify(storeRepository, times(1)).save(argThat(store -> {
             Store s = (Store) store;
             return "13800138000".equals(s.getPhone()) && 

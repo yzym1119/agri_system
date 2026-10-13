@@ -8,6 +8,9 @@ import java.util.Optional;
 public interface InventoryLocationRepository {
     void save(InventoryLocation location);
 
+    /** 并发首次入库也只生成一个默认后仓，并锁定读取当前状态。 */
+    InventoryLocation defaultBackroom(Long storeId);
+
     Optional<InventoryLocation> findById(Long id);
 
     Optional<InventoryLocation> findEnabledByStoreAndType(Long storeId, String locationType);

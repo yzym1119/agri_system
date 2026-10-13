@@ -12,15 +12,15 @@ import java.util.Optional;
 
 /**
  * 套餐仓储实现
- * 
+ *
  * @author AI Generated
  */
 @Repository
 @RequiredArgsConstructor
 public class ProductPackageRepositoryImpl implements ProductPackageRepository {
-    
+
     private final ProductPackageMapper packageMapper;
-    
+
     @Override
     public void save(ProductPackage productPackage) {
         if (productPackage.getId() == null) {
@@ -29,24 +29,29 @@ public class ProductPackageRepositoryImpl implements ProductPackageRepository {
             packageMapper.update(productPackage);
         }
     }
-    
+
     @Override
     public Optional<ProductPackage> findById(Long id) {
         return Optional.ofNullable(packageMapper.selectOneById(id));
     }
-    
+
+    @Override
+    public Optional<ProductPackage> findByIdForUpdate(Long id) {
+        return Optional.ofNullable(packageMapper.selectOneByQuery(QueryWrapper.create().where("id = ?", id).forUpdate()));
+    }
+
     @Override
     public Optional<ProductPackage> findByCode(String code) {
         QueryWrapper queryWrapper = QueryWrapper.create()
                 .where("code = ?", code);
         return Optional.ofNullable(packageMapper.selectOneByQuery(queryWrapper));
     }
-    
+
     @Override
-    public Page<ProductPackage> findPage(String code, String name, Integer status, 
+    public Page<ProductPackage> findPage(String code, String name, Integer status,
                                           int pageNum, int pageSize) {
         QueryWrapper queryWrapper = QueryWrapper.create();
-        
+
         if (code != null && !code.isEmpty()) {
             queryWrapper.where("code LIKE ?", "%" + code + "%");
         }
@@ -56,15 +61,15 @@ public class ProductPackageRepositoryImpl implements ProductPackageRepository {
         if (status != null) {
             queryWrapper.where("status = ?", status);
         }
-        
+
         // 排除已删除的记录
         queryWrapper.where("status != ?", -1);
-        
+
         queryWrapper.orderBy("created_at DESC");
-        
+
         return packageMapper.paginate(pageNum, pageSize, queryWrapper);
     }
-    
+
     @Override
     public void delete(Long id) {
         // 软删除：更新status为-1
@@ -73,7 +78,7 @@ public class ProductPackageRepositoryImpl implements ProductPackageRepository {
         productPackage.setStatus(-1);
         packageMapper.update(productPackage);
     }
-    
+
     @Override
     public void updateStatus(Long id, Integer status) {
         ProductPackage productPackage = new ProductPackage();

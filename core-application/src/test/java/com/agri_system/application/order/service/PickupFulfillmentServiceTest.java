@@ -62,6 +62,7 @@ import static com.agri_system.domain.order.enums.BatchEvidenceLevel.RULE_ALLOCAT
 import static com.agri_system.domain.order.enums.BatchEvidenceLevel.SCANNED;
 import static com.agri_system.domain.order.enums.BatchEvidenceLevel.UNKNOWN;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -73,11 +74,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * Task5 零售事实链：POS 销售批次证据与库房取货两阶段履约。
- *
- * <p>链路处于休眠状态（未激活 SKU 行为与现状保持一致），激活 SKU 的行为由本测试用
- * {@code isBatchLocationEnabled=true} 的桩验证。混批货架销售必须允许结账（UNKNOWN），
- * 后仓扫码取货必须产生 SCANNED 与真实批次成本；仅表示 SKU 的 EAN/GS1 条码绝不能产生 SCANNED。</p>
+ * 统一库存下库房履约确认已有销售出库证据，并保留扫码事实，不重复扣减库存。
+ * SKU 条码无法证明具体批次，跨门店、数量不匹配或缺失出库记录必须拒绝。
  */
 @ExtendWith(MockitoExtension.class)
 class PickupFulfillmentServiceTest {
@@ -128,6 +126,8 @@ class PickupFulfillmentServiceTest {
     @Mock
     private AfterSalesRepository afterSalesRepository;
     @Mock
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+    @Mock
     private AfterSalesItemRepository afterSalesItemRepository;
     @Mock
     private ApplicationEventPublisher eventPublisher;
@@ -158,237 +158,339 @@ class PickupFulfillmentServiceTest {
         allocationRepository = new InMemoryAllocationRepository();
         pickupRequestRepository = new InMemoryPickupRequestRepository();
         fulfillmentService = new PickupFulfillmentService(
-                allocationRepository, pickupRequestRepository, batchBalanceService, productUnitService,
-                locationRepository, batchBalanceRepository, receiptBatchRepository, orderRepository, itemRepository,
-                orderCostAllocationService, productRepository);
+                allocationRepository, pickupRequestRepository, locationRepository, receiptBatchRepository,
+                orderRepository, itemRepository, productRepository, afterSalesRepository, jdbc);
         orderService = new OrderApplicationService(
                 orderRepository, itemRepository, paymentRepository, paymentIntentRepository, deliveryRepository,
                 orderDomainService, paymentService, inventoryService, walletService, creditService,
-                productRepository, productPricingService, staffRepository, storeRepository, customerRepository,
+                productRepository, productPricingService, org.mockito.Mockito.mock(com.agri_system.application.productpackage.service.PackagePricingService.class), staffRepository, storeRepository, customerRepository,
                 afterSalesRepository, afterSalesItemRepository, eventPublisher, walletAuthCodeRepository,
                 fulfillmentService, manualPriceAuditService);
     }
 
     @Test
-    void directMixedShelfSaleCanRemainUnknownWithoutBlockingCheckout() {
-        stubPosOrderThenSave();
-        stubUnitConversion(new BigDecimal("5"));
-        when(batchBalanceService.isBatchLocationEnabled(STORE_ID, PRODUCT_ID)).thenReturn(true);
-        when(locationRepository.findEnabledByStoreAndType(STORE_ID, InventoryLocation.LocationType.SALES_FLOOR.name()))
-                .thenReturn(Optional.of(location(FLOOR_LOCATION_ID, InventoryLocation.LocationType.SALES_FLOOR.name())));
-        when(batchBalanceRepository.findByLocationAndProduct(FLOOR_LOCATION_ID, PRODUCT_ID))
-                .thenReturn(List.of(
-                        balance(61L, FLOOR_LOCATION_ID, "5"),
-                        balance(62L, FLOOR_LOCATION_ID, "5")));
-
-        Long orderId = orderService.createPOSOrder(commandForSkuOnly(), 7L);
-
-        assertThat(orderId).isEqualTo(ORDER_ID);
-        List<OrderItemBatchAllocation> allocations = allocationRepository.findByOrderId(orderId);
-        assertThat(allocations).hasSize(1);
-        assertThat(allocations.get(0).getEvidenceLevel()).isEqualTo(UNKNOWN.name());
-        assertThat(allocations.get(0).getBatchId()).isNull();
-        assertThat(allocations.get(0).getAllocatedBaseQuantity()).isEqualByComparingTo("5");
-        assertThat(pickupRequestRepository.all()).isEmpty();
-        verify(inventoryService, never()).outbound(any(), any());
+    void confirmedPickupPreservesActualSaleMovementAndDoesNotDeductAgain() {
+        Long requestId = prepareSoldRequest();
+        List<OrderItemBatchAllocation> result = fulfillmentService.fulfill(requestId,
+                confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID);
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getEvidenceLevel()).isEqualTo("FULFILLMENT_CONFIRMED");
+        assertThat(result.get(0).getSourceMovementId()).isEqualTo(MOVEMENT_ID);
+        assertThat(result.get(0).getAllocatedBaseQuantity()).isEqualByComparingTo("5");
+        assertThat(result.get(0).getPickupRequestId()).isEqualTo(requestId);
+        OrderPickupRequest request = pickupRequestRepository.findById(requestId).orElseThrow();
+        assertThat(request.getStatus()).isEqualTo("FULFILLED");
+        assertThat(request.getFulfilledBy()).isEqualTo(STAFF_ID);
+        assertThat(request.getFulfilledAt()).isNotNull();
+        verifyNoInteractions(batchBalanceService, orderCostAllocationService);
     }
 
     @Test
-    void backroomPickByBatchLabelCreatesScannedEvidenceAndActualBatchCost() {
-        stubPosOrderThenSave();
-        stubUnitConversion(new BigDecimal("5"));
-        when(batchBalanceService.isBatchLocationEnabled(STORE_ID, PRODUCT_ID)).thenReturn(true);
-        when(locationRepository.findEnabledByStoreAndType(STORE_ID, InventoryLocation.LocationType.SALES_FLOOR.name()))
-                .thenReturn(Optional.of(location(FLOOR_LOCATION_ID, InventoryLocation.LocationType.SALES_FLOOR.name())));
-        when(locationRepository.findEnabledByStoreAndType(STORE_ID, InventoryLocation.LocationType.STORE_BACKROOM.name()))
-                .thenReturn(Optional.of(location(BACKROOM_LOCATION_ID, InventoryLocation.LocationType.STORE_BACKROOM.name())));
-        when(batchBalanceRepository.findByLocationAndProduct(FLOOR_LOCATION_ID, PRODUCT_ID))
-                .thenReturn(Collections.emptyList());
-        String batchBarcode = INTERNAL_BATCH_NO;
-        when(receiptBatchRepository.findByInternalReceiptBatchNo(batchBarcode))
-                .thenReturn(Optional.of(receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00")));
+    void scannedPickupVerifiesAlreadySoldBatchWithoutAnotherStockMovement() {
+        Long requestId = prepareSoldRequest();
+        when(receiptBatchRepository.findByInternalReceiptBatchNo(INTERNAL_BATCH_NO))
+                .thenReturn(Optional.of(receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40")));
+        List<OrderItemBatchAllocation> result = fulfillmentService.fulfill(requestId, scannedBatch(INTERNAL_BATCH_NO), STAFF_ID);
+        assertThat(result.get(0).getEvidenceLevel()).isEqualTo("SCANNED");
+        assertThat(result.get(0).getSourceMovementId()).isEqualTo(MOVEMENT_ID);
+        verifyNoInteractions(batchBalanceService, orderCostAllocationService);
+    }
+
+    @Test
+    void skuOnlyBarcodeCannotConfirmBatch() {
+        Long requestId = prepareSoldRequest();
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, scannedBatch(SKU_ONLY_EAN), STAFF_ID))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("不能解析为内部批次标签");
+        assertPending(requestId);
+    }
+
+    @Test
+    void wrongBatchCannotReplaceActualSaleBatch() {
+        Long requestId = prepareSoldRequest();
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, confirmedBatch(62L, BACKROOM_LOCATION_ID), STAFF_ID))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("与已出库记录不一致");
+        assertPending(requestId);
+    }
+
+    @Test
+    void wrongLocationCannotConfirmPickup() {
+        Long requestId = prepareSoldRequest();
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, FLOOR_LOCATION_ID), STAFF_ID))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("与已出库记录不一致");
+        assertPending(requestId);
+    }
+
+    @Test
+    void scannedDifferentBatchCannotConfirmPickup() {
+        Long requestId = prepareSoldRequest();
+        when(receiptBatchRepository.findByInternalReceiptBatchNo(INTERNAL_BATCH_NO))
+                .thenReturn(Optional.of(receiptBatch(62L, INTERNAL_BATCH_NO, "40")));
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, scannedBatch(INTERNAL_BATCH_NO), STAFF_ID))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("与已出库记录不一致");
+        assertPending(requestId);
+    }
+
+    @Test
+    void missingBatchCannotConfirmPickup() {
+        Long requestId = prepareSoldRequest();
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, new PickupFulfillmentCommand(), STAFF_ID))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("必须核对出库批次");
+        assertPending(requestId);
+    }
+
+    @Test
+    void nullCommandCannotConfirmPickup() {
+        Long requestId = prepareSoldRequest();
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, null, STAFF_ID))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("取货确认不能为空");
+        assertPending(requestId);
+    }
+
+    @Test
+    void noSaleAllocationCannotConfirmPickup() {
+        Long requestId = seedPendingRequest(BACKROOM_LOCATION_ID);
         when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(batchBalanceService.move(any(BatchBalanceService.MoveRequest.class)))
-                .thenReturn(movement(MOVEMENT_ID));
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID))
+                .isInstanceOf(IllegalStateException.class).hasMessage("订单缺少实际出库记录");
+        assertPending(requestId);
+    }
 
-        // 货架无货：POS 结账不阻断，落 UNKNOWN 证据并生成后仓取货请求
-        Long orderId = orderService.createPOSOrder(commandForSkuOnly(), 7L);
+    @Test
+    void allocationWithoutSaleMovementCannotConfirmPickup() {
+        Long requestId = seedPendingRequest(BACKROOM_LOCATION_ID);
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        seedAllocation("RULE_ALLOCATED");
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID))
+                .isInstanceOf(IllegalStateException.class).hasMessage("订单缺少实际出库记录");
+        assertPending(requestId);
+    }
 
-        List<OrderItemBatchAllocation> beforePick = allocationRepository.findByOrderId(orderId);
-        assertThat(beforePick).hasSize(1);
-        assertThat(beforePick.get(0).getEvidenceLevel()).isEqualTo(UNKNOWN.name());
+    @Test
+    void completedRequestCannotBeConfirmedAgain() {
+        Long requestId = prepareSoldRequest();
+        fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID);
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID))
+                .isInstanceOf(IllegalStateException.class).hasMessage("取货请求已完成");
+        verifyNoInteractions(batchBalanceService);
+    }
+
+    @Test
+    void createRequestRequiresActualSaleAllocation() {
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        assertThatThrownBy(() -> fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("尚未实际出库");
+        assertThat(pickupRequestRepository.all()).isEmpty();
+    }
+
+    @Test
+    void createRequestRejectsDuplicatePendingRequest() {
+        seedPendingRequest(BACKROOM_LOCATION_ID);
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        assertThatThrownBy(() -> fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("已有未完成");
         assertThat(pickupRequestRepository.all()).hasSize(1);
-        Long requestId = pickupRequestRepository.all().get(0).getId();
-        assertThat(requestId).isEqualTo(REQUEST_ID);
-
-        // 拣货员扫描内部批次标签
-        List<OrderItemBatchAllocation> fulfilled = fulfillmentService.fulfill(requestId, scannedBatch(batchBarcode), 8L);
-        assertThat(fulfilled).hasSize(1);
-
-        assertThat(allocationRepository.findByRequestId(requestId).get(0).getEvidenceLevel())
-                .isEqualTo(SCANNED.name());
-        OrderItemBatchAllocation allocation = allocationRepository.findByRequestId(requestId).get(0);
-        assertThat(allocation.getBatchUnitCost()).isEqualByComparingTo("40.00");
-        assertThat(allocation.getAllocatedCost()).isEqualByComparingTo("200.00");
-        assertThat(allocation.getBatchId()).isEqualTo(BATCH_ID);
-        assertThat(allocation.getSourceMovementId()).isEqualTo(MOVEMENT_ID);
-        assertThat(allocationRepository.findByOrderId(orderId)).hasSize(1);
-        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus())
-                .isEqualTo(OrderPickupRequest.Status.FULFILLED.name());
-        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getFulfilledBy()).isEqualTo(8L);
-
-        ArgumentCaptor<BatchBalanceService.MoveRequest> moveCaptor =
-                ArgumentCaptor.forClass(BatchBalanceService.MoveRequest.class);
-        verify(batchBalanceService).move(moveCaptor.capture());
-        BatchBalanceService.MoveRequest move = moveCaptor.getValue();
-        assertThat(move.purpose()).isEqualTo(BatchBalanceService.MovementPurpose.PICK);
-        assertThat(move.fromLocationId()).isEqualTo(BACKROOM_LOCATION_ID);
-        assertThat(move.toLocationId()).isEqualTo(FLOOR_LOCATION_ID);
-        assertThat(move.batchId()).isEqualTo(BATCH_ID);
-        assertThat(move.baseQuantity()).isEqualByComparingTo("5");
-        assertThat(move.unitCost()).isEqualByComparingTo("40.00");
-        assertThat(move.referenceType()).isEqualTo("PICKUP_REQUEST");
-        assertThat(move.referenceId()).isEqualTo(REQUEST_ID);
-        assertThat(move.idempotencyKey())
-                .isEqualTo("PICK:" + REQUEST_ID + ":" + BATCH_ID + ":" + BACKROOM_LOCATION_ID);
     }
 
     @Test
-    void floorSingleBatchCreatesRuleAllocatedEvidenceAndDoesNotBlockCheckout() {
-        stubPosOrderThenSave();
-        stubUnitConversion(new BigDecimal("5"));
-        when(batchBalanceService.isBatchLocationEnabled(STORE_ID, PRODUCT_ID)).thenReturn(true);
-        when(locationRepository.findEnabledByStoreAndType(STORE_ID, InventoryLocation.LocationType.SALES_FLOOR.name()))
-                .thenReturn(Optional.of(location(FLOOR_LOCATION_ID, InventoryLocation.LocationType.SALES_FLOOR.name())));
-        when(batchBalanceRepository.findByLocationAndProduct(FLOOR_LOCATION_ID, PRODUCT_ID))
-                .thenReturn(List.of(balance(BATCH_ID, FLOOR_LOCATION_ID, "10")));
-        when(receiptBatchRepository.findById(BATCH_ID))
-                .thenReturn(Optional.of(receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00")));
+    void createRequestKeepsOriginalSoldQuantityWithoutCurrentUnitConversion() {
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        when(locationRepository.findById(BACKROOM_LOCATION_ID)).thenReturn(Optional.of(location(BACKROOM_LOCATION_ID, "STORE_BACKROOM")));
+        seedSoldAllocation();
+        Long id = fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID);
+        OrderPickupRequest request = pickupRequestRepository.findById(id).orElseThrow();
+        assertThat(request.getRequestedBaseQuantity()).isEqualByComparingTo("5");
+        verifyNoInteractions(productUnitService);
+        assertThat(request.getSourceLocationId()).isEqualTo(BACKROOM_LOCATION_ID);
+        assertThat(request.getStatus()).isEqualTo("PENDING");
+        verifyNoInteractions(batchBalanceService);
+    }
 
-        Long orderId = orderService.createPOSOrder(commandForSkuOnly(), 7L);
-
-        List<OrderItemBatchAllocation> allocations = allocationRepository.findByOrderId(orderId);
-        assertThat(allocations).hasSize(1);
-        OrderItemBatchAllocation allocation = allocations.get(0);
-        assertThat(allocation.getEvidenceLevel()).isEqualTo(RULE_ALLOCATED.name());
-        assertThat(allocation.getBatchId()).isEqualTo(BATCH_ID);
-        assertThat(allocation.getLocationId()).isEqualTo(FLOOR_LOCATION_ID);
-        assertThat(allocation.getBatchUnitCost()).isEqualByComparingTo("40.00");
-        assertThat(allocation.getAllocatedCost()).isEqualByComparingTo("200.00");
-        assertThat(allocation.getAllocationRule()).isEqualTo("FLOOR_SINGLE_BATCH");
-        assertThat(allocation.getAllocationRuleVersion()).isNotBlank();
+    @Test
+    void createRequestRejectsAllocationWithoutActualMovement() {
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        seedAllocation("RULE_ALLOCATED");
+        assertThatThrownBy(() -> fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("尚未实际出库");
         assertThat(pickupRequestRepository.all()).isEmpty();
-        verify(inventoryService, never()).outbound(any(), any());
+        verifyNoInteractions(productUnitService, batchBalanceService);
     }
 
     @Test
-    void skuOnlyBarcodeMustNeverBecomeScannedEvidence() {
-        Long requestId = seedPendingRequest(null);
+    void createRequestSumsAllActualSaleAllocations() {
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
         when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(receiptBatchRepository.findByInternalReceiptBatchNo(SKU_ONLY_EAN)).thenReturn(Optional.empty());
-
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> fulfillmentService.fulfill(requestId, scannedBatch(SKU_ONLY_EAN), 8L));
-
-        assertThat(ex.getMessage()).contains("批次");
-        verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
-        assertThat(allocationRepository.findByRequestId(requestId)).isEmpty();
-        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus())
-                .isEqualTo(OrderPickupRequest.Status.PENDING.name());
+        when(locationRepository.findById(BACKROOM_LOCATION_ID)).thenReturn(Optional.of(location(BACKROOM_LOCATION_ID, "STORE_BACKROOM")));
+        seedSoldAllocation();
+        OrderItemBatchAllocation second = new OrderItemBatchAllocation();
+        second.setOrderItemId(ITEM_ID); second.setProductId(PRODUCT_ID); second.setStoreId(STORE_ID);
+        second.setBatchId(62L); second.setLocationId(BACKROOM_LOCATION_ID); second.setSourceMovementId(MOVEMENT_ID + 1);
+        second.setAllocatedBaseQuantity(new BigDecimal("7"));
+        allocationRepository.save(second);
+        Long id = fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID);
+        assertThat(pickupRequestRepository.findById(id).orElseThrow().getRequestedBaseQuantity()).isEqualByComparingTo("12");
+        verifyNoInteractions(productUnitService, batchBalanceService);
     }
 
     @Test
-    void locationCodeScanResolvesSingleAvailableBatchAsScannedEvidence() {
-        Long requestId = seedPendingRequest(null);
-        InventoryLocation backroom = location(BACKROOM_LOCATION_ID, InventoryLocation.LocationType.STORE_BACKROOM.name());
-        backroom.setCode("BR-01");
-        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(receiptBatchRepository.findByInternalReceiptBatchNo("BR-01")).thenReturn(Optional.empty());
-        when(locationRepository.findByStoreIdAndCode(STORE_ID, "BR-01")).thenReturn(Optional.of(backroom));
-        when(batchBalanceRepository.findByLocationAndProduct(BACKROOM_LOCATION_ID, PRODUCT_ID))
-                .thenReturn(List.of(balance(BATCH_ID, BACKROOM_LOCATION_ID, "10")));
-        when(receiptBatchRepository.findById(BATCH_ID))
-                .thenReturn(Optional.of(receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00")));
-        when(locationRepository.findEnabledByStoreAndType(STORE_ID, InventoryLocation.LocationType.SALES_FLOOR.name()))
-                .thenReturn(Optional.of(location(FLOOR_LOCATION_ID, InventoryLocation.LocationType.SALES_FLOOR.name())));
-        when(batchBalanceService.move(any(BatchBalanceService.MoveRequest.class)))
-                .thenReturn(movement(MOVEMENT_ID));
-
-        List<OrderItemBatchAllocation> fulfilled = fulfillmentService.fulfill(requestId, scannedBatch("BR-01"), 8L);
-
-        assertThat(fulfilled).hasSize(1);
-        OrderItemBatchAllocation allocation = allocationRepository.findByRequestId(requestId).get(0);
-        assertThat(allocation.getEvidenceLevel()).isEqualTo(SCANNED.name());
-        assertThat(allocation.getAllocationRule()).isEqualTo("PICK_SCAN");
-        assertThat(allocation.getBatchId()).isEqualTo(BATCH_ID);
-        assertThat(allocation.getBatchUnitCost()).isEqualByComparingTo("40.00");
-        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus())
-                .isEqualTo(OrderPickupRequest.Status.FULFILLED.name());
-
-        ArgumentCaptor<BatchBalanceService.MoveRequest> moveCaptor =
-                ArgumentCaptor.forClass(BatchBalanceService.MoveRequest.class);
-        verify(batchBalanceService).move(moveCaptor.capture());
-        assertThat(moveCaptor.getValue().fromLocationId()).isEqualTo(BACKROOM_LOCATION_ID);
-        assertThat(moveCaptor.getValue().idempotencyKey())
-                .isEqualTo("PICK:" + REQUEST_ID + ":" + BATCH_ID + ":" + BACKROOM_LOCATION_ID);
+    void multiBatchPickupRequiresCompleteAllocationConfirmation() {
+        Long requestId = prepareMultiBatchRequest();
+        List<OrderItemBatchAllocation> assigned = allocationRepository.findByOrderItemId(ITEM_ID);
+        List<OrderItemBatchAllocation> result = fulfillmentService.fulfill(requestId,
+                confirmedAllocations(assigned.stream().map(OrderItemBatchAllocation::getId).toList()), STAFF_ID);
+        assertThat(result).hasSize(2).allMatch(a -> "FULFILLMENT_CONFIRMED".equals(a.getEvidenceLevel()));
+        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus()).isEqualTo("FULFILLED");
+        verifyNoInteractions(batchBalanceService, batchBalanceRepository, orderCostAllocationService);
     }
 
     @Test
-    void locationCodeWithMultipleAvailableBatchesIsRejectedWithoutMove() {
-        Long requestId = seedPendingRequest(null);
-        InventoryLocation backroom = location(BACKROOM_LOCATION_ID, InventoryLocation.LocationType.STORE_BACKROOM.name());
-        backroom.setCode("BR-01");
-        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(receiptBatchRepository.findByInternalReceiptBatchNo("BR-01")).thenReturn(Optional.empty());
-        when(locationRepository.findByStoreIdAndCode(STORE_ID, "BR-01")).thenReturn(Optional.of(backroom));
-        when(batchBalanceRepository.findByLocationAndProduct(BACKROOM_LOCATION_ID, PRODUCT_ID))
-                .thenReturn(List.of(
-                        balance(61L, BACKROOM_LOCATION_ID, "5"),
-                        balance(62L, BACKROOM_LOCATION_ID, "5")));
-
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> fulfillmentService.fulfill(requestId, scannedBatch("BR-01"), 8L));
-
-        assertThat(ex.getMessage()).contains("批次");
-        verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
-        assertThat(allocationRepository.findByRequestId(requestId)).isEmpty();
-        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus())
-                .isEqualTo(OrderPickupRequest.Status.PENDING.name());
+    void incompleteDuplicateAndForeignAllocationsCannotConfirmPickup() {
+        Long requestId = prepareMultiBatchRequest();
+        List<Long> ids = allocationRepository.findByOrderItemId(ITEM_ID).stream().map(OrderItemBatchAllocation::getId).toList();
+        for (List<Long> submitted : List.of(List.of(ids.get(0)), List.of(ids.get(0), ids.get(0)), List.of(ids.get(0), 99999L))) {
+            assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, confirmedAllocations(submitted), STAFF_ID))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("完整核对");
+            assertPending(requestId);
+        }
+        assertThat(allocationRepository.findByOrderItemId(ITEM_ID)).allMatch(a -> "RULE_ALLOCATED".equals(a.getEvidenceLevel()));
     }
 
     @Test
-    void locationCodeWithoutAvailableBatchIsRejectedWithoutMove() {
-        Long requestId = seedPendingRequest(null);
-        InventoryLocation backroom = location(BACKROOM_LOCATION_ID, InventoryLocation.LocationType.STORE_BACKROOM.name());
-        backroom.setCode("BR-EMPTY");
-        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(receiptBatchRepository.findByInternalReceiptBatchNo("BR-EMPTY")).thenReturn(Optional.empty());
-        when(locationRepository.findByStoreIdAndCode(STORE_ID, "BR-EMPTY")).thenReturn(Optional.of(backroom));
-        when(batchBalanceRepository.findByLocationAndProduct(BACKROOM_LOCATION_ID, PRODUCT_ID))
-                .thenReturn(List.of(balance(61L, BACKROOM_LOCATION_ID, "0")));
-
-        assertThrows(IllegalArgumentException.class,
-                () -> fulfillmentService.fulfill(requestId, scannedBatch("BR-EMPTY"), 8L));
-
-        verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
-        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus())
-                .isEqualTo(OrderPickupRequest.Status.PENDING.name());
+    void allocationLinkedToAnotherRequestCannotBeConfirmed() {
+        Long requestId = prepareMultiBatchRequest();
+        List<OrderItemBatchAllocation> assigned = allocationRepository.findByOrderItemId(ITEM_ID);
+        assigned.get(1).setPickupRequestId(999L);
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId,
+                confirmedAllocations(assigned.stream().map(OrderItemBatchAllocation::getId).toList()), STAFF_ID))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("请求归属");
+        assertPending(requestId);
     }
 
     @Test
-    void unknownScanCodeIsRejectedWithoutMove() {
-        Long requestId = seedPendingRequest(null);
+    void cancelledRefundedAndPartRefundedOrdersCannotBeHandedOver() {
+        Long requestId = prepareSoldRequest();
+        for (int status : List.of(7, 8, 9)) {
+            Order blocked = order(); blocked.setOrderStatus(status);
+            when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(blocked));
+            assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID))
+                    .isInstanceOf(IllegalStateException.class).hasMessageContaining("取消或退款");
+            assertPending(requestId);
+        }
+    }
+
+    @Test
+    void zeroAmountReturnBlocksPickupEvenIfOrderStillFinished() {
+        Long requestId = prepareSoldRequest();
+        com.agri_system.domain.after_sales.model.AfterSales returned = new com.agri_system.domain.after_sales.model.AfterSales();
+        returned.setOrderId(ORDER_ID);
+        returned.setStatus(com.agri_system.domain.after_sales.model.AfterSales.STATUS_WAIT_REFUND);
+        when(afterSalesRepository.findByOrderId(ORDER_ID)).thenReturn(List.of(returned));
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("售后");
+        assertPending(requestId);
+    }
+
+    @Test
+    void rejectedAfterSalesDoesNotBlockLegitimatePickup() {
+        Long requestId = prepareSoldRequest();
+        com.agri_system.domain.after_sales.model.AfterSales rejected = new com.agri_system.domain.after_sales.model.AfterSales();
+        rejected.setOrderId(ORDER_ID);
+        rejected.setStatus(com.agri_system.domain.after_sales.model.AfterSales.STATUS_REJECTED);
+        when(afterSalesRepository.findByOrderId(ORDER_ID)).thenReturn(List.of(rejected));
+        fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID);
+        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus()).isEqualTo("FULFILLED");
+        verifyNoInteractions(batchBalanceService, batchBalanceRepository);
+    }
+
+    @Test
+    void requestQuantityMismatchCannotConfirmPickup() {
+        Long requestId = prepareMultiBatchRequest();
+        pickupRequestRepository.findById(requestId).orElseThrow().setRequestedBaseQuantity(new BigDecimal("5"));
+        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId,
+                confirmedAllocations(allocationRepository.findByOrderItemId(ITEM_ID).stream().map(OrderItemBatchAllocation::getId).toList()), STAFF_ID))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("数量与实际出库记录不一致");
+        assertPending(requestId);
+    }
+
+    @Test
+    void arbitraryRealInternalBatchLabelCanConfirmPickup() {
+        Long requestId = prepareSoldRequest();
+        when(receiptBatchRepository.findByInternalReceiptBatchNo("B-actual-uuid"))
+                .thenReturn(Optional.of(receiptBatch(BATCH_ID, "B-actual-uuid", "40")));
+        List<OrderItemBatchAllocation> result = fulfillmentService.fulfill(requestId, scannedBatch(" B-actual-uuid "), STAFF_ID);
+        assertThat(result.get(0).getEvidenceLevel()).isEqualTo("SCANNED");
+        verifyNoInteractions(batchBalanceService, batchBalanceRepository);
+    }
+
+    @Test
+    void createRequestLinksEverySoldAllocationAndListShowsTheirActualLocations() {
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
         when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(receiptBatchRepository.findByInternalReceiptBatchNo(SKU_ONLY_EAN)).thenReturn(Optional.empty());
-        when(locationRepository.findByStoreIdAndCode(STORE_ID, SKU_ONLY_EAN)).thenReturn(Optional.empty());
+        when(locationRepository.findById(BACKROOM_LOCATION_ID)).thenReturn(Optional.of(location(BACKROOM_LOCATION_ID, "STORE_BACKROOM")));
+        seedSoldAllocation();
+        when(receiptBatchRepository.findByStore(STORE_ID)).thenReturn(List.of(receiptBatch(BATCH_ID, "B-actual-uuid", "40")));
+        Long requestId = fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID);
+        assertThat(allocationRepository.findByRequestId(requestId)).hasSize(1);
+        when(orderRepository.findByIds(Collections.singleton(ORDER_ID))).thenReturn(List.of(order()));
+        when(productRepository.findByIds(Collections.singleton(PRODUCT_ID))).thenReturn(List.of());
+        InventoryLocation actual = location(BACKROOM_LOCATION_ID, "STORE_BACKROOM"); actual.setName("后仓实际货位");
+        when(locationRepository.findByStoreId(STORE_ID)).thenReturn(List.of(actual));
+        PickupWorkItemVO vo = fulfillmentService.listPickupRequests(STORE_ID, "PENDING").get(0);
+        assertThat(vo.getAllocations()).hasSize(1);
+        assertThat(vo.getAllocations().get(0).getInternalReceiptBatchNo()).isEqualTo("B-actual-uuid");
+        assertThat(vo.getAllocations().get(0).getLocationName()).isEqualTo("后仓实际货位");
+        assertThat(vo.getAllocations().get(0).getAllocatedBaseQuantity()).isEqualByComparingTo("5");
+    }
 
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> fulfillmentService.fulfill(requestId, scannedBatch(SKU_ONLY_EAN), 8L));
+    private PickupFulfillmentCommand confirmedAllocations(List<Long> ids) {
+        PickupFulfillmentCommand command = new PickupFulfillmentCommand();
+        command.setAllocationIds(ids);
+        return command;
+    }
 
-        assertThat(ex.getMessage()).contains("批次");
-        verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
-        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus())
-                .isEqualTo(OrderPickupRequest.Status.PENDING.name());
+    private Long prepareMultiBatchRequest() {
+        Long requestId = prepareSoldRequest();
+        OrderItemBatchAllocation second = new OrderItemBatchAllocation();
+        second.setOrderItemId(ITEM_ID); second.setProductId(PRODUCT_ID); second.setStoreId(STORE_ID);
+        second.setBatchId(62L); second.setLocationId(FLOOR_LOCATION_ID); second.setSourceMovementId(MOVEMENT_ID + 1);
+        second.setAllocatedBaseQuantity(new BigDecimal("7")); second.setEvidenceLevel("RULE_ALLOCATED");
+        second.setPickupRequestId(requestId); allocationRepository.save(second);
+        pickupRequestRepository.findById(requestId).orElseThrow().setRequestedBaseQuantity(new BigDecimal("12"));
+        return requestId;
+    }
+
+    @Test
+    void returnedSaleCannotBeHandedOverEvenWhenOrderAndAfterSalesReadShowOldState() {
+        Long request = prepareSoldRequest();
+        when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(Long.class),
+                org.mockito.ArgumentMatchers.<Object[]>any())).thenReturn(List.of(123L));
+        assertThrows(IllegalStateException.class, () -> fulfillmentService.fulfill(request, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID));
+        assertPending(request);
+    }
+
+    private Long prepareSoldRequest() {
+        Long id = seedPendingRequest(BACKROOM_LOCATION_ID);
+        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        seedSoldAllocation();
+        allocationRepository.findByOrderItemId(ITEM_ID).get(0).setPickupRequestId(id);
+        return id;
+    }
+
+    private void seedSoldAllocation() {
+        seedAllocation("RULE_ALLOCATED");
+        OrderItemBatchAllocation allocation = allocationRepository.findByOrderItemId(ITEM_ID).get(0);
+        allocation.setBatchId(BATCH_ID);
+        allocation.setLocationId(BACKROOM_LOCATION_ID);
+        allocation.setSourceMovementId(MOVEMENT_ID);
+    }
+
+    private void assertPending(Long id) {
+        assertThat(pickupRequestRepository.findById(id).orElseThrow().getStatus()).isEqualTo("PENDING");
+        verifyNoInteractions(batchBalanceService);
     }
 
     @Test
@@ -434,201 +536,6 @@ class PickupFulfillmentServiceTest {
                 () -> fulfillmentService.listPickupRequests(STORE_ID, "DONE"));
 
         assertThat(ex.getMessage()).contains("状态");
-    }
-
-    @Test
-    void batchLabelForDifferentProductIsRejected() {
-        Long requestId = seedPendingRequest(null);
-        InventoryReceiptBatch foreignBatch = receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00");
-        foreignBatch.setProductId(PRODUCT_ID + 1);
-        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(receiptBatchRepository.findByInternalReceiptBatchNo(INTERNAL_BATCH_NO))
-                .thenReturn(Optional.of(foreignBatch));
-
-        assertThrows(IllegalArgumentException.class,
-                () -> fulfillmentService.fulfill(requestId, scannedBatch(INTERNAL_BATCH_NO), 8L));
-
-        verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
-        assertThat(allocationRepository.findByRequestId(requestId)).isEmpty();
-    }
-
-    @Test
-    void explicitBatchAndLocationConfirmationCreatesFulfillmentConfirmedEvidence() {
-        Long requestId = seedPendingRequest(BACKROOM_LOCATION_ID);
-        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(receiptBatchRepository.findById(BATCH_ID))
-                .thenReturn(Optional.of(receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00")));
-        when(locationRepository.findById(BACKROOM_LOCATION_ID))
-                .thenReturn(Optional.of(location(BACKROOM_LOCATION_ID, InventoryLocation.LocationType.STORE_BACKROOM.name())));
-        when(locationRepository.findEnabledByStoreAndType(STORE_ID, InventoryLocation.LocationType.SALES_FLOOR.name()))
-                .thenReturn(Optional.of(location(FLOOR_LOCATION_ID, InventoryLocation.LocationType.SALES_FLOOR.name())));
-        when(batchBalanceService.move(any(BatchBalanceService.MoveRequest.class)))
-                .thenReturn(movement(MOVEMENT_ID));
-
-        List<OrderItemBatchAllocation> fulfilled =
-                fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), 8L);
-
-        assertThat(fulfilled).hasSize(1);
-        OrderItemBatchAllocation allocation = allocationRepository.findByRequestId(requestId).get(0);
-        assertThat(allocation.getEvidenceLevel()).isEqualTo(FULFILLMENT_CONFIRMED.name());
-        assertThat(allocation.getBatchId()).isEqualTo(BATCH_ID);
-        assertThat(allocation.getBatchUnitCost()).isEqualByComparingTo("40.00");
-        assertThat(allocation.getAllocatedCost()).isEqualByComparingTo("200.00");
-        assertThat(allocation.getSourceMovementId()).isEqualTo(MOVEMENT_ID);
-        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus())
-                .isEqualTo(OrderPickupRequest.Status.FULFILLED.name());
-    }
-
-    @Test
-    void fulfillRejectsAlreadyProcessedRequest() {
-        Long requestId = seedPendingRequest(BACKROOM_LOCATION_ID);
-        pickupRequestRepository.findById(requestId).orElseThrow()
-                .setStatus(OrderPickupRequest.Status.FULFILLED.name());
-
-        assertThrows(IllegalStateException.class,
-                () -> fulfillmentService.fulfill(requestId, scannedBatch(INTERNAL_BATCH_NO), 8L));
-
-        verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
-        assertThat(allocationRepository.findByRequestId(requestId)).isEmpty();
-    }
-
-    @Test
-    void createRequestPersistsPendingPickupWithConfiguredSource() {
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
-        when(itemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(batchBalanceService.isBatchLocationEnabled(STORE_ID, PRODUCT_ID)).thenReturn(true);
-        when(locationRepository.findById(BACKROOM_LOCATION_ID))
-                .thenReturn(Optional.of(location(BACKROOM_LOCATION_ID, InventoryLocation.LocationType.STORE_BACKROOM.name())));
-        stubUnitConversion(new BigDecimal("5"));
-
-        Long requestId = fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID);
-
-        assertThat(requestId).isEqualTo(REQUEST_ID);
-        OrderPickupRequest saved = pickupRequestRepository.findById(requestId).orElseThrow();
-        assertThat(saved.getOrderId()).isEqualTo(ORDER_ID);
-        assertThat(saved.getOrderItemId()).isEqualTo(ITEM_ID);
-        assertThat(saved.getProductId()).isEqualTo(PRODUCT_ID);
-        assertThat(saved.getStoreId()).isEqualTo(STORE_ID);
-        assertThat(saved.getRequestedBaseQuantity()).isEqualByComparingTo("5");
-        assertThat(saved.getSourceLocationId()).isEqualTo(BACKROOM_LOCATION_ID);
-        assertThat(saved.getStatus()).isEqualTo(OrderPickupRequest.Status.PENDING.name());
-    }
-
-    @Test
-    void createRequestRejectsNonActivatedSku() {
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
-        when(itemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-
-        assertThrows(IllegalStateException.class,
-                () -> fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID));
-
-        assertThat(pickupRequestRepository.all()).isEmpty();
-        verify(locationRepository, never()).save(any(InventoryLocation.class));
-        verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
-    }
-
-    @Test
-    void createRequestRejectsSecondPendingRequestForSameItem() {
-        Long existingRequestId = seedPendingRequest(BACKROOM_LOCATION_ID);
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
-        when(itemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(batchBalanceService.isBatchLocationEnabled(STORE_ID, PRODUCT_ID)).thenReturn(true);
-
-        IllegalStateException ex = assertThrows(IllegalStateException.class,
-                () -> fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID));
-
-        assertThat(ex.getMessage()).contains("未完成的库房取货请求");
-        assertThat(pickupRequestRepository.all()).hasSize(1);
-        assertThat(pickupRequestRepository.findById(existingRequestId).orElseThrow().getStatus())
-                .isEqualTo(OrderPickupRequest.Status.PENDING.name());
-    }
-
-    @Test
-    void createRequestRejectsRequestWhenItemAlreadyHasFinalEvidence() {
-        seedAllocation(SCANNED.name());
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
-        when(itemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(batchBalanceService.isBatchLocationEnabled(STORE_ID, PRODUCT_ID)).thenReturn(true);
-
-        IllegalStateException ex = assertThrows(IllegalStateException.class,
-                () -> fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID));
-
-        assertThat(ex.getMessage()).contains("最终批次证据");
-        assertThat(pickupRequestRepository.all()).isEmpty();
-    }
-
-    @Test
-    void fulfillRejectsWhenItemAlreadyHasFinalEvidenceAllocation() {
-        Long requestId = seedPendingRequest(BACKROOM_LOCATION_ID);
-        seedAllocation(FULFILLMENT_CONFIRMED.name());
-        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-
-        IllegalStateException ex = assertThrows(IllegalStateException.class,
-                () -> fulfillmentService.fulfill(requestId, scannedBatch(INTERNAL_BATCH_NO), 8L));
-
-        assertThat(ex.getMessage()).contains("最终批次证据");
-        verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
-        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus())
-                .isEqualTo(OrderPickupRequest.Status.PENDING.name());
-        assertThat(allocationRepository.findByOrderItemId(ITEM_ID)).hasSize(1);
-        assertThat(allocationRepository.findByOrderItemId(ITEM_ID).get(0).getEvidenceLevel())
-                .isEqualTo(FULFILLMENT_CONFIRMED.name());
-    }
-
-    @Test
-    void fulfillLocksRequestAndOrderItemRows() {
-        OrderPickupRequestRepository requestRepository = mock(OrderPickupRequestRepository.class);
-        OrderItemRepository orderItemRepository = mock(OrderItemRepository.class);
-        when(requestRepository.findByIdForUpdate(REQUEST_ID)).thenReturn(Optional.of(pendingRequest(null)));
-        when(orderItemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(receiptBatchRepository.findByInternalReceiptBatchNo(INTERNAL_BATCH_NO))
-                .thenReturn(Optional.of(receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00")));
-        when(locationRepository.findEnabledByStoreAndType(STORE_ID, InventoryLocation.LocationType.STORE_BACKROOM.name()))
-                .thenReturn(Optional.of(location(BACKROOM_LOCATION_ID, InventoryLocation.LocationType.STORE_BACKROOM.name())));
-        when(locationRepository.findEnabledByStoreAndType(STORE_ID, InventoryLocation.LocationType.SALES_FLOOR.name()))
-                .thenReturn(Optional.of(location(FLOOR_LOCATION_ID, InventoryLocation.LocationType.SALES_FLOOR.name())));
-        when(batchBalanceService.move(any(BatchBalanceService.MoveRequest.class)))
-                .thenReturn(movement(MOVEMENT_ID));
-        PickupFulfillmentService service = new PickupFulfillmentService(
-                allocationRepository, requestRepository, batchBalanceService, productUnitService,
-                locationRepository, batchBalanceRepository, receiptBatchRepository, orderRepository,
-                orderItemRepository, orderCostAllocationService, productRepository);
-
-        service.fulfill(REQUEST_ID, scannedBatch(INTERNAL_BATCH_NO), 8L);
-
-        InOrder inOrder = inOrder(requestRepository, orderItemRepository, batchBalanceService);
-        inOrder.verify(requestRepository).findByIdForUpdate(REQUEST_ID);
-        inOrder.verify(orderItemRepository).findByIdForUpdate(ITEM_ID);
-        inOrder.verify(batchBalanceService).move(any(BatchBalanceService.MoveRequest.class));
-    }
-
-    @Test
-    void fulfillWithoutSourceLocationAndBackroomFailsWithClearMessage() {
-        Long requestId = seedPendingRequest(null);
-        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(receiptBatchRepository.findByInternalReceiptBatchNo(INTERNAL_BATCH_NO))
-                .thenReturn(Optional.of(receiptBatch(BATCH_ID, INTERNAL_BATCH_NO, "40.00")));
-
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> fulfillmentService.fulfill(requestId, scannedBatch(INTERNAL_BATCH_NO), 8L));
-
-        assertThat(ex.getMessage()).isEqualTo("门店未配置库房货位，无法完成库房取货");
-        verify(batchBalanceService, never()).move(any(BatchBalanceService.MoveRequest.class));
-        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus())
-                .isEqualTo(OrderPickupRequest.Status.PENDING.name());
-    }
-
-    @Test
-    void nonActivatedSkuSaleKeepsLegacyOutboundAndWritesNoEvidence() {
-        stubPosOrderThenSave();
-
-        Long orderId = orderService.createPOSOrder(commandForSkuOnly(), 7L);
-
-        assertThat(orderId).isEqualTo(ORDER_ID);
-        verify(inventoryService).outbound(any(), eq(7L));
-        assertThat(allocationRepository.findByOrderId(orderId)).isEmpty();
-        assertThat(pickupRequestRepository.all()).isEmpty();
-        verifyNoInteractions(productUnitService);
     }
 
     private POSOrderCreateCommand commandForSkuOnly() {
@@ -725,6 +632,7 @@ class PickupFulfillmentServiceTest {
         order.setId(ORDER_ID);
         order.setOrderNo("SO202609120001");
         order.setStoreId(STORE_ID);
+        order.setOrderStatus(6);
         return order;
     }
 
@@ -810,6 +718,11 @@ class PickupFulfillmentServiceTest {
             return rows.stream()
                     .filter(row -> pickupRequestId.equals(row.getPickupRequestId()))
                     .toList();
+        }
+
+        @Override
+        public List<OrderItemBatchAllocation> findByRequestIds(java.util.Collection<Long> requestIds) {
+            return rows.stream().filter(row -> requestIds.contains(row.getPickupRequestId())).toList();
         }
 
         @Override

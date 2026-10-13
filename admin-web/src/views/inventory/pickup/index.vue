@@ -4,7 +4,7 @@
       <div>
         <h1>取货</h1>
         <p class="page-desc">
-          库房取货待办：扫描内部批次标签或货位编码完成取货；商品编码不能用于取货确认。
+          库房取货待办：核对销售时已出库的批次、货位和数量后确认交货。商品编码不能证明批次。
         </p>
       </div>
     </section>
@@ -69,6 +69,15 @@
               {{ row.sourceLocationName || '-' }}
             </template>
           </el-table-column>
+          <el-table-column label="已出库批次" min-width="240">
+            <template #default="{ row }">
+              <div v-for="allocation in row.allocations" :key="allocation.id">
+                {{ allocation.internalReceiptBatchNo || '批次#' + allocation.batchId }} ·
+                {{ allocation.locationName || '货位#' + allocation.locationId }} ·
+                {{ allocation.allocatedBaseQuantity }}（基准）
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column prop="status" label="状态" width="100">
             <template #default="{ row }">
               <el-tag :type="row.status === 'PENDING' ? 'warning' : 'success'" effect="plain">
@@ -113,55 +122,20 @@
         </el-descriptions-item>
       </el-descriptions>
 
-      <el-form label-width="90px" class="pickup-form">
-        <el-form-item label="扫码确认">
-          <el-input
-            v-model="scanCode"
-            placeholder="扫描内部批次标签或货位编码后回车"
-            clearable
-            @keyup.enter="handleScan"
-          >
-            <template #append>
-              <el-button @click="handleScan">解析</el-button>
-            </template>
-          </el-input>
-          <div v-if="scanResult" class="scan-result">
-            <el-tag :type="scanResult.tagType" effect="plain" size="small">
-              {{ scanResult.label }}
-            </el-tag>
-            <span class="scan-result-text">{{ scanResult.text }}</span>
-          </div>
-          <div v-else class="scan-hint">
-            内部批次标签以 {{ BATCH_LABEL_PREFIX }} 开头；货位编码见「货位」页面。
-          </div>
-        </el-form-item>
-
-        <el-form-item label="显式确认">
-          <div class="explicit-confirm">
-            <el-input-number
-              v-model="explicitBatchId"
-              :min="1"
-              :controls="false"
-              placeholder="批次ID"
-              style="width: 160px"
-            />
-            <el-select
-              v-model="explicitLocationId"
-              placeholder="货位"
-              clearable
-              style="width: 220px"
-            >
-              <el-option
-                v-for="loc in locations"
-                :key="loc.id"
-                :label="`${loc.code} ${loc.name || ''}`"
-                :value="loc.id"
-              />
-            </el-select>
-          </div>
-          <div class="scan-hint">
-            无法扫码时，可手动填写批次ID并选择货位，二者需同时提供。
-          </div>
+      <el-alert title="请逐项核对实物批次、货位与基准数量，全部勾选后一次确认交货。" type="info" :closable="false" />
+      <el-checkbox-group v-model="confirmedAllocationIds" class="pickup-form">
+        <div v-for="allocation in currentItem?.allocations || []" :key="allocation.id">
+          <el-checkbox :label="allocation.id">
+            {{ allocation.internalReceiptBatchNo || '批次#' + allocation.batchId }} ·
+            {{ allocation.locationName || '货位#' + allocation.locationId }} ·
+            {{ allocation.allocatedBaseQuantity }}（基准）
+          </el-checkbox>
+        </div>
+      </el-checkbox-group>
+      <el-form v-if="(currentItem?.allocations?.length || 0) === 1" label-width="90px" class="pickup-form">
+        <el-form-item label="单批扫码">
+          <el-input v-model="scanCode" placeholder="扫描真实内部批次标签" clearable />
+          <div class="scan-hint">批次标签由服务端核验；商品条码和货位码不能证明批次。</div>
         </el-form-item>
       </el-form>
 
@@ -218,10 +192,7 @@ import { getStoreList } from '@/api/store'
 import { getInventoryLocations } from '@/api/inventory'
 import { createPickupRequest, fulfillPickupRequest, getPickupWorkItems } from '@/api/order'
 import type { InventoryLocationVO } from '@/types/inventory'
-import type { PickupWorkItemVO } from '@/types/order'
-
-/** 内部批次标签前缀（与后端 INTERNAL-RECEIPT-<收货单号>-<批次号> 约定一致） */
-const BATCH_LABEL_PREFIX = 'INTERNAL-RECEIPT-'
+import type { PickupWorkItemVO, PickupFulfillmentDTO } from '@/types/order'
 
 const stores = ref<any[]>([])
 const storeId = ref<number | undefined>(undefined)
@@ -235,9 +206,7 @@ const fulfillVisible = ref(false)
 const fulfilling = ref(false)
 const currentItem = ref<PickupWorkItemVO | null>(null)
 const scanCode = ref('')
-const scanResult = ref<{ type: 'BATCH' | 'LOCATION' | 'SKU'; label: string; text: string; tagType: 'success' | 'warning' | 'danger' } | null>(null)
-const explicitBatchId = ref<number | undefined>(undefined)
-const explicitLocationId = ref<number | undefined>(undefined)
+const confirmedAllocationIds = ref<number[]>([])
 
 // 登记取货请求
 const createVisible = ref(false)
@@ -245,10 +214,9 @@ const creating = ref(false)
 const createForm = ref<{ orderId?: number; orderItemId?: number; sourceLocationId?: number }>({})
 
 const canSubmit = computed(() => {
-  if (scanResult.value && (scanResult.value.type === 'BATCH' || scanResult.value.type === 'LOCATION')) {
-    return true
-  }
-  return !!explicitBatchId.value && !!explicitLocationId.value
+  const allocations = currentItem.value?.allocations || []
+  return allocations.length > 0 && (confirmedAllocationIds.value.length === allocations.length ||
+    (allocations.length === 1 && !!scanCode.value.trim()))
 })
 
 const canCreate = computed(() => !!createForm.value.orderId && !!createForm.value.orderItemId)
@@ -296,45 +264,6 @@ function handleStoreChange() {
   loadWorkItems()
 }
 
-/**
- * 解析扫码结果：批次标签 / 货位编码 / 商品编码。
- * 商品编码不会打开批次选择，仅提示需要扫描批次或货位。
- */
-function handleScan() {
-  const code = (scanCode.value || '').trim()
-  if (!code) {
-    scanResult.value = null
-    return
-  }
-  if (code.toUpperCase().startsWith(BATCH_LABEL_PREFIX)) {
-    scanResult.value = {
-      type: 'BATCH',
-      label: '批次标签',
-      text: `识别为内部批次标签：${code}`,
-      tagType: 'success'
-    }
-    return
-  }
-  const hit = locations.value.find(
-    (loc) => (loc.code || '').toUpperCase() === code.toUpperCase()
-  )
-  if (hit) {
-    scanResult.value = {
-      type: 'LOCATION',
-      label: '货位编码',
-      text: `识别为货位：${hit.code} ${hit.name || ''}（该货位存在多个可用批次时，请改扫批次标签）`,
-      tagType: 'success'
-    }
-    return
-  }
-  scanResult.value = {
-    type: 'SKU',
-    label: '商品编码',
-    text: '识别为商品编码/条码：不能用于取货确认，请扫描内部批次标签或货位编码。',
-    tagType: 'warning'
-  }
-}
-
 function openFulfillDialog(row: PickupWorkItemVO) {
   currentItem.value = row
   resetFulfill()
@@ -343,21 +272,19 @@ function openFulfillDialog(row: PickupWorkItemVO) {
 
 function resetFulfill() {
   scanCode.value = ''
-  scanResult.value = null
-  explicitBatchId.value = undefined
-  explicitLocationId.value = undefined
+  confirmedAllocationIds.value = []
 }
 
 async function submitFulfill() {
   if (!currentItem.value?.id) return
-  const payload: { scannedCode?: string; batchId?: number; locationId?: number } = {}
-  if (scanResult.value && (scanResult.value.type === 'BATCH' || scanResult.value.type === 'LOCATION')) {
+  const payload: PickupFulfillmentDTO = {}
+  const allocations = currentItem.value.allocations || []
+  if (confirmedAllocationIds.value.length === allocations.length && allocations.length > 0) {
+    payload.allocationIds = [...confirmedAllocationIds.value]
+  } else if (allocations.length === 1 && scanCode.value.trim()) {
     payload.scannedCode = scanCode.value.trim()
-  } else if (explicitBatchId.value && explicitLocationId.value) {
-    payload.batchId = explicitBatchId.value
-    payload.locationId = explicitLocationId.value
   } else {
-    ElMessage.warning('请先扫描或填写批次与货位')
+    ElMessage.warning('请逐项核对全部出库批次')
     return
   }
   fulfilling.value = true

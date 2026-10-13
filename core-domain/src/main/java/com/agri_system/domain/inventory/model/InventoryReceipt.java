@@ -14,6 +14,8 @@ import java.time.LocalDateTime;
 public class InventoryReceipt {
     @Id(keyType = KeyType.Auto)
     private Long id;
+
+    private String requestKey;
     private String receiptNo;
     private Long purchaseOrderId;
     private Long supplierId;

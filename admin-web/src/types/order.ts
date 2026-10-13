@@ -14,6 +14,10 @@ export interface OrderItemSummary {
   id: number
   productId?: number | null
   packageId?: number | null
+  packageGroupNo?: number | null
+  packageName?: string | null
+  packageQuantity?: number | null
+  packageUnitPrice?: number | null
   itemType?: number | null
   productName: string
   quantity: number
@@ -131,6 +135,16 @@ export interface PickupWorkItemVO {
   /** PENDING/FULFILLED */
   status?: string | null
   createdAt?: string | null
+  allocations: PickupAllocationVO[]
+}
+
+export interface PickupAllocationVO {
+  id: number
+  batchId: number
+  internalReceiptBatchNo?: string | null
+  locationId: number
+  locationName?: string | null
+  allocatedBaseQuantity: number
 }
 
 /**
@@ -145,6 +159,7 @@ export interface PickupRequestCreateDTO {
  * 完成库房取货（扫描内部批次标签或显式确认批次与货位）
  */
 export interface PickupFulfillmentDTO {
+  allocationIds?: number[]
   scannedCode?: string | null
   batchId?: number | null
   locationId?: number | null

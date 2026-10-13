@@ -1,175 +1,116 @@
 package com.agri_system.application.productpackage.service;
 
+import com.agri_system.application.product.service.ProductUnitService;
+import com.agri_system.application.productpackage.dto.query.ProductPackageQuery;
+import com.agri_system.application.productpackage.dto.vo.ProductPackageDetailVO;
+import com.agri_system.domain.inventory.repository.InventoryBatchBalanceRepository;
+import com.agri_system.domain.inventory.repository.InventoryRepository;
+import com.agri_system.domain.product.model.Product;
+import com.agri_system.domain.product.model.ProductUnit;
+import com.agri_system.domain.product.repository.ProductRepository;
+import com.agri_system.domain.productpackage.model.ProductPackage;
+import com.agri_system.domain.productpackage.model.ProductPackageItem;
+import com.agri_system.domain.productpackage.repository.ProductPackageItemRepository;
+import com.agri_system.domain.productpackage.repository.ProductPackageRepository;
+import com.mybatisflex.core.paginate.Page;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+/** 调用真实套餐列表服务，检验基准库存、持久化单位及逐套餐故障隔离。 */
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
+class PackageStockCalculationTest {
+    @Mock ProductPackageRepository packages;
+    @Mock ProductPackageItemRepository components;
+    @Mock ProductRepository products;
+    @Mock InventoryRepository legacyInventory;
+    @Mock InventoryBatchBalanceRepository balances;
+    @Mock ProductUnitService units;
+    @InjectMocks ProductPackageApplicationService service;
 
-/**
- * 套餐库存计算单位换算测试
- * 
- * 测试场景：
- * 1. 套餐需求单位 = 商品主单位（无需转换）
- * 2. 套餐需求单位 = 商品辅单位（需要转换）
- * 3. 单位不匹配（兜底处理）
- */
-public class PackageStockCalculationTest {
-    
-    /**
-     * 测试场景1：套餐需求单位 = 商品主单位
-     * 
-     * 商品：农药
-     * - 主单位：箱
-     * - 辅单位：瓶
-     * - 换算比例：20（1箱=20瓶）
-     * - 库存：10箱
-     * 
-     * 套餐需求：2箱（主单位）
-     * 
-     * 预期结果：
-     * - 归一化需求量 = 2箱
-     * - 可组成套数 = 10 / 2 = 5套
-     */
-    @Test
-    public void testMainUnitCalculation() {
-        // 模拟数据
-        BigDecimal inventory = new BigDecimal("10"); // 10箱
-        BigDecimal requiredQuantity = new BigDecimal("2"); // 需要2箱
-        String itemUnit = "箱";
-        String mainUnit = "箱";
-        String auxUnit = "瓶";
-        BigDecimal ratio = new BigDecimal("20");
-        
-        // 计算归一化需求量
-        BigDecimal normalizedRequired = requiredQuantity; // 主单位，无需转换
-        
-        // 计算可组成套数
-        BigDecimal packageCount = inventory.divide(normalizedRequired, 0, RoundingMode.FLOOR);
-        
-        assertEquals(new BigDecimal("5"), packageCount, "主单位计算错误");
+    @BeforeEach void productsAndUnits() {
+        for (long id : List.of(1L, 2L)) {
+            Product product = new Product(); product.setId(id); product.setStatus(1);
+            product.setName("物料" + id); product.setMainUnit("箱"); product.setAuxUnit("瓶");
+            product.setMainToAuxRatio(new BigDecimal("999")); // 旧字段不得影响计算。
+            when(products.findById(id)).thenReturn(Optional.of(product));
+            unit(id, "瓶", "1"); unit(id, "箱", "20"); unit(id, "件", "60");
+        }
+        when(balances.sumAvailableBaseQuantityGroupedByProduct(10L))
+                .thenReturn(Map.of(1L, new BigDecimal("200"), 2L, new BigDecimal("50")));
+        // 历史主单位库存故意不同，新可售套数必须由可用基准库存决定。
+        when(legacyInventory.findInventoryByStoreAndProducts(anyLong(), anyList()))
+                .thenReturn(Map.of(1L, new BigDecimal("999"), 2L, new BigDecimal("999")));
     }
-    
-    /**
-     * 测试场景2：套餐需求单位 = 商品辅单位（修复前会出错的场景）
-     * 
-     * 商品：农药
-     * - 主单位：箱
-     * - 辅单位：瓶
-     * - 换算比例：20（1箱=20瓶）
-     * - 库存：10箱
-     * 
-     * 套餐需求：5瓶（辅单位）
-     * 
-     * 修复前（错误）：
-     * - 归一化需求量 = 5 * 20 = 100箱 ❌
-     * - 可组成套数 = 10 / 100 = 0套 ❌
-     * 
-     * 修复后（正确）：
-     * - 归一化需求量 = 5 / 20 = 0.25箱 ✅
-     * - 可组成套数 = 10 / 0.25 = 40套 ✅
-     */
-    @Test
-    public void testAuxUnitCalculation() {
-        // 模拟数据
-        BigDecimal inventory = new BigDecimal("10"); // 10箱
-        BigDecimal requiredQuantity = new BigDecimal("5"); // 需要5瓶
-        String itemUnit = "瓶";
-        String mainUnit = "箱";
-        String auxUnit = "瓶";
-        BigDecimal ratio = new BigDecimal("20"); // 1箱=20瓶
-        
-        // 计算归一化需求量（辅单位转主单位）
-        BigDecimal normalizedRequired = requiredQuantity.divide(ratio, 6, RoundingMode.HALF_UP);
-        // 5 / 20 = 0.25箱
-        
-        // 计算可组成套数
-        BigDecimal packageCount = inventory.divide(normalizedRequired, 0, RoundingMode.FLOOR);
-        // 10 / 0.25 = 40套
-        
-        assertEquals(new BigDecimal("0.25"), normalizedRequired.setScale(2, RoundingMode.HALF_UP), 
-                    "辅单位转主单位计算错误");
-        assertEquals(new BigDecimal("40"), packageCount, "套餐数量计算错误");
+
+    @Test void mainUnitUsesPersistentBaseCoefficient() {
+        listing(1L, List.of(component(1L, "箱", "2")));
+        assertEquals(new BigDecimal("5"), query().get(0).getStock());
     }
-    
-    /**
-     * 测试场景3：复杂场景 - 多个商品的木桶效应
-     * 
-     * 套餐包含：
-     * - 商品A：需要2箱，库存10箱 → 可组成5套
-     * - 商品B：需要5瓶，库存10箱(=200瓶) → 可组成40套
-     * - 商品C：需要3箱，库存20箱 → 可组成6套
-     * 
-     * 预期结果：min(5, 40, 6) = 5套（木桶原理）
-     */
-    @Test
-    public void testBucketAlgorithm() {
-        // 商品A
-        BigDecimal inventoryA = new BigDecimal("10");
-        BigDecimal requiredA = new BigDecimal("2");
-        BigDecimal countA = inventoryA.divide(requiredA, 0, RoundingMode.FLOOR);
-        
-        // 商品B（辅单位）
-        BigDecimal inventoryB = new BigDecimal("10"); // 10箱
-        BigDecimal requiredB = new BigDecimal("5"); // 5瓶
-        BigDecimal ratioB = new BigDecimal("20"); // 1箱=20瓶
-        BigDecimal normalizedB = requiredB.divide(ratioB, 6, RoundingMode.HALF_UP); // 0.25箱
-        BigDecimal countB = inventoryB.divide(normalizedB, 0, RoundingMode.FLOOR);
-        
-        // 商品C
-        BigDecimal inventoryC = new BigDecimal("20");
-        BigDecimal requiredC = new BigDecimal("3");
-        BigDecimal countC = inventoryC.divide(requiredC, 0, RoundingMode.FLOOR);
-        
-        // 木桶效应：取最小值
-        BigDecimal minCount = countA.min(countB).min(countC);
-        
-        assertEquals(new BigDecimal("5"), countA, "商品A计算错误");
-        assertEquals(new BigDecimal("40"), countB, "商品B计算错误");
-        assertEquals(new BigDecimal("6"), countC, "商品C计算错误");
-        assertEquals(new BigDecimal("5"), minCount, "木桶效应计算错误");
+
+    @Test void auxiliaryUnitUsesSameBaseQuantityWithoutLegacyRatio() {
+        listing(1L, List.of(component(1L, "瓶", "5")));
+        assertEquals(new BigDecimal("40"), query().get(0).getStock());
     }
-    
-    /**
-     * 测试场景4：边界情况 - 库存不足
-     * 
-     * 商品：农药
-     * - 库存：2箱
-     * - 套餐需求：5瓶（= 0.25箱）
-     * 
-     * 预期结果：2 / 0.25 = 8套
-     */
-    @Test
-    public void testLowInventory() {
-        BigDecimal inventory = new BigDecimal("2"); // 2箱
-        BigDecimal required = new BigDecimal("5"); // 5瓶
-        BigDecimal ratio = new BigDecimal("20"); // 1箱=20瓶
-        
-        BigDecimal normalized = required.divide(ratio, 6, RoundingMode.HALF_UP);
-        BigDecimal count = inventory.divide(normalized, 0, RoundingMode.FLOOR);
-        
-        assertEquals(new BigDecimal("8"), count, "低库存计算错误");
+
+    @Test void thirdUnitAndOtherProductsUseMinimumWholePackageCount() {
+        listing(1L, List.of(component(1L, "件", "1"), component(2L, "瓶", "20")));
+        assertEquals(new BigDecimal("2"), query().get(0).getStock());
     }
-    
-    /**
-     * 测试场景5：边界情况 - 库存为0
-     */
-    @Test
-    public void testZeroInventory() {
-        BigDecimal inventory = BigDecimal.ZERO;
-        BigDecimal required = new BigDecimal("5");
-        BigDecimal ratio = new BigDecimal("20");
-        
-        BigDecimal normalized = required.divide(ratio, 6, RoundingMode.HALF_UP);
-        BigDecimal count = inventory.divide(normalized, 0, RoundingMode.FLOOR);
-        
-        assertEquals(BigDecimal.ZERO, count, "零库存计算错误");
+
+    @Test void legacyRepeatedSkuDemandIsAggregatedBeforeDividingStock() {
+        listing(1L, List.of(component(1L, "箱", "1"), component(1L, "瓶", "5")));
+        assertEquals(new BigDecimal("8"), query().get(0).getStock());
+    }
+
+    @Test void unknownUnitOnlyMakesItsPackageUnavailable() {
+        listing(1L, List.of(component(1L, "未知单位", "1")));
+        listing(2L, List.of(component(2L, "瓶", "5")));
+        when(units.requireEnabledUnit(1L, "未知单位", ProductUnitService.UnitOperation.SALE))
+                .thenThrow(new IllegalArgumentException("单位不存在"));
+        assertEquals(List.of(BigDecimal.ZERO, new BigDecimal("10")),
+                query().stream().map(ProductPackageDetailVO::getStock).toList());
+    }
+
+    @Test void fractionalUnitDoesNotRoundUpAvailableStockIntoAnExtraPackage() {
+        unit(1L, "小瓶", "0.0004");
+        when(balances.sumAvailableBaseQuantityGroupedByProduct(10L))
+                .thenReturn(Map.of(1L, new BigDecimal("0.0007")));
+        listing(1L, List.of(component(1L, "小瓶", "1")));
+        assertEquals(BigDecimal.ONE, query().get(0).getStock());
+    }
+
+    private final java.util.ArrayList<ProductPackage> listed = new java.util.ArrayList<>();
+    private void listing(long id, List<ProductPackageItem> items) {
+        ProductPackage pack = new ProductPackage(); pack.setId(id); pack.setName("套餐" + id);
+        pack.setStatus(1); pack.setSuggestedRetailPrice(BigDecimal.TEN); listed.add(pack);
+        Page<ProductPackage> page = new Page<>(1, 10); page.setRecords(listed); page.setTotalRow(listed.size());
+        when(packages.findPage(any(), any(), any(), anyInt(), anyInt())).thenReturn(page);
+        when(components.findItemsByPackageId(id)).thenReturn(items);
+    }
+    private List<ProductPackageDetailVO> query() {
+        ProductPackageQuery query = new ProductPackageQuery(); query.setStoreId(10L);
+        return service.queryPackages(query).getRecords();
+    }
+    private ProductPackageItem component(long id, String name, String quantity) {
+        ProductPackageItem item = new ProductPackageItem(); item.setProductId(id);
+        item.setUnit(name); item.setQuantity(new BigDecimal(quantity)); return item;
+    }
+    private void unit(long id, String name, String coefficient) {
+        ProductUnit unit = new ProductUnit(); unit.setUnitName(name);
+        unit.setBaseQuantityPerUnit(new BigDecimal(coefficient));
+        when(units.requireEnabledUnit(id, name, ProductUnitService.UnitOperation.SALE)).thenReturn(unit);
     }
 }
-
-
-
-
-
-

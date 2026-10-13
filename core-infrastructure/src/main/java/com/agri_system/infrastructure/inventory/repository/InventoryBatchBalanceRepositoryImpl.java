@@ -34,7 +34,7 @@ public class InventoryBatchBalanceRepositoryImpl implements InventoryBatchBalanc
 
     @Override
     public BigDecimal sumBaseQuantityByStoreAndProduct(Long storeId, Long productId) {
-        return mapper.sumBaseQuantityByStoreAndProduct(storeId, productId);
+        return mapper.quantitiesForUpdate(storeId, productId).stream().reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     @Override

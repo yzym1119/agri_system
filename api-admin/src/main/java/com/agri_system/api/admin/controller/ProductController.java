@@ -389,18 +389,18 @@ public class ProductController {
         @ApiResponse(responseCode = "200", description = "报价成功"),
         @ApiResponse(responseCode = "400", description = "参数错误或商品不存在", content = @Content(schema = @Schema(implementation = Map.class)))
     })
-    @SaCheckPermission("product:price:query")
+    @SaCheckPermission(value = {"product:price:query", "pos:order:create"}, mode = cn.dev33.satoken.annotation.SaMode.OR)
     public ResponseEntity<Map<String, Object>> quoteProductPrice(
             @Parameter(description = "商品ID", required = true) @PathVariable Long productId,
             @Parameter(description = "门店ID（可选）") @RequestParam(required = false) Long storeId,
             @Parameter(description = "销售渠道（可选，如 POS/小程序）") @RequestParam(required = false) String channel,
-            @Parameter(description = "客户类型（可选）") @RequestParam(required = false) Integer customerType,
+            @Parameter(description = "客户ID（可选；按客户真实会员有效期报价）") @RequestParam(required = false) Long customerId,
+            @Parameter(description = "客户类型（历史参数，已忽略）") @RequestParam(required = false) Integer customerType,
             @Parameter(description = "VIP等级（可选）") @RequestParam(required = false) Integer vipLevel,
             @Parameter(description = "销售单位（可选，为空表示按商品主单位）") @RequestParam(required = false) String saleUnit,
             @Parameter(description = "业务日期（可选，为空表示今天）") @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDate) {
-        PriceQuote quote = productService.quoteProductPrice(productId, storeId, channel, customerType,
-                vipLevel, saleUnit, businessDate);
+        PriceQuote quote = productService.quoteProductPrice(productId, storeId, channel, customerId, saleUnit, businessDate);
         Map<String, Object> result = new HashMap<>();
         result.put("code", "200");
         result.put("message", "报价成功");

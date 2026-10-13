@@ -3,7 +3,6 @@ import type {
     PurchaseCancelRequest,
     PurchaseCreateRequest,
     PurchaseDetailVO,
-    PurchaseInboundRequest,
     PurchasePageQuery,
     PurchasePageVO,
     PurchaseSubmitRequest,
@@ -55,15 +54,6 @@ export function submitPurchase(data: PurchaseSubmitRequest): Promise<void> {
   })
 }
 
-// 采购入库
-export function inboundPurchase(data: PurchaseInboundRequest): Promise<void> {
-  return request({
-    url: '/api/admin/purchase/inbound',
-    method: 'post',
-    data
-  })
-}
-
 // 取消采购单
 export function cancelPurchase(data: PurchaseCancelRequest): Promise<void> {
   return request({
@@ -84,7 +74,7 @@ export function getPurchaseDetail(orderId: number): Promise<PurchaseDetailVO> {
 /**
  * 采购实际收货（零售事实链 Task9：按批次登记原始单位数量/单价，支持日期未知）
  */
-export function receivePurchase(data: ReceivePurchaseRequest): Promise<{ receiptId: number }> {
+export function receivePurchase(data: ReceivePurchaseRequest): Promise<{ receiptId: number; batches: import('@/types/purchase').ReceiptBatchLabel[] }> {
   return request({
     url: '/api/admin/purchase/receipts',
     method: 'post',

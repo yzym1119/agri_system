@@ -20,9 +20,8 @@ public interface InventoryBatchBalanceMapper extends BaseMapper<InventoryBatchBa
             + "WHERE location_id = #{locationId} AND product_id = #{productId}")
     BigDecimal sumAvailableBaseQuantity(@Param("locationId") Long locationId, @Param("productId") Long productId);
 
-    @Select("SELECT COALESCE(SUM(base_quantity), 0) FROM inventory_batch_balance "
-            + "WHERE store_id = #{storeId} AND product_id = #{productId}")
-    BigDecimal sumBaseQuantityByStoreAndProduct(@Param("storeId") Long storeId, @Param("productId") Long productId);
+    @Select("SELECT base_quantity FROM inventory_batch_balance WHERE store_id=#{storeId} AND product_id=#{productId} ORDER BY id FOR UPDATE")
+    List<BigDecimal> quantitiesForUpdate(@Param("storeId") Long storeId, @Param("productId") Long productId);
 
     @Select("SELECT * FROM inventory_batch_balance WHERE location_id = #{locationId} AND product_id = #{productId} "
             + "ORDER BY batch_id")

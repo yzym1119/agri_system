@@ -70,13 +70,13 @@
             ¥{{ row.suggestedRetailPrice?.toFixed(2) || '0.00' }}
           </template>
         </el-table-column>
-        <el-table-column prop="vipPrice" label="VIP价" width="100" align="right">
+        <el-table-column prop="vipPrice" label="会员价" width="100" align="right">
           <template #default="{ row }">
             <span v-if="row.vipPrice">¥{{ row.vipPrice.toFixed(2) }}</span>
             <span v-else class="text-gray">-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="minPrice" label="最低售价" width="100" align="right">
+        <el-table-column prop="minPrice" label="最低价提醒" width="100" align="right">
           <template #default="{ row }">
             <span v-if="row.minPrice">¥{{ row.minPrice.toFixed(2) }}</span>
             <span v-else class="text-gray">-</span>
@@ -140,7 +140,8 @@
         label-width="120px"
       >
         <!-- 主信息 -->
-        <el-divider content-position="left">主信息</el-divider>
+        <el-divider content-position="left">套餐价格</el-divider>
+        <el-alert title="价格均为元/套，独立维护；物料组成不自动改写套餐价。会员价和最低价填0表示不启用。" type="info" :closable="false" style="margin-bottom: 16px" />
         <el-row :gutter="20">
           <el-col :span="12">
             <el-form-item label="套餐名称" prop="name">
@@ -151,19 +152,18 @@
             <el-form-item label="零售价" prop="suggestedRetailPrice">
               <el-input-number
                 v-model="formData.suggestedRetailPrice"
-                :min="0"
+                :min="0.01"
                 :precision="2"
                 placeholder="请输入零售价"
                 style="width: 100%"
-                @change="handleTotalPriceChange"
               />
-              <span class="form-tip">自动计算或手动输入（手动输入后将暂停自动计算）</span>
+
             </el-form-item>
           </el-col>
         </el-row>
         <el-row :gutter="20">
           <el-col :span="12">
-            <el-form-item label="VIP价" prop="vipPrice">
+            <el-form-item label="会员价" prop="vipPrice">
               <el-input-number
                 v-model="formData.vipPrice"
                 :min="0"
@@ -174,7 +174,7 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="最低售价" prop="minPrice">
+            <el-form-item label="最低价提醒" prop="minPrice">
               <el-input-number
                 v-model="formData.minPrice"
                 :min="0"
@@ -196,8 +196,6 @@
           border
           stripe
           style="width: 100%; margin-top: 10px"
-          show-summary
-          :summary-method="getSummaries"
         >
           <el-table-column type="index" label="序号" width="60" align="center" />
           <el-table-column prop="productName" label="商品名称" min-width="200" show-overflow-tooltip />
@@ -214,7 +212,6 @@
                 :step="1"
                 :precision="0"
                 style="width: 100%"
-                @change="handleQuantityChange($index)"
               />
             </template>
           </el-table-column>
@@ -223,29 +220,10 @@
               <el-select
                 v-model="row.unit"
                 style="width: 100%"
-                @change="handleUnitChange($index)"
               >
-                <el-option
-                  v-if="row.productMainUnit"
-                  :label="row.productMainUnit"
-                  :value="row.productMainUnit"
-                />
-                <el-option
-                  v-if="row.productAuxUnit"
-                  :label="row.productAuxUnit"
-                  :value="row.productAuxUnit"
-                />
+                <el-option v-for="unit in row.saleUnits" :key="unit.unitName"
+                  :label="unit.unitName" :value="unit.unitName" />
               </el-select>
-            </template>
-          </el-table-column>
-          <el-table-column label="单价（元）" width="120" align="right">
-            <template #default="{ row }">
-              ¥{{ (row.currentUnitPrice || 0).toFixed(2) }}
-            </template>
-          </el-table-column>
-          <el-table-column label="小计（元）" width="120" align="right">
-            <template #default="{ row }">
-              ¥{{ (row.subtotal || 0).toFixed(2) }}
             </template>
           </el-table-column>
           <el-table-column label="操作" width="100" align="center">
@@ -288,7 +266,7 @@
 </template>
 
 <script setup lang="ts">
-import {computed, onMounted, reactive, ref, watch} from 'vue'
+import {computed, onMounted, reactive, ref} from 'vue'
 import {ElMessage, ElMessageBox, type FormInstance, type FormRules} from 'element-plus'
 import {Delete, Edit, Plus, Refresh, Search} from '@element-plus/icons-vue'
 import {
@@ -365,9 +343,6 @@ const dialogTitle = computed(() => {
 // 商品选择器
 const productSelectorVisible = ref(false)
 
-// 是否自动计算总价（用户手动修改总价后暂停自动计算）
-const autoCalculateTotal = ref(true)
-
 // 加载套餐列表
 const loadPackageList = async () => {
   loading.value = true
@@ -427,7 +402,7 @@ const handleEdit = async (row: ProductPackageDetailVO) => {
     formData.minPrice = detail.minPrice
     formData.remark = detail.remark || ''
     
-    // 需要获取商品详情来填充价格计算所需的信息
+    // 物料单位使用商品的持久化可销售单位，不计算物料价格
     formData.items = (detail.items || []).map(item => ({
       productId: item.productId,
       productName: item.productName,
@@ -435,13 +410,10 @@ const handleEdit = async (row: ProductPackageDetailVO) => {
       quantity: item.quantity,
       unit: item.unit || '',
       sortOrder: item.sortOrder,
-      productMainUnit: undefined,
-      productAuxUnit: undefined,
-      productMainToAuxRatio: undefined,
-      productSuggestedRetailPrice: undefined
+      saleUnits: []
     })) as ProductPackageItemVO[]
     
-    // 加载商品详情以获取价格信息
+    // 加载物料可销售单位，保留已保存套餐价
     await loadProductDetailsForItems()
     
     dialogVisible.value = true
@@ -452,34 +424,21 @@ const handleEdit = async (row: ProductPackageDetailVO) => {
   }
 }
 
-// 加载商品详情（用于编辑时获取价格信息）
+// 加载物料可销售单位，不能覆盖套餐独立定价
 const loadProductDetailsForItems = async () => {
   const failedProducts: string[] = []
   await Promise.allSettled(formData.items.map(async item => {
     try {
       const productDetail = await getProductDetail(item.productId)
-      item.productMainUnit = productDetail.mainUnit
-      item.productAuxUnit = productDetail.auxUnit || undefined
-      item.productMainToAuxRatio = productDetail.mainToAuxRatio || undefined
-      item.productSuggestedRetailPrice = productDetail.suggestedRetailPrice || 0
-      updateItemPrice(item)
+      item.saleUnits = productDetail.units?.filter(unit => unit.status === 1 && unit.allowSale === 1) || []
     } catch (error) {
       console.error(`加载商品 ${item.productId} 详情失败:`, error)
       failedProducts.push(item.productName || `商品#${item.productId}`)
     }
   }))
-  // 更新总价
-  updateAllPrices()
-
   if (failedProducts.length > 0) {
-    ElMessage.warning(`部分商品详情加载失败，价格可能不完整：${failedProducts.join('、')}`)
+    ElMessage.warning(`部分商品详情加载失败，单位可能不完整：${failedProducts.join('、')}`)
   }
-}
-
-// 总价手动修改
-const handleTotalPriceChange = () => {
-  // 用户手动修改总价后，暂停自动计算
-  autoCalculateTotal.value = false
 }
 
 // 删除
@@ -520,86 +479,26 @@ const handleAddItem = () => {
   productSelectorVisible.value = true
 }
 
-// 计算当前单位单价
-const calculateUnitPrice = (item: ProductPackageItemVO): number => {
-  if (!item.productSuggestedRetailPrice) return 0
-  
-  // 如果选择的是辅单位（最小单位），直接返回商品零售价
-  if (item.unit === item.productAuxUnit) {
-    return item.productSuggestedRetailPrice
-  }
-  
-  // 如果选择的是主单位，需要乘以换算比例
-  if (item.unit === item.productMainUnit && item.productMainToAuxRatio) {
-    return item.productSuggestedRetailPrice * item.productMainToAuxRatio
-  }
-  
-  // 默认返回商品零售价
-  return item.productSuggestedRetailPrice
-}
-
-// 计算小计
-const calculateSubtotal = (item: ProductPackageItemVO): number => {
-  return (item.currentUnitPrice || 0) * (item.quantity || 0)
-}
-
-// 计算总价
-const calculateTotalPrice = (): number => {
-  return formData.items.reduce((sum, item) => {
-    return sum + (item.subtotal || 0)
-  }, 0)
-}
-
-// 更新明细项的价格
-const updateItemPrice = (item: ProductPackageItemVO) => {
-  item.currentUnitPrice = calculateUnitPrice(item)
-  item.subtotal = calculateSubtotal(item)
-}
-
-// 更新所有明细价格并计算总价
-const updateAllPrices = () => {
-  formData.items.forEach(item => {
-    updateItemPrice(item)
-  })
-  
-  // 自动计算总价
-  if (autoCalculateTotal.value) {
-    formData.suggestedRetailPrice = calculateTotalPrice()
-  }
-}
-
 // 商品选择确认
 const handleProductSelect = (products: ProductDetailVO[]) => {
   products.forEach(product => {
     // 检查是否已存在
     const exists = formData.items.find(item => item.productId === product.id)
     if (!exists) {
-      // 优先使用辅单位，如果没有辅单位则使用主单位
-      const defaultUnit = product.auxUnit || product.mainUnit
-      
-      const newItem: ProductPackageItemVO = {
-        productId: product.id,
-        productName: product.name,
-        productSpecification: product.specification || '',
-        quantity: 1,
-        unit: defaultUnit,
-        sortOrder: formData.items.length,
-        // 保存商品详细信息用于价格计算
-        productMainUnit: product.mainUnit,
-        productAuxUnit: product.auxUnit || undefined,
-        productMainToAuxRatio: product.mainToAuxRatio || undefined,
-        productSuggestedRetailPrice: product.suggestedRetailPrice || 0
+      const saleUnits = product.units?.filter(unit => unit.status === 1 && unit.allowSale === 1) || []
+      const defaultUnit = saleUnits.find(unit => unit.isBaseUnit === 1) || saleUnits[0]
+      if (!defaultUnit) {
+        ElMessage.warning(`${product.name}未配置可销售单位，不能加入套餐`)
+        return
       }
-      
-      // 计算价格
-      updateItemPrice(newItem)
-      
+      const newItem: ProductPackageItemVO = {
+        productId: product.id, productName: product.name,
+        productSpecification: product.specification || '', quantity: 1,
+        unit: defaultUnit.unitName, sortOrder: formData.items.length, saleUnits
+      }
       formData.items.push(newItem)
     }
   })
-  
-  // 更新总价
-  updateAllPrices()
 }
 
 // 移除商品
@@ -609,47 +508,6 @@ const handleRemoveItem = (index: number) => {
   formData.items.forEach((item, idx) => {
     item.sortOrder = idx
   })
-  // 更新总价
-  updateAllPrices()
-}
-
-// 数量改变
-const handleQuantityChange = (index: number) => {
-  const item = formData.items[index]
-  if (item) {
-    updateItemPrice(item)
-    updateAllPrices()
-  }
-}
-
-// 单位改变
-const handleUnitChange = (index: number) => {
-  const item = formData.items[index]
-  if (item) {
-    updateItemPrice(item)
-    updateAllPrices()
-  }
-}
-
-// 表格合计行
-const getSummaries = (param: any) => {
-  const { columns } = param
-  const sums: string[] = []
-  const total = calculateTotalPrice()
-  
-  columns.forEach((column: any, index: number) => {
-    if (index === 0) {
-      sums[index] = '合计'
-      return
-    }
-    // 根据列的 label 判断是否为小计列
-    if (column.label === '小计（元）') {
-      sums[index] = `¥${total.toFixed(2)}`
-    } else {
-      sums[index] = ''
-    }
-  })
-  return sums
 }
 
 // 提交表单
@@ -720,7 +578,6 @@ const resetForm = () => {
   formData.minPrice = undefined
   formData.items = []
   formData.remark = ''
-  autoCalculateTotal.value = true
 }
 
 // 对话框关闭
@@ -751,17 +608,6 @@ const getPackageItemsTooltip = (row: ProductPackageDetailVO): string => {
   }).join('\n')
   return `套餐明细：\n${itemsText}`
 }
-
-// 监听明细变化，自动计算总价
-watch(
-  () => formData.items,
-  () => {
-    if (autoCalculateTotal.value) {
-      updateAllPrices()
-    }
-  },
-  { deep: true }
-)
 
 // 初始化
 onMounted(() => {

@@ -12,7 +12,7 @@ import java.math.BigDecimal;
 @Schema(description = "支付明细")
 public class PaymentDetailDTO {
 
-    @Schema(description = "支付方式代码（1=现金,2=微信,3=支付宝,4=余额,6=赊销,10=混合；余额会由后端自动拆分为本金余额/专用金流水）", example = "1")
+    @Schema(description = "每笔支付方式（1=现金,2=微信,3=支付宝,4=余额,6=赊销；混合为整单方式，余额由后端拆分本金/专用金流水）", example = "1")
     private Integer paymentType;
 
     @Schema(description = "该方式支付的金额", example = "100.00")

@@ -73,8 +73,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class InventoryApplicationService {
     
-    private final InventoryDomainService domainService;
-    private final InventoryBatchRepository batchRepository;
+    private final InventoryLedgerService ledger;
     private final InventoryRepository inventoryRepository;
     private final InventoryTransactionRepository transactionRepository;
     private final InventoryTransferOrderRepository transferOrderRepository;
@@ -144,22 +143,15 @@ public class InventoryApplicationService {
         } catch (RuntimeException exception) {
             throw new IllegalArgumentException("移动用途无效");
         }
+        if (purpose == BatchBalanceService.MovementPurpose.SALE || purpose == BatchBalanceService.MovementPurpose.RECEIPT
+                || purpose == BatchBalanceService.MovementPurpose.RETURN || purpose == BatchBalanceService.MovementPurpose.TRANSFER) {
+            throw new IllegalArgumentException("销售、收货、退货和跨店调拨必须通过对应业务单据，不能手工创建移动");
+        }
         ProductUnitService.UnitOperation operation = purpose == BatchBalanceService.MovementPurpose.TRANSFER
                 ? ProductUnitService.UnitOperation.TRANSFER : ProductUnitService.UnitOperation.INVENTORY;
         var unit = productUnitService.requireEnabledUnit(batch.getProductId(), command.getOriginalUnit(), operation);
         UnitConversionSnapshot converted = productUnitService.toBaseQuantity(
                 batch.getProductId(), command.getOriginalUnit(), command.getOriginalQuantity());
-        if (purpose == BatchBalanceService.MovementPurpose.TRANSFER) {
-            // 跨店调拨必须走 transfer 拆成同 transferId 的出/入两条事实,禁止外部直接单边 move(Critical 1)
-            if (command.getDestinationBatchId() == null) {
-                throw new IllegalArgumentException("跨店调拨必须提供目的门店已收货批次destinationBatchId");
-            }
-            return batchBalanceService.transfer(new BatchBalanceService.TransferRequest(
-                    batch.getId(), command.getDestinationBatchId(), command.getFromLocationId(), command.getToLocationId(),
-                    command.getTransferId(), unit.getId(), converted.unitName(), converted.originalQuantity(),
-                    converted.baseQuantity(), command.getReferenceType(), command.getReferenceId(), createdBy,
-                    command.getRemark())).outbound();
-        }
         return batchBalanceService.move(new BatchBalanceService.MoveRequest(
                 batch.getId(), command.getFromLocationId(), command.getToLocationId(), purpose,
                 command.getTransferId(), unit.getId(), converted.unitName(), converted.originalQuantity(),
@@ -177,13 +169,7 @@ public class InventoryApplicationService {
         }
     }
 
-    /** 已切换到批次货位余额模式的 SKU 禁止走 legacy 路径,避免快照双写与批次余额背离(Critical 2 安全闸门)。 */
-    private void assertNotCutOver(Long storeId, Long productId, String legacyOperation) {
-        if (batchBalanceService.isBatchLocationEnabled(storeId, productId)) {
-            throw new IllegalArgumentException(
-                    "该SKU已切换到批次货位余额模式,禁止走传统" + legacyOperation + "路径,请使用新单位链路");
-        }
-    }
+
     
     /**
      * 入库
@@ -194,33 +180,7 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long inbound(InventoryInCommand command, Long createdBy) {
-        assertNotCutOver(command.getStoreId(), command.getProductId(), "入库");
-        // 校验商品是否存在并获取单位
-        Product product = productRepository.findById(command.getProductId())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        InventoryErrorCode.PRODUCT_NOT_FOUND + ": 商品不存在"));
-        
-        // 获取单位（优先使用主单位）
-        String unit = product.getMainUnit();
-        if (unit == null || unit.trim().isEmpty()) {
-            throw new IllegalArgumentException("商品单位信息不完整");
-        }
-        
-        // 调用领域服务执行入库
-        return domainService.inbound(
-                command.getStoreId(),
-                command.getProductId(),
-                command.getBatchNo(),
-                command.getQuantity(),
-                command.getCostPrice(),
-                command.getProductionDate(),
-                command.getExpireDate(),
-                command.getSourceType(),
-                command.getSourceId(),
-                command.getSourceLineNo(),
-                unit,
-                createdBy
-        );
+        return ledger.inbound(command, createdBy);
     }
     
     /**
@@ -232,87 +192,14 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public List<BatchDetailVO> outbound(InventoryOutCommand command, Long createdBy) {
-        assertNotCutOver(command.getStoreId(), command.getProductId(), "出库");
-        // 1. 校验商品是否存在并获取单位信息
-        Product product = productRepository.findById(command.getProductId())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        InventoryErrorCode.PRODUCT_NOT_FOUND + ": 商品不存在"));
-        
-        String mainUnit = product.getMainUnit();
-        String auxUnit = product.getAuxUnit();
-        BigDecimal mainToAuxRatio = product.getMainToAuxRatio();
-        
-        if (mainUnit == null || mainUnit.trim().isEmpty()) {
-            throw new IllegalArgumentException("商品主单位信息不完整");
-        }
-        
-        // 2. 单位归一化：将业务单位转换为库存主单位
-        BigDecimal deductMainQty; // 最终要扣减的主单位数量
-        String originalUnit = command.getUnit(); // 原始单位（可能为空，表示使用主单位）
-        BigDecimal originalQuantity = command.getQuantity(); // 原始数量
-        
-        if (originalUnit != null && !originalUnit.trim().isEmpty() 
-                && auxUnit != null && auxUnit.equals(originalUnit) 
-                && mainToAuxRatio != null && mainToAuxRatio.compareTo(BigDecimal.ONE) > 0) {
-            // 场景：按辅单位销售（如卖 1 瓶，1箱=3瓶）
-            // 换算公式：主单位数量 = 辅单位数量 / ratio
-            deductMainQty = originalQuantity.divide(mainToAuxRatio, 8, RoundingMode.HALF_UP);
-        } else {
-            // 场景：按主单位销售，或无换算 -> 直接使用
-            deductMainQty = originalQuantity;
-            // 如果未指定单位，默认使用主单位
-            if (originalUnit == null || originalUnit.trim().isEmpty()) {
-                originalUnit = mainUnit;
-            }
-        }
-        
-        // 3. 确定流水类型（transactionType）
-        // 如果 referenceType 是 "ORDER"，根据订单类型确定 transactionType
-        Integer transactionType = InventoryTransactionType.POS_SALES.getCode(); // 默认 POS 销售
-        if ("ORDER".equalsIgnoreCase(command.getReferenceType()) && command.getReferenceId() != null) {
-            // 查询订单以确定类型
-            var orderOpt = orderRepository.findById(command.getReferenceId());
-            if (orderOpt.isPresent()) {
-                var order = orderOpt.get();
-                // orderType: 1-线下POS，2-小程序自提，3-小程序配送
-                // transactionType: 2-POS_SALES, 3-ONLINE_SALES
-                if (order.getOrderType() != null && order.getOrderType() == 1) {
-                    transactionType = InventoryTransactionType.POS_SALES.getCode();
-                } else if (order.getOrderType() != null && (order.getOrderType() == 2 || order.getOrderType() == 3)) {
-                    transactionType = InventoryTransactionType.ONLINE_SALES.getCode();
-                }
-            }
-        }
-        
-        // 4. 调用领域服务执行出库（传入归一化的主单位数量）
-        List<InventoryDomainService.BatchDeductionDetail> deductionDetails = 
-                domainService.outbound(
-                        command.getStoreId(),
-                        command.getProductId(),
-                        deductMainQty, // 归一化的主单位数量
-                        mainUnit, // 主单位（用于流水记录）
-                        originalUnit, // 原始单位（用于审计）
-                        originalQuantity, // 原始数量（用于审计）
-                        createdBy,
-                        transactionType,
-                        command.getReferenceType(),
-                        command.getReferenceId()
-                );
-        
-        // 5. 转换为VO
-        return deductionDetails.stream()
-                .map(detail -> {
-                    BatchDetailVO vo = new BatchDetailVO();
-                    vo.setId(detail.getBatchId());
-                    vo.setBatchNo(detail.getBatchNo());
-                    vo.setExpireDate(detail.getExpireDate());
-                    vo.setCostPrice(detail.getCostPrice());
-                    vo.setQuantity(detail.getQuantity());
-                    return vo;
-                })
-                .collect(Collectors.toList());
+        return ledger.outbound(command, createdBy);
     }
     
+    @Transactional(rollbackFor = Exception.class)
+    public void lockProducts(Long storeId, List<Long> productIds) {
+        ledger.lockProducts(storeId, productIds);
+    }
+
     /**
      * 调拨
      * 
@@ -322,8 +209,6 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public InventoryDomainService.TransferDetail transfer(InventoryTransferCommand command, Long createdBy) {
-        assertNotCutOver(command.getFromStoreId(), command.getProductId(), "调拨");
-        assertNotCutOver(command.getToStoreId(), command.getProductId(), "调拨");
         if (Objects.equals(command.getFromStoreId(), command.getToStoreId())) {
             throw new IllegalArgumentException(InventoryErrorCode.TARGET_STORE_UNAVAILABLE + ": 调出门店和调入门店不能相同");
         }
@@ -341,13 +226,15 @@ public class InventoryApplicationService {
                         InventoryErrorCode.PRODUCT_NOT_FOUND + ": 商品不存在"));
         
         // 获取单位（优先使用主单位）
-        String unit = product.getMainUnit();
+        String unit = StringUtils.hasText(command.getUnit()) ? command.getUnit() : product.getMainUnit();
         if (unit == null || unit.trim().isEmpty()) {
             throw new IllegalArgumentException("商品单位信息不完整");
         }
 
         LocalDateTime now = LocalDateTime.now();
         InventoryTransferOrder order = new InventoryTransferOrder();
+        if (!StringUtils.hasText(command.getRequestKey())) throw new IllegalArgumentException("调拨请求标识不能为空");
+        order.setRequestKey(command.getRequestKey());
         order.setTransferNo(generateTransferNo(now.toLocalDate()));
         order.setFromStoreId(command.getFromStoreId());
         order.setToStoreId(command.getToStoreId());
@@ -362,7 +249,7 @@ public class InventoryApplicationService {
         order.setUpdatedBy(createdBy);
         transferOrderRepository.save(order);
 
-        InventoryDomainService.TransferDetail transferDetail = domainService.transfer(
+        InventoryDomainService.TransferDetail transferDetail = ledger.transfer(
                 command.getFromStoreId(),
                 command.getToStoreId(),
                 command.getProductId(),
@@ -376,8 +263,8 @@ public class InventoryApplicationService {
         for (InventoryDomainService.TransferBatchDetail batchDetail : transferDetail.getTransferBatchDetails()) {
             InventoryTransferOrderDetail detailRecord = new InventoryTransferOrderDetail();
             detailRecord.setTransferId(order.getId());
-            detailRecord.setFromBatchId(batchDetail.getFromBatchId());
-            detailRecord.setToBatchId(batchDetail.getToBatchId());
+            detailRecord.setFromReceiptBatchId(batchDetail.getFromBatchId());
+            detailRecord.setToReceiptBatchId(batchDetail.getToBatchId());
             detailRecord.setQuantity(batchDetail.getQuantity());
             detailRecord.setCostPrice(batchDetail.getCostPrice());
             detailRecord.setCreatedAt(now);
@@ -520,20 +407,9 @@ public class InventoryApplicationService {
     public InventoryDetailVO getInventoryDetail(Long storeId, Long productId) {
         // 查询库存快照
         Inventory inventory = inventoryRepository.findByStoreAndProduct(storeId, productId)
-                .orElseGet(() -> {
-                    // 如果快照不存在，创建并同步
-                    // 已切换 SKU 的快照由新链投影(从批次货位余额聚合)维护,禁止用 legacy inventory_batch 惰性物化,
-                    // 否则会写出与新链背离的快照(Critical 2 闸门补全:读路径的惰性写入同样受守卫)
-                    if (!batchBalanceService.isBatchLocationEnabled(storeId, productId)) {
-                        domainService.refreshTotalStock(storeId, productId);
-                    }
-                    return inventoryRepository.findByStoreAndProduct(storeId, productId)
-                            .orElse(new Inventory());
-                });
-        
-        // 查询批次列表
-        List<InventoryBatch> batches = batchRepository.findActiveBatches(storeId, productId);
-        
+                .orElseGet(() -> { Inventory empty = new Inventory(); empty.setQuantity(BigDecimal.ZERO); return empty; });
+        List<BatchDetailVO> batches = ledger.batchViews(storeId, productId);
+
         // 查询门店和商品信息
         Store store = storeRepository.findById(storeId).orElse(null);
         Product product = productRepository.findById(productId).orElse(null);
@@ -551,9 +427,7 @@ public class InventoryApplicationService {
             vo.setProductName(product.getName());
             vo.setUnit(product.getMainUnit());
         }
-        vo.setBatches(batches.stream()
-                .map(this::convertToBatchVO)
-                .collect(Collectors.toList()));
+        vo.setBatches(batches);
         
         return vo;
     }
@@ -580,10 +454,7 @@ public class InventoryApplicationService {
      * @return 批次详情
      */
     public BatchDetailVO getBatchDetail(Long batchId) {
-        InventoryBatch batch = batchRepository.findById(batchId)
-                .orElseThrow(() -> new IllegalArgumentException("批次不存在"));
-        
-        return convertToBatchVO(batch);
+        return ledger.batchView(batchId);
     }
     
     /**
@@ -594,33 +465,7 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void adjust(InventoryAdjustCommand command, Long createdBy) {
-        assertNotCutOver(command.getStoreId(), command.getProductId(), "盘点");
-        // 校验商品是否存在并获取单位
-        Product product = productRepository.findById(command.getProductId())
-                .orElseThrow(() -> new IllegalArgumentException(
-                        InventoryErrorCode.PRODUCT_NOT_FOUND + ": 商品不存在"));
-        
-        // 获取单位（优先使用主单位）
-        String unit = product.getMainUnit();
-        if (unit == null || unit.trim().isEmpty()) {
-            throw new IllegalArgumentException("商品单位信息不完整");
-        }
-        
-        // 确定流水类型：1-盘盈，2-盘亏
-        Integer transactionType = command.getType() == 1 
-                ? InventoryTransactionType.ADJUSTMENT_IN.getCode()
-                : InventoryTransactionType.ADJUSTMENT_OUT.getCode();
-        
-        // 调用领域服务执行调整
-        domainService.adjust(
-                command.getStoreId(),
-                command.getProductId(),
-                command.getQuantityDiff(),
-                transactionType,
-                unit,
-                createdBy,
-                command.getRemark()
-        );
+        ledger.adjust(command, createdBy);
     }
     
     /**
@@ -656,24 +501,6 @@ public class InventoryApplicationService {
     }
     
     // ==================== 私有方法：转换 ====================
-    
-    private BatchDetailVO convertToBatchVO(InventoryBatch batch) {
-        BatchDetailVO vo = new BatchDetailVO();
-        vo.setId(batch.getId());
-        vo.setStoreId(batch.getStoreId());
-        vo.setProductId(batch.getProductId());
-        vo.setBatchNo(batch.getBatchNo());
-        vo.setProductionDate(batch.getProductionDate());
-        vo.setExpireDate(batch.getExpireDate());
-        vo.setQuantity(batch.getQuantity());
-        vo.setCostPrice(batch.getCostPrice());
-        vo.setIsActive(batch.getIsActive());
-        vo.setCreatedAt(batch.getCreatedAt());
-        vo.setUpdatedAt(batch.getUpdatedAt());
-        vo.setIsExpired(batch.isExpired());
-        vo.setIsExpiringSoon(batch.isExpiringSoon());
-        return vo;
-    }
     
     private InventoryTransactionVO convertToTransactionVO(InventoryTransaction transaction) {
         InventoryTransactionVO vo = new InventoryTransactionVO();

@@ -37,6 +37,9 @@ public class InventoryOutCommand {
     
     @Schema(description = "关联ID", example = "123")
     private Long referenceId;
+
+    @Schema(description = "关联订单明细ID，销售出库必填")
+    private Long referenceLineId;
     
     @Schema(description = "备注", example = "销售出库")
     private String remark;

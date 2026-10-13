@@ -32,6 +32,8 @@ public class InventoryTransaction {
     
     /** 批次ID（关联inventory_batch表） */
     private Long batchId;
+
+    private Long receiptBatchId;
     
     /** 流水类型：1-入库，2-出库，3-调拨出，4-调拨入，5-调整，6-销售，7-退货 */
     private Integer transactionType;

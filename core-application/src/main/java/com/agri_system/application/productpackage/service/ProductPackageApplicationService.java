@@ -7,11 +7,13 @@ import com.agri_system.application.productpackage.dto.query.ProductPackageQuery;
 import com.agri_system.application.productpackage.dto.vo.ProductPackageDetailVO;
 import com.agri_system.application.productpackage.dto.vo.ProductPackageItemVO;
 import com.agri_system.application.productpackage.exception.PackageErrorCode;
-import com.agri_system.domain.inventory.repository.InventoryRepository;
+import com.agri_system.application.product.service.ProductUnitService;
+import com.agri_system.domain.inventory.repository.InventoryBatchBalanceRepository;
 import com.agri_system.domain.order.repository.OrderItemRepository;
 import com.agri_system.domain.performance.model.CommissionRule;
 import com.agri_system.domain.performance.repository.CommissionRuleRepository;
 import com.agri_system.domain.product.model.Product;
+import com.agri_system.domain.product.model.ProductUnit;
 import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.productpackage.model.ProductPackage;
 import com.agri_system.domain.productpackage.model.ProductPackageItem;
@@ -28,6 +30,7 @@ import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashMap;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -45,7 +48,8 @@ public class ProductPackageApplicationService {
     private final ProductPackageItemRepository itemRepository;
     private final ProductRepository productRepository;
     private final ProductPackageDomainService domainService;
-    private final InventoryRepository inventoryRepository;
+    private final InventoryBatchBalanceRepository balanceRepository;
+    private final ProductUnitService productUnitService;
     private final OrderItemRepository orderItemRepository;
     private final CommissionRuleRepository commissionRuleRepository;
     
@@ -56,6 +60,7 @@ public class ProductPackageApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long createPackage(ProductPackageCreateCommand command) {
+        PackagePricingService.validatePrices(command.getSuggestedRetailPrice(), command.getVipPrice(), command.getMinPrice());
         // 生成套餐编码
         String code = generateUniqueCode();
         
@@ -69,7 +74,7 @@ public class ProductPackageApplicationService {
         List<ProductPackageItem> items = convertToItems(command.getItems(), null);
         
         // 校验明细（包含重复商品校验、商品存在性校验、数量校验）
-        domainService.validatePackageItems(items);
+        validateMaterials(items);
         
         // 创建套餐实体
         ProductPackage productPackage = new ProductPackage();
@@ -100,18 +105,22 @@ public class ProductPackageApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void updatePackage(ProductPackageUpdateCommand command) {
-        ProductPackage productPackage = packageRepository.findById(command.getId())
+        ProductPackage productPackage = packageRepository.findByIdForUpdate(command.getId())
                 .orElseThrow(() -> new IllegalArgumentException(PackageErrorCode.PACKAGE_NOT_FOUND + ": 套餐不存在"));
         
         if (productPackage.isDeleted()) {
             throw new IllegalStateException("已删除的套餐不能修改");
+        }
+        PackagePricingService.validatePrices(command.getSuggestedRetailPrice(), command.getVipPrice(), command.getMinPrice());
+        if (productPackage.isOnline() && command.getSuggestedRetailPrice().signum() <= 0) {
+            throw new IllegalArgumentException("上架套餐必须有大于0的零售价（元/套）");
         }
         
         // 转换明细DTO为实体
         List<ProductPackageItem> newItems = convertToItems(command.getItems(), command.getId());
         
         // 校验明细
-        domainService.validatePackageItems(newItems);
+        validateMaterials(newItems);
         
         // 更新套餐主信息
         productPackage.setName(command.getName());
@@ -234,10 +243,17 @@ public class ProductPackageApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void updateStatus(Long id, Integer status) {
-        ProductPackage productPackage = packageRepository.findById(id)
+        ProductPackage productPackage = packageRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new IllegalArgumentException(PackageErrorCode.PACKAGE_NOT_FOUND + ": 套餐不存在"));
         
         domainService.validateStatusChange(productPackage, status);
+        if (Integer.valueOf(1).equals(status)) {
+            PackagePricingService.validatePrices(productPackage.getSuggestedRetailPrice(), productPackage.getVipPrice(), productPackage.getMinPrice());
+            if (productPackage.getSuggestedRetailPrice().signum() <= 0) {
+                throw new IllegalArgumentException("上架套餐必须有大于0的零售价（元/套）");
+            }
+            validateMaterials(itemRepository.findItemsByPackageId(id));
+        }
         
         packageRepository.updateStatus(id, status);
     }
@@ -286,8 +302,12 @@ public class ProductPackageApplicationService {
      * 转换明细DTO为实体
      */
     private List<ProductPackageItem> convertToItems(List<PackageItemDTO> itemDTOs, Long packageId) {
+        if (itemDTOs == null || itemDTOs.isEmpty()) {
+            throw new IllegalArgumentException(PackageErrorCode.PACKAGE_MUST_HAVE_ITEMS + ": 套餐必须至少包含一个商品");
+        }
         return itemDTOs.stream()
                 .map(dto -> {
+                    if (dto == null) throw new IllegalArgumentException("套餐物料不能为空");
                     ProductPackageItem item = new ProductPackageItem();
                     item.setPackageId(packageId);
                     item.setProductId(dto.getProductId());
@@ -346,124 +366,55 @@ public class ProductPackageApplicationService {
                 })
                 .collect(Collectors.toList());
     }
+
+    /** 档案、配置替换与上架共用当前商品和持久化销售单位校验。 */
+    private void validateMaterials(List<ProductPackageItem> items) {
+        domainService.validatePackageItems(items);
+        for (ProductPackageItem item : items) {
+            BigDecimal quantity = item.getQuantity();
+            if (quantity == null || quantity.signum() <= 0 || quantity.stripTrailingZeros().scale() > 4
+                    || quantity.compareTo(new BigDecimal("999999.9999")) > 0) {
+                throw new IllegalArgumentException("套餐物料数量必须大于0、最多四位小数且在存储范围内");
+            }
+            ProductUnit unit = productUnitService.requireEnabledUnit(item.getProductId(), item.getUnit(),
+                    ProductUnitService.UnitOperation.SALE);
+            item.setUnit(unit.getUnitName());
+        }
+    }
     
-    /**
-     * 计算套餐库存（木桶算法 + 主辅单位归一化）
-     * 
-     * 算法说明：
-     * 1. 获取所有子商品的库存（主单位）和商品信息（主辅单位、换算比例）
-     * 2. 对每个套餐，遍历其子商品：
-     *    a. 将套餐需求量归一化为主单位（处理主辅单位换算）
-     *    b. 计算该商品能组成多少套：floor(库存 / 归一化需求量)
-     *    c. 取所有子商品的最小值（木桶原理）
-     * 3. 将计算结果设置为套餐库存
-     * 
-     * 单位换算规则：
-     * - 情况A：套餐需求单位 = 商品主单位 → 无需转换
-     * - 情况B：套餐需求单位 = 商品辅单位 → 需求量 / 换算比例
-     *   例如：商品主单位=箱，辅单位=瓶，比例=20（1箱=20瓶）
-     *        套餐需要5瓶 → 归一化为 5/20 = 0.25箱
-     *        库存10箱 → 可组成 10/0.25 = 40套
-     * - 情况C：单位不匹配 → 兜底使用原数量（假设为主单位）
-     * 
-     * @param voList 套餐VO列表
-     * @param storeId 门店ID
-     */
+    /** 可售套数：门店可用基准库存 / 每套基准需求，同商品需求先汇总。 */
     private void calculatePackageStocks(List<ProductPackageDetailVO> voList, Long storeId) {
-        if (voList == null || voList.isEmpty() || storeId == null) {
-            return;
-        }
-        
-        // 1. 收集所有套餐涉及的商品ID
-        List<Long> allProductIds = voList.stream()
-                .flatMap(vo -> vo.getItems() != null ? vo.getItems().stream() : java.util.stream.Stream.empty())
-                .map(com.agri_system.application.productpackage.dto.vo.ProductPackageItemVO::getProductId)
-                .distinct()
-                .collect(Collectors.toList());
-        
-        if (allProductIds.isEmpty()) {
-            // 如果没有商品，所有套餐库存为0
-            voList.forEach(vo -> vo.setStock(BigDecimal.ZERO));
-            return;
-        }
-        
-        // 2. 批量查询所有商品的库存
-        Map<Long, BigDecimal> inventoryMap = inventoryRepository.findInventoryByStoreAndProducts(storeId, allProductIds);
-        
-        // 3. 批量查询所有商品信息（用于单位换算）
-        Map<Long, Product> productMap = allProductIds.stream()
-                .collect(Collectors.toMap(
-                        id -> id,
-                        id -> productRepository.findById(id).orElse(null)
-                ));
-        
-        // 4. 对每个套餐计算库存（木桶算法）
+        if (voList == null || voList.isEmpty() || storeId == null) return;
+        Map<Long, BigDecimal> inventory = balanceRepository.sumAvailableBaseQuantityGroupedByProduct(storeId);
         for (ProductPackageDetailVO vo : voList) {
-            if (vo.getItems() == null || vo.getItems().isEmpty()) {
-                vo.setStock(BigDecimal.ZERO);
-                continue;
-            }
-            
-            BigDecimal minPackageCount = null;
-            
-            for (com.agri_system.application.productpackage.dto.vo.ProductPackageItemVO item : vo.getItems()) {
-                Long productId = item.getProductId();
-                Product product = productMap.get(productId);
-                
-                if (product == null) {
-                    // 商品不存在，该套餐无法组成
-                    minPackageCount = BigDecimal.ZERO;
-                    break;
-                }
-                
-                // 获取商品库存（主单位）
-                BigDecimal productStock = inventoryMap.getOrDefault(productId, BigDecimal.ZERO);
-                
-                // 获取套餐明细中需要的数量
-                BigDecimal requiredQuantity = item.getQuantity();
-                if (requiredQuantity == null || requiredQuantity.compareTo(BigDecimal.ZERO) <= 0) {
-                    // 需求数量无效，该套餐无法组成
-                    minPackageCount = BigDecimal.ZERO;
-                    break;
-                }
-                
-                // 处理单位换算 - 将套餐需求量归一化为主单位
-                String itemUnit = item.getUnit();
-                BigDecimal normalizedRequiredQuantity = requiredQuantity;
-                
-                // 情况A：套餐明细单位 = 商品主单位，无需转换
-                if (itemUnit != null && product.getMainUnit() != null && itemUnit.equals(product.getMainUnit())) {
-                    normalizedRequiredQuantity = requiredQuantity;
-                }
-                // 情况B：套餐明细单位 = 商品辅单位，需要转换为主单位
-                else if (itemUnit != null && product.getAuxUnit() != null && itemUnit.equals(product.getAuxUnit())) {
-                    if (product.getMainToAuxRatio() != null && product.getMainToAuxRatio().compareTo(BigDecimal.ZERO) > 0) {
-                        // 辅单位转主单位：数量 / 比例
-                        // 例如：5瓶 / 20(瓶/箱) = 0.25箱
-                        normalizedRequiredQuantity = requiredQuantity.divide(product.getMainToAuxRatio(), 6, RoundingMode.HALF_UP);
+            vo.setStock(BigDecimal.ZERO);
+            if (vo.getItems() == null || vo.getItems().isEmpty()) continue;
+            try {
+                Map<Long, BigDecimal> demand = new LinkedHashMap<>();
+                for (ProductPackageItemVO item : vo.getItems()) {
+                    Product product = productRepository.findById(item.getProductId())
+                            .orElseThrow(() -> new IllegalArgumentException("套餐物料不存在"));
+                    if (!Integer.valueOf(1).equals(product.getStatus())) throw new IllegalArgumentException("套餐物料已停用");
+                    ProductUnit unit = productUnitService.requireEnabledUnit(item.getProductId(), item.getUnit(),
+                            ProductUnitService.UnitOperation.SALE);
+                    BigDecimal quantity = item.getQuantity();
+                    BigDecimal coefficient = unit.getBaseQuantityPerUnit();
+                    if (quantity == null || quantity.signum() <= 0 || coefficient == null || coefficient.signum() <= 0) {
+                        throw new IllegalArgumentException("套餐物料数量或基准单位系数无效");
                     }
+                    demand.merge(item.getProductId(), quantity.multiply(coefficient), BigDecimal::add);
                 }
-                // 情况C：单位不匹配或无法识别，兜底使用原数量（假设为主单位）
-                else {
-                    normalizedRequiredQuantity = requiredQuantity;
+                BigDecimal minimum = null;
+                for (Map.Entry<Long, BigDecimal> entry : demand.entrySet()) {
+                    BigDecimal available = inventory.getOrDefault(entry.getKey(), BigDecimal.ZERO).max(BigDecimal.ZERO);
+                    BigDecimal count = available.divide(entry.getValue(), 0, RoundingMode.FLOOR);
+                    minimum = minimum == null ? count : minimum.min(count);
                 }
-                
-                // 计算该商品能组成多少套套餐
-                // 单品最大套数 = floor(单品库存 / 归一化需求量)
-                BigDecimal packageCount = BigDecimal.ZERO;
-                if (normalizedRequiredQuantity.compareTo(BigDecimal.ZERO) > 0) {
-                    packageCount = productStock.divide(normalizedRequiredQuantity, 0, RoundingMode.FLOOR);
-                }
-                
-                // 取最小值（木桶原理）
-                if (minPackageCount == null || packageCount.compareTo(minPackageCount) < 0) {
-                    minPackageCount = packageCount;
-                }
+                vo.setStock(minimum == null ? BigDecimal.ZERO : minimum);
+            } catch (IllegalArgumentException invalidConfiguration) {
+                // 单个套餐单位失效只令该套餐不可售，不能影响其它套餐列表。
+                vo.setStock(BigDecimal.ZERO);
             }
-            
-            // 设置套餐库存
-            BigDecimal finalStock = minPackageCount != null ? minPackageCount : BigDecimal.ZERO;
-            vo.setStock(finalStock);
         }
     }
 }

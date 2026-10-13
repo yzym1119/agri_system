@@ -34,6 +34,7 @@ public class StoreApplicationService {
     private final StoreRepository storeRepository;
     private final StaffRepository staffRepository;
     private final InventoryRepository inventoryRepository;
+    private final com.agri_system.domain.inventory.repository.InventoryLocationRepository locationRepository;
     private final StoreDomainService domainService;
     private final CodeGenerationApplicationService codeGenerationService;
     
@@ -73,6 +74,7 @@ public class StoreApplicationService {
         store.setDeleted(0);
         
         storeRepository.save(store);
+        locationRepository.defaultBackroom(store.getId());
         return store.getId();
     }
     

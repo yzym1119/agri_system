@@ -37,6 +37,11 @@ public class CustomerCouponRepositoryImpl implements CustomerCouponRepository {
     }
     
     @Override
+    public Optional<CustomerCoupon> findByIdForUpdate(Long id) {
+        return Optional.ofNullable(mapper.selectOneByQuery(QueryWrapper.create().where("id = ?", id).forUpdate()));
+    }
+
+    @Override
     public Page<CustomerCoupon> findPage(Integer pageNum, Integer pageSize, Long customerId, Integer status) {
         QueryWrapper query = QueryWrapper.create()
                 .where("customer_id = ?", customerId);

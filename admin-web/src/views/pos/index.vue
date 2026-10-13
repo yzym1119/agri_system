@@ -33,13 +33,15 @@
             @update="handleCartUpdate"
             @unit-change="handleUnitChange"
             @customer-change="handleCustomerChange"
+            @package-change="handlePackageQuoteChange"
           />
         </div>
         
-        <!-- 服务端报价降级提示：仅提示，不阻断收款 -->
+        <!-- 服务端报价状态：报价失败阻止收款 -->
         <div v-if="hasPriceFallback" class="price-fallback-hint">
           <el-icon><WarningFilled /></el-icon>
-          <span>服务端报价暂不可用，本单已按本地价格计算，可继续收款。</span>
+          <span>部分商品尚未取得有效报价，请重新报价后收款。</span>
+          <el-button size="small" @click="recalculateCartPrices(true)">重新报价</el-button>
         </div>
 
         <div class="settlement-wrapper">
@@ -99,7 +101,6 @@
 import {computed, onMounted, onUnmounted, ref} from 'vue'
 import {ElMessage} from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
-import { getProductPriceRules } from '@/api/product'
 import { createPickupRequest, createPOSOrder, getOrderDetail } from '@/api/order'
 import {useUserStore} from '@/store/user'
 import CategorySidebar from './components/CategorySidebar.vue'
@@ -108,8 +109,8 @@ import ModernCartList from './components/ModernCartList.vue'
 import ModernSettlementBar from './components/ModernSettlementBar.vue'
 import CheckoutDialog from './components/CheckoutDialog.vue'
 import type {CartItem, POSCustomerInfo} from '@/types/pos'
-import type { ProductDetailVO, ProductPriceRuleVO } from '@/types/product'
-import { fetchServerPriceQuote, resolvePackageUnitPrice, resolveProductCartUnitPrice } from '@/utils/posPricing'
+import { fetchServerPriceQuote, fetchServerPackageQuote } from '@/utils/posPricing'
+import type { ServerPriceQuote, ServerPackageQuote } from '@/utils/posPricing'
 
 const userStore = useUserStore()
 
@@ -134,7 +135,8 @@ const goodsPanelRef = ref<InstanceType<typeof ModernGoodsPanel> | null>(null)
 const categorySidebarRef = ref<InstanceType<typeof CategorySidebar> | null>(null)
 const cartListRef = ref<InstanceType<typeof ModernCartList> | null>(null)
 const settlementBarRef = ref<InstanceType<typeof ModernSettlementBar> | null>(null)
-const productPriceRuleCache = new Map<number, ProductPriceRuleVO[]>()
+let quoteRequestSequence = 0
+let cartGeneration = 0
 
 // 选中的分类
 const selectedCategoryId = ref<number | null>(null)
@@ -161,11 +163,11 @@ const checkoutData = ref<{
 
 // 计算总金额
 const totalAmount = computed(() => {
-  return cartItems.value.reduce((sum, item) => sum + item.subtotal, 0)
+  return Math.round(cartItems.value.reduce((sum, item) => sum + item.subtotal, 0) * 100) / 100
 })
 
-// 是否存在服务端报价降级（仅提示，不阻断收款）
-const hasPriceFallback = computed(() => cartItems.value.some((item) => item.priceFallback))
+// 是否存在未完成的报价（报价失败阻止收款）
+const hasPriceFallback = computed(() => cartItems.value.some((item) => item.priceFallback || item.pricePending || !item.quoteId))
 
 // 初始化
 onMounted(async () => {
@@ -219,31 +221,14 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown)
 })
 
-const getProductSnapshot = (item: CartItem): ProductDetailVO | null => {
-  if (!item.productId) return null
-  return (item as any)._product || goodsPanelRef.value?.getProductById?.(item.productId) || null
-}
-
-const getCachedProductPriceRules = async (productId: number): Promise<ProductPriceRuleVO[]> => {
-  if (productPriceRuleCache.has(productId)) {
-    return productPriceRuleCache.get(productId) || []
-  }
-  try {
-    const rules = await getProductPriceRules(productId)
-    productPriceRuleCache.set(productId, rules || [])
-    return rules || []
-  } catch (error) {
-    console.error(`获取商品 ${productId} 价格规则失败:`, error)
-    return []
-  }
-}
-
-/** 记录服务端报价结果（单据审计依据），报价失败时标记降级提示 */
-const applyServerQuote = (item: CartItem, quote: Awaited<ReturnType<typeof fetchServerPriceQuote>>) => {
+/** 记录服务端报价结果（单据审计依据），报价失败时阻止结算 */
+const applyServerQuote = (item: CartItem, quote: ServerPriceQuote | ServerPackageQuote) => {
   item.quoteId = quote.quoteId ?? null
   item.belowReference = !!quote.belowReference
   item.referenceFloor = quote.referenceFloor ?? null
   item.priceFallback = false
+  item.suggestedUnitPrice = quote.suggestedUnitPrice
+  item.pricePending = false
 }
 
 const markPriceFallback = (item: CartItem) => {
@@ -251,64 +236,91 @@ const markPriceFallback = (item: CartItem) => {
   item.belowReference = false
   item.referenceFloor = null
   item.priceFallback = true
+  item.pricePending = false
 }
 
 /**
  * 解析购物车行单价：
- * 商品优先取服务端报价（按销售单位/渠道/客户分层）；报价失败回退本地价格并提示，不阻断收款。
+ * 商品与套餐均取服务端报价；套餐的物料、金额和专用金额度不在前端拆算。
  */
-const resolveCartItemUnitPrice = async (item: CartItem): Promise<number | null> => {
-  if (item.itemType === 1 && item.productId) {
+const resolveCartItemUnitPrice = async (item: CartItem, preserveNegotiation = false): Promise<number | null> => {
+  if ((item.itemType === 1 && item.productId) || (item.itemType === 2 && item.packageId)) {
+    const isPackage = item.itemType === 2
+    const previousSuggested = item.suggestedUnitPrice
+    const previousDeal = item.unitPrice
+    const previousReason = item.priceChangeReason
+    const previousQuoteId = item.quoteId
+    const hadNegotiation = previousSuggested != null && previousDeal !== previousSuggested
+      && (isPackage || !!previousReason?.trim())
+    const requestId = ++quoteRequestSequence
+    item.quoteRequestId = requestId
+    item.pricePending = true
+    item.quoteId = null
+    const customerId = selectedCustomer.value?.id
+    const saleUnit = item.currentUnit
+    const quantity = item.quantity
+    const requestIsCurrent = () => item.quoteRequestId === requestId
+      && selectedCustomer.value?.id === customerId && item.currentUnit === saleUnit
+      && (!isPackage || item.quantity === quantity)
     try {
-      const quote = await fetchServerPriceQuote({
-        productId: item.productId,
-        storeId: storeId.value,
-        channel: 'POS',
-        customerType: selectedCustomer.value?.type,
-        vipLevel: selectedCustomer.value?.vipLevel,
-        saleUnit: item.currentUnit
-      })
-      const quotedPrice = typeof quote?.suggestedUnitPrice === 'number' ? quote.suggestedUnitPrice : null
-      if (quotedPrice !== null && quotedPrice > 0) {
-        applyServerQuote(item, quote)
-        return quotedPrice
+      let quote: ServerPriceQuote | ServerPackageQuote = isPackage
+        ? await fetchServerPackageQuote({ packageId: item.packageId!, storeId: storeId.value, customerId, quantity,
+          dealUnitPrice: preserveNegotiation && hadNegotiation ? previousDeal : undefined })
+        : await fetchServerPriceQuote({ productId: item.productId!, storeId: storeId.value,
+          channel: 'POS', customerId, saleUnit })
+      if (!requestIsCurrent()) return null
+      if (!(Number(quote.suggestedUnitPrice) > 0) || !quote.quoteId) throw new Error('未取得有效售价')
+      const keepNegotiation = preserveNegotiation && hadNegotiation
+        && previousSuggested === Number(quote.suggestedUnitPrice)
+        && (!isPackage || previousQuoteId === quote.quoteId)
+      if (isPackage && preserveNegotiation && hadNegotiation && !keepNegotiation) {
+        ElMessage.warning(`${item.name}价格或组成已变化，原议价请重新确认`)
+        quote = await fetchServerPackageQuote({ packageId: item.packageId!, storeId: storeId.value, customerId, quantity })
+        if (!requestIsCurrent()) return null
+      } else if (isPackage && preserveNegotiation && previousQuoteId && previousQuoteId !== quote.quoteId) {
+        ElMessage.warning(`${item.name}价格或组成已变化，请核对套餐物料`)
       }
-      markPriceFallback(item)
+      applyServerQuote(item, quote)
+      if (isPackage && 'items' in quote) {
+        item.packageItems = quote.items
+        item.specialFundEligibleAmount = Number(quote.specialFundEligibleAmount)
+        item.unitPrice = Number(quote.dealUnitPrice)
+        item.subtotal = Number(quote.totalAmount)
+        // 预览期间收银员可能已填写原因，同版本议价不能用请求开始时的旧值覆盖。
+        if (!keepNegotiation) item.priceChangeReason = undefined
+        return item.unitPrice
+      }
+      if (keepNegotiation) {
+        item.belowReference = quote.referenceFloor != null && previousDeal < quote.referenceFloor
+        return previousDeal
+      }
+      if (preserveNegotiation && hadNegotiation) ElMessage.warning(`${item.name}报价已变化，原议价请重新确认`)
+      item.priceChangeReason = undefined
+      return Number(quote.suggestedUnitPrice)
     } catch (error) {
-      // 报价失败不阻断销售：回退本地价格并在购物车给出 WARN 提示
-      console.warn('服务端报价获取失败，已回退本地价格:', error)
-      markPriceFallback(item)
+      if (item.quoteRequestId === requestId) markPriceFallback(item)
+      console.warn('商品报价失败，结算已阻止:', error)
+      return null
     }
-
-    return resolveProductCartUnitPrice({
-      product: getProductSnapshot(item),
-      rules: await getCachedProductPriceRules(item.productId),
-      storeId: storeId.value,
-      customerType: selectedCustomer.value?.type,
-      vipLevel: selectedCustomer.value?.vipLevel,
-      currentUnit: item.currentUnit,
-      fallbackPrice: item.unitPrice
-    })
   }
 
-  if (item.itemType === 2) {
-    return resolvePackageUnitPrice({
-      customer: selectedCustomer.value,
-      packagePrice: item.packagePrice,
-      vipPrice: item.vipPrice,
-      fallbackPrice: item.unitPrice
-    })
-  }
-
-  return item.unitPrice
+  markPriceFallback(item)
+  return null
 }
 
 // 添加商品到购物车
 const handleAddToCart = async (item: CartItem) => {
+  const generation = cartGeneration
   const resolvedPrice = await resolveCartItemUnitPrice(item)
+  if (generation !== cartGeneration) return
   if (resolvedPrice !== null) {
     item.unitPrice = resolvedPrice
-    item.subtotal = item.quantity * item.unitPrice
+    if (item.itemType === 1) item.subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
+  }
+
+  if (resolvedPrice === null) {
+    ElMessage.error('商品报价失败，请检查商品价格与单位后重试')
+    return
   }
 
   // 检查是否已存在
@@ -317,42 +329,42 @@ const handleAddToCart = async (item: CartItem) => {
       cartItem.itemType === item.itemType &&
       ((item.itemType === 1 && cartItem.productId === item.productId) ||
         (item.itemType === 2 && cartItem.packageId === item.packageId)) &&
-      cartItem.currentUnit === item.currentUnit
+      cartItem.currentUnit === item.currentUnit &&
+      (item.itemType === 1 || (cartItem.unitPrice === item.unitPrice
+        && cartItem.quoteId === item.quoteId && cartItem.priceChangeReason === item.priceChangeReason))
   )
 
   if (existingIndex >= 0) {
     // 已存在，增加数量
-    cartItems.value[existingIndex].quantity += item.quantity
-    cartItems.value[existingIndex].subtotal =
-      cartItems.value[existingIndex].quantity * cartItems.value[existingIndex].unitPrice
+    const existing = cartItems.value[existingIndex]
+    existing.quantity += item.quantity
+    if (existing.itemType === 2) await resolveCartItemUnitPrice(existing, true)
+    else existing.subtotal = Math.round(existing.quantity * existing.unitPrice * 100) / 100
   } else {
     // 新增
     cartItems.value.push({
       ...item,
-      id: `${item.itemType}_${item.productId || item.packageId}_${Date.now()}`
+      id: `${item.itemType}_${item.productId || item.packageId}_${Date.now()}_${item.quoteRequestId}`
     })
   }
 }
 
 // 重新计算购物车中所有商品的价格
-const recalculateCartPrices = async () => {
+const recalculateCartPrices = async (preserveNegotiation = false) => {
   if (!cartItems.value || cartItems.value.length === 0) return
   
   const updatedItems = [...cartItems.value]
-  let hasChanges = false
 
   for (const item of updatedItems) {
-    const newPrice = await resolveCartItemUnitPrice(item)
-    if (newPrice !== null && Math.abs(newPrice - item.unitPrice) > 0.01) {
+    const newPrice = await resolveCartItemUnitPrice(item, preserveNegotiation)
+    if (newPrice !== null && newPrice !== item.unitPrice) {
       item.unitPrice = newPrice
-      item.subtotal = item.quantity * item.unitPrice
-      hasChanges = true
+      item.subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
     }
   }
 
-  if (hasChanges) {
-    cartItems.value = updatedItems
-  }
+  // 异步报价期间可能删除或清空购物车，只刷新当前集合，不能恢复旧快照。
+  cartItems.value = [...cartItems.value]
 }
 
 // 客户变更
@@ -367,17 +379,24 @@ const handleCartUpdate = (items: CartItem[]) => {
   cartItems.value = items
 }
 
-// 单位切换：按新的销售单位重新取服务端报价，并刷新行内标记（低于参考下限/本地价降级）
+// 单位切换：按新的销售单位重新取服务端报价，并刷新行内标记（低于参考下限/报价失败）
 const handleUnitChange = async (payload: { id: string; oldUnit: string; newUnit: string }) => {
   const item = cartItems.value.find((cartItem) => cartItem.id === payload.id)
   if (item && item.itemType === 1 && item.productId) {
     const newPrice = await resolveCartItemUnitPrice(item)
-    if (newPrice !== null && Math.abs(newPrice - item.unitPrice) > 0.01) {
+    if (newPrice !== null && newPrice !== item.unitPrice) {
       item.unitPrice = newPrice
-      item.subtotal = item.quantity * item.unitPrice
+      item.subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
     }
   }
   // 无论报价结果如何都重新赋值，确保 belowReference/priceFallback 标签按最新报价结果刷新
+  cartItems.value = [...cartItems.value]
+}
+
+// 套餐数量或成交单价改变后重新取权威物料金额和专用金额度。
+const handlePackageQuoteChange = async ({ id }: { id: string }) => {
+  const item = cartItems.value.find(line => line.id === id && line.itemType === 2)
+  if (item) await resolveCartItemUnitPrice(item, true)
   cartItems.value = [...cartItems.value]
 }
 
@@ -408,15 +427,18 @@ const handleCategorySelect = (categoryId: number | null) => {
 }
 
 // 恢复挂单
-const handleRestoreCart = (payload: { cartItems: CartItem[]; customer: POSCustomerInfo | null; discountAmount: number }) => {
+const handleRestoreCart = async (payload: { cartItems: CartItem[]; customer: POSCustomerInfo | null; discountAmount: number }) => {
+  cartGeneration++
   cartItems.value = payload.cartItems
   selectedCustomer.value = payload.customer
   // 设置优惠金额
   settlementBarRef.value?.setDiscountAmount(payload.discountAmount)
+  await recalculateCartPrices(true)
 }
 
 // 清空购物车（挂单后）
 const handleClearCart = () => {
+  cartGeneration++
   cartItems.value = []
   selectedCustomer.value = null
 }
@@ -432,6 +454,18 @@ const handleCheckout = (data: {
     ElMessage.warning('购物车为空')
     return
   }
+  if (cartItems.value.some(item => item.itemType === 1 && (item.packageId != null || item.fromPackage))) {
+    ElMessage.error('挂单含旧套餐拆分行，请移除后重新选择套餐')
+    return
+  }
+  if (hasPriceFallback.value) {
+    ElMessage.error('请等待报价完成或重新报价后结算')
+    return
+  }
+  if (cartItems.value.some(item => (item.unitPrice !== item.suggestedUnitPrice || item.belowReference) && !item.priceChangeReason?.trim())) {
+    ElMessage.error('请填写议价或低于最低价的原因')
+    return
+  }
   checkoutData.value = data
   checkoutVisible.value = true
 }
@@ -442,12 +476,18 @@ const handleSubmitOrder = async (orderData: any) => {
     return // 防止重复提交
   }
 
+  if (hasPriceFallback.value) {
+    ElMessage.error('商品报价未完成，暂不能提交订单')
+    return
+  }
   submittingOrder.value = true
 
   // 提交前收集库房取货商品（订单创建后购物车会被清空）
   const pickupFlaggedItems = cartItems.value
-    .filter((item) => item.warehousePickup && item.itemType === 1 && item.productId)
-    .map((item) => ({ productId: item.productId as number, name: item.name }))
+    .filter((item) => item.warehousePickup)
+    .flatMap(item => item.itemType === 2
+      ? (item.packageItems || []).map(material => ({ productId: material.productId, name: material.productName || item.name }))
+      : [{ productId: item.productId as number, name: item.name }])
 
   try {
     const createdOrder: any = await createPOSOrder({
@@ -462,8 +502,7 @@ const handleSubmitOrder = async (orderData: any) => {
     checkoutVisible.value = false
     
     // 清空购物车
-    cartItems.value = []
-    selectedCustomer.value = null
+    handleClearCart()
 
     // 刷新商品列表（更新库存）
     goodsPanelRef.value?.refresh()
@@ -479,7 +518,11 @@ const handleSubmitOrder = async (orderData: any) => {
     console.error('订单创建失败:', error)
     const errorMessage = error?.response?.data?.message || error?.message || '未知错误'
     ElMessage.error('订单创建失败：' + errorMessage)
-    // 失败时不关闭弹窗，让用户重试
+    if (typeof errorMessage === 'string' && errorMessage.includes('报价')) {
+      checkoutVisible.value = false
+      await recalculateCartPrices(true)
+    }
+    // 其他收款/库存错误保留弹窗，报价变化则返回购物车核对新价格与组成。
   } finally {
     // 确保状态重置，即使出错也要重置
     submittingOrder.value = false

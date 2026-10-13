@@ -20,6 +20,9 @@ public interface CustomerCouponRepository {
      * 根据ID查询优惠券
      */
     Optional<CustomerCoupon> findById(Long id);
+
+    /** 核销在事务内锁定当前券状态，避免不同订单并发使用同一张券。 */
+    Optional<CustomerCoupon> findByIdForUpdate(Long id);
     
     /**
      * 分页查询客户优惠券

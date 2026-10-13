@@ -105,7 +105,21 @@
         </div>
       </el-card>
 
-      <!-- 商品明细 -->
+      <el-card v-if="packageGroups.length" shadow="never" style="margin-bottom: 16px">
+        <template #header><span style="font-weight: 600">套餐成交明细</span></template>
+        <el-table :data="packageGroups" border>
+          <el-table-column prop="name" label="套餐名称" min-width="180" />
+          <el-table-column prop="quantity" label="套数" width="100" />
+          <el-table-column label="每套成交价" width="140" align="right">
+            <template #default="{ row }">¥{{ formatMoney(row.unitPrice) }}</template>
+          </el-table-column>
+          <el-table-column label="套餐成交金额" width="150" align="right">
+            <template #default="{ row }">¥{{ formatMoney(row.quantity * row.unitPrice) }}</template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+
+      <!-- 商品明细：实际出入库与退款始终使用这些物料行 -->
       <el-card shadow="never" style="margin-bottom: 16px">
         <template #header>
           <span style="font-weight: 600">商品明细</span>
@@ -118,7 +132,7 @@
 
                 <div>
                   <div style="font-weight: 500">{{ row.productName }}</div>
-
+                  <div v-if="row.packageGroupNo" style="font-size: 12px; color: #909399">来自套餐：{{ row.packageName }}</div>
                 </div>
               </div>
             </template>
@@ -309,6 +323,16 @@ const emit = defineEmits<Emits>()
 const drawerVisible = ref(false)
 const loading = ref(false)
 const orderDetail = ref<OrderDetailType | null>(null)
+const packageGroups = computed(() => {
+  const groups = new Map<number, { name: string; quantity: number; unitPrice: number }>()
+  for (const item of orderDetail.value?.items || []) {
+    if (item.packageGroupNo && !groups.has(item.packageGroupNo)) {
+      groups.set(item.packageGroupNo, { name: item.packageName || '套餐',
+        quantity: Number(item.packageQuantity || 0), unitPrice: Number(item.packageUnitPrice || 0) })
+    }
+  }
+  return [...groups.values()]
+})
 const printPaperWidth = ref<'receipt_80' | 'invoice_std' | string>('receipt_80')
 const terminalStatuses = [7, 8, 9]
 

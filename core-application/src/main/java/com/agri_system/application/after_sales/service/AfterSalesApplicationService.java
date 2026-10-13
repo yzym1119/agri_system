@@ -13,6 +13,7 @@ import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.service.InventoryApplicationService;
 import com.agri_system.application.performance.event.OrderRefundedEvent;
 import com.agri_system.application.order.service.OrderPaymentService;
+import com.agri_system.application.order.service.RefundAmountPolicy;
 import com.agri_system.domain.customer.repository.CustomerRepository;
 import com.agri_system.domain.after_sales.model.AfterSales;
 import com.agri_system.domain.after_sales.model.AfterSalesItem;
@@ -33,6 +34,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
@@ -68,7 +70,7 @@ public class AfterSalesApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long applyFromClient(ClientApplyCommand command, Long customerId) {
-        Order order = orderRepository.findById(command.getOrderId())
+        Order order = orderRepository.findByIdForUpdate(command.getOrderId())
                 .orElseThrow(() -> new IllegalArgumentException(AfterSalesErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
 
         if (order.getCustomerId() == null || !order.getCustomerId().equals(customerId)) {
@@ -137,10 +139,12 @@ public class AfterSalesApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long createFromAdmin(AdminReturnCommand command, Long operatorId) {
-        Order order = orderRepository.findById(command.getOrderId())
+        Order order = orderRepository.findByIdForUpdate(command.getOrderId())
                 .orElseThrow(() -> new IllegalArgumentException(AfterSalesErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
 
-        if (!isAdminReturnable(order.getOrderStatus())) {
+        boolean zeroGiftAfterPaidRefund = Integer.valueOf(8).equals(order.getOrderStatus())
+                && command.getRefundAmount() != null && command.getRefundAmount().signum() == 0;
+        if (!isAdminReturnable(order.getOrderStatus()) && !zeroGiftAfterPaidRefund) {
             throw new IllegalArgumentException(AfterSalesErrorCode.ORDER_STATUS_INVALID + ": 订单状态必须为已发货或已完成");
         }
         if (isCreditOrder(order)) {
@@ -148,6 +152,9 @@ public class AfterSalesApplicationService {
         }
 
         ensureNoProcessingAfterSales(order.getId());
+
+        RefundAmountPolicy.validateOrderRefund(order.getPayAmount(),
+                resolveCumulativeRefundAmount(order.getId(), null, BigDecimal.ZERO), command.getRefundAmount());
 
         AfterSales afterSales = new AfterSales();
         afterSales.setAfterSalesNo(afterSalesDomainService.generateAfterSalesNo());
@@ -163,12 +170,24 @@ public class AfterSalesApplicationService {
         afterSales.setAuditTime(LocalDateTime.now());
         afterSales.setCreatedAt(LocalDateTime.now());
         afterSales.setUpdatedAt(LocalDateTime.now());
-        afterSalesRepository.save(afterSales);
-
         Map<Long, OrderItem> orderItemMap = orderItemRepository.findByOrderId(order.getId()).stream()
                 .collect(Collectors.toMap(OrderItem::getId, oi -> oi));
+        Map<Long, BigDecimal> refundBases = RefundAmountPolicy.refundableBaseAmounts(order, List.copyOf(orderItemMap.values()));
+        Map<Long, RefundAggregate> existingRefunds = loadExistingRefundAggregates(order.getId());
 
-        List<AfterSalesItem> items = buildAdminItems(afterSales, command, orderItemMap);
+        List<AfterSalesItem> items = buildAdminItems(afterSales, command, orderItemMap, refundBases, existingRefunds);
+        if (command.getRefundAmount().signum() == 0 && items.stream().anyMatch(item -> {
+            OrderItem material = orderItemMap.get(item.getOrderItemId());
+            RefundAggregate history = existingRefunds.get(material.getId());
+            return material.getPackageId() == null || RefundAmountPolicy.maximumForReturn(material,
+                    history == null ? BigDecimal.ZERO : history.quantity,
+                    history == null ? BigDecimal.ZERO : history.refundAmount,
+                    item.getQuantity(), refundBases.get(material.getId())).signum() != 0;
+        })) {
+            throw new IllegalArgumentException("0元退款仅适用于本次没有现金可退的套餐物料");
+        }
+        afterSalesRepository.save(afterSales);
+        items.forEach(item -> item.setAfterSalesId(afterSales.getId()));
         afterSalesItemRepository.saveBatch(items);
 
         triggerRestock(afterSales, items, operatorId);
@@ -179,11 +198,6 @@ public class AfterSalesApplicationService {
             // 调用订单模块执行原路退款
             orderPaymentService.refund(order, refundAmount, operatorId);
             
-            // 更新售后单状态为已完成，并设置退款人和退款时间
-            afterSales.markFinished(operatorId);
-            afterSales.setUpdatedAt(LocalDateTime.now());
-            afterSalesRepository.save(afterSales);
-            
             // 按历史累计退款金额判断最终订单状态
             BigDecimal cumulativeRefundAmount = resolveCumulativeRefundAmount(order.getId(), afterSales.getId(), refundAmount);
             if (cumulativeRefundAmount.compareTo(order.getPayAmount()) >= 0) {
@@ -192,13 +206,13 @@ public class AfterSalesApplicationService {
                 order.markAsPartRefunded();
             }
             orderRepository.save(order);
-            eventPublisher.publishEvent(new OrderRefundedEvent(
-                    order.getId(),
-                    refundAmount,
-                    buildRefundItemQuantityMap(items),
-                    "AFTER_SALES:" + afterSales.getId()
-            ));
         }
+        // 0元套餐物料仍须完成售后和回库，不能留下阻塞下一次退货的处理中记录。
+        afterSales.markFinished(operatorId);
+        afterSales.setUpdatedAt(LocalDateTime.now());
+        afterSalesRepository.save(afterSales);
+        eventPublisher.publishEvent(new OrderRefundedEvent(order.getId(), refundAmount,
+                buildRefundItemQuantityMap(items), "AFTER_SALES:" + afterSales.getId()));
         
         return afterSales.getId();
     }
@@ -238,27 +252,32 @@ public class AfterSalesApplicationService {
     /**
      * 确认退款
      */
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public void refund(AfterSalesRefundCommand command, Long operatorId) {
         AfterSales afterSales = afterSalesRepository.findById(command.getAfterSalesId())
+                .orElseThrow(() -> new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_NOT_FOUND + ": 售后单不存在"));
+        Order order = orderRepository.findByIdForUpdate(afterSales.getOrderId())
+                .orElseThrow(() -> new IllegalArgumentException(AfterSalesErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
+        // 等待订单锁期间其它操作可能已经完成退款，取得锁后必须重新确认售后状态。
+        afterSales = afterSalesRepository.findById(command.getAfterSalesId())
                 .orElseThrow(() -> new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_NOT_FOUND + ": 售后单不存在"));
         if (!afterSales.isWaitRefund()) {
             throw new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_STATUS_INVALID + ": 当前状态不可退款");
         }
 
-        Order order = orderRepository.findById(afterSales.getOrderId())
-                .orElseThrow(() -> new IllegalArgumentException(AfterSalesErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
-
         BigDecimal refundAmount = command.getRefundAmount() != null ? command.getRefundAmount() : afterSales.getRefundAmount();
         if (refundAmount.compareTo(afterSales.getRefundAmount()) > 0) {
             throw new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_STATUS_INVALID + ": 退款金额不能超过审核金额");
         }
+        RefundAmountPolicy.validateOrderRefund(order.getPayAmount(),
+                resolveCumulativeRefundAmount(order.getId(), afterSales.getId(), BigDecimal.ZERO), refundAmount);
 
         // 调用订单模块执行原路退款
-        orderPaymentService.refund(order, refundAmount, operatorId);
+        if (refundAmount.signum() > 0) orderPaymentService.refund(order, refundAmount, operatorId);
 
         // 更新售后单状态（确保设置退款人和退款时间）
         afterSales.markFinished(operatorId);
+        afterSales.setRefundAmount(refundAmount);
         afterSales.setUpdatedAt(LocalDateTime.now());
         afterSalesRepository.save(afterSales);
 
@@ -339,14 +358,19 @@ public class AfterSalesApplicationService {
 
     private List<AfterSalesItem> buildAdminItems(AfterSales afterSales,
                                                  AdminReturnCommand command,
-                                                 Map<Long, OrderItem> orderItemMap) {
-        Map<Long, RefundAggregate> existingRefunds = loadExistingRefundAggregates(afterSales.getOrderId());
+                                                 Map<Long, OrderItem> orderItemMap,
+                                                 Map<Long, BigDecimal> refundBases,
+                                                 Map<Long, RefundAggregate> existingRefunds) {
         BigDecimal total = BigDecimal.ZERO;
         List<AfterSalesItem> items = new ArrayList<>();
+        Set<Long> requestedIds = new HashSet<>();
         for (AdminReturnCommand.ReturnItem itemCommand : command.getItems()) {
+            if (!requestedIds.add(itemCommand.getOrderItemId())) {
+                throw new IllegalArgumentException("同一次退货不能重复提交相同订单明细");
+            }
             OrderItem orderItem = Optional.ofNullable(orderItemMap.get(itemCommand.getOrderItemId()))
                     .orElseThrow(() -> new IllegalArgumentException(AfterSalesErrorCode.ORDER_NOT_FOUND + ": 订单明细不存在"));
-            validateAdminReturnItem(orderItem, itemCommand, existingRefunds.get(orderItem.getId()));
+            validateAdminReturnItem(orderItem, itemCommand, existingRefunds.get(orderItem.getId()), refundBases.get(orderItem.getId()));
             AfterSalesItem afterSalesItem = new AfterSalesItem();
             afterSalesItem.setAfterSalesId(afterSales.getId());
             afterSalesItem.setOrderItemId(orderItem.getId());
@@ -410,11 +434,15 @@ public class AfterSalesApplicationService {
 
     private void validateAdminReturnItem(OrderItem orderItem,
                                          AdminReturnCommand.ReturnItem itemCommand,
-                                         RefundAggregate existingRefund) {
+                                         RefundAggregate existingRefund,
+                                         BigDecimal netLineTotal) {
         BigDecimal requestedQuantity = defaultAmount(itemCommand.getQuantity());
         BigDecimal requestedRefundAmount = defaultAmount(itemCommand.getRefundAmount());
         BigDecimal existingQuantity = existingRefund != null ? existingRefund.quantity : BigDecimal.ZERO;
         BigDecimal existingRefundAmount = existingRefund != null ? existingRefund.refundAmount : BigDecimal.ZERO;
+        if (requestedQuantity.signum() <= 0 || requestedRefundAmount.signum() < 0 || requestedRefundAmount.scale() > 2) {
+            throw new IllegalArgumentException("退货数量必须大于0，退款金额不能为负且最多两位小数");
+        }
 
         if (requestedQuantity.compareTo(orderItem.getQuantity()) > 0) {
             throw new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_STATUS_INVALID + ": 退货数量不能超过购买数量");
@@ -435,6 +463,11 @@ public class AfterSalesApplicationService {
         if (existingRefundAmount.add(requestedRefundAmount).compareTo(itemTotalPrice) > 0) {
             throw new IllegalArgumentException(AfterSalesErrorCode.AFTER_SALES_STATUS_INVALID + ": 该商品累计退款金额已超过商品成交金额");
         }
+        BigDecimal maximum = RefundAmountPolicy.maximumForReturn(orderItem, existingQuantity,
+                existingRefundAmount, requestedQuantity, netLineTotal);
+        if (requestedRefundAmount.compareTo(maximum) > 0) {
+            throw new IllegalArgumentException("套餐明细退款金额不能超过累计退货数量对应的成交金额");
+        }
     }
 
     private void triggerRestock(AfterSales afterSales, List<AfterSalesItem> items, Long operatorId) {
@@ -453,7 +486,8 @@ public class AfterSalesApplicationService {
             inCommand.setStoreId(order.getStoreId());
             inCommand.setProductId(item.getProductId());
             inCommand.setBatchNo(afterSales.getAfterSalesNo() + "-" + item.getOrderItemId());
-            inCommand.setQuantity(resolveRestockQuantity(item, orderItem, product));
+            inCommand.setQuantity(item.getQuantity());
+            inCommand.setUnit(orderItem.getUnit());
             BigDecimal costPrice = product.getAvgCostPrice();
             if (costPrice == null || costPrice.compareTo(BigDecimal.ZERO) <= 0) {
                 costPrice = orderItem.getUnitPrice();

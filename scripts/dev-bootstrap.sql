@@ -1,5 +1,5 @@
--- Local development seed data. Do not run this in production.
--- Default admin login: admin / admin123
+-- 本地开发基础账号初始化，仅限开发库。先执行全部 Flyway 迁移。
+-- 默认本地管理员：admin / admin123
 
 START TRANSACTION;
 
@@ -14,6 +14,10 @@ ON DUPLICATE KEY UPDATE
     `remark` = VALUES(`remark`);
 
 SET @dev_store_id = (SELECT `id` FROM `store` WHERE `code` = 'STORE_DEV' LIMIT 1);
+
+INSERT INTO inventory_location(store_id,location_type,name,status)
+VALUES(@dev_store_id,'STORE_BACKROOM','门店后仓',1)
+ON DUPLICATE KEY UPDATE id=id;
 
 INSERT INTO `staff` (`code`, `name`, `phone`, `password`, `store_id`, `role`, `status`, `deleted`, `hire_date`, `remark`)
 VALUES (

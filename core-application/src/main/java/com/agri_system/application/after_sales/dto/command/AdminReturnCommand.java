@@ -22,7 +22,7 @@ public class AdminReturnCommand {
     private Long orderId;
 
     @NotNull(message = "退款金额不能为空")
-    @DecimalMin(value = "0.01", message = "退款金额必须大于0")
+    @DecimalMin(value = "0.00", message = "退款金额不能为负数")
     @Schema(description = "退款金额")
     private BigDecimal refundAmount;
 

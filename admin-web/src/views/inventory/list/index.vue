@@ -204,6 +204,7 @@ const transferForm = reactive<InventoryTransferRequest & {
   productMainToAuxRatio?: number
   unit?: string
 }>({
+  requestKey: crypto.randomUUID(),
   fromStoreId: undefined as unknown as number,
   toStoreId: undefined as unknown as number,
   productId: undefined as unknown as number,
@@ -227,6 +228,7 @@ const adjustForm = reactive<{
   systemQuantity?: number
   actualQuantity?: number
   quantityDiff: number
+  requestKey: string
   type?: number
   remark?: string
   productMainUnit?: string
@@ -234,7 +236,8 @@ const adjustForm = reactive<{
   productMainToAuxRatio?: number
   unit?: string
 }>({
-  quantityDiff: 0
+  quantityDiff: 0,
+  requestKey: crypto.randomUUID()
 })
 const adjustRules: FormRules = {
   actualQuantity: [{ required: true, message: '请输入实际库存', trigger: 'blur' }]
@@ -298,6 +301,7 @@ const handleTransfer = (row: InventoryPageVO) => {
   transferForm.productMainToAuxRatio = row.mainToAuxRatio as any
   transferForm.unit = row.mainUnit as any
   transferForm.toStoreId = undefined as unknown as number
+  transferForm.requestKey = crypto.randomUUID()
   transferForm.quantity = 1
   transferVisible.value = true
 }
@@ -312,10 +316,6 @@ const handleTransferSubmit = () => {
     transferLoading.value = true
     try {
       const payload: InventoryTransferRequest = { ...transferForm }
-      const ratio = transferForm.productMainToAuxRatio
-      if (transferForm.unit === transferForm.productAuxUnit && ratio && ratio > 0) {
-        payload.quantity = Number((transferForm.quantity / ratio).toFixed(4))
-      }
       await transferInventory(payload)
       ElMessage.success('调拨成功')
       transferVisible.value = false
@@ -335,6 +335,7 @@ const handleAdjust = (row: InventoryPageVO) => {
   adjustForm.systemQuantity = row.totalQuantity
   adjustForm.actualQuantity = row.totalQuantity
   adjustForm.quantityDiff = 0
+  adjustForm.requestKey = crypto.randomUUID()
   adjustForm.remark = ''
   adjustForm.productMainUnit = row.mainUnit as any
   adjustForm.productAuxUnit = row.auxUnit as any
@@ -348,9 +349,9 @@ const calculateAdjustDiff = () => {
   let actual = adjustForm.actualQuantity
   const ratio = adjustForm.productMainToAuxRatio
   if (adjustForm.unit === adjustForm.productAuxUnit && ratio && ratio > 0) {
-    actual = Number((actual / ratio).toFixed(4))
+    actual = Number((actual / ratio).toFixed(8))
   }
-  adjustForm.quantityDiff = Number((actual - (adjustForm.systemQuantity || 0)).toFixed(4))
+  adjustForm.quantityDiff = Number((actual - (adjustForm.systemQuantity || 0)).toFixed(8))
   adjustForm.type = adjustForm.quantityDiff >= 0 ? 1 : 2 // 1-盘盈，2-盘亏
 }
 
@@ -367,8 +368,12 @@ const handleAdjustSubmit = () => {
         storeId: adjustForm.storeId!,
         productId: adjustForm.productId!,
         quantityDiff: adjustForm.quantityDiff!,
+        requestKey: adjustForm.requestKey,
+        expectedQuantity: adjustForm.systemQuantity!,
+        actualQuantity: adjustForm.actualQuantity!,
+        unit: adjustForm.unit,
         type: adjustForm.type!,
-        remark: adjustForm.remark
+        remark: adjustForm.remark?.trim() || '门店实物盘点'
       }
       await adjustInventory(payload)
       ElMessage.success('盘点成功')

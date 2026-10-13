@@ -52,6 +52,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -63,6 +64,8 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class OrderApplicationServicePaymentFlowTest {
 
+    @Mock
+    private com.agri_system.domain.coupon.repository.CustomerCouponRepository couponRepository;
     @Mock
     private OrderRepository orderRepository;
     @Mock
@@ -87,6 +90,8 @@ class OrderApplicationServicePaymentFlowTest {
     private ProductRepository productRepository;
     @Mock
     private ProductPricingService productPricingService;
+    @Mock
+    private com.agri_system.application.productpackage.service.PackagePricingService packagePricingService;
     @Mock
     private StaffRepository staffRepository;
     @Mock
@@ -155,6 +160,7 @@ class OrderApplicationServicePaymentFlowTest {
         Order order = mockPendingClientOrder();
         OrderPaymentIntent intent = mockPendingIntent(order);
         OrderItem item = new OrderItem();
+        item.setId(77L);
         item.setProductId(9L);
         item.setQuantity(new BigDecimal("2"));
         item.setUnit("袋");
@@ -186,7 +192,11 @@ class OrderApplicationServicePaymentFlowTest {
                 eq("wx202604110001"),
                 eq(LocalDateTime.of(2026, 4, 11, 10, 30))
         );
-        verify(inventoryService).outbound(any(), eq(order.getCustomerId()));
+        verify(inventoryService).outbound(argThat(stock -> stock.getReferenceLineId().equals(77L)
+                && stock.getReferenceId().equals(order.getId())
+                && stock.getStoreId().equals(order.getStoreId())
+                && stock.getUnit().equals("袋")
+                && stock.getQuantity().compareTo(new BigDecimal("2")) == 0), isNull());
         verify(paymentIntentRepository).save(any(OrderPaymentIntent.class));
 
         ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
@@ -284,6 +294,9 @@ class OrderApplicationServicePaymentFlowTest {
         orderItem.setAllowSpecialFund(1);
         orderItem.setTotalPrice(new BigDecimal("100.00"));
 
+        org.mockito.Mockito.lenient().when(productPricingService.quote(any(PriceContext.class)))
+                .thenReturn(new PriceQuote("normal", null, 99L, 3L, "POS", 1, null, "袋", 11L,
+                        LocalDate.now(), new BigDecimal("100.00"), "RETAIL", null, false, false));
         when(staffRepository.findById(8L)).thenReturn(Optional.of(staff));
         when(orderDomainService.generateOrderNo()).thenReturn("SO202604120001");
         when(productRepository.findById(99L)).thenReturn(Optional.of(product));
@@ -309,52 +322,370 @@ class OrderApplicationServicePaymentFlowTest {
     }
 
     @Test
-    void createPosOrderDelegatesSaleEvidenceToNewChainWhenSkuActivated() {
+    void createPosOrderDeductsInventoryWithPersistedOrderLine() {
         POSOrderCreateCommand command = cashPosCommand(false);
         stubCashPosOrderPersistence();
-        when(pickupFulfillmentService.recordDirectSaleEvidence(
-                any(Order.class), any(OrderItem.class), eq(false), eq(8L))).thenReturn(true);
-
-        Long orderId = orderService.createPOSOrder(command, 8L);
-
-        assertEquals(500L, orderId);
-        verify(pickupFulfillmentService).recordDirectSaleEvidence(
-                any(Order.class), any(OrderItem.class), eq(false), eq(8L));
-        verify(inventoryService, never()).outbound(any(), any());
+        assertEquals(500L, orderService.createPOSOrder(command, 8L));
+        assertSaleOutbound();
     }
 
     @Test
-    void createPosOrderKeepsLegacyOutboundWhenSkuNotActivated() {
-        POSOrderCreateCommand command = cashPosCommand(false);
-        stubCashPosOrderPersistence();
-
-        Long orderId = orderService.createPOSOrder(command, 8L);
-
-        assertEquals(500L, orderId);
-        verify(pickupFulfillmentService).recordDirectSaleEvidence(
-                any(Order.class), any(OrderItem.class), eq(false), eq(8L));
-        verify(inventoryService).outbound(any(), eq(8L));
-    }
-
-    @Test
-    void createPosOrderForwardsWarehousePickupChoiceToNewChain() {
+    void createPosOrderWarehousePickupAlsoDeductsInventoryAtCheckout() {
         POSOrderCreateCommand command = cashPosCommand(true);
         stubCashPosOrderPersistence();
-        when(pickupFulfillmentService.recordDirectSaleEvidence(
-                any(Order.class), any(OrderItem.class), eq(true), eq(8L))).thenReturn(true);
+        assertEquals(500L, orderService.createPOSOrder(command, 8L));
+        assertSaleOutbound();
+    }
 
-        Long orderId = orderService.createPOSOrder(command, 8L);
+    @Test
+    void createPosOrderPropagatesInsufficientInventoryInsteadOfCompletingSale() {
+        stubCashPosOrderPersistence();
+        org.mockito.Mockito.doThrow(new IllegalArgumentException("库存不足"))
+                .when(inventoryService).outbound(any(), eq(8L));
+        assertEquals("库存不足", assertThrows(IllegalArgumentException.class,
+                () -> orderService.createPOSOrder(cashPosCommand(false), 8L)).getMessage());
+        verify(eventPublisher, never()).publishEvent(any(OrderFinishedEvent.class));
+    }
 
-        assertEquals(500L, orderId);
-        verify(pickupFulfillmentService).recordDirectSaleEvidence(
-                any(Order.class), any(OrderItem.class), eq(true), eq(8L));
+    @Test
+    void quoteFailureCannotFallBackToSubmittedPrice() {
+        Staff staff = new Staff(); staff.setId(8L); staff.setStoreId(3L);
+        Product product = new Product(); product.setId(99L); product.setMainUnit("袋");
+        when(staffRepository.findById(8L)).thenReturn(Optional.of(staff));
+        when(productRepository.findById(99L)).thenReturn(Optional.of(product));
+        when(orderDomainService.generateOrderNo()).thenReturn("FAILED-QUOTE");
+        when(productPricingService.quote(any(PriceContext.class)))
+                .thenThrow(new IllegalArgumentException("商品未配置零售价"));
+        assertEquals("商品未配置零售价", assertThrows(IllegalArgumentException.class,
+                () -> orderService.createPOSOrder(cashPosCommand(false), 8L)).getMessage());
+        verify(itemRepository, never()).save(any());
         verify(inventoryService, never()).outbound(any(), any());
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void wholeOrderDiscountRequiresReasonBeforeSavingOrder() {
+        stubCashPosOrderPersistence();
+        ReflectionTestUtils.setField(orderService, "manualPriceAuditService",
+                new ManualPriceAuditService(org.mockito.Mockito.mock(com.agri_system.domain.order.repository.OrderItemPriceAuditRepository.class)));
+        POSOrderCreateCommand command = cashPosCommand(false);
+        command.setDiscountAmount(new BigDecimal("9.00"));
+        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void staleDisplayedQuoteCannotSilentlyChangeCheckoutAmount() {
+        stubCashPosOrderPersistence();
+        POSOrderCreateCommand command = cashPosCommand(false);
+        command.getItems().get(0).setQuotedUnitPrice(new BigDecimal("90.00"));
+        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        verify(orderRepository, never()).save(any());
+        verify(inventoryService, never()).outbound(any(), any());
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void unsupportedPackageCannotBeSoldAsIndividuallyPricedLines() {
+        stubCashPosOrderPersistence();
+        POSOrderCreateCommand command = cashPosCommand(false);
+        command.getItems().get(0).setPackageId(7L);
+        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void fractionalSaleRoundsLineMoneyBeforeCheckout() {
+        stubCashPosOrderPersistence();
+        POSOrderCreateCommand command = cashPosCommand(false);
+        command.getItems().get(0).setQuantity(new BigDecimal("0.3333"));
+        command.setReceiveAmount(new BigDecimal("33.33"));
+        orderService.createPOSOrder(command, 8L);
+        ArgumentCaptor<OrderItem> item = ArgumentCaptor.forClass(OrderItem.class);
+        verify(itemRepository).save(item.capture());
+        assertEquals(new BigDecimal("33.33"), item.getValue().getTotalPrice());
+    }
+
+    @Test
+    void packageSaleUsesPackageTotalAndPersistsCompositionSnapshot() {
+        stubCashPosOrderPersistence();
+        var command = cashPosCommand(false);
+        var input = command.getItems().get(0); input.setProductId(null); input.setItemType(2); input.setPackageId(7L);
+        input.setQuantity(new BigDecimal("2")); input.setUnit("套"); input.setUnitPrice(null);
+        input.setQuotedUnitPrice(new BigDecimal("80.00")); input.setPackageQuoteId("package-content");
+        var material = new com.agri_system.application.productpackage.dto.vo.PackagePriceQuote.Item(
+                99L,"复合肥",new BigDecimal("14"),"袋",11L,new BigDecimal("11.428571428571"),
+                new BigDecimal("160.00"),0,new BigDecimal("11.428571428571"));
+        var quote = new com.agri_system.application.productpackage.dto.vo.PackagePriceQuote("package-content",7L,"独立定价套餐",
+                new BigDecimal("2"),new BigDecimal("80.00"),new BigDecimal("60.00"),false,new BigDecimal("80.00"),
+                new BigDecimal("160.00"),BigDecimal.ZERO,java.util.List.of(material));
+        when(packagePricingService.quoteForSale(eq(7L),isNull(),eq(3L),eq(new BigDecimal("2")),isNull())).thenReturn(quote);
+        orderService.createPOSOrder(command,8L);
+        ArgumentCaptor<OrderItem> saved = ArgumentCaptor.forClass(OrderItem.class); verify(itemRepository).save(saved.capture());
+        assertEquals(new BigDecimal("160.00"),saved.getValue().getTotalPrice());
+        assertEquals(new BigDecimal("14"),saved.getValue().getQuantity());
+        assertEquals(7L,saved.getValue().getPackageId()); assertEquals(1,saved.getValue().getPackageGroupNo());
+        assertEquals("独立定价套餐",saved.getValue().getPackageName());
+        assertEquals(new BigDecimal("2"),saved.getValue().getPackageQuantity());
+        assertEquals(new BigDecimal("80.00"),saved.getValue().getPackageUnitPrice());
+    }
+
+    @Test
+    void packageAndProductMixedSaleKeepPickupFlagsOnExpandedGoods() {
+        stubCashPosOrderPersistence();
+        var command = cashPosCommand(true);
+        var pack = command.getItems().get(0);
+        pack.setProductId(null); pack.setItemType(2); pack.setPackageId(7L);
+        pack.setQuantity(new BigDecimal("2")); pack.setUnitPrice(null); pack.setPackageQuoteId("mixed");
+        var standalone = new OrderItemDTO();
+        standalone.setProductId(99L); standalone.setQuantity(BigDecimal.ONE); standalone.setUnit("袋");
+        standalone.setWarehousePickup(false);
+        command.setItems(java.util.List.of(pack, standalone));
+        Product second = new Product(); second.setId(98L); second.setName("配套农药");
+        second.setMainUnit("瓶"); second.setAllowSpecialFund(0);
+        when(productRepository.findById(98L)).thenReturn(Optional.of(second));
+        var material1 = new com.agri_system.application.productpackage.dto.vo.PackagePriceQuote.Item(
+                99L,"复合肥",new BigDecimal("14"),"袋",11L,new BigDecimal("6.857142857143"),
+                new BigDecimal("96.00"),0,new BigDecimal("6.857142857143"));
+        var material2 = new com.agri_system.application.productpackage.dto.vo.PackagePriceQuote.Item(
+                98L,"配套农药",new BigDecimal("2"),"瓶",12L,new BigDecimal("32.00"),
+                new BigDecimal("64.00"),0,new BigDecimal("32.00"));
+        var quote = new com.agri_system.application.productpackage.dto.vo.PackagePriceQuote("mixed",7L,"套餐",
+                new BigDecimal("2"),new BigDecimal("80.00"),null,false,new BigDecimal("80.00"),
+                new BigDecimal("160.00"),BigDecimal.ZERO,java.util.List.of(material1,material2));
+        when(packagePricingService.quoteForSale(eq(7L),isNull(),eq(3L),eq(new BigDecimal("2")),isNull())).thenReturn(quote);
+
+        orderService.createPOSOrder(command,8L);
+
+        verify(inventoryService, org.mockito.Mockito.times(3)).outbound(any(),eq(8L));
+        verify(pickupFulfillmentService).createRequest(500L,900L,null);
+        verify(pickupFulfillmentService).createRequest(500L,901L,null);
+        verify(pickupFulfillmentService,never()).createRequest(500L,902L,null);
+        ArgumentCaptor<Order> saved = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository, org.mockito.Mockito.atLeastOnce()).save(saved.capture());
+        assertEquals(new BigDecimal("260.00"),saved.getValue().getPayAmount());
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void couponAndBalanceChargeNetAmountOnlyOnce() {
+        var facts = couponPosFixture("10.00");
+        var command = couponPosCommand(4);
+        command.setWalletAuthCode("TEST90");
+        orderService.createPOSOrder(command, 8L);
+        assertEquals(new BigDecimal("110.00"), facts.wallet().get(), "100元商品减10元券只能扣90元");
+        assertPaymentTotal(facts.payments(), 4, "90.00");
+        assertPaymentTotal(facts.payments(), 5, "10.00");
+        assertEquals(2, facts.coupon().getStatus());
+        assertEquals(500L, facts.coupon().getUsedOrderId());
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void couponAndCashRecordCashNetAmount() {
+        var facts = couponPosFixture("10.00");
+        orderService.createPOSOrder(couponPosCommand(1), 8L);
+        assertPaymentTotal(facts.payments(), 1, "90.00");
+        assertPaymentTotal(facts.payments(), 5, "10.00");
+        assertEquals(new BigDecimal("200.00"), facts.wallet().get());
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void couponAndMixedCashWechatChargeAllocatedNetAmount() {
+        var facts = couponPosFixture("10.00");
+        var command = couponPosCommand(10);
+        command.setPayments(java.util.List.of(paymentDetail(1, "40.00"), paymentDetail(2, "50.00")));
+        orderService.createPOSOrder(command, 8L);
+        assertPaymentTotal(facts.payments(), 1, "40.00");
+        assertPaymentTotal(facts.payments(), 2, "50.00");
+        assertPaymentTotal(facts.payments(), 5, "10.00");
+        assertEquals(3, facts.payments().size());
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void fullCouponDoesNotChargeWalletOrRequireCode() {
+        var facts = couponPosFixture("100.00");
+        orderService.createPOSOrder(couponPosCommand(4), 8L);
+        assertEquals(new BigDecimal("200.00"), facts.wallet().get());
+        assertPaymentTotal(facts.payments(), 5, "100.00");
+        assertEquals(1, facts.payments().size());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints = {5, 8, 10, 999})
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void mixedPaymentRejectsTypesThatCannotBeSubmittedAsRealTender(int type) {
+        stubCashPosOrderPersistence();
+        var command = cashPosCommand(false); command.setPaymentType(10);
+        command.setPayments(java.util.List.of(paymentDetail(type, "100.00")));
+        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void mixedPaymentRejectsNegativeEntryInsteadOfDroppingItAfterSummation() {
+        stubCashPosOrderPersistence();
+        var command = cashPosCommand(false); command.setPaymentType(10);
+        command.setPayments(java.util.List.of(paymentDetail(1, "150.00"), paymentDetail(6, "-50.00")));
+        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"0", "0.001"})
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void mixedPaymentRequiresEachEntryPositiveAndExactlyExpressibleInCents(String invalid) {
+        stubCashPosOrderPersistence();
+        var command = cashPosCommand(false); command.setPaymentType(10);
+        command.setPayments(java.util.List.of(paymentDetail(1, new BigDecimal("100.00").subtract(new BigDecimal(invalid)).toPlainString()),
+                paymentDetail(2, invalid)));
+        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void walletTenderRecordsOnlySpecialFundThatWasActuallyAvailable() {
+        var facts = couponPosFixture("10.00");
+        var fund = new java.util.concurrent.atomic.AtomicReference<>(new BigDecimal("5.00"));
+        when(walletService.getSpecialFundBalance(12L)).thenAnswer(invocation -> fund.get());
+        when(orderDomainService.calculateMaxSpecialFundAmount(any())).thenReturn(new BigDecimal("20.00"));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            fund.updateAndGet(amount -> amount.subtract(invocation.getArgument(1))); return null;
+        }).when(walletService).deductSpecialFund(eq(12L),any(),any(),any(),any(),any());
+        var command = couponPosCommand(4); command.setUseSpecialFund(true); command.setWalletAuthCode("TEST85");
+        orderService.createPOSOrder(command,8L);
+        assertPaymentTotal(facts.payments(),8,"5.00");
+        assertPaymentTotal(facts.payments(),4,"85.00");
+        assertEquals(new BigDecimal("115.00"),facts.wallet().get());
+        assertEquals(new BigDecimal("0.00"),fund.get());
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void mixedWalletTenderRequiresAuthorizationBeforeDeduction() {
+        var facts = couponPosFixture("10.00");
+        var command = couponPosCommand(10);
+        command.setPayments(java.util.List.of(paymentDetail(1,"40.00"),paymentDetail(4,"50.00")));
+        assertThrows(IllegalArgumentException.class,()->orderService.createPOSOrder(command,8L));
+        assertEquals(new BigDecimal("200.00"),facts.wallet().get());
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void mixedWalletTenderRejectsExpiredUsedOrWrongAmountAuthorization() {
+        var facts = couponPosFixture("10.00");
+        when(walletAuthCodeRepository.consumeAuthCode(eq(12L),any(),any(),eq(500L))).thenReturn(0);
+        var command = couponPosCommand(10); command.setWalletAuthCode("EXPIRED");
+        command.setPayments(java.util.List.of(paymentDetail(1,"40.00"),paymentDetail(4,"50.00")));
+        assertThrows(IllegalStateException.class,()->orderService.createPOSOrder(command,8L));
+        assertEquals(new BigDecimal("200.00"),facts.wallet().get());
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void mixedWalletTenderConsumesAuthorizationExactlyOnce() {
+        var facts = couponPosFixture("10.00");
+        var command = couponPosCommand(10); command.setWalletAuthCode("TEST50");
+        command.setPayments(java.util.List.of(paymentDetail(1,"40.00"),paymentDetail(4,"50.00")));
+        orderService.createPOSOrder(command,8L);
+        assertEquals(new BigDecimal("150.00"),facts.wallet().get());
+        assertPaymentTotal(facts.payments(),4,"50.00");
+        assertEquals(1,facts.authUses().get());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"owner", "expired", "not_started", "minimum", "category", "product"})
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void selectedCouponMustSatisfySameEligibilityAsPreview(String invalid) {
+        var facts = couponPosFixture("10.00");
+        switch (invalid) {
+            case "owner" -> facts.coupon().setCustomerId(13L);
+            case "expired" -> facts.coupon().setEndTime(LocalDateTime.now().minusMinutes(1));
+            case "not_started" -> facts.coupon().setStartTime(LocalDateTime.now().plusDays(1));
+            case "minimum" -> facts.coupon().setMinOrderAmount(new BigDecimal("200.00"));
+            case "category" -> facts.coupon().setLimitCategoryId(999L);
+            case "product" -> facts.coupon().setLimitProductId(999L);
+        }
+        assertThrows(IllegalArgumentException.class,()->orderService.createPOSOrder(couponPosCommand(1),8L));
+        assertEquals(1,facts.coupon().getStatus());
+        assertEquals(0,facts.payments().size());
+    }
+
+    private record CouponPosFacts(com.agri_system.domain.coupon.model.CustomerCoupon coupon,
+                                  java.util.List<com.agri_system.domain.order.model.OrderPayment> payments,
+                                  java.util.concurrent.atomic.AtomicReference<BigDecimal> wallet,
+                                  java.util.concurrent.atomic.AtomicInteger authUses) {}
+
+    /** 真实订单及支付服务，仅外部存储用可观察状态替身。 */
+    private CouponPosFacts couponPosFixture(String value) {
+        stubCashPosOrderPersistence();
+        var payments = new java.util.ArrayList<com.agri_system.domain.order.model.OrderPayment>();
+        var persistedItems = new java.util.ArrayList<OrderItem>();
+        when(paymentRepository.findByOrderId(500L)).thenAnswer(invocation -> new java.util.ArrayList<>(payments));
+        when(paymentRepository.save(any())).thenAnswer(invocation -> {
+            com.agri_system.domain.order.model.OrderPayment payment = invocation.getArgument(0);
+            payments.add(payment); return payment;
+        });
+        when(itemRepository.save(any())).thenAnswer(invocation -> {
+            OrderItem item = invocation.getArgument(0); item.setId(900L); persistedItems.add(item); return item;
+        });
+        when(itemRepository.findByOrderId(500L)).thenAnswer(invocation -> persistedItems);
+        var coupon = new com.agri_system.domain.coupon.model.CustomerCoupon();
+        coupon.setId(81L); coupon.setCustomerId(12L); coupon.setType(1);
+        coupon.setAmount(new BigDecimal(value)); coupon.setStatus(1);
+        coupon.setStartTime(LocalDateTime.now().minusDays(1)); coupon.setEndTime(LocalDateTime.now().plusDays(1));
+        when(couponRepository.findById(81L)).thenReturn(Optional.of(coupon));
+        when(couponRepository.findByIdForUpdate(81L)).thenReturn(Optional.of(coupon));
+        var wallet = new java.util.concurrent.atomic.AtomicReference<>(new BigDecimal("200.00"));
+        when(walletService.getBalance(12L)).thenAnswer(invocation -> wallet.get());
+        when(walletService.getSpecialFundBalance(12L)).thenReturn(BigDecimal.ZERO);
+        when(orderDomainService.calculateMaxSpecialFundAmount(any())).thenReturn(BigDecimal.ZERO);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            wallet.updateAndGet(amount -> amount.subtract(invocation.getArgument(1))); return null;
+        }).when(walletService).deductBalance(eq(12L),any(),any(),any(),any(),any());
+        var authUses = new java.util.concurrent.atomic.AtomicInteger();
+        when(walletAuthCodeRepository.consumeAuthCode(eq(12L), any(), any(), eq(500L))).thenAnswer(invocation -> {
+            authUses.incrementAndGet(); return 1;
+        });
+        ReflectionTestUtils.setField(orderService, "paymentService", new OrderPaymentService(paymentRepository,
+                couponRepository, walletService, orderDomainService, itemRepository, productRepository));
+        return new CouponPosFacts(coupon, payments, wallet, authUses);
+    }
+
+    private POSOrderCreateCommand couponPosCommand(int paymentType) {
+        var command = cashPosCommand(false); command.setCustomerId(12L); command.setCouponId(81L);
+        command.setPaymentType(paymentType); command.setReceiveAmount(new BigDecimal("90.00")); return command;
+    }
+
+    private PaymentDetailDTO paymentDetail(int type, String amount) {
+        var detail = new PaymentDetailDTO(); detail.setPaymentType(type); detail.setAmount(new BigDecimal(amount)); return detail;
+    }
+
+    private void assertPaymentTotal(java.util.List<com.agri_system.domain.order.model.OrderPayment> payments, int type, String expected) {
+        assertEquals(new BigDecimal(expected), payments.stream().filter(p -> Integer.valueOf(type).equals(p.getPaymentType()))
+                .map(com.agri_system.domain.order.model.OrderPayment::getAmount).reduce(BigDecimal.ZERO,BigDecimal::add));
+    }
+
+    private void assertSaleOutbound() {
+        ArgumentCaptor<com.agri_system.application.inventory.dto.command.InventoryOutCommand> captor =
+                ArgumentCaptor.forClass(com.agri_system.application.inventory.dto.command.InventoryOutCommand.class);
+        verify(inventoryService).outbound(captor.capture(), eq(8L));
+        assertEquals(500L, captor.getValue().getReferenceId());
+        assertEquals(900L, captor.getValue().getReferenceLineId());
+        assertEquals("ORDER", captor.getValue().getReferenceType());
+        assertEquals(99L, captor.getValue().getProductId());
+        assertEquals(3L, captor.getValue().getStoreId());
+        assertEquals("袋", captor.getValue().getUnit());
+        assertEquals(0, captor.getValue().getQuantity().compareTo(BigDecimal.ONE));
     }
 
     @Test
     void createPosOrderRecordsManualPriceChangeAfterItemSaveAndKeepsSubmittedPrice() {
         POSOrderCreateCommand command = cashPosCommand(false);
         stubCashPosOrderPersistence();
+        command.getItems().get(0).setPriceChangeReason("老客户议价");
         PriceQuote quote = new PriceQuote("quote-pos-1", null, 99L, 3L, "POS", null, null, "袋", 11L,
                 LocalDate.now(), new BigDecimal("90.00"), "v1", new BigDecimal("80.00"), false, false);
         when(productPricingService.quote(any(PriceContext.class))).thenReturn(quote);
@@ -373,7 +704,7 @@ class OrderApplicationServicePaymentFlowTest {
         assertEquals(900L, quoteCaptor.getValue().orderItemId());
         assertEquals("quote-pos-1", quoteCaptor.getValue().quoteId());
         assertEquals(0, priceCaptor.getValue().compareTo(new BigDecimal("100.00")));
-        assertEquals("POS手动改价", reasonCaptor.getValue());
+        assertEquals("老客户议价", reasonCaptor.getValue());
 
         ArgumentCaptor<OrderItem> itemCaptor = ArgumentCaptor.forClass(OrderItem.class);
         verify(itemRepository).save(itemCaptor.capture());
@@ -405,6 +736,9 @@ class OrderApplicationServicePaymentFlowTest {
         product.setAvgCostPrice(new BigDecimal("40.00"));
         product.setAllowSpecialFund(0);
 
+        org.mockito.Mockito.lenient().when(productPricingService.quote(any(PriceContext.class)))
+                .thenReturn(new PriceQuote("normal", null, 99L, 3L, "POS", 1, null, "袋", 11L,
+                        LocalDate.now(), new BigDecimal("100.00"), "RETAIL", null, false, false));
         when(staffRepository.findById(8L)).thenReturn(Optional.of(staff));
         when(orderDomainService.generateOrderNo()).thenReturn("SO202609120001");
         when(productRepository.findById(99L)).thenReturn(Optional.of(product));
@@ -415,10 +749,11 @@ class OrderApplicationServicePaymentFlowTest {
             }
             return saved;
         });
+        var ids = new java.util.concurrent.atomic.AtomicLong(900L);
         when(itemRepository.save(any(OrderItem.class))).thenAnswer(invocation -> {
             OrderItem saved = invocation.getArgument(0);
             if (saved.getId() == null) {
-                saved.setId(900L);
+                saved.setId(ids.getAndIncrement());
             }
             return saved;
         });

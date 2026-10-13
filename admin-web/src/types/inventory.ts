@@ -52,6 +52,8 @@ export interface InventoryDetailVO {
 }
 
 export interface InventoryTransferRequest {
+  requestKey: string
+  unit?: string
   fromStoreId: number
   toStoreId: number
   productId: number
@@ -86,6 +88,10 @@ export interface InventoryTransferResult {
 }
 
 export interface InventoryAdjustRequest {
+  requestKey: string
+  expectedQuantity: number
+  actualQuantity?: number
+  unit?: string
   storeId: number
   productId: number
   quantityDiff: number

@@ -22,6 +22,14 @@ public class OrderItemVO {
     
     @Schema(description = "套餐ID", example = "1")
     private Long packageId;
+
+    /** 同一订单内的套餐销售组；空表示历史行/单品，不能推测历史套数。 */
+    private Integer packageGroupNo;
+    /** 套餐销售时的名称、套数和每套成交价快照。 */
+    private String packageName;
+    private BigDecimal packageQuantity;
+    private BigDecimal packageUnitPrice;
+
     
     @Schema(description = "明细类型：1-商品，2-套餐", example = "1")
     private Integer itemType;

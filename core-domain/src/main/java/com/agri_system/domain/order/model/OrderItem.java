@@ -28,6 +28,14 @@ public class OrderItem {
     
     /** 套餐ID（套餐订单） */
     private Long packageId;
+
+    /** 同一订单内的套餐销售组；空表示历史行/单品，不能推测历史套数。 */
+    private Integer packageGroupNo;
+    /** 套餐销售时的名称、套数和每套成交价快照。 */
+    private String packageName;
+    private BigDecimal packageQuantity;
+    private BigDecimal packageUnitPrice;
+
     
     /** 明细类型：1-商品，2-套餐 */
     private Integer itemType;

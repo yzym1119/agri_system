@@ -12,15 +12,15 @@ import java.util.Optional;
 
 /**
  * 订单仓储实现
- * 
+ *
  * @author AI Generated
  */
 @Repository
 @RequiredArgsConstructor
 public class OrderRepositoryImpl implements OrderRepository {
-    
+
     private final OrderMapper mapper;
-    
+
     @Override
     public Order save(Order order) {
         if (order.getId() == null) {
@@ -30,12 +30,17 @@ public class OrderRepositoryImpl implements OrderRepository {
         }
         return order;
     }
-    
+
     @Override
     public Optional<Order> findById(Long id) {
         return Optional.ofNullable(mapper.selectOneById(id));
     }
-    
+
+    @Override
+    public Optional<Order> findByIdForUpdate(Long id) {
+        return Optional.ofNullable(mapper.selectOneByQuery(QueryWrapper.create().where("id = ?", id).forUpdate()));
+    }
+
     @Override
     public Optional<Order> findByOrderNo(String orderNo) {
         Order order = mapper.selectOneByQuery(
@@ -44,7 +49,7 @@ public class OrderRepositoryImpl implements OrderRepository {
         );
         return Optional.ofNullable(order);
     }
-    
+
     @Override
     public Optional<Order> findByPickupCode(String pickupCode) {
         Order order = mapper.selectOneByQuery(
@@ -71,7 +76,7 @@ public class OrderRepositoryImpl implements OrderRepository {
                 .and("updated_at < ?", beforeTime);
         return mapper.selectListByQuery(query);
     }
-    
+
     @Override
     public com.mybatisflex.core.paginate.Page<Order> findPage(
             Integer pageNum,
@@ -90,21 +95,21 @@ public class OrderRepositoryImpl implements OrderRepository {
                 .leftJoin("store").as("s").on("o.store_id = s.id")
                 .leftJoin("customer").as("c").on("o.customer_id = c.id")
                 .leftJoin("order_delivery").as("od").on("o.id = od.order_id");
-        
+
         // 关键词搜索（订单号/手机号/收货人）
         if (keyword != null && !keyword.trim().isEmpty()) {
             query.and("(o.order_no LIKE ? OR o.receiver_phone LIKE ? OR o.receiver_name LIKE ? OR c.phone LIKE ?)",
                     "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%");
         }
-        
+
         if (storeId != null) {
             query.and("o.store_id = ?", storeId);
         }
-        
+
         if (orderType != null) {
             query.and("o.order_type = ?", orderType);
         }
-        
+
         if (deliveryType != null) {
             if (deliveryType == 1) {
                 query.and("o.order_type = ?", 2); // 自提
@@ -116,7 +121,7 @@ public class OrderRepositoryImpl implements OrderRepository {
                         .and("(od.delivery_type = ? OR od.id IS NULL)", 3);
             }
         }
-        
+
         if (orderStatus != null && !orderStatus.trim().isEmpty()) {
             // 支持多状态查询，用逗号分隔，如：7,8,9
             if (orderStatus.contains(",")) {
@@ -127,7 +132,7 @@ public class OrderRepositoryImpl implements OrderRepository {
                 query.and("o.order_status = ?", Integer.parseInt(orderStatus.trim()));
             }
         }
-        
+
         // 过滤客户（仅当传入时生效）
         if (customerId != null) {
             query.and("o.customer_id = ?", customerId);
@@ -136,13 +141,13 @@ public class OrderRepositoryImpl implements OrderRepository {
         if (startTime != null && !startTime.trim().isEmpty()) {
             query.and("o.created_at >= ?", java.time.LocalDateTime.parse(startTime));
         }
-        
+
         if (endTime != null && !endTime.trim().isEmpty()) {
             query.and("o.created_at <= ?", java.time.LocalDateTime.parse(endTime));
         }
-        
+
         query.orderBy("o.created_at DESC");
-        
+
         com.mybatisflex.core.paginate.Page<Order> page = new com.mybatisflex.core.paginate.Page<>(pageNum, pageSize);
         return mapper.paginate(page, query);
     }

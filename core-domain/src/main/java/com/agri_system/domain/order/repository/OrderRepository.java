@@ -20,6 +20,9 @@ public interface OrderRepository {
      * 根据ID查询订单
      */
     Optional<Order> findById(Long id);
+
+    /** 同一业务事务内锁定当前行，序列化资金或套餐配置变更。 */
+    Optional<Order> findByIdForUpdate(Long id);
     
     /**
      * 根据订单号查询订单

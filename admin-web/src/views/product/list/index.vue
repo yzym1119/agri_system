@@ -74,10 +74,10 @@
         <el-table-column prop="name" label="商品名称" width="200" show-overflow-tooltip fixed="left" />
         <el-table-column prop="categoryName" label="分类" width="100" align="center"/>
         <el-table-column prop="specification" label="规格" width="100" align="center"/>
-        <el-table-column prop="suggestedRetailPrice" label="零售价" width="100" align="center">
+        <el-table-column prop="suggestedRetailPrice" label="零售价" width="150" align="center">
           <template #default="{ row }">
             <div style="display: flex; align-items: center; justify-content: flex-end; gap: 6px;">
-              <span>¥{{ row.suggestedRetailPrice?.toFixed(2) || '0.00' }}</span>
+              <span>¥{{ row.suggestedRetailPrice?.toFixed(2) || '0.00' }}/{{ row.pricingUnit || '未配置单位' }}</span>
             </div>
           </template>
         </el-table-column>
@@ -148,32 +148,6 @@
           <template #default="{ row }">
             <div class="action-cell">
               <el-button v-permission="'product:update'" type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
-              <!-- 价格策略 (带 Badge) -->
-              <el-badge
-                v-if="row.strategyCount && row.strategyCount > 0"
-                v-permission="'product:price:query'"
-                :value="row.strategyCount"
-                type="warning"
-                :offset="[8, 7]"
-                class="strategy-badge"
-              >
-                <el-button link type="warning" :icon="Money" @click="handlePriceStrategy(row)">
-                  已配策略
-                </el-button>
-              </el-badge>
-
-              <!-- 价格策略 (无 Badge) -->
-              <el-button
-                v-permission="'product:price:query'"
-                v-else
-                link
-                type="primary"
-                :icon="Money"
-                @click="handlePriceStrategy(row)"
-              >
-                配置策略
-              </el-button>
-
               <!-- 上下架 -->
               <el-button
                 v-permission="'product:update'"
@@ -201,14 +175,6 @@
           </template>
         </el-table-column>
       </el-table>
-
-      <!-- 价格策略弹窗 -->
-      <PriceStrategyDialog
-        v-model="priceStrategyVisible"
-        :product-id="currentProductId"
-        :product-name="currentProductName"
-        @success="loadProductList"
-      />
 
       <!-- 分页 -->
       <div class="pagination">
@@ -388,7 +354,8 @@
         </el-form-item>
 
         <!-- 价格体系 -->
-        <el-divider content-position="left">价格体系</el-divider>
+        <el-divider content-position="left">销售价格</el-divider>
+        <el-alert :title="`零售价、会员价和最低价均为元/${pricingUnit || '请先填写单位'}，销售时按单位自动换算；线上与门店同价。会员价与最低价填0表示不启用。`" type="info" :closable="false" />
         <el-row :gutter="20">
           <el-col :span="12">
             <el-form-item label="零售价" prop="suggestedRetailPrice">
@@ -402,7 +369,7 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="VIP价" prop="vipPrice">
+            <el-form-item label="会员价" prop="vipPrice">
               <el-input-number
                 v-model="formData.vipPrice"
                 :min="0"
@@ -415,7 +382,7 @@
         </el-row>
         <el-row :gutter="20">
           <el-col :span="12">
-            <el-form-item label="最低限价" prop="minPrice">
+            <el-form-item label="最低价提醒" prop="minPrice">
               <el-input-number
                 v-model="formData.minPrice"
                 :min="0"
@@ -426,7 +393,7 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="成本价" prop="avgCostPrice">
+            <el-form-item label="平均成本（主单位）" prop="avgCostPrice">
               <el-input
                 v-model="formData.avgCostPrice"
                 disabled
@@ -462,15 +429,6 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <el-form-item label="线上价" prop="onlinePrice" v-if="formData.isOnline === 1">
-          <el-input-number
-            v-model="formData.onlinePrice"
-            :min="0"
-            :precision="2"
-            placeholder="为空则取零售价"
-            style="width: 100%"
-          />
-        </el-form-item>
         <el-form-item label="基础运费" prop="baseShippingFee">
           <el-input-number
             v-model="formData.baseShippingFee"
@@ -563,8 +521,7 @@
 <script setup lang="ts">
 import {computed, onMounted, reactive, ref, watch} from 'vue'
 import {ElMessage, ElMessageBox, type FormInstance, type FormRules} from 'element-plus'
-import {Delete, Edit, Money, Plus, Refresh, Search} from '@element-plus/icons-vue'
-import PriceStrategyDialog from '@/components/PriceStrategyDialog/index.vue'
+import {Delete, Edit, Plus, Refresh, Search} from '@element-plus/icons-vue'
 import {
   createProduct,
   deleteProduct,
@@ -616,12 +573,10 @@ const drawerVisible = ref(false)
 const isEdit = ref(false)
 const formRef = ref<FormInstance>()
 
-// 价格策略弹窗
-const priceStrategyVisible = ref(false)
-const currentProductId = ref<number>(0)
-const currentProductName = ref<string>('')
-
 // 表单数据
+const existingPricingUnit = ref<string>('')
+const pricingUnit = computed(() => isEdit.value ? existingPricingUnit.value : (formData.auxUnit || formData.mainUnit))
+
 const formData = reactive<ProductCreateRequest & { id?: number; avgCostPrice?: number }>({
   name: '',
   categoryId: undefined,
@@ -850,14 +805,14 @@ const handleEdit = async (row: ProductDetailVO) => {
     formData.mainUnit = detail.mainUnit
     formData.auxUnit = detail.auxUnit
     formData.mainToAuxRatio = detail.mainToAuxRatio
+    existingPricingUnit.value = detail.pricingUnit || ''
     formData.suggestedRetailPrice = detail.suggestedRetailPrice
-    formData.vipPrice = detail.vipPrice
-    formData.minPrice = detail.minPrice
+    formData.vipPrice = detail.vipPrice || 0
+    formData.minPrice = detail.minPrice || 0
     formData.avgCostPrice = detail.avgCostPrice
     formData.imageUrl = detail.imageUrl || ''
     formData.detailText = detail.detailText
     formData.isOnline = detail.isOnline
-    formData.onlinePrice = detail.onlinePrice
     formData.baseShippingFee = detail.baseShippingFee || 0
     formData.allowSpecialFund = detail.allowSpecialFund || 0
     formData.remark = detail.remark
@@ -874,13 +829,6 @@ const handleEdit = async (row: ProductDetailVO) => {
   } catch (error) {
     console.error('加载商品详情失败:', error)
   }
-}
-
-// 价格策略
-const handlePriceStrategy = (row: ProductDetailVO) => {
-  currentProductId.value = row.id
-  currentProductName.value = row.name
-  priceStrategyVisible.value = true
 }
 
 // 删除
@@ -1054,8 +1002,7 @@ const handleSubmit = async () => {
           imageUrl: formData.imageUrl,
           detailText: formData.detailText,
           isOnline: formData.isOnline,
-          onlinePrice: formData.onlinePrice,
-          baseShippingFee: formData.baseShippingFee,
+                    baseShippingFee: formData.baseShippingFee,
           allowSpecialFund: formData.allowSpecialFund,
           remark: formData.remark,
           barcode: formData.barcode || undefined,
@@ -1086,8 +1033,7 @@ const handleSubmit = async () => {
           imageUrl: formData.imageUrl,
           detailText: formData.detailText,
           isOnline: formData.isOnline,
-          onlinePrice: formData.onlinePrice,
-          baseShippingFee: formData.baseShippingFee,
+                    baseShippingFee: formData.baseShippingFee,
           allowSpecialFund: formData.allowSpecialFund,
           remark: formData.remark,
           barcode: formData.barcode || undefined,

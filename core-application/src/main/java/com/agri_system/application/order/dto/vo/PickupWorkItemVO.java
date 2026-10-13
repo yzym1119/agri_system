@@ -5,6 +5,7 @@ import lombok.Data;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 取货待办工作项VO（零售事实链 Task9：库房取货待办查询）。
@@ -50,4 +51,17 @@ public class PickupWorkItemVO {
 
     @Schema(description = "创建时间")
     private LocalDateTime createdAt;
+
+    @Schema(description = "请求所属的已出库批次分配，数量为销售时基准数量")
+    private List<AllocationVO> allocations;
+
+    @Data
+    public static class AllocationVO {
+        private Long id;
+        private Long batchId;
+        private String internalReceiptBatchNo;
+        private Long locationId;
+        private String locationName;
+        private BigDecimal allocatedBaseQuantity;
+    }
 }

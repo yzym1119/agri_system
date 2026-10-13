@@ -206,6 +206,7 @@ const historyRecords = ref<InventoryTransferRecordVO[]>([])
 const historyTotal = ref(0)
 
 const form = reactive<InventoryTransferRequest>({
+  requestKey: crypto.randomUUID(),
   fromStoreId: undefined as unknown as number,
   toStoreId: undefined as unknown as number,
   productId: undefined as unknown as number,
@@ -333,8 +334,9 @@ const handleSubmit = () => {
     if (!valid) return
     submitting.value = true
     try {
-      lastTransferResult.value = await transferInventory(form)
+      lastTransferResult.value = await transferInventory({ ...form, unit: selectedProduct.value?.mainUnit })
       ElMessage.success('调拨成功')
+      form.requestKey = crypto.randomUUID()
       loadHistory()
       form.remark = ''
     } finally {
@@ -344,6 +346,7 @@ const handleSubmit = () => {
 }
 
 const handleReset = () => {
+  form.requestKey = crypto.randomUUID()
   form.fromStoreId = undefined as unknown as number
   form.toStoreId = undefined as unknown as number
   form.productId = undefined as unknown as number

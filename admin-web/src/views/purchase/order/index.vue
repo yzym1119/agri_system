@@ -238,76 +238,6 @@
       </el-table>
     </el-drawer>
 
-    <!-- 入库弹窗 -->
-    <el-dialog v-model="inboundVisible" title="采购入库" width="70%" :close-on-click-modal="false">
-      <el-descriptions :column="2" border style="margin-bottom: 16px">
-        <el-descriptions-item label="入库门店">{{ inboundStoreName }}</el-descriptions-item>
-        <el-descriptions-item label="采购单号">{{ inboundOrderNo }}</el-descriptions-item>
-      </el-descriptions>
-      <el-table :data="inboundItems" border size="small">
-        <el-table-column type="index" label="#" width="50" />
-        <el-table-column prop="productName" label="商品名称" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="specification" label="规格" width="100" show-overflow-tooltip />
-        <el-table-column prop="manufacturer" label="厂家" width="120" show-overflow-tooltip />
-        <el-table-column prop="unit" label="单位" width="80" align="center" />
-        <el-table-column prop="qty" label="采购数量" width="120" align="right" />
-        <el-table-column label="实收数量" width="160" align="center">
-          <template #default="{ row }">
-            <el-input-number v-model="row.quantity" :min="0.01" :precision="2" style="width: 100%" />
-          </template>
-        </el-table-column>
-        <el-table-column label="实际成本" width="160" align="center">
-          <template #default="{ row }">
-            <el-input-number v-model="row.costPrice" :min="0.01" :precision="2" style="width: 100%" />
-          </template>
-        </el-table-column>
-        <el-table-column label="生产日期" width="160" align="center">
-          <template #default="{ row }">
-            <el-date-picker
-              v-model="row.productionDate"
-              type="date"
-              value-format="YYYY-MM-DD"
-              placeholder="选择日期"
-              style="width: 100%"
-              @change="() => handleDateChange(row)"
-            />
-          </template>
-        </el-table-column>
-        <el-table-column label="保质期" width="140" align="center">
-          <template #default="{ row }">
-            <el-select
-              v-model="row._shelfLife"
-              placeholder="请选择"
-              filterable
-              allow-create
-              default-first-option
-              style="width: 100%"
-              @change="() => handleDateChange(row)"
-            >
-              <el-option v-for="opt in shelfLifeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-            </el-select>
-          </template>
-        </el-table-column>
-        <el-table-column label="有效期至" width="160" align="center">
-          <template #default="{ row }">
-            <el-date-picker
-              v-model="row.expireDate"
-              type="date"
-              value-format="YYYY-MM-DD"
-              placeholder="自动计算"
-              :input-style="{ color: '#606266', fontWeight: 'bold' }"
-              style="width: 100%"
-              @change="(val: string | null) => handleExpireChange(row, val)"
-            />
-          </template>
-        </el-table-column>
-      </el-table>
-      <template #footer>
-        <el-button @click="inboundVisible = false">取消</el-button>
-        <el-button v-permission="'purchase:inbound'" type="primary" :loading="submitLoading" @click="handleInbound">确认入库</el-button>
-      </template>
-    </el-dialog>
-
     <!-- 商品选择器 -->
     <ProductSelector v-model="productSelectorVisible" :selected-ids="selectedProductIds" @confirm="handleProductSelect" />
 
@@ -324,7 +254,6 @@ import {
   createPurchase,
   getPurchaseDetail,
   getPurchaseList,
-  inboundPurchase,
   submitPurchase
 } from '@/api/purchase'
 import {getAllStores} from '@/api/store'
@@ -332,7 +261,6 @@ import {getAllSuppliers} from '@/api/supplier'
 import type {
   PurchaseCreateRequest,
   PurchaseDetailVO,
-  PurchaseInboundRequest,
   PurchasePageQuery,
   PurchasePageVO
 } from '@/types/purchase'
@@ -344,14 +272,9 @@ import ProductSelector from '@/components/ProductSelector/index.vue'
 import QuickProductForm from '@/components/QuickProductForm/index.vue'
 import type {ProductDetailVO} from '@/types/product'
 import {getProductDetail} from '@/api/product'
-import dayjs from 'dayjs'
+import { useRouter } from 'vue-router'
 
-const shelfLifeOptions = [
-  { label: '1年 (12个月)', value: 12 },
-  { label: '2年 (24个月)', value: 24 },
-  { label: '3年 (36个月)', value: 36 },
-  { label: '5年 (60个月)', value: 60 }
-]
+const router = useRouter()
 
 // 状态映射
 const statusOptions = [
@@ -410,27 +333,6 @@ const submitLoading = ref(false)
 // 详情
 const detailVisible = ref(false)
 const detail = ref<PurchaseDetailVO>()
-
-// 入库
-const inboundVisible = ref(false)
-const inboundOrderId = ref<number>()
-const inboundStoreName = ref<string>('')
-const inboundOrderNo = ref<string>('')
-type InboundRow = {
-  productId: number
-  productName?: string
-  specification?: string
-  manufacturer?: string
-  unit?: string
-  qty?: number
-  quantity: number
-  costPrice: number
-  productionDate?: string
-  expireDate?: string
-  _shelfLife?: number | null
-}
-
-const inboundItems = ref<InboundRow[]>([])
 
 // 商品选择器
 const productSelectorVisible = ref(false)
@@ -690,85 +592,8 @@ const handleSubmit = async (row: PurchasePageVO) => {
   }
 }
 
-const handleOpenInbound = async (row: PurchasePageVO) => {
-  inboundOrderId.value = row.id
-  const detailData = await getPurchaseDetail(row.id)
-  inboundStoreName.value = detailData.storeName || '-'
-  inboundOrderNo.value = detailData.orderNo || '-'
-  inboundItems.value =
-    detailData.items?.map(it => ({
-      productId: it.productId,
-      productName: it.productName,
-      specification: it.specification,
-      manufacturer: it.manufacturer,
-      unit: it.unit,
-      qty: it.qty,
-      quantity: it.qty,
-      costPrice: it.price,
-      _shelfLife: 24
-    })) || []
-  inboundVisible.value = true
-}
-
-const handleDateChange = (row: InboundRow) => {
-  if (row.productionDate && row._shelfLife) {
-    row.expireDate = dayjs(row.productionDate)
-      .add(Number(row._shelfLife), 'month')
-      .format('YYYY-MM-DD')
-  }
-}
-
-const handleExpireChange = (row: InboundRow, val: string | null) => {
-  row.expireDate = val || undefined
-}
-
-const handleInbound = async () => {
-  if (!inboundOrderId.value) return
-
-  // 前端校验
-  if (!inboundItems.value.length) {
-    ElMessage.warning('入库明细不能为空')
-    return
-  }
-
-  for (const item of inboundItems.value) {
-    if (!item.quantity || item.quantity <= 0) {
-      ElMessage.warning(`请填写商品【${item.productName || item.productId}】的实收数量`)
-      return
-    }
-    if (!item.costPrice || item.costPrice <= 0) {
-      ElMessage.warning(`请填写商品【${item.productName || item.productId}】的实际成本`)
-      return
-    }
-    // 若生产日期和保质期都有，则再次计算有效期，避免未计算的情况
-    if (item.productionDate && item._shelfLife && !item.expireDate) {
-      item.expireDate = dayjs(item.productionDate)
-        .add(Number(item._shelfLife), 'month')
-        .format('YYYY-MM-DD')
-    }
-  }
-
-  submitLoading.value = true
-  try {
-    const cleanedItems = inboundItems.value.map(i => ({
-      productId: i.productId,
-      quantity: Number(i.quantity),
-      costPrice: Number(i.costPrice),
-      productionDate: i.productionDate,
-      expireDate: i.expireDate
-    }))
-
-    const payload: PurchaseInboundRequest = {
-      orderId: inboundOrderId.value,
-      items: cleanedItems
-    }
-    await inboundPurchase(payload)
-    ElMessage.success('入库成功')
-    inboundVisible.value = false
-    loadTable()
-  } finally {
-    submitLoading.value = false
-  }
+const handleOpenInbound = (row: PurchasePageVO) => {
+  router.push({ path: '/purchase/receipt', query: { purchaseOrderId: String(row.id) } })
 }
 
 const handleView = async (row: PurchasePageVO) => {

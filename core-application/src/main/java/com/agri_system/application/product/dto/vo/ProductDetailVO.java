@@ -48,13 +48,16 @@ public class ProductDetailVO {
     @Schema(description = "主辅单位换算比例", example = "20.0000")
     private BigDecimal mainToAuxRatio;
     
-    @Schema(description = "建议零售价（元）", example = "50.00")
+    @Schema(description = "零售价（元/基准单位，按商品业务单位系数换算销售价）", example = "50.00")
     private BigDecimal suggestedRetailPrice;
+
+    @Schema(description = "零售价、会员价、最低价对应的持久化基准单位")
+    private String pricingUnit;
     
-    @Schema(description = "VIP价格（元）", example = "45.00")
+    @Schema(description = "会员价（元/基准单位，0或空表示使用零售价）", example = "45.00")
     private BigDecimal vipPrice;
     
-    @Schema(description = "最低限价（元）", example = "40.00")
+    @Schema(description = "最低价提醒（元/基准单位，不作为销售价兜底）", example = "40.00")
     private BigDecimal minPrice;
     
     @Schema(description = "移动加权平均成本（元，只读）", example = "30.00")

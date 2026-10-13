@@ -1,5 +1,8 @@
 # agri_system
 
+当前库存已统一为采购收货、销售、原单退货、盘点和调拨共用的一套库存账，无 SKU 模式开关。运行及验收见 [统一库存说明](docs/runbooks/retail-fact-chain-rollout.md) 和 [修复验收](docs/reviews/2026-10-12-库存统一修复验收.md)。开发修改遵循 [AGENTS.md](AGENTS.md)。
+
+
 农业行业进销存系统，采用多模块 Maven 结构，包含管理端接口、客户端接口、领域层、应用层与基础设施层。
 
 ## 项目结构

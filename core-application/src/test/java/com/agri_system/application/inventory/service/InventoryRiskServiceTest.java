@@ -151,11 +151,11 @@ class InventoryRiskServiceTest {
         orderService = new OrderApplicationService(
                 orderRepository, itemRepository, paymentRepository, paymentIntentRepository, deliveryRepository,
                 orderDomainService, paymentService, inventoryService, walletService, creditService,
-                productRepository, productPricingService, staffRepository, storeRepository, customerRepository,
+                productRepository, productPricingService, org.mockito.Mockito.mock(com.agri_system.application.productpackage.service.PackagePricingService.class), staffRepository, storeRepository, customerRepository,
                 afterSalesRepository, afterSalesItemRepository, eventPublisher, walletAuthCodeRepository,
-                new PickupFulfillmentService(allocationRepository, pickupRequestRepository, batchBalanceService,
-                        productUnitService, locationRepository, batchBalanceRepository, receiptBatchRepository,
-                        orderRepository, itemRepository, orderCostAllocationService, productRepository),
+                new PickupFulfillmentService(allocationRepository, pickupRequestRepository, locationRepository, receiptBatchRepository,
+                        orderRepository, itemRepository, productRepository, afterSalesRepository,
+                        org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class)),
                 manualPriceAuditService);
     }
 
@@ -352,6 +352,10 @@ class InventoryRiskServiceTest {
         when(staffRepository.findById(STAFF_ID)).thenReturn(Optional.of(staff));
         when(orderDomainService.generateOrderNo()).thenReturn("SO202609120001");
         when(productRepository.findById(PRODUCT_ID)).thenReturn(Optional.of(product));
+        when(productPricingService.quote(any(com.agri_system.application.product.dto.vo.PriceContext.class)))
+                .thenReturn(new com.agri_system.application.product.dto.vo.PriceQuote("risk-price", null, PRODUCT_ID,
+                        STORE_ID, "POS", 1, null, "袋", 1L, LocalDate.now(), new BigDecimal("100.00"),
+                        "RETAIL", null, false, false));
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
             Order saved = invocation.getArgument(0);
             if (saved.getId() == null) {

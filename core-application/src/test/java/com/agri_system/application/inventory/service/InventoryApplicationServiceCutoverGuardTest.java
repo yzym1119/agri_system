@@ -1,14 +1,14 @@
 package com.agri_system.application.inventory.service;
 
-import com.agri_system.application.inventory.dto.command.InventoryAdjustCommand;
-import com.agri_system.application.inventory.dto.command.InventoryInCommand;
-import com.agri_system.application.inventory.dto.command.InventoryOutCommand;
-import com.agri_system.application.inventory.dto.command.InventoryTransferCommand;
-import com.agri_system.domain.inventory.repository.InventoryBatchRepository;
-import com.agri_system.domain.inventory.repository.InventoryRepository;
-import com.agri_system.domain.inventory.service.BatchBalanceService;
+import com.agri_system.application.inventory.dto.command.*;
+import com.agri_system.application.inventory.dto.vo.BatchDetailVO;
+import com.agri_system.domain.inventory.model.Inventory;
+import com.agri_system.domain.inventory.model.InventoryTransferOrder;
+import com.agri_system.domain.inventory.repository.*;
 import com.agri_system.domain.inventory.service.InventoryDomainService;
+import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.repository.ProductRepository;
+import com.agri_system.domain.store.model.Store;
 import com.agri_system.domain.store.repository.StoreRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,112 +16,104 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
-
+import java.math.BigDecimal;
+import java.util.List;
 import java.util.Optional;
 
-/**
- * Critical 2 安全闸门:已切换到批次货位余额模式的 SKU 禁止再走 legacy 入库/出库/调拨/盘点,
- * 否则会与新链路的批次余额权威来源背离并双写库存快照。变更入口的守卫在方法入口即触发(抛异常),
- * 只需 mock {@link BatchBalanceService};读详情 getInventoryDetail 的守卫是“惰性物化时条件跳过 legacy 写入”,
- * 会触达快照/批次/门店/商品仓储,故一并 mock 这些依赖以验证不回退 refreshTotalStock。
- */
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+/** 库存统一后所有业务入口都委派同一批次账，不再根据 SKU 模式选择旧库存。 */
 @ExtendWith(MockitoExtension.class)
 class InventoryApplicationServiceCutoverGuardTest {
+    @Mock private InventoryLedgerService ledger;
+    @Mock private InventoryRepository inventoryRepository;
+    @Mock private InventoryBatchRepository batchRepository;
+    @Mock private InventoryTransferOrderRepository transferOrderRepository;
+    @Mock private InventoryTransferOrderDetailRepository transferOrderDetailRepository;
+    @Mock private StoreRepository storeRepository;
+    @Mock private ProductRepository productRepository;
+    @InjectMocks private InventoryApplicationService service;
 
-    @Mock
-    private BatchBalanceService batchBalanceService;
-    @Mock
-    private InventoryRepository inventoryRepository;
-    @Mock
-    private InventoryDomainService domainService;
-    @Mock
-    private InventoryBatchRepository batchRepository;
-    @Mock
-    private StoreRepository storeRepository;
-    @Mock
-    private ProductRepository productRepository;
-    @InjectMocks
-    private InventoryApplicationService service;
-
-    @Test
-    void rejectsLegacyInboundWhenSkuHasCutOverToBatchLocation() {
-        when(batchBalanceService.isBatchLocationEnabled(1L, 5L)).thenReturn(true);
+    @Test void inboundReturnsReceiptBatchFromUnifiedLedger() {
         InventoryInCommand command = new InventoryInCommand();
-        command.setStoreId(1L);
-        command.setProductId(5L);
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> service.inbound(command, 9L));
-        assertEquals("该SKU已切换到批次货位余额模式,禁止走传统入库路径,请使用新单位链路", exception.getMessage());
+        command.setStoreId(1L); command.setProductId(5L);
+        when(ledger.inbound(command, 9L)).thenReturn(77L);
+        assertEquals(77L, service.inbound(command, 9L));
+        verify(ledger).inbound(command, 9L);
+        verifyNoInteractions(batchRepository, inventoryRepository);
     }
 
-    @Test
-    void rejectsLegacyOutboundWhenSkuHasCutOverToBatchLocation() {
-        when(batchBalanceService.isBatchLocationEnabled(1L, 5L)).thenReturn(true);
+    @Test void outboundPreservesLineAndOperatorAndReturnsLedgerAllocation() {
         InventoryOutCommand command = new InventoryOutCommand();
-        command.setStoreId(1L);
-        command.setProductId(5L);
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> service.outbound(command, 9L));
-        assertEquals("该SKU已切换到批次货位余额模式,禁止走传统出库路径,请使用新单位链路", exception.getMessage());
+        command.setReferenceLineId(55L);
+        List<BatchDetailVO> result = List.of(new BatchDetailVO());
+        when(ledger.outbound(command, 9L)).thenReturn(result);
+        assertSame(result, service.outbound(command, 9L));
+        verify(ledger).outbound(command, 9L);
+        verifyNoInteractions(batchRepository, inventoryRepository);
     }
 
-    @Test
-    void rejectsLegacyTransferWhenSourceStoreSkuHasCutOver() {
-        when(batchBalanceService.isBatchLocationEnabled(1L, 5L)).thenReturn(true);
-        InventoryTransferCommand command = new InventoryTransferCommand();
-        command.setFromStoreId(1L);
-        command.setToStoreId(2L);
-        command.setProductId(5L);
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> service.transfer(command, 9L));
-        assertEquals("该SKU已切换到批次货位余额模式,禁止走传统调拨路径,请使用新单位链路", exception.getMessage());
-    }
-
-    @Test
-    void rejectsLegacyTransferWhenOnlyDestinationStoreSkuHasCutOver() {
-        when(batchBalanceService.isBatchLocationEnabled(1L, 5L)).thenReturn(false);
-        when(batchBalanceService.isBatchLocationEnabled(2L, 5L)).thenReturn(true);
-        InventoryTransferCommand command = new InventoryTransferCommand();
-        command.setFromStoreId(1L);
-        command.setToStoreId(2L);
-        command.setProductId(5L);
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> service.transfer(command, 9L));
-        assertEquals("该SKU已切换到批次货位余额模式,禁止走传统调拨路径,请使用新单位链路", exception.getMessage());
-    }
-
-    @Test
-    void rejectsLegacyAdjustWhenSkuHasCutOverToBatchLocation() {
-        when(batchBalanceService.isBatchLocationEnabled(1L, 5L)).thenReturn(true);
+    @Test void adjustDelegatesToUnifiedLedger() {
         InventoryAdjustCommand command = new InventoryAdjustCommand();
-        command.setStoreId(1L);
-        command.setProductId(5L);
-        IllegalArgumentException exception = assertThrows(IllegalArgumentException.class,
-                () -> service.adjust(command, 9L));
-        assertEquals("该SKU已切换到批次货位余额模式,禁止走传统盘点路径,请使用新单位链路", exception.getMessage());
+        service.adjust(command, 9L);
+        verify(ledger).adjust(command, 9L);
+        verifyNoInteractions(batchRepository, inventoryRepository);
     }
 
-    @Test
-    void skipsLegacySnapshotMaterializationInDetailWhenSkuHasCutOver() {
-        when(batchBalanceService.isBatchLocationEnabled(1L, 5L)).thenReturn(true);
-        when(inventoryRepository.findByStoreAndProduct(1L, 5L)).thenReturn(Optional.empty());
-        // 已切换 SKU 的快照缺失时,读详情不得回退 legacy refreshTotalStock(会用 inventory_batch 写出背离快照)
-        service.getInventoryDetail(1L, 5L);
-        verify(domainService, never()).refreshTotalStock(1L, 5L);
+    @Test void transferValidatesStoresAndPersistsReceiptBatchDetails() {
+        InventoryTransferCommand command = new InventoryTransferCommand();
+        command.setFromStoreId(1L); command.setToStoreId(2L); command.setProductId(5L);
+        command.setQuantity(new BigDecimal("2")); command.setRequestKey("transfer-80");
+        when(storeRepository.findById(1L)).thenReturn(Optional.of(new Store()));
+        when(storeRepository.findById(2L)).thenReturn(Optional.of(new Store()));
+        Product product = new Product(); product.setMainUnit("袋");
+        when(productRepository.findById(5L)).thenReturn(Optional.of(product));
+        doAnswer(invocation -> { ((InventoryTransferOrder) invocation.getArgument(0)).setId(80L); return null; })
+                .when(transferOrderRepository).save(any());
+        InventoryDomainService.TransferBatchDetail slice = new InventoryDomainService.TransferBatchDetail();
+        slice.setFromBatchId(71L); slice.setToBatchId(72L); slice.setQuantity(new BigDecimal("2"));
+        slice.setCostPrice(new BigDecimal("8"));
+        InventoryDomainService.TransferDetail detail = new InventoryDomainService.TransferDetail();
+        detail.setTransferBatchDetails(List.of(slice));
+        when(ledger.transfer(1L, 2L, 5L, command.getQuantity(), "袋", 9L, 80L)).thenReturn(detail);
+        assertSame(detail, service.transfer(command, 9L));
+        verify(transferOrderDetailRepository).saveBatch(argThat(records -> records.size() == 1
+                && records.get(0).getFromReceiptBatchId().equals(71L)
+                && records.get(0).getToReceiptBatchId().equals(72L)
+                && records.get(0).getTransferId().equals(80L)));
+        assertEquals(80L, detail.getTransferId());
+        verifyNoInteractions(batchRepository, inventoryRepository);
     }
 
-    @Test
-    void materializesLegacySnapshotInDetailWhenSkuNotCutOver() {
-        when(batchBalanceService.isBatchLocationEnabled(1L, 5L)).thenReturn(false);
+    @Test void transferRejectsSameStoreBeforeWritingAnything() {
+        InventoryTransferCommand command = new InventoryTransferCommand();
+        command.setFromStoreId(1L); command.setToStoreId(1L);
+        assertThrows(IllegalArgumentException.class, () -> service.transfer(command, 9L));
+        verifyNoInteractions(ledger, transferOrderRepository, transferOrderDetailRepository);
+    }
+
+    @Test void missingSnapshotReturnsZeroAndReceiptBatchViewsWithoutLegacyWrite() {
         when(inventoryRepository.findByStoreAndProduct(1L, 5L)).thenReturn(Optional.empty());
-        // 未切换 SKU 保持原惰性物化行为(回归保护)
-        service.getInventoryDetail(1L, 5L);
-        verify(domainService, times(1)).refreshTotalStock(1L, 5L);
+        List<BatchDetailVO> batches = List.of(new BatchDetailVO());
+        when(ledger.batchViews(1L, 5L)).thenReturn(batches);
+        var detail = service.getInventoryDetail(1L, 5L);
+        assertEquals(BigDecimal.ZERO, detail.getQuantity());
+        assertSame(batches, detail.getBatches());
+        verifyNoInteractions(batchRepository);
+        verify(inventoryRepository).findByStoreAndProduct(1L, 5L);
+        verifyNoMoreInteractions(inventoryRepository);
+    }
+
+    @Test void existingSnapshotAndSingleBatchReadUseUnifiedLedger() {
+        Inventory inventory = new Inventory(); inventory.setQuantity(new BigDecimal("3"));
+        when(inventoryRepository.findByStoreAndProduct(1L, 5L)).thenReturn(Optional.of(inventory));
+        when(ledger.batchViews(1L, 5L)).thenReturn(List.of());
+        assertEquals(inventory.getQuantity(), service.getInventoryDetail(1L, 5L).getQuantity());
+        BatchDetailVO batch = new BatchDetailVO();
+        when(ledger.batchView(77L)).thenReturn(batch);
+        assertSame(batch, service.getBatchDetail(77L));
+        verifyNoInteractions(batchRepository);
     }
 }

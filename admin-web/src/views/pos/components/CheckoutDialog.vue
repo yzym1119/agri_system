@@ -53,7 +53,8 @@
           <el-input
             type="textarea"
             v-model="confirmForm.remark"
-            placeholder="订单备注（可选）"
+            :placeholder="discountAmount > 0 ? '整单优惠原因（必填，最多255字）' : '订单备注（可选）'"
+            :maxlength="255"
             :rows="2"
             resize="none"
           />
@@ -483,12 +484,14 @@ const changeAmount = computed(() => {
 
 // 是否有支持专用金的商品
 const hasSpecialFundProducts = computed(() => {
-  return props.cartItems.some((item) => item.itemType === 1 && item.allowSpecialFund === 1)
+  return props.cartItems.some((item) => item.itemType === 2
+    ? (item.specialFundEligibleAmount || 0) > 0 : item.allowSpecialFund === 1)
 })
 
 const specialFundEligibleAmount = computed(() => {
   if (!hasSpecialFundProducts.value) return 0
   const eligibleAmount = props.cartItems.reduce((sum, item) => {
+    if (item.itemType === 2) return sum + (item.specialFundEligibleAmount || 0)
     if (item.allowSpecialFund === 1) {
       return sum + item.subtotal
     }
@@ -731,6 +734,7 @@ const handleConfirm = () => {
   }
 
   if (props.submitting) return
+  if (props.discountAmount > 0 && !confirmForm.value.remark?.trim()) return ElMessage.warning('请填写整单优惠原因')
 
   // 构造基础订单数据
   const orderData: any = {
@@ -741,7 +745,9 @@ const handleConfirm = () => {
       itemType: item.itemType,
       quantity: item.quantity,
       unit: item.currentUnit,
-      unitPrice: item.unitPrice,
+      unitPrice: item.unitPrice !== item.suggestedUnitPrice ? item.unitPrice : undefined,
+      quotedUnitPrice: item.suggestedUnitPrice,
+      packageQuoteId: item.itemType === 2 ? item.quoteId : undefined,
       // 库房取货：由后端生成取货请求（后仓拣货，不即时出库）
       warehousePickup: item.warehousePickup === true ? true : undefined,
       // 低于参考下限等原因留痕

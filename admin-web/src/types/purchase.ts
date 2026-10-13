@@ -48,19 +48,6 @@ export interface PurchaseCancelRequest {
   orderId: number
 }
 
-export interface PurchaseInboundItem {
-  productId: number
-  quantity: number
-  costPrice: number
-  productionDate?: string
-  expireDate?: string
-}
-
-export interface PurchaseInboundRequest {
-  orderId: number
-  items?: PurchaseInboundItem[]
-}
-
 export interface PurchaseItemVO {
   id?: number
   productId: number
@@ -121,6 +108,7 @@ export interface ReceiptLineCommand {
  * 采购实际收货请求（零售事实链 Task9 收货界面）
  */
 export interface ReceivePurchaseRequest {
+  requestKey: string
   purchaseOrderId: number
   lines: ReceiptLineCommand[]
   /** 例外说明（如数量短缺、批次异常） */
@@ -129,3 +117,15 @@ export interface ReceivePurchaseRequest {
 }
 
 
+
+export interface ReceiptBatchLabel {
+  id: number
+  productId: number
+  internalReceiptBatchNo: string
+  supplierBatchNo?: string | null
+  originalUnitName: string
+  originalQuantity: number
+  productionDate?: string | null
+  expiryDate?: string | null
+  dateStatus: 'KNOWN' | 'PARTIAL' | 'UNKNOWN'
+}

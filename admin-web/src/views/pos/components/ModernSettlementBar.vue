@@ -11,6 +11,7 @@
           <span class="summary-label">优惠</span>
           <el-input-number
             v-model="discountAmount"
+            :disabled="!canChangePrice"
             :precision="2"
             :min="0"
             :max="totalAmount"
@@ -93,6 +94,7 @@
 </template>
 
 <script setup lang="ts">
+import { usePermissionStore } from '@/store/permission'
 import {computed, ref} from 'vue'
 import {ElMessage} from 'element-plus'
 import type {CartItem, POSCustomerInfo} from '@/types/pos'
@@ -122,6 +124,9 @@ const emit = defineEmits<{
   clearCart: []
   restoreCart: [payload: { cartItems: CartItem[]; customer: POSCustomerInfo | null; discountAmount: number }]
 }>()
+
+const permissionStore = usePermissionStore()
+const canChangePrice = computed(() => permissionStore.permissions.includes('*') || permissionStore.permissions.includes('order:price:override'))
 
 const discountAmount = ref(0)
 const holdOrders = ref<HoldOrder[]>([])

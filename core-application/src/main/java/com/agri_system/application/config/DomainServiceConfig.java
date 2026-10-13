@@ -45,23 +45,14 @@ import org.springframework.context.annotation.Configuration;
 public class DomainServiceConfig {
     
     @Bean
-    public InventoryDomainService inventoryDomainService(
-            InventoryBatchRepository batchRepository,
-            InventoryRepository inventoryRepository,
-            InventoryTransactionRepository transactionRepository) {
-        return new InventoryDomainService(batchRepository, inventoryRepository, transactionRepository);
-    }
-
-    @Bean
     public BatchBalanceService batchBalanceService(
             InventoryLocationRepository locationRepository,
             InventoryBatchBalanceRepository balanceRepository,
             InventoryMovementRepository movementRepository,
             InventoryReceiptBatchRepository receiptBatchRepository,
-            InventoryBalanceFeatureStatusRepository featureStatusRepository,
             InventoryRepository inventoryRepository) {
         return new BatchBalanceService(locationRepository, balanceRepository, movementRepository,
-                receiptBatchRepository, featureStatusRepository, inventoryRepository);
+                receiptBatchRepository, inventoryRepository);
     }
     
     @Bean

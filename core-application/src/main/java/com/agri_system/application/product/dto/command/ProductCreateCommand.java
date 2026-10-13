@@ -46,15 +46,15 @@ public class ProductCreateCommand {
     private BigDecimal mainToAuxRatio;
     
     @PositiveOrZero(message = "建议零售价必须大于等于0")
-    @Schema(description = "建议零售价（元）", example = "50.00")
+    @Schema(description = "零售价（元/基准单位，按商品业务单位系数换算销售价）", example = "50.00")
     private BigDecimal suggestedRetailPrice;
     
     @PositiveOrZero(message = "VIP价格必须大于等于0")
-    @Schema(description = "VIP价格（元）", example = "45.00")
+    @Schema(description = "会员价（元/基准单位，0或空表示使用零售价）", example = "45.00")
     private BigDecimal vipPrice;
     
     @PositiveOrZero(message = "最低限价必须大于等于0")
-    @Schema(description = "最低限价（元）", example = "40.00")
+    @Schema(description = "最低价提醒（元/基准单位，不作为销售价兜底）", example = "40.00")
     private BigDecimal minPrice;
     
     @Schema(description = "主图URL", example = "https://example.com/image.jpg")
@@ -67,7 +67,7 @@ public class ProductCreateCommand {
     private Integer isOnline;
     
     @PositiveOrZero(message = "线上价必须大于等于0")
-    @Schema(description = "线上价（元，可为空，为空则取零售价）", example = "48.00")
+    @Schema(description = "已停用的线上价字段；线上与门店统一使用商品价格", example = "48.00")
     private BigDecimal onlinePrice;
     
     @PositiveOrZero(message = "基础运费必须大于等于0")

@@ -13,7 +13,7 @@ import com.agri_system.application.product.dto.vo.UnitConversionVO;
 import com.agri_system.application.product.exception.ProductErrorCode;
 import com.agri_system.application.storage.dto.FileUploadCommand;
 import com.agri_system.domain.common.service.CodeGenerationService;
-import com.agri_system.domain.inventory.repository.InventoryBatchRepository;
+import com.agri_system.domain.inventory.repository.InventoryRepository;
 import com.agri_system.domain.order.repository.OrderItemRepository;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.model.ProductCategory;
@@ -63,7 +63,7 @@ public class ProductApplicationService {
     private final OrderItemRepository orderItemRepository;
     private final ProductPackageItemRepository productPackageItemRepository;
     private final PurchaseItemRepository purchaseItemRepository;
-    private final InventoryBatchRepository inventoryBatchRepository;
+    private final InventoryRepository inventoryRepository;
     private final ProductUnitService productUnitService;
     private final ProductPricingService productPricingService;
     
@@ -74,6 +74,7 @@ public class ProductApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long createProduct(ProductCreateCommand command) {
+        validatePrices(command.getSuggestedRetailPrice(), command.getVipPrice(), command.getMinPrice(), command.getOnlinePrice());
         // 自动生成编码（如果未提供）
         String productCode = command.getCode();
         if (productCode == null || productCode.isBlank()) {
@@ -120,7 +121,7 @@ public class ProductApplicationService {
         product.setImageUrl(command.getImageUrl());
         product.setDetailText(command.getDetailText());
         product.setIsOnline(command.getIsOnline() != null ? command.getIsOnline() : 0);
-        product.setOnlinePrice(command.getOnlinePrice());
+        // online_price 仅保留历史存储，当前线上与门店使用同一报价。
         product.setBaseShippingFee(command.getBaseShippingFee() != null ? command.getBaseShippingFee() : java.math.BigDecimal.ZERO);
         product.setAllowSpecialFund(command.getAllowSpecialFund() != null ? command.getAllowSpecialFund() : 0);
         product.setStatus(1);
@@ -142,6 +143,7 @@ public class ProductApplicationService {
         product.setUpdatedBy(currentStaffId);
         
         productRepository.save(product);
+        productUnitService.initializeUnits(product);
         return product.getId();
     }
     
@@ -173,6 +175,10 @@ public class ProductApplicationService {
                     throw new IllegalArgumentException("商品已存在：同名同规格同厂家");
                 });
 
+        validatePrices(command.getSuggestedRetailPrice() != null ? command.getSuggestedRetailPrice() : product.getSuggestedRetailPrice(),
+                command.getVipPrice() != null ? command.getVipPrice() : product.getVipPrice(),
+                command.getMinPrice() != null ? command.getMinPrice() : product.getMinPrice(), command.getOnlinePrice());
+
         // 更新商品信息（只更新非空字段，避免清空未传递的字段）
         if (command.getName() != null) {
             product.setName(command.getName());
@@ -189,9 +195,20 @@ public class ProductApplicationService {
         if (command.getManufacturer() != null) {
             product.setManufacturer(command.getManufacturer());
         }
-        if (command.getMainUnit() != null) {
-            product.setMainUnit(command.getMainUnit());
+        if (command.getMainUnit() != null && !command.getMainUnit().trim().equals(product.getMainUnit())) {
+            throw new IllegalArgumentException("商品基准单位不可通过档案变更，请使用单位管理");
         }
+        if (command.getAuxUnit() != null
+                && !java.util.Objects.equals(command.getAuxUnit().trim().isEmpty() ? null : command.getAuxUnit().trim(),
+                    product.getAuxUnit())) {
+            throw new IllegalArgumentException("商品辅单位不可通过档案变更，请使用单位管理");
+        }
+        if (command.getMainToAuxRatio() != null
+                && (product.getMainToAuxRatio() == null
+                    || command.getMainToAuxRatio().compareTo(product.getMainToAuxRatio()) != 0)) {
+            throw new IllegalArgumentException("商品单位换算比例不可通过档案变更，请使用单位管理");
+        }
+
         // 辅单位：仅在明确传值时更新
         if (command.getAuxUnit() != null) {
             String newAuxUnit = command.getAuxUnit().trim().isEmpty() ? null : command.getAuxUnit();
@@ -217,9 +234,7 @@ public class ProductApplicationService {
         if (command.getDetailText() != null) {
             product.setDetailText(command.getDetailText());
         }
-        if (command.getOnlinePrice() != null) {
-            product.setOnlinePrice(command.getOnlinePrice());
-        }
+
         if (command.getBaseShippingFee() != null) {
             product.setBaseShippingFee(command.getBaseShippingFee());
         }
@@ -314,14 +329,11 @@ public class ProductApplicationService {
                 .map(this::convertToDetailVO)
                 .collect(Collectors.toList());
         
-        // 填充价格策略数量（仅统计启用状态）
         voList.forEach(vo -> {
-            if (vo.getId() != null) {
-                long cnt = priceRepository.countActiveByProductId(vo.getId());
-                vo.setStrategyCount((int) cnt);
-            }
+            vo.setStrategyCount(0);
+            enrichUnitFields(vo, vo.getId());
         });
-        
+
         // 填充分类名称
         voList.forEach(vo -> {
             if (vo.getCategoryId() != null) {
@@ -372,7 +384,7 @@ public class ProductApplicationService {
             throw new IllegalStateException("该商品已被采购明细引用，无法删除");
         }
 
-        java.math.BigDecimal currentStock = inventoryBatchRepository.sumQuantityByProduct(id);
+        java.math.BigDecimal currentStock = inventoryRepository.sumQuantityByProduct(id, null);
         if (currentStock != null && currentStock.compareTo(java.math.BigDecimal.ZERO) > 0) {
             throw new IllegalStateException("该商品当前仍有库存，无法删除");
         }
@@ -621,73 +633,22 @@ public class ProductApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long createPriceRule(PriceRuleCreateCommand command) {
-        // 校验商品存在
-        productRepository.findById(command.getProductId())
-                .orElseThrow(() -> new IllegalArgumentException(ProductErrorCode.PRODUCT_NOT_FOUND + ": 商品不存在"));
-        
-        ProductPrice price = new ProductPrice();
-        price.setProductId(command.getProductId());
-        price.setStoreId(command.getStoreId());
-        price.setCustomerType(command.getCustomerType());
-        price.setVipLevel(command.getVipLevel());
-        price.setPriceType(command.getPriceType());
-        price.setPrice(command.getPrice());
-        price.setSaleUnit(command.getSaleUnit());
-        price.setChannel(command.getChannel());
-        price.setRuleVersion(StringUtils.hasText(command.getRuleVersion()) ? command.getRuleVersion() : "1");
-        price.setEffectiveDate(command.getEffectiveDate());
-        price.setExpiryDate(command.getExpiryDate());
-        price.setStatus(command.getStatus() != null ? command.getStatus() : 1);
-        price.setCreatedAt(LocalDateTime.now());
-        price.setUpdatedAt(LocalDateTime.now());
-        
-        priceRepository.save(price);
-        return price.getId();
+        throw new IllegalArgumentException("多维价格策略已停用，请在商品档案维护零售价、会员价和最低价");
     }
-    
-    /**
-     * 更新价格规则
-     */
+
     @Transactional(rollbackFor = Exception.class)
     public void updatePriceRule(PriceRuleUpdateCommand command) {
-        ProductPrice price = priceRepository.findById(command.getId())
-                .orElseThrow(() -> new IllegalArgumentException("价格规则不存在"));
-        
-        if (command.getPrice() != null) {
-            price.setPrice(command.getPrice());
-        }
-        if (command.getSaleUnit() != null) {
-            price.setSaleUnit(command.getSaleUnit());
-        }
-        if (command.getChannel() != null) {
-            price.setChannel(command.getChannel());
-        }
-        if (command.getRuleVersion() != null) {
-            price.setRuleVersion(command.getRuleVersion());
-        }
-        price.setEffectiveDate(command.getEffectiveDate());
-        price.setExpiryDate(command.getExpiryDate());
-        if (command.getStatus() != null) {
-            price.setStatus(command.getStatus());
-        }
-        price.setUpdatedAt(LocalDateTime.now());
-        
-        priceRepository.save(price);
+        throw new IllegalArgumentException("多维价格策略已停用，请在商品档案维护价格");
     }
-    
+
     /**
      * 删除价格规则
      */
     @Transactional(rollbackFor = Exception.class)
     public void deletePriceRule(Long id) {
-        ProductPrice price = priceRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("价格规则不存在"));
-        if (price.getStatus() != null && price.getStatus() == 1) {
-            throw new IllegalArgumentException("启用中的价格规则不能直接删除，请先停用后再删除");
-        }
-        priceRepository.delete(id);
+        throw new IllegalArgumentException("历史价格策略仅供查询，不再维护；请在商品档案维护价格");
     }
-    
+
     /**
      * 查询商品的价格规则列表
      */
@@ -701,21 +662,37 @@ public class ProductApplicationService {
     /**
      * 服务端报价：按商品/门店/渠道/客户分层与销售单位解析单价
      */
-    public PriceQuote quoteProductPrice(Long productId, Long storeId, String channel, Integer customerType,
-                                        Integer vipLevel, String saleUnit, LocalDate businessDate) {
-        return productPricingService.quote(new PriceContext(
-                productId,
-                storeId,
-                channel,
-                customerType,
-                vipLevel,
-                saleUnit,
-                businessDate
-        ));
+    public PriceQuote quoteProductPrice(Long productId, Long storeId, String channel, Long customerId,
+                                        String saleUnit, LocalDate businessDate) {
+        ProductPricingService.CustomerPriceContext customer = productPricingService.resolveCustomerContext(customerId);
+        return productPricingService.quote(new PriceContext(productId, storeId, channel,
+                customer.customerType(), null, saleUnit, businessDate));
     }
-    
+
     // ==================== 私有方法：转换 ====================
     
+    /** 价格都按持久化基准单位维护；0 表示可选会员价/最低价未启用。 */
+    private void validatePrices(java.math.BigDecimal retail, java.math.BigDecimal member,
+                                java.math.BigDecimal floor, java.math.BigDecimal online) {
+        for (java.math.BigDecimal price : new java.math.BigDecimal[]{retail, member, floor}) {
+            if (price != null && (price.signum() < 0 || price.scale() > 2 || price.precision() - price.scale() > 8)) {
+                throw new IllegalArgumentException("商品价格不能为负，最多两位小数且小于一亿元");
+            }
+        }
+        if (online != null && online.signum() != 0 && (retail == null || online.compareTo(retail) != 0)) {
+            throw new IllegalArgumentException("线上与门店使用统一价格，请修改商品零售价，不再单独设置线上价");
+        }
+        if (member != null && member.signum() > 0 && (retail == null || member.compareTo(retail) > 0)) {
+            throw new IllegalArgumentException("会员价不能高于零售价");
+        }
+        if (floor != null && member != null && member.signum() > 0 && floor.compareTo(member) > 0) {
+            throw new IllegalArgumentException("会员价不能低于最低价提醒，请核对商品价格");
+        }
+        if (floor != null && floor.signum() > 0 && (retail == null || floor.compareTo(retail) > 0)) {
+            throw new IllegalArgumentException("最低价不能高于零售价");
+        }
+    }
+
     private ProductDetailVO convertToDetailVO(Product product) {
         ProductDetailVO vo = new ProductDetailVO();
         vo.setId(product.getId());
@@ -735,7 +712,7 @@ public class ProductApplicationService {
         vo.setImageUrl(product.getImageUrl());
         vo.setDetailText(product.getDetailText());
         vo.setIsOnline(product.getIsOnline());
-        vo.setOnlinePrice(product.getOnlinePrice());
+        vo.setOnlinePrice(product.getSuggestedRetailPrice()); // 旧客户端展示字段使用当前零售价，禁止另一套线上价
         vo.setBaseShippingFee(product.getBaseShippingFee());
         vo.setAllowSpecialFund(product.getAllowSpecialFund());
         vo.setStatus(product.getStatus());
@@ -759,6 +736,10 @@ public class ProductApplicationService {
         }
         vo.setUnitModelStatus(productUnitService.getUnitModelStatus(productId));
         vo.setUnits(productUnitService.getUnitVOs(productId));
+        if (vo.getUnits() != null) {
+            vo.setPricingUnit(vo.getUnits().stream().filter(u -> Integer.valueOf(1).equals(u.getIsBaseUnit()))
+                    .map(com.agri_system.application.product.dto.vo.ProductUnitVO::getUnitName).findFirst().orElse(null));
+        }
     }
     
     private CategoryTreeVO convertToCategoryTreeVO(ProductCategory category, List<ProductCategory> allCategories) {

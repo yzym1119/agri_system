@@ -1,11 +1,9 @@
 package com.agri_system.domain.inventory.service;
 
-import com.agri_system.domain.inventory.model.InventoryBalanceFeatureStatus;
 import com.agri_system.domain.inventory.model.InventoryBatchBalance;
 import com.agri_system.domain.inventory.model.InventoryLocation;
 import com.agri_system.domain.inventory.model.InventoryMovement;
 import com.agri_system.domain.inventory.model.InventoryReceiptBatch;
-import com.agri_system.domain.inventory.repository.InventoryBalanceFeatureStatusRepository;
 import com.agri_system.domain.inventory.repository.InventoryBatchBalanceRepository;
 import com.agri_system.domain.inventory.repository.InventoryLocationRepository;
 import com.agri_system.domain.inventory.repository.InventoryMovementRepository;
@@ -28,7 +26,6 @@ public class BatchBalanceService {
     private final InventoryBatchBalanceRepository balanceRepository;
     private final InventoryMovementRepository movementRepository;
     private final InventoryReceiptBatchRepository receiptBatchRepository;
-    private final InventoryBalanceFeatureStatusRepository featureStatusRepository;
     private final InventoryRepository inventoryRepository;
 
     public InventoryMovement move(MoveRequest request) {
@@ -37,12 +34,16 @@ public class BatchBalanceService {
         InventoryLocation to = request.toLocationId() == null ? null : requireLocation(request.toLocationId());
         Long storeId = resolveStoreId(from, to);
 
+        InventoryReceiptBatch batch = receiptBatchRepository.findById(request.batchId())
+                .orElseThrow(() -> new IllegalArgumentException("收货批次不存在"));
+        if (!storeId.equals(batch.getStoreId())) throw new IllegalArgumentException("批次与货位门店不一致");
+        if (batch.getBaseUnitCost().compareTo(request.unitCost()) != 0) throw new IllegalArgumentException("移动成本必须沿用原批次成本");
+        lockStock(storeId, batch.getProductId());
         InventoryBatchBalance source = null;
         InventoryBatchBalance destination = null;
         if (from != null) {
             source = balanceRepository.findByBatchAndLocationForUpdate(request.batchId(), from.getId())
                     .orElseThrow(() -> new IllegalArgumentException("源货位不存在该批次余额"));
-            assertEnabled(source.getStoreId(), source.getProductId());
             if (!source.getStoreId().equals(from.getStoreId())) {
                 throw new IllegalArgumentException("批次余额与源货位门店不一致");
             }
@@ -52,7 +53,6 @@ public class BatchBalanceService {
         if (to != null) {
             destination = balanceRepository.findByBatchAndLocationForUpdate(request.batchId(), to.getId())
                     .orElseGet(() -> newBalance(request.batchId(), lockedSource, to));
-            assertEnabled(destination.getStoreId(), destination.getProductId());
             if (!destination.getStoreId().equals(to.getStoreId())) {
                 throw new IllegalArgumentException("批次余额与目的货位门店不一致");
             }
@@ -97,9 +97,14 @@ public class BatchBalanceService {
         }
         if (!sourceBatch.getProductId().equals(destinationBatch.getProductId())
                 || !equals(sourceBatch.getSupplierBatchNo(), destinationBatch.getSupplierBatchNo())
-                || sourceBatch.getBaseUnitCost().compareTo(destinationBatch.getBaseUnitCost()) != 0) {
+                || sourceBatch.getBaseUnitCost().compareTo(destinationBatch.getBaseUnitCost()) != 0
+                || !equals(sourceBatch.getProductionDate(), destinationBatch.getProductionDate())
+                || !equals(sourceBatch.getExpiryDate(), destinationBatch.getExpiryDate())
+                || !equals(sourceBatch.getBaseUnitId(), destinationBatch.getBaseUnitId())) {
             throw new IllegalArgumentException("跨店调拨批次必须保持SKU、供应商批号和单位成本谱系");
         }
+        lockStock(Math.min(sourceBatch.getStoreId(), destinationBatch.getStoreId()), sourceBatch.getProductId());
+        lockStock(Math.max(sourceBatch.getStoreId(), destinationBatch.getStoreId()), sourceBatch.getProductId());
         MoveRequest outbound = new MoveRequest(sourceBatch.getId(), request.fromLocationId(), null, MovementPurpose.TRANSFER,
                 request.transferId(), request.originalUnitId(), request.originalUnitName(), request.originalQuantity(),
                 request.baseQuantity(), sourceBatch.getBaseUnitCost(), request.referenceType(), request.referenceId(),
@@ -112,28 +117,30 @@ public class BatchBalanceService {
         return new TransferResult(outboundMovement, move(inbound));
     }
 
-    /** 收货事实已持久化后调用；未明确切换的 SKU 不创建新余额。 */
-    public void increaseFromReceipt(Long receiptId, InventoryReceiptBatch receiptBatch) {
-        if (receiptBatch == null || !isEnabled(receiptBatch.getStoreId(), receiptBatch.getProductId())) {
-            return;
-        }
-        InventoryLocation location = locationRepository
-                .findEnabledByStoreAndType(receiptBatch.getStoreId(), InventoryLocation.LocationType.STORE_BACKROOM.name())
-                .orElseGet(() -> createBackroom(receiptBatch.getStoreId()));
-        InventoryBatchBalance balance = balanceRepository.findByBatchAndLocationForUpdate(receiptBatch.getId(), location.getId())
-                .orElseGet(() -> receiptBalance(receiptBatch, location.getId()));
-        balance.increase(requirePositive(receiptBatch.getBaseQuantity(), "收货基准数量"));
-        balanceRepository.save(balance);
-        projectInventory(receiptBatch.getStoreId(), receiptBatch.getProductId());
+    /** 收货与余额、流水必须在调用方同一事务内提交。不存在按商品启用的开关。 */
+    public void increaseFromReceipt(Long receiptId, InventoryReceiptBatch batch) {
+        if (batch == null || batch.getId() == null) throw new IllegalArgumentException("必须先保存收货批次");
+        lockStock(batch.getStoreId(), batch.getProductId());
+        InventoryLocation location = defaultLocation(batch.getStoreId());
+        move(new MoveRequest(batch.getId(), null, location.getId(), MovementPurpose.RECEIPT,
+                null, batch.getOriginalUnitId(), batch.getOriginalUnitName(), batch.getOriginalQuantity(),
+                batch.getBaseQuantity(), batch.getBaseUnitCost(), "RECEIPT", receiptId,
+                batch.getReceiverId(), "收货入库", Direction.IN, "RECEIPT:" + batch.getId()));
+    }
+
+    public InventoryLocation defaultLocation(Long storeId) {
+        return locationRepository.defaultBackroom(storeId);
+    }
+
+    /** 先锁门店商品，再操作批次；空库存首次写入也需串行化。 */
+    public void lockStock(Long storeId, Long productId) {
+        inventoryRepository.lockProduct(productId);
+        inventoryRepository.createIfNotExists(storeId, productId, BigDecimal.ZERO);
+        inventoryRepository.findByStoreAndProductForUpdate(storeId, productId);
     }
 
     public BigDecimal availableBaseQuantity(Long locationId, Long productId) {
         return zero(balanceRepository.sumAvailableBaseQuantity(locationId, productId));
-    }
-
-    /** 该 store+SKU 是否已切换到批次货位余额权威模式;供 legacy 路径守卫拒绝已切换 SKU(Critical 2 安全闸门)。 */
-    public boolean isBatchLocationEnabled(Long storeId, Long productId) {
-        return isEnabled(storeId, productId);
     }
 
     private void validateRequest(MoveRequest request) {
@@ -161,6 +168,16 @@ public class BatchBalanceService {
                 }
                 if (request.fromLocationId() == null && request.toLocationId() == null) {
                     throw new IllegalArgumentException("跨店调拨必须指定源货位或目的货位");
+                }
+            }
+            case SALE, RECEIPT -> {
+                if (blank(request.idempotencyKey()) || request.referenceId() == null) {
+                    throw new IllegalArgumentException("收货和销售必须关联业务单据并提供幂等键");
+                }
+                if (request.purpose() == MovementPurpose.SALE
+                        ? request.fromLocationId() == null || request.toLocationId() != null
+                        : request.toLocationId() == null || request.fromLocationId() != null) {
+                    throw new IllegalArgumentException("销售只能出库，收货只能入库");
                 }
             }
             case COUNT_ADJUSTMENT, RETURN -> {
@@ -278,7 +295,7 @@ public class BatchBalanceService {
         inventoryRepository.createIfNotExists(storeId, productId, BigDecimal.ZERO);
         // 悲观锁串行化同门店同商品的并发投影,避免无锁 SUM 互相覆盖(Important 5)
         inventoryRepository.findByStoreAndProductForUpdate(storeId, productId);
-        inventoryRepository.updateSnapshot(storeId, productId,
+        inventoryRepository.updateBaseSnapshot(storeId, productId,
                 zero(balanceRepository.sumBaseQuantityByStoreAndProduct(storeId, productId)));
     }
 
@@ -287,19 +304,6 @@ public class BatchBalanceService {
             throw new IllegalArgumentException("跨店调拨必须拆为同一transferId的出库和入库事实");
         }
         return from != null ? from.getStoreId() : to.getStoreId();
-    }
-
-    private void assertEnabled(Long storeId, Long productId) {
-        if (!isEnabled(storeId, productId)) {
-            throw new IllegalStateException("SKU尚未切换到批次货位余额模式");
-        }
-    }
-
-    private boolean isEnabled(Long storeId, Long productId) {
-        return featureStatusRepository.findByStoreAndProduct(storeId, productId)
-                .map(InventoryBalanceFeatureStatus::getBalanceMode)
-                .filter(InventoryBalanceFeatureStatus.BATCH_LOCATION::equals)
-                .isPresent();
     }
 
     private BigDecimal requirePositive(BigDecimal value, String name) {
@@ -311,7 +315,7 @@ public class BatchBalanceService {
     private boolean blank(String value) { return value == null || value.trim().isEmpty(); }
     private boolean equals(Object left, Object right) { return java.util.Objects.equals(left, right); }
 
-    public enum MovementPurpose { REPLENISHMENT, PICK, TRANSFER, COUNT_ADJUSTMENT, RETURN }
+    public enum MovementPurpose { RECEIPT, SALE, REPLENISHMENT, PICK, TRANSFER, COUNT_ADJUSTMENT, RETURN }
 
     /** 单边增减方向:仅 COUNT_ADJUSTMENT/RETURN 使用。IN=盘盈/退货入库(只增目的),OUT=盘亏/报损出库(只扣源)。 */
     public enum Direction { IN, OUT }

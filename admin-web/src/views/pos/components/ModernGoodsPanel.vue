@@ -65,7 +65,6 @@
             <el-icon v-if="item.type === 'package'" :size="48"><Box /></el-icon>
             <el-icon v-else :size="48"><Picture /></el-icon>
           </div>
-          <!-- 套餐标签 -->
           <div v-if="item.type === 'package'" class="package-badge">套餐</div>
           <!-- 缺货蒙层 -->
           <div v-if="(item.type === 'product' || item.type === 'package') && (item.stock || 0) <= 0" class="out-of-stock-overlay">
@@ -103,7 +102,7 @@
             >
               {{ pkg.productName }} × {{ pkg.quantity }}{{ pkg.unit || '' }}
             </div>
-            <div v-if="item.package.items.length > 4" class="package-more">+{{ item.package.items.length - 2 }}</div>
+            <div v-if="item.package.items.length > 4" class="package-more">另有{{ item.package.items.length - 4 }}种商品</div>
               <div class="card-stock-line">
               <span class="card-label">库存：</span>
               <span :class="{ 'stock-zero': (item.stock || 0) <= 0, 'stock-value': true }">
@@ -114,7 +113,7 @@
           
           <!-- 价格 -->
           <div class="card-footer">
-            <div v-if="item.price != null && (typeof item.price === 'number' || typeof item.price === 'string') && Number(item.price) > 0" class="card-price">¥{{ Number(item.price).toFixed(2) }}</div>
+            <div v-if="item.price != null && (typeof item.price === 'number' || typeof item.price === 'string') && Number(item.price) > 0" class="card-price">¥{{ Number(item.price).toFixed(2) }}<span>/{{ item.product?.pricingUnit || '套' }}</span></div>
             <div v-else class="card-price no-price">价格待定</div>
           </div>
         </div>
@@ -159,11 +158,7 @@ const activeTab = ref('all')
 const loading = ref(false)
 
 // Tab配置
-const tabs = [
-  { label: '全部', value: 'all' },
-  { label: '单品', value: 'product' },
-  { label: '套餐', value: 'package' }
-]
+const tabs = [{ label: '全部', value: 'all' }, { label: '单品', value: 'product' }, { label: '套餐', value: 'package' }]
 
 // 数据
 const products = ref<ProductDetailVO[]>([])
@@ -189,15 +184,8 @@ const allGoods = computed<GoodsCard[]>(() => {
       return 0
     }
     
-    const suggestedPrice = parsePrice(product.suggestedRetailPrice)
-    if (suggestedPrice > 0) {
-      price = suggestedPrice
-    } else {
-      const vipPrice = parsePrice(product.vipPrice)
-      const minPrice = parsePrice(product.minPrice)
-      const onlinePrice = parsePrice(product.onlinePrice)
-      price = vipPrice || minPrice || onlinePrice || 0
-    }
+    // 商品卡展示基准单位零售价；加入购物车后的成交报价只取后端。
+    price = parsePrice(product.suggestedRetailPrice)
     goods.push({
       id: product.id,
       type: 'product',
@@ -223,15 +211,7 @@ const allGoods = computed<GoodsCard[]>(() => {
       return 0
     }
     
-    let price: number = 0
-    const suggestedPrice = parsePrice(pkg.suggestedRetailPrice)
-    if (suggestedPrice > 0) {
-      price = suggestedPrice
-    } else {
-      const vipPrice = parsePrice(pkg.vipPrice)
-      const minPrice = parsePrice(pkg.minPrice)
-      price = vipPrice || minPrice || 0
-    }
+    const price = parsePrice(pkg.suggestedRetailPrice)
     
     goods.push({
       id: pkg.id,
@@ -385,22 +365,9 @@ const loadData = async () => {
   loading.value = true
   try {
     const [productRes, packageRes] = await Promise.all([
-      getProductList({
-        status: 1,
-        pageNum: 1,
-        pageSize: 1000
-        // 线下 POS：展示正常商品，不受商城上架状态限制
-      }),
-      getPackageList({
-        status: 1,
-        pageNum: 1,
-        pageSize: 1000,
-        storeId: props.storeId || undefined
-        // 线下 POS：只展示已上架套餐
-        // 传递 storeId 用于计算套餐库存
-      })
+      getProductList({ status: 1, pageNum: 1, pageSize: 1000 }),
+      getPackageList({ status: 1, storeId: props.storeId || undefined, pageNum: 1, pageSize: 1000 })
     ])
-
     products.value = productRes.records || []
     packages.value = packageRes.records || []
 
@@ -523,7 +490,7 @@ const switchToProductTab = () => {
 // 卡片点击
 const handleCardClick = (item: GoodsCard) => {
   // 商品/套餐库存为0时不可点击
-  if ((item.type === 'product' || item.type === 'package') && (item.stock || 0) <= 0) {
+  if ((item.stock || 0) <= 0) {
     ElMessage.warning(item.type === 'package' ? '该套餐库存不足' : '该商品库存不足')
     return
   }
@@ -531,6 +498,13 @@ const handleCardClick = (item: GoodsCard) => {
   // 添加到购物车
   if (item.type === 'product' && item.product) {
     // 单品：直接添加
+    const saleUnits = item.product.units?.filter(unit => unit.status === 1 && unit.allowSale === 1) || []
+    const saleUnit = saleUnits.find(unit => unit.isBaseUnit === 1)
+      || saleUnits.find(unit => unit.unitName === item.product?.mainUnit) || saleUnits[0]
+    if (!saleUnit) {
+      ElMessage.warning('商品未配置可销售单位，请先维护商品单位')
+      return
+    }
     const cartItem: CartItem = {
       id: '',
       itemType: 1,
@@ -543,7 +517,8 @@ const handleCardClick = (item: GoodsCard) => {
       auxUnit: item.product.auxUnit,
       mainToAuxRatio: item.product.mainToAuxRatio,
       allowSpecialFund: item.product.allowSpecialFund,
-      currentUnit: item.product.auxUnit || item.product.mainUnit || '个',
+      saleUnits,
+      currentUnit: saleUnit.unitName,
       unitPrice: item.price, // 初始价格，会在 handleAddToCart 中根据客户类型重新计算
       quantity: 1,
       subtotal: item.price,
@@ -553,105 +528,11 @@ const handleCardClick = (item: GoodsCard) => {
     ;(cartItem as any)._product = item.product
     emit('addToCart', cartItem)
   } else if (item.type === 'package' && item.package) {
-    // 套餐：炸开为多个商品行
-    explodePackageToCart(item)
-  }
-}
-
-/**
- * 将套餐"炸开"为多个商品行添加到购物车
- * 核心逻辑：
- * 1. 遍历套餐的所有子商品
- * 2. 为每个子商品创建独立的购物车行
- * 3. 数量 = 套餐数量(1) × 子商品数量
- * 4. 单位 = 套餐配置的单位（保持原样，如"瓶"）
- * 5. 价格 = 按比例分摊套餐总价
- */
-const explodePackageToCart = (packageItem: GoodsCard) => {
-  if (!packageItem.package || !packageItem.package.items || packageItem.package.items.length === 0) {
-    ElMessage.warning('套餐配置异常，无法添加到购物车')
-    return
-  }
-
-  const packageDetail = packageItem.package
-  const packagePrice = packageItem.price // 套餐总价
-  const packageItems = packageDetail.items
-  
-  // 计算套餐原总价（用于价格分摊）
-  let originalTotalPrice = 0
-  const productPrices: Record<number, number> = {}
-  
-  packageItems.forEach(item => {
-    const product = products.value.find(p => p.id === item.productId)
-    if (product) {
-      // 获取商品单价（优先使用建议零售价）
-      const productPrice = product.suggestedRetailPrice || product.vipPrice || product.minPrice || 0
-      productPrices[item.productId] = productPrice
-      originalTotalPrice += productPrice * (item.quantity || 0)
-    }
-  })
-  
-  // 如果无法计算原总价，则按商品数量平均分摊
-  const useAveragePrice = originalTotalPrice === 0
-  const averagePrice = useAveragePrice ? packagePrice / packageItems.length : 0
-  
-  // 遍历套餐子商品，为每个创建购物车行
-  let successCount = 0
-  packageItems.forEach(item => {
-    const product = products.value.find(p => p.id === item.productId)
-    if (!product) {
-      console.warn(`套餐中的商品 ${item.productId} 不存在，跳过`)
-      return
-    }
-    
-    // 计算分摊价格
-    let allocatedPrice: number
-    if (useAveragePrice) {
-      // 平均分摊
-      allocatedPrice = averagePrice
-    } else {
-      // 按原价比例分摊
-      const productOriginalPrice = productPrices[item.productId] * (item.quantity || 0)
-      allocatedPrice = (productOriginalPrice / originalTotalPrice) * packagePrice
-    }
-    
-    // 计算单价（分摊价格 / 数量）
-    const unitPrice = (item.quantity || 0) > 0 ? allocatedPrice / (item.quantity || 1) : allocatedPrice
-    
-    // 创建购物车行
-    const cartItem: CartItem = {
-      id: '',
-      itemType: 1, // 重要：现在都是商品类型
-      productId: product.id,
-      packageId: packageDetail.id,
-      name: product.name,
-      specification: product.specification,
-      manufacturer: product.manufacturer,
-      imageUrl: product.imageUrl,
-      mainUnit: product.mainUnit,
-      auxUnit: product.auxUnit,
-      mainToAuxRatio: product.mainToAuxRatio,
-      allowSpecialFund: product.allowSpecialFund,
-      currentUnit: item.unit || product.mainUnit || '个', // 使用套餐配置的单位
-      unitPrice: unitPrice,
-      quantity: item.quantity || 1, // 套餐中配置的数量
-      subtotal: allocatedPrice,
-      stock: inventoryMap.value[product.id] || 0,
-      // 标记这是来自套餐的商品（可选，用于UI显示）
-      fromPackage: packageDetail.name || '套餐'
-    }
-    
-    // 保存商品信息以便后续价格计算
-    ;(cartItem as any)._product = product
-    
-    emit('addToCart', cartItem)
-    successCount++
-  })
-  
-  if (successCount > 0) {
-    ElMessage.success(`已将套餐"${packageDetail.name || '套餐'}"的 ${successCount} 个商品添加到购物车`)
-  } else {
-    ElMessage.error('套餐商品添加失败')
+    emit('addToCart', {
+      id: '', itemType: 2, packageId: item.package.id, name: item.package.name,
+      currentUnit: '套', unitPrice: item.price, quantity: 1, subtotal: item.price,
+      stock: item.stock, packageItems: item.package.items
+    })
   }
 }
 

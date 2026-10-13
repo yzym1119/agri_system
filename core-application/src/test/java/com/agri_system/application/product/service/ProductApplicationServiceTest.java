@@ -1,6 +1,7 @@
 package com.agri_system.application.product.service;
 
 import com.agri_system.application.product.dto.command.ProductCreateCommand;
+import com.agri_system.application.product.dto.command.ProductUpdateCommand;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.product.service.ProductDomainService;
@@ -34,6 +35,17 @@ class ProductApplicationServiceTest {
     @Mock
     private ProductDomainService domainService;
     
+    @Mock
+    private ProductUnitService productUnitService;
+    @Mock
+    private com.agri_system.domain.inventory.repository.InventoryRepository inventoryRepository;
+    @Mock
+    private com.agri_system.domain.order.repository.OrderItemRepository orderItemRepository;
+    @Mock
+    private com.agri_system.domain.productpackage.repository.ProductPackageItemRepository productPackageItemRepository;
+    @Mock
+    private com.agri_system.domain.purchase.repository.PurchaseItemRepository purchaseItemRepository;
+
     @InjectMocks
     private ProductApplicationService productService;
     
@@ -75,8 +87,35 @@ class ProductApplicationServiceTest {
                    p.getAvgCostPrice().compareTo(BigDecimal.ZERO) == 0;
         }));
         assertNotNull(productId);
+        verify(productUnitService).initializeUnits(any(Product.class));
     }
     
+    @Test
+    void deleteUsesCurrentStockSnapshot() {
+        when(productRepository.findById(1L)).thenReturn(Optional.of(new Product()));
+        when(inventoryRepository.sumQuantityByProduct(1L, null)).thenReturn(BigDecimal.ONE);
+        assertThrows(IllegalStateException.class, () -> productService.deleteProduct(1L));
+        verify(productRepository, never()).delete(1L);
+        when(inventoryRepository.sumQuantityByProduct(1L, null)).thenReturn(BigDecimal.ZERO);
+        productService.deleteProduct(1L);
+        verify(productRepository).delete(1L);
+    }
+
+    @Test
+    void cannotRedefineUnitConversionThroughProductProfile() {
+        Product product = new Product();
+        product.setId(1L);
+        product.setMainUnit("箱");
+        product.setAuxUnit("瓶");
+        product.setMainToAuxRatio(new BigDecimal("20"));
+        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        ProductUpdateCommand update = new ProductUpdateCommand();
+        update.setId(1L);
+        update.setMainToAuxRatio(new BigDecimal("24"));
+        assertThrows(IllegalArgumentException.class, () -> productService.updateProduct(update));
+        verify(productRepository, never()).save(any());
+    }
+
     @Test
     void testCreateProduct_CodeExists_ThrowsException() {
         // Given: 商品编码已存在
@@ -90,6 +129,44 @@ class ProductApplicationServiceTest {
             productService.createProduct(createCommand);
         });
     }
+    @Test
+    void cannotCreateAnotherWritablePriceStrategy() {
+        var command = new com.agri_system.application.product.dto.command.PriceRuleCreateCommand();
+        command.setProductId(1L);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> productService.createPriceRule(command))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("商品档案");
+    }
+
+    @Test
+    void cannotSetSeparateOnlinePrice() {
+        createCommand.setOnlinePrice(new BigDecimal("49"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> productService.createProduct(createCommand))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("线上");
+        verify(productRepository, never()).save(any());
+    }
+
+    @Test
+    void rejectsVipPriceAboveRetail() {
+        createCommand.setVipPrice(new BigDecimal("60"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> productService.createProduct(createCommand))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("会员价");
+    }
+
+    @Test
+    void rejectsFloorAboveRetail() {
+        createCommand.setMinPrice(new BigDecimal("60"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> productService.createProduct(createCommand))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("最低价");
+    }
+
+    @Test
+    void configuredMemberPriceCannotBeBelowFloor() {
+        createCommand.setVipPrice(new BigDecimal("40"));
+        createCommand.setMinPrice(new BigDecimal("45"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> productService.createProduct(createCommand))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("会员价");
+    }
+
 }
 
 

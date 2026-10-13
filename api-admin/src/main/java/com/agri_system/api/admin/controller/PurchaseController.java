@@ -119,7 +119,7 @@ public class PurchaseController {
         Map<String, Object> result = new HashMap<>();
         result.put("code", "200");
         result.put("message", "收货成功");
-        result.put("data", Map.of("receiptId", receiptId));
+        result.put("data", Map.of("receiptId", receiptId, "batches", purchaseService.receiptLabels(receiptId)));
         return ResponseEntity.ok(result);
     }
     

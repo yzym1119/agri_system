@@ -34,6 +34,9 @@ public class InventoryInCommand {
     @DecimalMin(value = "0.0001", message = "入库数量必须大于0")
     @Schema(description = "入库数量", example = "100.0000")
     private BigDecimal quantity;
+
+    @Schema(description = "入库数量及成本的单位，缺省使用商品主单位")
+    private String unit;
     
     @NotNull(message = "成本价不能为空")
     @DecimalMin(value = "0.01", message = "成本价必须大于0")

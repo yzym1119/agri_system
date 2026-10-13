@@ -15,6 +15,10 @@ import java.math.BigDecimal;
 @Data
 @Schema(description = "调拨命令")
 public class InventoryTransferCommand {
+    @jakarta.validation.constraints.NotBlank(message = "请求标识不能为空")
+    @jakarta.validation.constraints.Size(max = 64, message = "请求标识不能超过64字符")
+    private String requestKey;
+
     
     @NotNull(message = "调出门店ID不能为空")
     @Schema(description = "调出门店ID", example = "1")
@@ -32,6 +36,9 @@ public class InventoryTransferCommand {
     @DecimalMin(value = "0.0001", message = "调拨数量必须大于0")
     @Schema(description = "调拨数量", example = "30.0000")
     private BigDecimal quantity;
+
+    @Schema(description = "实际调拨单位，缺省商品主单位")
+    private String unit;
     
     @Schema(description = "备注", example = "门店间调拨")
     private String remark;

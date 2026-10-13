@@ -15,6 +15,21 @@ import java.util.List;
  */
 @Mapper
 public interface InventoryBatchMapper extends BaseMapper<InventoryBatch> {
+    /** 历史实体仅作为报表投影形状，实时数据来自统一批次账。 */
+    @org.apache.ibatis.annotations.Select("""
+            <script>
+            SELECT r.id,r.store_id,r.product_id,r.supplier_batch_no batch_no,r.production_date,r.expiry_date expire_date,
+                   SUM(b.base_quantity)/u.base_quantity_per_unit quantity,r.base_unit_cost*u.base_quantity_per_unit cost_price,
+                   1 is_active,r.received_at created_at
+            FROM inventory_receipt_batch r JOIN inventory_batch_balance b ON b.batch_id=r.id
+            JOIN product p ON p.id=r.product_id JOIN product_unit u ON u.product_id=p.id AND u.unit_name=p.main_unit
+            <where><if test="storeId != null">r.store_id=#{storeId}</if></where>
+            GROUP BY r.id,r.store_id,r.product_id,r.supplier_batch_no,r.production_date,r.expiry_date,u.base_quantity_per_unit,r.base_unit_cost,r.received_at
+            HAVING SUM(b.base_quantity)>0
+            </script>
+            """)
+    java.util.List<com.agri_system.domain.inventory.model.InventoryBatch> currentBalances(@org.apache.ibatis.annotations.Param("storeId") Long storeId);
+
     
     /**
      * FIFO排序查询批次列表（不使用锁）

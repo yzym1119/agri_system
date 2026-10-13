@@ -86,7 +86,7 @@ class ProductUnitServiceTest {
 
     @Test
     void rejectsDuplicateEnabledBaseUnitsBeforeWriting() {
-        when(productRepository.findById(10L)).thenReturn(Optional.of(new Product()));
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("瓶")));
         assertThatThrownBy(() -> service.replaceUnits(10L, List.of(
                 unitCommand("瓶", "1", true), unitCommand("支", "1", true))))
                 .hasMessageContaining("基准单位");
@@ -95,7 +95,7 @@ class ProductUnitServiceTest {
 
     @Test
     void updatesExistingIdInPlaceAndInsertsOnlyNewRows() {
-        when(productRepository.findById(10L)).thenReturn(Optional.of(new Product()));
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("瓶")));
         ProductUnit existing = persisted(101L, 10L, "瓶", 1, 1);
         when(unitRepository.findByProductId(10L)).thenReturn(List.of(existing));
 
@@ -112,7 +112,7 @@ class ProductUnitServiceTest {
 
     @Test
     void removesMissingRowsByDisablingAndKeepsTheirIds() {
-        when(productRepository.findById(10L)).thenReturn(Optional.of(new Product()));
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("瓶")));
         ProductUnit retained = persisted(101L, 10L, "瓶", 1, 1);
         ProductUnit removed = persisted(102L, 10L, "件", 288, 1);
         when(unitRepository.findByProductId(10L)).thenReturn(List.of(retained, removed));
@@ -129,7 +129,7 @@ class ProductUnitServiceTest {
 
     @Test
     void rejectsCrossSkuUnknownAndRepeatedIdsWithoutWriting() {
-        when(productRepository.findById(10L)).thenReturn(Optional.of(new Product()));
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("瓶")));
         when(unitRepository.findByProductId(10L)).thenReturn(List.of(persisted(101L, 10L, "瓶", 1, 1)));
         ProductUnit external = persisted(202L, 20L, "瓶", 1, 1);
         when(unitRepository.findById(202L)).thenReturn(Optional.of(external));
@@ -154,7 +154,7 @@ class ProductUnitServiceTest {
 
     @Test
     void rejectsDisabledBaseWithNonOneCoefficientBeforeWriting() {
-        when(productRepository.findById(10L)).thenReturn(Optional.of(new Product()));
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("瓶")));
         ProductUnitUpsertCommand disabledBase = unitCommand("瓶", "2", true);
         disabledBase.setStatus(0);
         assertThatThrownBy(() -> service.replaceUnits(10L, List.of(disabledBase)))
@@ -172,7 +172,7 @@ class ProductUnitServiceTest {
 
     @Test
     void reusesDisabledSameNameRowWhenIdIsOmitted() {
-        when(productRepository.findById(10L)).thenReturn(Optional.of(new Product()));
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("瓶")));
         ProductUnit disabled = persisted(101L, 10L, "瓶", 1, 0);
         when(unitRepository.findByProductId(10L)).thenReturn(List.of(disabled));
         service.replaceUnits(10L, List.of(unitCommand("瓶", "1", true)));
@@ -187,10 +187,9 @@ class ProductUnitServiceTest {
         product.setMainUnit("瓶");
         product.setAuxUnit("件");
         product.setMainToAuxRatio(new BigDecimal("288"));
-        when(unitRepository.findEnabledByProductId(10L)).thenReturn(List.of());
         when(productRepository.findById(10L)).thenReturn(Optional.of(product));
 
-        List<ProductUnit> units = service.getUnits(10L);
+        List<ProductUnit> units = service.getManagementUnits(10L);
 
         assertThat(units).hasSize(2);
         assertThat(units).allMatch(unit -> unit.isReadOnly()
@@ -199,7 +198,7 @@ class ProductUnitServiceTest {
 
     @Test
     void configuredSkuCannotSwitchBaseUnitId() {
-        when(productRepository.findById(10L)).thenReturn(Optional.of(new Product()));
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("瓶")));
         ProductUnit base = persisted(101L, 10L, "瓶", 1, 1);
         ProductUnit other = persisted(102L, 10L, "件", 288, 1);
         when(unitRepository.findByProductId(10L)).thenReturn(List.of(base, other));
@@ -215,7 +214,7 @@ class ProductUnitServiceTest {
 
     @Test
     void configuredSkuCannotRemoveOrDisableCurrentBaseUnit() {
-        when(productRepository.findById(10L)).thenReturn(Optional.of(new Product()));
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("瓶")));
         ProductUnit base = persisted(101L, 10L, "瓶", 1, 1);
         ProductUnit other = persisted(102L, 10L, "件", 288, 1);
         when(unitRepository.findByProductId(10L)).thenReturn(List.of(base, other));
@@ -238,6 +237,106 @@ class ProductUnitServiceTest {
                 .hasMessageContaining("无启用单位");
         assertThat(service.getUnitModelStatus(10L)).isEqualTo("NEW_CHAIN_NO_ENABLED_UNITS");
         verify(unitRepository, never()).save(any());
+    }
+
+    @Test
+    void initializesPersistentUnitsWithExactDeclaredConversion() {
+        Product product = new Product();
+        product.setId(10L);
+        product.setMainUnit("箱");
+        product.setAuxUnit("瓶");
+        product.setMainToAuxRatio(new BigDecimal("20"));
+        service.initializeUnits(product);
+        verify(unitRepository).save(org.mockito.ArgumentMatchers.argThat(unit ->
+                "瓶".equals(unit.getUnitName()) && unit.isBase() && !unit.isReadOnly()));
+        verify(unitRepository).save(org.mockito.ArgumentMatchers.argThat(unit ->
+                "箱".equals(unit.getUnitName()) && unit.getBaseQuantityPerUnit().compareTo(new BigDecimal("20")) == 0));
+    }
+
+    @Test
+    void initializesSingleMainUnitAsBase() {
+        Product product = new Product();
+        product.setId(10L);
+        product.setMainUnit("瓶");
+        service.initializeUnits(product);
+        verify(unitRepository).save(org.mockito.ArgumentMatchers.argThat(unit ->
+                "瓶".equals(unit.getUnitName()) && unit.isBase()
+                        && unit.getBaseQuantityPerUnit().compareTo(BigDecimal.ONE) == 0));
+    }
+
+    @Test
+    void rejectsMissingOrInexactAuxiliaryConversionBeforeWriting() {
+        Product product = new Product();
+        product.setId(10L);
+        product.setMainUnit("箱");
+        product.setAuxUnit("瓶");
+        assertThatThrownBy(() -> service.initializeUnits(product)).hasMessageContaining("比例");
+        product.setMainToAuxRatio(new BigDecimal("0.123456789"));
+        assertThatThrownBy(() -> service.initializeUnits(product)).hasMessageContaining("精确");
+        verify(unitRepository, never()).save(any());
+    }
+
+    @Test
+    void businessReadsCannotUseUnpersistedLegacyProjection() {
+        assertThatThrownBy(() -> service.getUnits(10L)).hasMessageContaining("持久化单位");
+    }
+
+    @Test
+    void configuredUnitCoefficientCannotBeRedefined() {
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("瓶")));
+        when(unitRepository.findByProductId(10L)).thenReturn(List.of(
+                persisted(101L, 10L, "瓶", 1, 1), persisted(102L, 10L, "箱", 20, 1)));
+        ProductUnitUpsertCommand base = unitCommand("瓶", "1", true);
+        base.setId(101L);
+        ProductUnitUpsertCommand box = unitCommand("箱", "24", false);
+        box.setId(102L);
+        assertThatThrownBy(() -> service.replaceUnits(10L, List.of(base, box))).hasMessageContaining("换算系数不可变更");
+        verify(unitRepository, never()).save(any());
+    }
+
+    @Test
+    void rejectsDisablingMainUnitWhenAuxiliaryBaseRemainsEnabledBeforeWriting() {
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("箱")));
+        ProductUnit base = persisted(101L, 10L, "瓶", 1, 1);
+        ProductUnit main = persisted(102L, 10L, "箱", 20, 1);
+        when(unitRepository.findByProductId(10L)).thenReturn(List.of(base, main));
+        ProductUnitUpsertCommand baseCommand = unitCommand("瓶", "1", true); baseCommand.setId(101L);
+        ProductUnitUpsertCommand mainCommand = unitCommand("箱", "20", false); mainCommand.setId(102L); mainCommand.setStatus(0);
+        assertThatThrownBy(() -> service.replaceUnits(10L, List.of(baseCommand, mainCommand)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("主单位不可移除或停用");
+        assertThat(base.getStatus()).isOne(); assertThat(main.getStatus()).isOne();
+        verify(unitRepository, never()).save(any());
+    }
+
+    @Test
+    void rejectsOmittingMainUnitWhenAuxiliaryBaseRemainsEnabledBeforeWriting() {
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("箱")));
+        ProductUnit base = persisted(101L, 10L, "瓶", 1, 1);
+        ProductUnit main = persisted(102L, 10L, "箱", 20, 1);
+        when(unitRepository.findByProductId(10L)).thenReturn(List.of(base, main));
+        ProductUnitUpsertCommand baseCommand = unitCommand("瓶", "1", true); baseCommand.setId(101L);
+        assertThatThrownBy(() -> service.replaceUnits(10L, List.of(baseCommand)))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("主单位不可移除或停用");
+        assertThat(main.getStatus()).isOne(); verify(unitRepository, never()).save(any());
+    }
+
+    @Test
+    void allowsDisablingOtherUnitWhenMainAndAuxiliaryBaseRemainEnabled() {
+        when(productRepository.findById(10L)).thenReturn(Optional.of(productWithMainUnit("箱")));
+        ProductUnit base = persisted(101L, 10L, "瓶", 1, 1);
+        ProductUnit main = persisted(102L, 10L, "箱", 20, 1);
+        ProductUnit other = persisted(103L, 10L, "件", 100, 1);
+        when(unitRepository.findByProductId(10L)).thenReturn(List.of(base, main, other));
+        ProductUnitUpsertCommand baseCommand = unitCommand("瓶", "1", true); baseCommand.setId(101L);
+        ProductUnitUpsertCommand mainCommand = unitCommand("箱", "20", false); mainCommand.setId(102L);
+        ProductUnitUpsertCommand otherCommand = unitCommand("件", "100", false); otherCommand.setId(103L); otherCommand.setStatus(0);
+        service.replaceUnits(10L, List.of(baseCommand, mainCommand, otherCommand));
+        assertThat(main.getStatus()).isOne(); assertThat(base.getStatus()).isOne(); assertThat(other.getStatus()).isZero();
+        verify(unitRepository).save(other); verify(unitRepository, times(3)).save(any());
+    }
+
+    private static Product productWithMainUnit(String main) {
+        Product product = new Product(); product.setId(10L); product.setMainUnit(main); return product;
     }
 
     private static ProductUnit base(String name) {

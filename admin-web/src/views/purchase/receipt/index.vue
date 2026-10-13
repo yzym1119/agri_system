@@ -156,6 +156,7 @@
           <div class="label-type">{{ labelTypeText }}</div>
           <div class="label-name">{{ label.productName }}</div>
           <div class="label-line">编码：{{ label.productCode || '-' }}</div>
+          <div class="label-line">内部批次码：{{ label.internalReceiptBatchNo }}</div>
           <div class="label-line">批号：{{ label.supplierBatchNo || '-' }}</div>
           <div class="label-line">数量：{{ label.quantity }} {{ label.unit }}</div>
           <div class="label-line">
@@ -175,7 +176,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getPurchaseDetail, getPurchaseList, receivePurchase } from '@/api/purchase'
 import type { PurchaseDetailVO, PurchasePageVO, ReceiptBatchCommand } from '@/types/purchase'
@@ -199,6 +201,7 @@ interface LineRow {
 interface LabelInfo {
   productName: string
   productCode?: string
+  internalReceiptBatchNo: string
   supplierBatchNo?: string | null
   quantity: number
   unit: string
@@ -209,8 +212,10 @@ interface LabelInfo {
   receivedAt: string
 }
 
+const route = useRoute()
 const purchaseOrders = ref<PurchasePageVO[]>([])
 const ordersLoading = ref(false)
+const receiptRequestKey = ref(crypto.randomUUID())
 const purchaseOrderId = ref<number | undefined>(undefined)
 const detail = ref<PurchaseDetailVO | null>(null)
 const detailLoading = ref(false)
@@ -273,7 +278,7 @@ const loadDetail = async () => {
       qty: Number(item.qty ?? 0),
       unit: item.unit,
       remark: '',
-      batches: [newBatch(item.unit)]
+      batches: [{ ...newBatch(item.unit), originalQuantity: Number(item.qty ?? 0), originalUnitCost: Number(item.price ?? 0) }]
     }))
   } catch (e: any) {
     ElMessage.error(e?.message || '加载采购单详情失败')
@@ -322,7 +327,8 @@ const submit = async () => {
 
   submitting.value = true
   try {
-    await receivePurchase({
+    const received = await receivePurchase({
+      requestKey: receiptRequestKey.value,
       purchaseOrderId: purchaseOrderId.value,
       exceptionReason: exceptionReason.value || null,
       remark: remark.value || null,
@@ -342,24 +348,27 @@ const submit = async () => {
       }))
     })
     ElMessage.success('收货成功')
+    receiptRequestKey.value = crypto.randomUUID()
 
     if (printLabels.value) {
       const storeName = detail.value?.storeName || String(detail.value?.storeId ?? '')
       const now = new Date().toLocaleString()
-      labels.value = lineRows.value.flatMap(line =>
-        line.batches.map(batch => ({
-          productName: line.productName || String(line.productId),
-          productCode: line.productCode,
+      labels.value = received.batches.map(batch => {
+        const line = lineRows.value.find(row => row.productId === batch.productId)
+        return {
+          productName: line?.productName || String(batch.productId),
+          productCode: line?.productCode,
+          internalReceiptBatchNo: batch.internalReceiptBatchNo,
           supplierBatchNo: batch.supplierBatchNo,
           quantity: Number(batch.originalQuantity),
-          unit: batch.originalUnit,
-          productionDate: batch.dateUnknown ? null : batch.productionDate || null,
-          expiryDate: batch.dateUnknown ? null : batch.expiryDate || null,
-          dateUnknown: batch.dateUnknown,
+          unit: batch.originalUnitName,
+          productionDate: batch.productionDate,
+          expiryDate: batch.expiryDate,
+          dateUnknown: batch.dateStatus === 'UNKNOWN',
           storeName,
           receivedAt: now
-        }))
-      )
+        }
+      })
       printVisible.value = true
     }
 
@@ -384,7 +393,16 @@ const doPrint = () => {
   window.print()
 }
 
-loadOrders()
+watch(() => route.query.purchaseOrderId, async value => {
+  await loadOrders()
+  const id = Number(value)
+  if (!Number.isSafeInteger(id) || id <= 0) return
+  purchaseOrderId.value = id
+  await loadDetail()
+  if (detail.value && !purchaseOrders.value.some(order => order.id === id)) {
+    purchaseOrders.value.push({ id, orderNo: detail.value.orderNo } as PurchasePageVO)
+  }
+}, { immediate: true })
 </script>
 
 <style scoped>

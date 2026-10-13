@@ -93,6 +93,7 @@ class AdminReturnTest {
         product.setMainToAuxRatio(new BigDecimal("4"));
 
         when(orderRepository.findById(order.getId())).thenAnswer(inv -> Optional.of(order));
+        when(orderRepository.findByIdForUpdate(order.getId())).thenAnswer(inv -> Optional.of(order));
         when(orderItemRepository.findByOrderId(order.getId())).thenReturn(List.of(orderItem));
         when(productRepository.findById(product.getId())).thenReturn(Optional.of(product));
         when(afterSalesDomainService.generateAfterSalesNo()).thenReturn("AS202401010001");
@@ -131,7 +132,11 @@ class AdminReturnTest {
 
         assertEquals(999L, afterSalesId);
         verify(inventoryApplicationService, times(1)).inbound(argThat(inCommand ->
-                inCommand.getQuantity().compareTo(new BigDecimal("0.50000000")) == 0
+                inCommand.getQuantity().compareTo(new BigDecimal("2")) == 0
+                        && "瓶".equals(inCommand.getUnit())
+                        && Integer.valueOf(200).equals(inCommand.getSourceLineNo())
+                        && Long.valueOf(999L).equals(inCommand.getSourceId())
+                        && "SALES_RETURN".equals(inCommand.getSourceType())
                         && inCommand.getProductId().equals(product.getId())
         ), eq(8L));
 
@@ -226,6 +231,224 @@ class AdminReturnTest {
 
         assertThrows(IllegalArgumentException.class, () -> afterSalesService.createFromAdmin(command, 8L));
         verify(orderPaymentService, never()).refund(eq(order), eq(new BigDecimal("60.00")), eq(8L));
+    }
+
+    @Test
+    void packagePartialReturnCannotRefundMoreThanItsAllocatedQuantityShare() {
+        packageMaterial("3", "10.00");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> afterSalesService.createFromAdmin(returnCommand("1", "4.00"), 8L));
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("金额"));
+        verifyNoInteractions(orderPaymentService, inventoryApplicationService);
+    }
+
+    @Test
+    void secondPackageReturnUsesCumulativeAmountAndCannotTakeAnotherMaterialsMoney() {
+        packageMaterial("3", "10.00");
+        history("1", "3.33");
+        assertThrows(IllegalArgumentException.class,
+                () -> afterSalesService.createFromAdmin(returnCommand("1", "3.35"), 8L));
+        verifyNoInteractions(orderPaymentService, inventoryApplicationService);
+    }
+
+    @Test
+    void lastPackageMaterialReturnRefundsTheRemainingCent() {
+        packageMaterial("3", "10.00");
+        history("2", "6.66");
+        persistNewAfterSales();
+        afterSalesService.createFromAdmin(returnCommand("1", "3.34"), 8L);
+        verify(orderPaymentService).refund(eq(order), eq(new BigDecimal("3.34")), eq(8L));
+    }
+
+    @Test
+    void duplicateMaterialInOneReturnRequestIsRejectedBeforeStockOrMoneyMoves() {
+        packageMaterial("3", "10.00");
+        AdminReturnCommand command = returnCommand("1", "5.00");
+        command.setRefundAmount(new BigDecimal("10.00"));
+        command.setItems(List.of(command.getItems().get(0), command.getItems().get(0)));
+        assertThrows(IllegalArgumentException.class, () -> afterSalesService.createFromAdmin(command, 8L));
+        verifyNoInteractions(orderPaymentService, inventoryApplicationService);
+    }
+
+    @Test
+    void cumulativeRefundCannotExceedOriginalNetPayment() {
+        history("0", "100.00");
+        // 历史金额来自其它物料，当前行仍有60元额度，但订单实收只剩20元。
+        when(afterSalesItemRepository.findByAfterSalesId(501L)).thenReturn(List.of());
+        assertThrows(IllegalArgumentException.class,
+                () -> afterSalesService.createFromAdmin(returnCommand("1", "60.00"), 8L));
+        verifyNoInteractions(orderPaymentService, inventoryApplicationService);
+    }
+
+    @Test
+    void zeroAllocatedPackageMaterialCanReturnWithoutMoneyAndFinishesTheAfterSale() {
+        packageMaterial("2", "0.00");
+        orderItem.setUnitPrice(BigDecimal.ZERO);
+        persistNewAfterSales();
+        afterSalesService.createFromAdmin(returnCommand("1", "0.00"), 8L);
+        verify(inventoryApplicationService).inbound(argThat(c -> c.getQuantity().compareTo(BigDecimal.ONE) == 0), eq(8L));
+        verify(afterSalesRepository, atLeastOnce()).save(argThat(a -> a.getStatus() == AfterSales.STATUS_FINISHED));
+        assertEquals(6, order.getOrderStatus());
+        verifyNoInteractions(orderPaymentService);
+    }
+
+    @Test
+    void zeroAllocatedGiftCanReturnAfterAllPaidMoneyWasAlreadyRefunded() {
+        packageMaterial("2", "0.00");
+        orderItem.setUnitPrice(BigDecimal.ZERO);
+        order.setOrderStatus(8);
+        history("0", "120.00");
+        when(afterSalesItemRepository.findByAfterSalesId(501L)).thenReturn(List.of());
+        persistNewAfterSales();
+        afterSalesService.createFromAdmin(returnCommand("1", "0.00"), 8L);
+        verify(inventoryApplicationService).inbound(any(), eq(8L));
+        verifyNoInteractions(orderPaymentService);
+        assertEquals(8, order.getOrderStatus());
+    }
+
+    @Test
+    void ordinaryProductKeepsExistingAuthorizedManualRefundAmount() {
+        orderItem.setTotalPrice(new BigDecimal("120.00"));
+        persistNewAfterSales();
+        afterSalesService.createFromAdmin(returnCommand("1", "100.00"), 8L);
+        verify(orderPaymentService).refund(eq(order), eq(new BigDecimal("100.00")), eq(8L));
+    }
+
+    @Test
+    void confirmedRefundStoresTheActuallyRefundedAmountForFutureCumulativeChecks() {
+        AfterSales afterSales = new AfterSales();
+        afterSales.setId(999L); afterSales.setOrderId(order.getId());
+        afterSales.setStatus(AfterSales.STATUS_WAIT_REFUND);
+        afterSales.setRefundAmount(new BigDecimal("60.00"));
+        when(afterSalesRepository.findById(999L)).thenReturn(Optional.of(afterSales));
+        when(afterSalesItemRepository.findByAfterSalesId(999L)).thenReturn(List.of());
+        AfterSalesRefundCommand command = new AfterSalesRefundCommand();
+        command.setAfterSalesId(999L); command.setRefundAmount(new BigDecimal("40.00"));
+        afterSalesService.refund(command, 8L);
+        assertEquals(new BigDecimal("40.00"), afterSales.getRefundAmount());
+    }
+
+    @Test
+    void packageRefundCannotUseGrossMoneyFromOtherLinesAfterOrderDiscount() {
+        discountedPackageMaterials();
+        // 两个物料各成交10元，整单实收10元；每行净额5元，退1/3最多1.67元。
+        assertThrows(IllegalArgumentException.class,
+                () -> afterSalesService.createFromAdmin(returnCommand("1", "3.33"), 8L));
+        verifyNoInteractions(orderPaymentService, inventoryApplicationService);
+    }
+
+    @Test
+    void discountedPackageCanFinishAllQuantityReturnsAndRefundExactlyOriginalNetPayment() {
+        OrderItem second = discountedPackageMaterials();
+        java.util.ArrayList<AfterSales> saved = new java.util.ArrayList<>();
+        java.util.Map<Long, List<AfterSalesItem>> details = new java.util.HashMap<>();
+        when(afterSalesRepository.findByOrderId(order.getId())).thenAnswer(inv -> List.copyOf(saved));
+        when(afterSalesRepository.save(any(AfterSales.class))).thenAnswer(inv -> {
+            AfterSales entity = inv.getArgument(0);
+            if (entity.getId() == null) { entity.setId(900L + saved.size()); saved.add(entity); }
+            return entity;
+        });
+        doAnswer(inv -> {
+            List<AfterSalesItem> rows = inv.getArgument(0);
+            details.put(rows.get(0).getAfterSalesId(), List.copyOf(rows)); return null;
+        }).when(afterSalesItemRepository).saveBatch(anyList());
+        when(afterSalesItemRepository.findByAfterSalesId(anyLong()))
+                .thenAnswer(inv -> details.getOrDefault(inv.getArgument(0), List.of()));
+
+        afterSalesService.createFromAdmin(returnCommand("1", "1.67"), 8L);
+        afterSalesService.createFromAdmin(returnCommand("1", "1.66"), 8L);
+        afterSalesService.createFromAdmin(returnCommand("1", "1.67"), 8L);
+        AdminReturnCommand last = returnCommand("3", "5.00");
+        last.getItems().get(0).setOrderItemId(second.getId());
+        afterSalesService.createFromAdmin(last, 8L);
+
+        assertEquals(new BigDecimal("10.00"), saved.stream().map(AfterSales::getRefundAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add));
+        assertEquals(8, order.getOrderStatus());
+        assertEquals(new BigDecimal("6"), details.values().stream().flatMap(List::stream)
+                .map(AfterSalesItem::getQuantity).reduce(BigDecimal.ZERO, BigDecimal::add));
+        assertEquals(new BigDecimal("10.00"), orderItem.getTotalPrice());
+        assertEquals(new BigDecimal("10.00"), second.getTotalPrice());
+    }
+
+    @Test
+    void packageMaterialWithPositiveGrossButZeroNetShareCanReturnWithoutFunds() {
+        OrderItem second = discountedPackageMaterials();
+        order.setPayAmount(new BigDecimal("0.01"));
+        // 相同权重的一分钱按订单行ID稳定分配，第二行分到0元，原成交小计仍为10元。
+        var bases = com.agri_system.application.order.service.RefundAmountPolicy.refundableBaseAmounts(
+                order, List.of(second, orderItem));
+        assertEquals(new BigDecimal("0.01"), bases.get(orderItem.getId()));
+        assertEquals(new BigDecimal("0.00"), bases.get(second.getId()));
+        persistNewAfterSales();
+        AdminReturnCommand command = returnCommand("1", "0.00");
+        command.getItems().get(0).setOrderItemId(second.getId());
+        afterSalesService.createFromAdmin(command, 8L);
+        verify(inventoryApplicationService).inbound(any(), eq(8L));
+        verify(afterSalesRepository, atLeastOnce()).save(argThat(a -> a.getStatus() == AfterSales.STATUS_FINISHED));
+        verifyNoInteractions(orderPaymentService);
+        assertEquals(new BigDecimal("10.00"), second.getTotalPrice());
+    }
+
+    @Test
+    void firstOfThreeMaterialsSharingOneCentCanReturnForZeroCash() {
+        packageMaterial("3", "0.01"); order.setPayAmount(new BigDecimal("0.01"));
+        persistNewAfterSales();
+        // 1/3分钱按分舍入为0，首件必须能回库；剩余两件仍保留一分钱退款额度。
+        afterSalesService.createFromAdmin(returnCommand("1", "0.00"), 8L);
+        verify(inventoryApplicationService).inbound(argThat(c -> c.getQuantity().compareTo(BigDecimal.ONE) == 0), eq(8L));
+        verify(afterSalesRepository, atLeastOnce()).save(argThat(a -> a.getStatus() == AfterSales.STATUS_FINISHED));
+        verifyNoInteractions(orderPaymentService);
+        assertEquals(6, order.getOrderStatus());
+        assertEquals(new BigDecimal("0.01"), orderItem.getTotalPrice());
+    }
+
+    private OrderItem discountedPackageMaterials() {
+        packageMaterial("3", "10.00"); order.setPayAmount(new BigDecimal("10.00"));
+        OrderItem second = new OrderItem(); second.setId(201L); second.setOrderId(order.getId());
+        second.setProductId(product.getId()); second.setPackageId(700L); second.setQuantity(new BigDecimal("3"));
+        second.setUnit("瓶"); second.setUnitPrice(new BigDecimal("3.333333333333"));
+        second.setTotalPrice(new BigDecimal("10.00"));
+        when(orderItemRepository.findByOrderId(order.getId())).thenReturn(List.of(orderItem, second));
+        return second;
+    }
+
+    private void packageMaterial(String quantity, String totalPrice) {
+        orderItem.setPackageId(700L);
+        orderItem.setQuantity(new BigDecimal(quantity));
+        orderItem.setTotalPrice(new BigDecimal(totalPrice));
+        // 显示单价故意不能乘回分摊小计，金额校验必须以快照小计为准。
+        orderItem.setUnitPrice(new BigDecimal("3.333333333333"));
+    }
+
+    private AdminReturnCommand returnCommand(String quantity, String amount) {
+        AdminReturnCommand command = new AdminReturnCommand();
+        command.setOrderId(order.getId()); command.setRefundAmount(new BigDecimal(amount));
+        command.setReason("套餐物料退货");
+        AdminReturnCommand.ReturnItem item = new AdminReturnCommand.ReturnItem();
+        item.setOrderItemId(orderItem.getId()); item.setQuantity(new BigDecimal(quantity));
+        item.setRefundAmount(new BigDecimal(amount)); command.setItems(List.of(item));
+        return command;
+    }
+
+    private void history(String quantity, String amount) {
+        AfterSales finished = new AfterSales();
+        finished.setId(501L); finished.setOrderId(order.getId());
+        finished.setStatus(AfterSales.STATUS_FINISHED); finished.setRefundAmount(new BigDecimal(amount));
+        AfterSalesItem item = new AfterSalesItem();
+        item.setAfterSalesId(501L); item.setOrderItemId(orderItem.getId());
+        item.setProductId(product.getId()); item.setQuantity(new BigDecimal(quantity));
+        item.setRefundAmount(new BigDecimal(amount));
+        when(afterSalesRepository.findByOrderId(order.getId())).thenReturn(List.of(finished));
+        when(afterSalesItemRepository.findByAfterSalesId(501L)).thenReturn(List.of(item));
+    }
+
+    private void persistNewAfterSales() {
+        when(afterSalesRepository.save(any(AfterSales.class))).thenAnswer(inv -> {
+            AfterSales entity = inv.getArgument(0);
+            if (entity.getId() == null) entity.setId(999L);
+            return entity;
+        });
     }
 
     private AfterSalesItem buildAfterSalesItem() {

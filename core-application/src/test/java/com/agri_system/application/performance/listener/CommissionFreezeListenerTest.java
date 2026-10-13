@@ -9,6 +9,8 @@ import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.order.model.OrderItem;
 import com.agri_system.domain.order.repository.OrderItemRepository;
 import com.agri_system.domain.order.repository.OrderRepository;
+import com.agri_system.domain.after_sales.repository.AfterSalesRepository;
+import com.agri_system.domain.after_sales.repository.AfterSalesItemRepository;
 import com.agri_system.domain.performance.model.CommissionRule;
 import com.agri_system.domain.performance.model.PerformanceBizType;
 import com.agri_system.domain.performance.model.PerformanceLogStatus;
@@ -52,6 +54,8 @@ class CommissionFreezeListenerTest {
     @Mock StaffCustomerRelationRepository relationRepository;
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock CustomerSettlementService customerSettlementService;
+    @Mock AfterSalesRepository afterSalesRepository;
+    @Mock AfterSalesItemRepository afterSalesItemRepository;
 
     @InjectMocks PerformanceEventListener listener;
 
@@ -62,7 +66,7 @@ class CommissionFreezeListenerTest {
         when(orderItemRepository.findByOrderId(order.getId())).thenReturn(List.of(item));
         when(productRepository.findById(item.getProductId())).thenReturn(Optional.of(product));
         // 计算结果给出正提成,触发写 log
-        when(performanceDomainService.calculateSalesCommission(any(), any(), any(), anyBoolean(), any()))
+        when(performanceDomainService.calculateSalesCommission(any(), any(), any(), any(), anyBoolean(), any()))
                 .thenReturn(new PerformanceDomainService.CommissionResult(
                         new BigDecimal("10.00"), "desc", false));
         // 监听器 onOrderFinished 调 findBestSalesRule;空则 continue 不写 log
@@ -127,6 +131,7 @@ class CommissionFreezeListenerTest {
         when(eventRecordRepository.existsByEventKey(any())).thenReturn(false);
         when(eventRecordRepository.save(any())).thenReturn(null);
         when(orderRepository.findById(7L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(order));
         when(logRepository.findByOrderId(7L)).thenReturn(List.of(positive));
 
         listener.onOrderRefunded(new OrderRefundedEvent(7L, new BigDecimal("100"), null, "rk1"));
@@ -159,6 +164,7 @@ class CommissionFreezeListenerTest {
         when(eventRecordRepository.existsByEventKey(any())).thenReturn(false);
         when(eventRecordRepository.save(any())).thenReturn(null);
         when(orderRepository.findById(7L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(order));
         when(logRepository.findByOrderId(7L)).thenReturn(List.of(positive));
 
         listener.onOrderRefunded(new OrderRefundedEvent(7L, new BigDecimal("100"), null, "rk2"));

@@ -131,7 +131,8 @@ public class ReportAnalysisService {
         if (storeId != null) {
             inventoryAlertQ.and("store_id = ?", storeId);
         }
-        Long inventoryAlertCount = inventoryBatchMapper.selectCountByQuery(inventoryAlertQ);
+        Long inventoryAlertCount = inventoryBatchMapper.currentBalances(storeId).stream()
+                .filter(b -> b.getProductionDate() != null && !b.getProductionDate().isAfter(threshold)).count();
 
         DashboardVO vo = new DashboardVO();
         vo.setGmv(defaultZero(gmv));
@@ -232,7 +233,7 @@ public class ReportAnalysisService {
         if (storeId != null) {
             batchQ.and("store_id = ?", storeId);
         }
-        List<InventoryBatch> batches = inventoryBatchMapper.selectListByQuery(batchQ);
+        List<InventoryBatch> batches = inventoryBatchMapper.currentBalances(storeId);
         BigDecimal total = batches.stream()
                 .map(b -> defaultZero(b.getQuantity()).multiply(defaultZero(b.getCostPrice())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -393,7 +394,8 @@ public class ReportAnalysisService {
         if (storeId != null) {
             batchQ.and("store_id = ?", storeId);
         }
-        List<InventoryBatch> batches = inventoryBatchMapper.selectListByQuery(batchQ);
+        List<InventoryBatch> batches = inventoryBatchMapper.currentBalances(storeId).stream()
+                .filter(b -> b.getProductionDate() != null && !b.getProductionDate().isAfter(threshold)).toList();
         
         // 获取商品ID集合，批量查询商品名称
         List<Long> productIds = batches.stream()

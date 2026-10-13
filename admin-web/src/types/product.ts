@@ -58,6 +58,8 @@ export interface ProductDetailVO {
   auxUnit?: string
   mainToAuxRatio?: number
   suggestedRetailPrice: number
+  pricingUnit?: string
+  units?: ProductUnitVO[]
   vipPrice?: number
   minPrice?: number
   avgCostPrice?: number

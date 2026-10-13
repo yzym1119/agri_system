@@ -3,8 +3,16 @@ package com.agri_system.e2e;
 import cn.dev33.satoken.stp.SaTokenInfo;
 import cn.dev33.satoken.stp.StpInterface;
 import cn.dev33.satoken.stp.StpUtil;
+import cn.dev33.satoken.interceptor.SaInterceptor;
 import com.agri_system.api.admin.controller.InventoryController;
 import com.agri_system.api.admin.controller.InventoryWarningController;
+import com.agri_system.api.admin.controller.OrderAdminController;
+import com.agri_system.api.admin.controller.ProductController;
+import com.agri_system.api.admin.controller.ProductPackageController;
+import com.agri_system.api.admin.controller.AfterSalesAdminController;
+import com.agri_system.application.after_sales.dto.command.AdminReturnCommand;
+import com.agri_system.application.performance.listener.PerformanceEventListener;
+import com.agri_system.application.performance.event.OrderRefundedEvent;
 import com.agri_system.application.config.DomainServiceConfig;
 import com.agri_system.application.inventory.dto.command.InventoryOutCommand;
 import com.agri_system.application.inventory.dto.vo.InventoryRiskVO;
@@ -51,6 +59,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import javax.sql.DataSource;
 import java.math.BigDecimal;
@@ -82,19 +92,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Task 10c 零售事实链端到端验收测试（仅当 -Dmysql.it=true 时执行）。
- *
- * <p>覆盖 brief §4 的十步弧线：legacy 耗尽 → 激活（enable）→ 收货+守卫 → 移动/销售证据
- * （RULE_ALLOCATED / UNKNOWN / SCANNED）→ 改价留痕 → 日期未知风险建议 → L1/L2/L3 对账 →
- * 回滚（save LEGACY）→ M4 HTTP 端点 → M2 边界。
- *
- * <p>有意简化（brief §3）：不模拟历史初始化（那是 10b 运营脚本已 smoke 的职责）。
- * 本 E2E 让 enable 前的两笔 legacy 销售恰好耗尽 legacy 库存，因此激活后投影覆写无遗留差额。
- *
- * <p>本类只使用一次性测试库 agri_retail_e2e（@DynamicPropertySource 中建库并跑 Flyway，
- * @AfterAll drop）。绝不连接 agri_system / tlcloud_* / agri_retail_it。
- *
- * <p>MySQL 不可达时本测试必须失败（抛 IllegalStateException），禁止 Assumptions 静默跳过。
+ * 统一库存真实 MySQL 验收：全量 Flyway 后，通过业务入口收货、销售、原单退货、调拨和盘点。
+ * 不依赖商品开关；库存快照使用主单位，余额与流水使用基准单位。
+ * 每次创建唯一临时数据库，绝不预先删除已有库，仅清理本次成功创建的库。
  */
 @EnabledIfSystemProperty(named = "mysql.it", matches = "true")
 @SpringBootTest(classes = RetailFactChainEndToEndTest.E2EConfig.class,
@@ -102,7 +102,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 class RetailFactChainEndToEndTest {
 
-    private static final String DB_NAME = "agri_retail_e2e";
+    private static final String DB_NAME = "agri_unified_inventory_it_"
+            + java.util.UUID.randomUUID().toString().replace("-", "");
 
     private static boolean databaseCreated = false;
     private static String serverUrl;
@@ -130,6 +131,12 @@ class RetailFactChainEndToEndTest {
     private MockMvc mockMvc;
     @Autowired
     private ObjectMapper objectMapper;
+    @Autowired private PerformanceEventListener performanceEventListener;
+    @Autowired private org.apache.ibatis.session.SqlSessionFactory sqlSessionFactory;
+    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    @Autowired private org.springframework.transaction.PlatformTransactionManager transactionManager;
+    @Autowired private com.agri_system.application.order.service.OrderPaymentService orderPaymentService;
+    @Autowired private com.agri_system.domain.order.repository.OrderRepository orderRepository;
 
     // ------------------------------------------------------------------
     // 数据源：建一次性库 + Flyway 编程式迁移 + 自证（行数==迁移文件数、failed==0）
@@ -147,24 +154,28 @@ class RetailFactChainEndToEndTest {
 
         try (Connection conn = DriverManager.getConnection(serverUrl, dbUser, dbPassword);
              Statement st = conn.createStatement()) {
-            st.execute("DROP DATABASE IF EXISTS " + DB_NAME);
             st.execute("CREATE DATABASE " + DB_NAME + " CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
             databaseCreated = true;
-            log("[db] 已重建一次性测试库 " + DB_NAME + "（未触碰 agri_system / tlcloud_* / agri_retail_it）");
+            log("[db] 已创建唯一一次性测试库 " + DB_NAME + "（未触碰 agri_system / tlcloud_* / agri_retail_it）");
         } catch (SQLException e) {
             throw new IllegalStateException("E2E 验收需要可达的真实 MySQL（-Dmysql.it=true，"
                     + "mysql.it.host/port/user/password 可覆盖；当前 " + serverUrl + "）。"
                     + "本测试禁止静默跳过：MySQL 不可达即失败", e);
         }
 
-        MigrateResult migrateResult = Flyway.configure()
-                .dataSource(jdbcUrl, dbUser, dbPassword)
-                .locations("classpath:db/migration")
-                .load()
-                .migrate();
-        log("[flyway] migrationsExecuted=" + migrateResult.migrationsExecuted);
-
-        selfCheckFlywayHistory();
+        try {
+            MigrateResult migrateResult = Flyway.configure()
+                    .dataSource(jdbcUrl, dbUser, dbPassword)
+                    .locations("classpath:db/migration")
+                    .load()
+                    .migrate();
+            log("[flyway] migrationsExecuted=" + migrateResult.migrationsExecuted);
+            selfCheckFlywayHistory();
+        } catch (RuntimeException | AssertionError e) {
+            // 上下文初始化失败时 JUnit 不一定执行 AfterAll，仍只清理本次已创建库。
+            dropOnetimeDatabase();
+            throw e;
+        }
 
         registry.add("spring.datasource.url", () -> jdbcUrl);
         registry.add("spring.datasource.username", () -> dbUser);
@@ -206,10 +217,15 @@ class RetailFactChainEndToEndTest {
             for (Resource r : resources) {
                 distinct.put(r.getFilename(), r.getDescription());
             }
+            Resource[] javaMigrations = new PathMatchingResourcePatternResolver()
+                    .getResources("classpath*:db/migration/V*__*.class");
+            for (Resource r : javaMigrations) {
+                if (!r.getFilename().contains("$")) distinct.put(r.getFilename(), r.getDescription());
+            }
             classpathMigrations = distinct.size();
-            sb.append("[flyway-selfcheck] classpath 迁移文件(按文件名去重)=").append(classpathMigrations).append('\n');
+            sb.append("[flyway-selfcheck] classpath SQL/Java 迁移(按文件名去重)=").append(classpathMigrations).append('\n');
         } catch (Exception e) {
-            throw new IllegalStateException("枚举 classpath:db/migration/*.sql 失败（自证无法完成即失败）", e);
+            throw new IllegalStateException("枚举 classpath:db/migration 失败（自证无法完成即失败）", e);
         }
 
         String databaseName;
@@ -265,480 +281,768 @@ class RetailFactChainEndToEndTest {
     // 十步弧线（一个有序 @Test，顺序即 brief §4，断言内联）
     // ------------------------------------------------------------------
     @Test
-    void retailFactChainTenStepArc() throws Exception {
+    void unifiedInventoryBusinessChain() throws Exception {
+        assertTrue(sqlSessionFactory.getConfiguration().getEnvironment().getDataSource() == jdbcTemplate.getDataSource(),
+                "JdbcTemplate 必须使用 MyBatis 同一个事务数据源");
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager).execute(status -> {
+            org.apache.ibatis.session.SqlSession session = org.mybatis.spring.SqlSessionUtils.getSqlSession(sqlSessionFactory);
+            try (Statement st = session.getConnection().createStatement(); ResultSet rs = st.executeQuery("SELECT CONNECTION_ID()")) {
+                rs.next();
+                assertEquals(rs.getLong(1), jdbcTemplate.queryForObject("SELECT CONNECTION_ID()", Long.class),
+                        "MyBatis 与 JDBC 必须在同一事务使用同一物理连接");
+            } catch (SQLException e) { throw new IllegalStateException(e); }
+            finally { org.mybatis.spring.SqlSessionUtils.closeSqlSession(session, sqlSessionFactory); }
+            return null;
+        });
         seedFixture();
+        assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_balance_feature_status"),
+                "所有业务入口必须在没有开关记录时直接使用同一账本");
+        ReceivePurchaseCommand receipt = receiveCmd(1L, 1L, "SUP-BATCH-1", "箱", "1", "100.00",
+                LocalDate.now().minusDays(10), LocalDate.now().plusYears(1));
+        receipt.setRequestKey("E2E-RECEIPT-HALF-1");
+        Long firstReceipt = purchaseApplicationService.receive(receipt, 1L);
+        long batch = jdbcLong("SELECT id FROM inventory_receipt_batch WHERE product_id=101 ORDER BY id LIMIT 1");
+        assertStock(1, "1", "20");
+        assertEquals(1L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE movement_type='RECEIPT'"));
+        assertDecimal("箱成本转换成每瓶成本", "5", jdbcDecimal("SELECT base_unit_cost FROM inventory_receipt_batch WHERE id=" + batch));
+        long movements = movementCount();
+        assertThrows(RuntimeException.class, () -> purchaseApplicationService.receive(receipt, 1L));
+        assertEquals(movements, movementCount(), "重复半收货不能多记账");
+        assertStock(1, "1", "20");
+        ReceivePurchaseCommand secondReceipt = receiveCmd(1L, 1L, "SUP-BATCH-2", "箱", "1", "100.00",
+                LocalDate.now().minusDays(5), LocalDate.now().plusYears(2));
+        secondReceipt.setRequestKey("E2E-RECEIPT-HALF-2");
+        purchaseApplicationService.receive(secondReceipt, 1L);
+        assertStock(1, "2", "40");
 
-        // ============ 步骤 1：enable 前两笔 legacy 销售恰好耗尽 legacy 库存 ============
-        // 40 瓶 + 1 箱 = 60 瓶 = 3 箱（主单位），与 legacy 快照 3 箱恰好抵消；
-        // 有意不模拟历史初始化（见类注释）。两笔销售均走 legacy 出库路径。
-        Long saleALegacyOrderId = orderApplicationService.createPOSOrder(
-                posSale(101L, "40", "瓶", "5.00", false, null, "200.00"), 1L);
-        assertNotNull(saleALegacyOrderId, "第一笔 legacy 销售应成功");
-        log("[step1] legacy 销售1(40瓶) orderId=" + saleALegacyOrderId);
+        // 销售在下单时真实扣账，包括多单位和库房提货订单。
+        long order = orderApplicationService.createPOSOrder(posSale(101L, "1", "箱", "100.00", true, null, "100.00"), 1L);
+        long item = jdbcLong("SELECT id FROM order_item WHERE order_id=" + order);
+        assertStock(1, "1", "20");
+        assertDecimal("原单记录实际销售基准量", "20", jdbcDecimal("SELECT allocated_base_quantity FROM order_item_batch_allocation WHERE order_item_id=" + item));
+        assertEquals(batch, jdbcLong("SELECT batch_id FROM order_item_batch_allocation WHERE order_item_id=" + item));
+        long sourceMovement = jdbcLong("SELECT source_movement_id FROM order_item_batch_allocation WHERE order_item_id=" + item);
+        assertEquals("SALE", jdbcString("SELECT movement_type FROM inventory_movement WHERE id=" + sourceMovement));
+        assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE id=" + sourceMovement + " AND to_location_id IS NOT NULL"));
+        movements = movementCount();
+        InventoryOutCommand duplicateSale = outCmd(101L, "1", "箱");
+        duplicateSale.setReferenceType("ORDER"); duplicateSale.setReferenceId(order); duplicateSale.setReferenceLineId(item);
+        assertThrows(RuntimeException.class, () -> inventoryApplicationService.outbound(duplicateSale, 1L));
+        assertEquals(movements, movementCount());
 
-        Long saleBLegacyOrderId = orderApplicationService.createPOSOrder(
-                posSale(101L, "1", "箱", "100.00", false, null, "100.00"), 1L);
-        assertNotNull(saleBLegacyOrderId, "第二笔 legacy 销售应成功");
-        log("[step1] legacy 销售2(1箱) orderId=" + saleBLegacyOrderId);
+        // 取货仅核对已出库的批次，不再次移动或扣库存。
+        long pickup = jdbcLong("SELECT id FROM order_pickup_request WHERE order_item_id=" + item);
+        PickupFulfillmentCommand scan = new PickupFulfillmentCommand();
+        scan.setScannedCode(jdbcString("SELECT internal_receipt_batch_no FROM inventory_receipt_batch WHERE id=" + batch));
+        pickupFulfillmentService.fulfill(pickup, scan, 1L);
+        assertEquals("FULFILLED", jdbcString("SELECT status FROM order_pickup_request WHERE id=" + pickup));
+        assertEquals("SCANNED", jdbcString("SELECT evidence_level FROM order_item_batch_allocation WHERE order_item_id=" + item));
+        assertEquals(movements, movementCount(), "提货核对不能再次扣账");
+        assertThrows(RuntimeException.class, () -> pickupFulfillmentService.fulfill(pickup, scan, 1L));
+        assertEquals(movements, movementCount());
+        assertStock(1, "1", "20");
 
-        assertDecimal("步骤1 legacy 快照应被两笔销售恰好耗尽",
-                "0", jdbcDecimal("SELECT quantity FROM inventory WHERE store_id=1 AND product_id=101"));
-        assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM order_item_batch_allocation"),
-                "enable 前销售不得产生批次归属行（新链路零写入）");
-        assertDecimal("LB-A 应被 FIFO 耗尽为 0",
-                "0", jdbcDecimal("SELECT quantity FROM inventory_batch WHERE store_id=1 AND product_id=101 AND batch_no='LB-A'"));
-        assertEquals(0L, jdbcLong("SELECT is_active FROM inventory_batch WHERE store_id=1 AND product_id=101 AND batch_no='LB-A'"));
-        assertDecimal("LB-B 应被 FIFO 耗尽为 0",
-                "0", jdbcDecimal("SELECT quantity FROM inventory_batch WHERE store_id=1 AND product_id=101 AND batch_no='LB-B'"));
-        assertEquals(0L, jdbcLong("SELECT is_active FROM inventory_batch WHERE store_id=1 AND product_id=101 AND batch_no='LB-B'"));
+        // 半箱退回原批次，日期与成本谱系不变；重复、超量退货全部回滚。
+        var returned = new com.agri_system.application.inventory.dto.command.InventoryInCommand();
+        returned.setStoreId(1L); returned.setProductId(101L); returned.setUnit("箱");
+        returned.setQuantity(new BigDecimal("0.5")); returned.setSourceType("SALES_RETURN");
+        returned.setSourceId(9001L); returned.setSourceLineNo(Math.toIntExact(item));
+        assertEquals(batch, inventoryApplicationService.inbound(returned, 1L));
+        assertStock(1, "1.5", "30");
+        assertEquals(2L, jdbcLong("SELECT COUNT(*) FROM inventory_receipt_batch WHERE product_id=101"), "退货沿用原批次");
+        assertDecimal("退货沿用原成本", "5", jdbcDecimal("SELECT unit_cost FROM inventory_movement WHERE movement_type='RETURN'"));
+        movements = movementCount();
+        assertThrows(RuntimeException.class, () -> inventoryApplicationService.inbound(returned, 1L));
+        returned.setSourceId(9002L); returned.setQuantity(new BigDecimal("1"));
+        assertThrows(RuntimeException.class, () -> inventoryApplicationService.inbound(returned, 1L));
+        assertEquals(movements, movementCount(), "超量退货在部分回库后必须整体回滚");
+        assertStock(1, "1.5", "30");
 
-        // ============ 步骤 2：激活（enable）→ BATCH_LOCATION + cutover 留痕 ============
-        InventoryBalanceFeatureStatus enabled = featureStatusRepository.enable(1L, 101L, 1L);
-        assertNotNull(enabled, "enable 应返回已激活实体");
-        assertNotNull(enabled.getId(), "enable 返回值应已回填实体 id");
-        assertEquals(InventoryBalanceFeatureStatus.BATCH_LOCATION, enabled.getBalanceMode());
-        assertEquals("BATCH_LOCATION",
-                jdbcString("SELECT balance_mode FROM inventory_balance_feature_status WHERE store_id=1 AND product_id=101"));
-        assertNotNull(jdbcTimestamp("SELECT cutover_at FROM inventory_balance_feature_status WHERE store_id=1 AND product_id=101"),
-                "enable 应落 cutover_at");
-        assertEquals(1L, jdbcLong("SELECT cutover_by FROM inventory_balance_feature_status WHERE store_id=1 AND product_id=101"));
-        log("[step2] enable 完成: featureStatusId=" + enabled.getId());
+        orderApplicationService.createPOSOrder(posSale(101L, "2", "瓶", "5.00", false, null, "10.00"), 1L);
+        assertStock(1, "1.4", "28");
+        long orders = jdbcLong("SELECT COUNT(*) FROM `order`");
+        long allocations = jdbcLong("SELECT COUNT(*) FROM order_item_batch_allocation");
+        movements = movementCount();
+        assertThrows(RuntimeException.class, () -> orderApplicationService.createPOSOrder(
+                posSale(101L, "2", "箱", "100.00", false, null, "200.00"), 1L));
+        assertEquals(orders, jdbcLong("SELECT COUNT(*) FROM `order`"), "缺货必须回滚整张订单");
+        assertEquals(allocations, jdbcLong("SELECT COUNT(*) FROM order_item_batch_allocation"));
+        assertEquals(movements, movementCount());
+        assertStock(1, "1.4", "28");
 
-        // ============ 步骤 3：收货 2 箱（必须先 enable 再收货）→ 后仓余额 + 守卫对照 ============
-        Long receiptId1 = purchaseApplicationService.receive(
-                receiveCmd(1L, 1L, "SUP-BATCH-1", "箱", "2", "100.00", null, null), 1L);
-        assertNotNull(receiptId1, "PO-E2E-1 收货应成功");
-        long r1BatchId = jdbcLong("SELECT id FROM inventory_receipt_batch WHERE store_id=1 AND product_id=101 ORDER BY id LIMIT 1");
-        String r1InternalNo = jdbcString("SELECT internal_receipt_batch_no FROM inventory_receipt_batch WHERE id=" + r1BatchId);
-        assertNotNull(r1InternalNo, "内部批次标签号应生成");
-        log("[step3] R1 batchId=" + r1BatchId + " internalNo=" + r1InternalNo);
+        var transfer = new com.agri_system.application.inventory.dto.command.InventoryTransferCommand();
+        transfer.setFromStoreId(1L); transfer.setToStoreId(2L); transfer.setProductId(101L);
+        transfer.setRequestKey("E2E-TRANSFER-1");
+        transfer.setQuantity(new BigDecimal("0.5")); transfer.setRemark("端到端调拨");
+        inventoryApplicationService.transfer(transfer, 1L);
+        assertStock(1, "0.9", "18"); assertStock(2, "0.5", "10");
+        movements = movementCount(); assertThrows(RuntimeException.class, () -> inventoryApplicationService.transfer(transfer, 1L));
+        assertEquals(movements, movementCount(), "重复调拨请求不能重复扣账");
+        assertStock(1, "0.9", "18"); assertStock(2, "0.5", "10");
+        assertEquals(4L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE movement_type='TRANSFER'"));
+        assertEquals(2L, jdbcLong("SELECT COUNT(DISTINCT transfer_id) FROM inventory_movement WHERE movement_type='TRANSFER'"));
+        assertEquals(2L, jdbcLong("SELECT COUNT(*) FROM inventory_receipt_batch a JOIN inventory_receipt_batch b "
+                + "ON a.store_id=1 AND b.store_id=2 AND a.supplier_batch_no=b.supplier_batch_no "
+                + "AND a.expiry_date=b.expiry_date AND a.production_date=b.production_date AND a.base_unit_cost=b.base_unit_cost"));
+        long transfers = jdbcLong("SELECT COUNT(*) FROM inventory_transfer");
+        movements = movementCount(); transfer.setRequestKey("E2E-TRANSFER-SHORTAGE"); transfer.setQuantity(new BigDecimal("2"));
+        assertThrows(RuntimeException.class, () -> inventoryApplicationService.transfer(transfer, 1L));
+        assertEquals(transfers, jdbcLong("SELECT COUNT(*) FROM inventory_transfer"));
+        assertEquals(movements, movementCount());
 
-        assertDecimal("R1 base_quantity 应为 40（2箱×20）",
-                "40", jdbcDecimal("SELECT base_quantity FROM inventory_receipt_batch WHERE id=" + r1BatchId));
-        assertEquals(1L, jdbcLong("SELECT base_unit_id FROM inventory_receipt_batch WHERE id=" + r1BatchId));
-        assertDecimal("R1 base_unit_cost 应为 5.00（100/20）",
-                "5.00", jdbcDecimal("SELECT base_unit_cost FROM inventory_receipt_batch WHERE id=" + r1BatchId));
-        assertEquals("UNKNOWN", jdbcString("SELECT date_status FROM inventory_receipt_batch WHERE id=" + r1BatchId));
-        // 后仓（id=2）余额 = 40
-        assertDecimal("R1 后仓余额应为 40",
-                "40", jdbcDecimal("SELECT base_quantity FROM inventory_batch_balance WHERE batch_id=" + r1BatchId + " AND location_id=2"));
-        // 收货不写 movement
-        assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE store_id=1"),
-                "收货不得产生 inventory_movement");
-        // 投影已触发：legacy 快照 = 40
-        assertDecimal("收货后投影应把快照改写为基准单位量 40",
-                "40", jdbcDecimal("SELECT quantity FROM inventory WHERE store_id=1 AND product_id=101"));
+        var count = new com.agri_system.application.inventory.dto.command.InventoryAdjustCommand();
+        count.setStoreId(2L); count.setProductId(101L); count.setRemark("端到端盘点差异");
+        count.setRequestKey("E2E-COUNT-LOSS"); count.setExpectedQuantity(new BigDecimal("0.5"));
+        count.setQuantityDiff(new BigDecimal("-0.1")); count.setType(2);
+        inventoryApplicationService.adjust(count, 1L); assertStock(2, "0.4", "8");
+        movements = movementCount(); assertThrows(RuntimeException.class, () -> inventoryApplicationService.adjust(count, 1L));
+        assertEquals(movements, movementCount(), "重复盘点请求不能重复记账");
+        assertStock(2, "0.4", "8");
+        count.setRequestKey("E2E-COUNT-GAIN"); count.setExpectedQuantity(new BigDecimal("0.4"));
+        count.setQuantityDiff(new BigDecimal("0.2")); count.setType(1);
+        inventoryApplicationService.adjust(count, 1L); assertStock(2, "0.6", "12");
+        movements = movementCount(); count.setRequestKey("E2E-COUNT-SHORTAGE"); count.setExpectedQuantity(new BigDecimal("0.6"));
+        count.setQuantityDiff(new BigDecimal("-1")); count.setType(2);
+        assertThrows(RuntimeException.class, () -> inventoryApplicationService.adjust(count, 1L));
+        assertEquals(movements, movementCount()); assertStock(2, "0.6", "12");
+        assertEquals(2L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE movement_type='COUNT_ADJUSTMENT'"));
+        assertConcurrentReturnCannotExceedOriginalSale();
+        assertConcurrentSalesCannotOversell();
+        assertExactAuxiliaryOperations();
+        assertMultiBatchPickupCompletesWithoutSecondDeduction();
+        assertUnifiedPricingBusinessChain();
+        assertPackageBusinessChain();
+        assertPosCouponPaymentChain();
+        assertLedgerReconciles();
+        assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_balance_feature_status"));
+        log("收货、销售、原单退货、提货、调拨、盘点及失败回滚使用同一账本，验收通过");
+    }
 
-        // 守卫对照：已激活 SKU 走 legacy 出库入口被拒
-        IllegalArgumentException guardEx = assertThrows(IllegalArgumentException.class,
-                () -> inventoryApplicationService.outbound(outCmd(101L, "1", "箱"), 1L),
-                "已切换到批次货位余额模式的 SKU 必须拒绝 legacy 出库入口");
-        assertTrue(guardEx.getMessage() != null && guardEx.getMessage().contains("已切换到批次货位余额模式"),
-                "守卫消息应包含『已切换到批次货位余额模式』，实际: " + guardEx.getMessage());
-        assertTrue(guardEx.getMessage().contains("禁止走传统出库路径"),
-                "守卫消息应包含『禁止走传统出库路径』，实际: " + guardEx.getMessage());
-        log("[step3] 守卫拒绝消息: " + guardEx.getMessage());
-
-        // 未启用对照 SKU（102）仍放行 legacy 路径
-        inventoryApplicationService.outbound(outCmd(102L, "2", "袋"), 1L);
-        assertDecimal("对照 SKU 102 legacy 出库后快照应为 8",
-                "8", jdbcDecimal("SELECT quantity FROM inventory WHERE store_id=1 AND product_id=102"));
-        assertDecimal("对照 SKU 102 legacy 批次 LB-C 应扣减为 8",
-                "8", jdbcDecimal("SELECT quantity FROM inventory_batch WHERE store_id=1 AND product_id=102 AND batch_no='LB-C'"));
-
-        // ============ 步骤 4：移动 + 三类销售证据（RULE_ALLOCATED / UNKNOWN / SCANNED） ============
-        // 4a. 10 瓶 后仓→前仓（REPLENISHMENT 须两端货位）
-        InventoryMovement m1 = batchBalanceService.move(new BatchBalanceService.MoveRequest(
-                r1BatchId, 2L, 1L, BatchBalanceService.MovementPurpose.REPLENISHMENT,
-                null, 1L, "瓶", new BigDecimal("10"), new BigDecimal("10"), new BigDecimal("5.00"),
-                null, null, 1L, "E2E 前仓补货", null, null));
-        assertNotNull(m1.getId(), "补货移动应落库");
-        assertEquals("REPLENISHMENT", m1.getMovementType());
-        assertEquals(Long.valueOf(2L), m1.getFromLocationId());
-        assertEquals(Long.valueOf(1L), m1.getToLocationId());
-        assertDecimal("R1 后仓 40→30",
-                "30", jdbcDecimal("SELECT base_quantity FROM inventory_batch_balance WHERE batch_id=" + r1BatchId + " AND location_id=2"));
-        assertDecimal("R1 前仓 0→10",
-                "10", jdbcDecimal("SELECT base_quantity FROM inventory_batch_balance WHERE batch_id=" + r1BatchId + " AND location_id=1"));
-        assertEquals(1L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE store_id=1"));
-        assertDecimal("移动不改变快照（仍为 40）",
-                "40", jdbcDecimal("SELECT quantity FROM inventory WHERE store_id=1 AND product_id=101"));
-        log("[step4a] 补货移动 movementNo=" + m1.getMovementNo());
-
-        // 4b. 前仓单批次可满足 → RULE_ALLOCATED（RULE_FLOOR_SINGLE_BATCH）
-        Long saleAId = orderApplicationService.createPOSOrder(
-                posSale(101L, "2", "瓶", "5.00", false, null, "10.00"), 1L);
-        assertNotNull(saleAId);
-        assertEquals(1L, jdbcLong("SELECT COUNT(*) FROM order_item_batch_allocation"),
-                "Sale A 应产生 1 条归属行");
-        assertEquals("RULE_ALLOCATED",
-                jdbcString("SELECT evidence_level FROM order_item_batch_allocation ORDER BY id LIMIT 1"));
-        assertEquals("FLOOR_SINGLE_BATCH",
-                jdbcString("SELECT allocation_rule FROM order_item_batch_allocation ORDER BY id LIMIT 1"));
-        assertEquals("R1",
-                jdbcString("SELECT allocation_rule_version FROM order_item_batch_allocation ORDER BY id LIMIT 1"));
-        assertEquals(r1BatchId,
-                jdbcLong("SELECT batch_id FROM order_item_batch_allocation ORDER BY id LIMIT 1"));
-        assertEquals(1L, jdbcLong("SELECT location_id FROM order_item_batch_allocation ORDER BY id LIMIT 1"));
-        assertDecimal("Sale A 归属基准量 2",
-                "2", jdbcDecimal("SELECT allocated_base_quantity FROM order_item_batch_allocation ORDER BY id LIMIT 1"));
-        assertDecimal("Sale A 批次单位成本 5.00",
-                "5.00", jdbcDecimal("SELECT batch_unit_cost FROM order_item_batch_allocation ORDER BY id LIMIT 1"));
-        assertDecimal("Sale A 归属成本 10.00",
-                "10.00", jdbcDecimal("SELECT allocated_cost FROM order_item_batch_allocation ORDER BY id LIMIT 1"));
-        // 新链直接销售不扣减余额、不写 movement
-        assertDecimal("直接销售不扣前仓余额（仍 10）",
-                "10", jdbcDecimal("SELECT base_quantity FROM inventory_batch_balance WHERE batch_id=" + r1BatchId + " AND location_id=1"));
-        assertEquals(1L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE store_id=1"));
-        log("[step4b] Sale A orderId=" + saleAId + " → RULE_ALLOCATED/FLOOR_SINGLE_BATCH");
-
-        // 4c. 第二次收货（日期 KNOWN）制造多批次：PO-E2E-2 收 1 箱
-        Long receiptId2 = purchaseApplicationService.receive(
-                receiveCmd(2L, 2L, "SUP-BATCH-2", "箱", "1", "90.00",
-                        LocalDate.of(2026, 9, 1), LocalDate.of(2027, 9, 1)), 1L);
-        assertNotNull(receiptId2);
-        long r2BatchId = jdbcLong("SELECT id FROM inventory_receipt_batch WHERE store_id=1 AND product_id=101 ORDER BY id DESC LIMIT 1");
-        assertDecimal("R2 base_quantity 应为 20",
-                "20", jdbcDecimal("SELECT base_quantity FROM inventory_receipt_batch WHERE id=" + r2BatchId));
-        assertEquals("KNOWN", jdbcString("SELECT date_status FROM inventory_receipt_batch WHERE id=" + r2BatchId));
-        assertDecimal("R2 base_unit_cost 应为 4.50",
-                "4.50", jdbcDecimal("SELECT base_unit_cost FROM inventory_receipt_batch WHERE id=" + r2BatchId));
-        assertDecimal("R2 后仓余额应为 20",
-                "20", jdbcDecimal("SELECT base_quantity FROM inventory_batch_balance WHERE batch_id=" + r2BatchId + " AND location_id=2"));
-        assertDecimal("两次收货后快照应为 60",
-                "60", jdbcDecimal("SELECT quantity FROM inventory WHERE store_id=1 AND product_id=101"));
-        assertEquals(1L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE store_id=1"),
-                "第二次收货同样不写 movement");
-        log("[step4c] R2 batchId=" + r2BatchId);
-
-        // 4d. R2 补 6 瓶到前仓 → 前仓合计 16 < 20（1 箱）
-        batchBalanceService.move(new BatchBalanceService.MoveRequest(
-                r2BatchId, 2L, 1L, BatchBalanceService.MovementPurpose.REPLENISHMENT,
-                null, 1L, "瓶", new BigDecimal("6"), new BigDecimal("6"), new BigDecimal("4.50"),
-                null, null, 1L, "E2E 前仓补货 2", null, null));
-        assertDecimal("R2 后仓 20→14",
-                "14", jdbcDecimal("SELECT base_quantity FROM inventory_batch_balance WHERE batch_id=" + r2BatchId + " AND location_id=2"));
-        assertDecimal("R2 前仓 0→6",
-                "6", jdbcDecimal("SELECT base_quantity FROM inventory_batch_balance WHERE batch_id=" + r2BatchId + " AND location_id=1"));
-        assertEquals(2L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE store_id=1"));
-
-        // 4e. Sale B：1 箱（20 基准），前仓 16 不足 → UNKNOWN + pending 取货请求
-        Long saleBId = orderApplicationService.createPOSOrder(
-                posSale(101L, "1", "箱", "100.00", false, null, "100.00"), 1L);
-        assertNotNull(saleBId);
-        assertEquals(2L, jdbcLong("SELECT COUNT(*) FROM order_item_batch_allocation"),
-                "Sale B 应新增 1 条归属行");
-        assertEquals("UNKNOWN",
-                jdbcString("SELECT evidence_level FROM order_item_batch_allocation ORDER BY id DESC LIMIT 1"));
-        long reqBId = jdbcLong("SELECT id FROM order_pickup_request ORDER BY id DESC LIMIT 1");
-        assertDecimal("reqB 请求基准量 20",
-                "20", jdbcDecimal("SELECT requested_base_quantity FROM order_pickup_request WHERE id=" + reqBId));
-        assertEquals(2L, jdbcLong("SELECT source_location_id FROM order_pickup_request WHERE id=" + reqBId));
-        assertEquals("PENDING", jdbcString("SELECT status FROM order_pickup_request WHERE id=" + reqBId));
-        assertEquals(reqBId, jdbcLong("SELECT pickup_request_id FROM order_item_batch_allocation ORDER BY id DESC LIMIT 1"));
-        assertEquals(2L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE store_id=1"),
-                "UNKNOWN 登记不得产生 movement");
-        log("[step4e] Sale B orderId=" + saleBId + " → UNKNOWN, reqB=" + reqBId);
-
-        // 4f. SCANNED：扫 R1 内部批次标签履约
-        PickupFulfillmentCommand scanCmd = new PickupFulfillmentCommand();
-        scanCmd.setScannedCode(r1InternalNo);
-        List<?> fulfilled = pickupFulfillmentService.fulfill(reqBId, scanCmd, 1L);
-        assertEquals(1, fulfilled.size(), "履约应回写 1 条最终归属");
-        assertEquals("FULFILLED", jdbcString("SELECT status FROM order_pickup_request WHERE id=" + reqBId));
-        assertEquals("SCANNED",
-                jdbcString("SELECT evidence_level FROM order_item_batch_allocation ORDER BY id DESC LIMIT 1"));
-        assertEquals("PICK_SCAN",
-                jdbcString("SELECT allocation_rule FROM order_item_batch_allocation ORDER BY id DESC LIMIT 1"));
-        assertEquals(r1BatchId, jdbcLong("SELECT batch_id FROM order_item_batch_allocation ORDER BY id DESC LIMIT 1"));
-        assertDecimal("SCANNED 归属成本 100.00（20×5.00）",
-                "100.00", jdbcDecimal("SELECT allocated_cost FROM order_item_batch_allocation ORDER BY id DESC LIMIT 1"));
-        assertEquals(2L, jdbcLong("SELECT COUNT(*) FROM order_item_batch_allocation"),
-                "SCANNED 应回写既有 UNKNOWN 行而非新增");
-        assertEquals(3L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE store_id=1"),
-                "SCANNED 履约应产生 1 条 PICK movement");
-        assertEquals("PICK", jdbcString("SELECT movement_type FROM inventory_movement ORDER BY id DESC LIMIT 1"));
-        assertEquals(2L, jdbcLong("SELECT from_location_id FROM inventory_movement ORDER BY id DESC LIMIT 1"));
-        assertEquals(1L, jdbcLong("SELECT to_location_id FROM inventory_movement ORDER BY id DESC LIMIT 1"));
-        assertDecimal("PICK 基准量 20",
-                "20", jdbcDecimal("SELECT base_quantity FROM inventory_movement ORDER BY id DESC LIMIT 1"));
-        assertDecimal("PICK 原始量 1（箱）",
-                "1", jdbcDecimal("SELECT original_quantity FROM inventory_movement ORDER BY id DESC LIMIT 1"));
-        assertEquals("箱", jdbcString("SELECT original_unit_name FROM inventory_movement ORDER BY id DESC LIMIT 1"));
-        assertEquals(jdbcLong("SELECT id FROM inventory_movement ORDER BY id DESC LIMIT 1"),
-                jdbcLong("SELECT source_movement_id FROM order_item_batch_allocation ORDER BY id DESC LIMIT 1"));
-        assertDecimal("PICK 后 R1 后仓 10",
-                "10", jdbcDecimal("SELECT base_quantity FROM inventory_batch_balance WHERE batch_id=" + r1BatchId + " AND location_id=2"));
-        assertDecimal("PICK 后 R1 前仓 30",
-                "30", jdbcDecimal("SELECT base_quantity FROM inventory_batch_balance WHERE batch_id=" + r1BatchId + " AND location_id=1"));
-        log("[step4f] SCANNED 履约完成: movementId=" + jdbcLong("SELECT id FROM inventory_movement ORDER BY id DESC LIMIT 1"));
-
-        // ============ 步骤 5：改价留痕（88.88 vs 服务端 100.00 → 差价 -11.12） ============
-        Long saleCId = orderApplicationService.createPOSOrder(
-                posSale(101L, "1", "箱", "88.88", true, "E2E人工改价", "88.88"), 1L);
-        assertNotNull(saleCId);
-        assertEquals(1L, jdbcLong("SELECT COUNT(*) FROM order_item_price_audit"),
-                "改价应产生 1 条价格审计");
-        assertEquals(2L, jdbcLong("SELECT sale_unit_id FROM order_item_price_audit ORDER BY id LIMIT 1"),
-                "销售单位为箱（product_unit id=2）");
-        assertDecimal("建议单价 100.00",
-                "100.00", jdbcDecimal("SELECT suggested_unit_price FROM order_item_price_audit ORDER BY id LIMIT 1"));
-        assertDecimal("最终单价 88.88",
-                "88.88", jdbcDecimal("SELECT final_unit_price FROM order_item_price_audit ORDER BY id LIMIT 1"));
-        assertDecimal("差价 -11.12",
-                "-11.12", jdbcDecimal("SELECT price_difference FROM order_item_price_audit ORDER BY id LIMIT 1"));
-        assertEquals(1L, jdbcLong("SELECT operator_id FROM order_item_price_audit ORDER BY id LIMIT 1"));
-        assertNotNull(jdbcString("SELECT change_reason FROM order_item_price_audit ORDER BY id LIMIT 1"),
-                "改价原因应留痕");
-        log("[step5] 改价审计 change_reason=" + jdbcString("SELECT change_reason FROM order_item_price_audit ORDER BY id LIMIT 1"));
-
-        // Sale C 是 warehousePickup=true → UNKNOWN + pending reqC（保留 PENDING 供步骤 10 使用）
-        long reqCId = jdbcLong("SELECT id FROM order_pickup_request ORDER BY id DESC LIMIT 1");
-        assertEquals("PENDING", jdbcString("SELECT status FROM order_pickup_request WHERE id=" + reqCId));
-        assertEquals(3L, jdbcLong("SELECT COUNT(*) FROM order_item_batch_allocation"));
-        assertEquals(3L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE store_id=1"));
-        log("[step5] Sale C orderId=" + saleCId + " → UNKNOWN, reqC=" + reqCId);
-
-        // ============ 步骤 6：日期 UNKNOWN 风险建议（纯建议、无自动阻断） ============
-        List<InventoryRiskVO> risks = inventoryRiskService.list(1L);
-        InventoryRiskVO dateUnknown = risks.stream()
-                .filter(r -> "DATE_UNKNOWN".equals(r.getKind()) && r1BatchId == (r.getBatchId() == null ? -1L : r.getBatchId()))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("风险列表应包含 R1 批次的 DATE_UNKNOWN 建议，实际: " + risks));
-        assertEquals("UNKNOWN", dateUnknown.getDateStatus());
-        assertNotNull(dateUnknown.getCurrentStock());
-        log("[step6] /risks 同源风险条目 kind=" + dateUnknown.getKind()
-                + " productId=" + dateUnknown.getProductId()
-                + " batchId=" + dateUnknown.getBatchId()
-                + " dateStatus=" + dateUnknown.getDateStatus()
-                + " currentStock=" + dateUnknown.getCurrentStock() + "（纯建议，无自动阻断）");
-        assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_decision_log"),
-                "风险建议不得自动产生人工决策记录");
-
-        // ============ 步骤 7：L1/L2/L3 对账（与 verify-retail-fact-chain.sh 同源数学，tolerance 0） ============
-        BigDecimal snapshot = jdbcDecimal("SELECT quantity FROM inventory WHERE store_id=1 AND product_id=101");
-        BigDecimal sumBase = jdbcDecimal("SELECT COALESCE(SUM(base_quantity),0) FROM inventory_batch_balance WHERE store_id=1 AND product_id=101");
-        // L1：启用后 factor 按 1 处理 ⇒ Σbase == 快照换算
-        assertDecimal("L1: Σbalance 应等于 legacy 快照换算（factor=1）", snapshot.toPlainString(), sumBase);
-        log("[L1] Σinventory_batch_balance.base_quantity=" + sumBase.toPlainString()
-                + " legacy 快照=" + snapshot.toPlainString() + " factor=1 → OK");
-        // L2：启用快照 == Σbase
-        assertDecimal("L2: 快照应等于 Σbalance", sumBase.toPlainString(), snapshot);
-        log("[L2] inventory.quantity=" + snapshot.toPlainString() + " == Σbase=" + sumBase.toPlainString() + " → OK");
-
-        // L3（per (batch, location)）：balance == receipt_term + net_movements
-        // 与 R9 脚本同源：收货项只记在该批次门店“启用的 STORE_BACKROOM”货位上，其余货位记 0
-        // （脚本 SQL_L3 中 rt.batch_id = bal.batch_id AND rt.location_id = bal.location_id）。
-        Map<String, BigDecimal> receiptTermByKey = new LinkedHashMap<>();
-        try (Connection conn = dataSource.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                     "SELECT b.id, l.id, b.base_quantity FROM inventory_receipt_batch b "
-                             + "JOIN inventory_location l ON l.store_id=b.store_id "
-                             + "AND l.location_type='STORE_BACKROOM' AND l.status=1 "
-                             + "WHERE b.store_id=1 AND b.product_id=101");
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                receiptTermByKey.put(rs.getLong(1) + ":" + rs.getLong(2), rs.getBigDecimal(3));
-            }
+    /** POS券核销与收款使用真实服务/事务，钱包、券、授权及库存均直接核账。 */
+    private void assertPosCouponPaymentChain() throws Exception {
+        exec("INSERT INTO product(id,code,name,main_unit,suggested_retail_price,avg_cost_price,status) VALUES(120,'PAY-P120','收款回归商品','袋',100,10,1)");
+        exec("INSERT INTO product_unit(id,product_id,unit_name,base_quantity_per_unit,is_base_unit,allow_purchase,allow_sale,allow_inventory,allow_transfer,status) VALUES(1201,120,'袋',1,1,1,1,1,1,1)");
+        var inbound = new com.agri_system.application.inventory.dto.command.InventoryInCommand();
+        inbound.setStoreId(1L); inbound.setProductId(120L); inbound.setUnit("袋");
+        inbound.setBatchNo("POS-PAYMENT-STOCK"); inbound.setQuantity(new BigDecimal("20")); inbound.setCostPrice(new BigDecimal("10"));
+        inventoryApplicationService.inbound(inbound,1L);
+        exec("INSERT INTO customer(id,code,name,phone,type,status) VALUES(550,'PAY-C550','支付回归客户','13800000550',1,1),(551,'PAY-C551','专用金回归客户','13800000551',1,1)");
+        exec("INSERT INTO customer_wallet(customer_id,wallet_type,balance) VALUES(550,1,200),(550,2,0),(551,1,200),(551,2,5)");
+        for (int id = 9001; id <= 9012; id++) {
+            exec("INSERT INTO customer_coupon(id,customer_id,name,amount,start_time,end_time,status) VALUES(" + id + ","
+                    + (id == 9005 ? 551 : 550) + ",'POS收款测试券'," + (id == 9006 ? 100 : 10)
+                    + ",DATE_SUB(NOW(),INTERVAL 1 DAY),DATE_ADD(NOW(),INTERVAL 1 DAY),1)");
         }
-        Map<String, BigDecimal> netMovements = new LinkedHashMap<>();
-        try (Connection conn = dataSource.getConnection();
-             Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT batch_id, to_location_id, SUM(base_quantity) FROM inventory_movement "
-                     + "WHERE product_id=101 AND to_location_id IS NOT NULL GROUP BY batch_id, to_location_id")) {
-            while (rs.next()) {
-                netMovements.merge(rs.getLong(1) + ":" + rs.getLong(2), rs.getBigDecimal(3), BigDecimal::add);
-            }
+        exec("INSERT INTO wallet_auth_code(customer_id,auth_code,amount,status,expire_at) VALUES(550,'PAY090',90,1,DATE_ADD(NOW(),INTERVAL 1 DAY)),"
+                + "(551,'PAY085',85,1,DATE_ADD(NOW(),INTERVAL 1 DAY)),(550,'PAY050',50,1,DATE_ADD(NOW(),INTERVAL 1 DAY))");
+        E2EToken manager = loginToken(1L);
+
+        var cash = couponSale(550L,9001L,1); long cashOrder = createPOSViaHttp(manager,cash);
+        assertDecimal("现金减券只收90元","90",paymentAmount(cashOrder,1));
+        assertDecimal("券只记录10元","10",paymentAmount(cashOrder,5));
+        assertDecimal("订单实付90元","90",jdbcDecimal("SELECT pay_amount FROM `order` WHERE id="+cashOrder));
+
+        var wallet = couponSale(550L,9002L,4); wallet.setWalletAuthCode("PAY090");
+        long walletOrder = orderApplicationService.createPOSOrder(wallet,1L);
+        assertDecimal("钱包200支付净额90后剩110","110",walletBalance(550L,1));
+        assertDecimal("钱包流水恰好90","90",paymentAmount(walletOrder,4));
+        assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM wallet_transaction WHERE wallet_type=1 AND reference_id="+walletOrder+" AND reference_type='ORDER'"));
+        assertEquals(2L,jdbcLong("SELECT status FROM wallet_auth_code WHERE auth_code='PAY090'"));
+
+        var wechat = couponSale(550L,9003L,2); long wechatOrder = createPOSViaHttp(manager,wechat);
+        assertDecimal("微信加券仍收净额90","90",paymentAmount(wechatOrder,2));
+        var mixed = couponSale(550L,9004L,10);
+        mixed.setPayments(List.of(paymentTender(1,"40"),paymentTender(2,"50")));
+        long mixedOrder = createPOSViaHttp(manager,mixed);
+        assertDecimal("混合现金40","40",paymentAmount(mixedOrder,1));
+        assertDecimal("混合微信50","50",paymentAmount(mixedOrder,2));
+        assertEquals(3L,jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+mixedOrder));
+
+        // 原商品允许专用金，实际5元不能记成商品上限100元。
+        exec("UPDATE product SET allow_special_fund=1 WHERE id=120");
+        var special = couponSale(551L,9005L,4); special.setUseSpecialFund(true); special.setWalletAuthCode("PAY085");
+        long specialOrder = orderApplicationService.createPOSOrder(special,1L);
+        assertDecimal("专用金实际只扣5元","0",walletBalance(551L,2));
+        assertDecimal("本金实际只扣85元","115",walletBalance(551L,1));
+        assertDecimal("专用金流水等于实扣","5",paymentAmount(specialOrder,8));
+        assertDecimal("本金流水等于实扣","85",paymentAmount(specialOrder,4));
+
+        var free = couponSale(550L,9006L,4); long freeOrder = orderApplicationService.createPOSOrder(free,1L);
+        assertDecimal("券全额抵扣无钱包扣减","110",walletBalance(550L,1));
+        assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+freeOrder));
+        assertDecimal("券全额抵扣实付为0","0",jdbcDecimal("SELECT pay_amount FROM `order` WHERE id="+freeOrder));
+
+        var mixedWallet = couponSale(550L,9007L,10); mixedWallet.setWalletAuthCode("PAY050");
+        mixedWallet.setPayments(List.of(paymentTender(1,"40"),paymentTender(4,"50")));
+        long mixedWalletOrder = orderApplicationService.createPOSOrder(mixedWallet,1L);
+        assertDecimal("混合钱包只扣50元","60",walletBalance(550L,1));
+        assertDecimal("混合钱包流水50元","50",paymentAmount(mixedWalletOrder,4));
+        assertEquals(2L,jdbcLong("SELECT status FROM wallet_auth_code WHERE auth_code='PAY050'"));
+        var before = pricingFacts(); long walletTransactions = jdbcLong("SELECT COUNT(*) FROM wallet_transaction");
+        var reused = couponSale(550L,9008L,10); reused.setWalletAuthCode("PAY050");
+        reused.setPayments(List.of(paymentTender(1,"40"),paymentTender(4,"50")));
+        assertThrows(RuntimeException.class,()->orderApplicationService.createPOSOrder(reused,1L));
+        assertEquals(before,pricingFacts(),"已用验证码必须回滚订单/券流水/库存");
+        assertDecimal("已用码不能再次扣钱包","60",walletBalance(550L,1));
+        assertEquals(walletTransactions,jdbcLong("SELECT COUNT(*) FROM wallet_transaction"));
+        assertEquals(1L,jdbcLong("SELECT status FROM customer_coupon WHERE id=9008"));
+
+        for (var tenders : List.of(List.of(paymentTender(1,"150"),paymentTender(6,"-50")),
+                List.of(paymentTender(5,"100")),List.of(paymentTender(8,"100")),List.of(paymentTender(999,"100")),
+                List.of(paymentTender(1,"100"),paymentTender(2,"0")),List.of(paymentTender(1,"99.999"),paymentTender(2,"0.001")))) {
+            var invalid = posSale(120L,"1","袋","100",false,null,"100"); invalid.setPaymentType(10); invalid.setPayments(tenders);
+            assertThrows(IllegalArgumentException.class,()->orderApplicationService.createPOSOrder(invalid,1L));
+            assertEquals(before,pricingFacts(),"非法支付不得写入任何交易事实");
         }
-        try (Connection conn = dataSource.getConnection();
-             Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT batch_id, from_location_id, SUM(base_quantity) FROM inventory_movement "
-                     + "WHERE product_id=101 AND from_location_id IS NOT NULL GROUP BY batch_id, from_location_id")) {
-            while (rs.next()) {
-                netMovements.merge(rs.getLong(1) + ":" + rs.getLong(2),
-                        rs.getBigDecimal(3).negate(), BigDecimal::add);
-            }
-        }
-        int l3Rows = 0;
-        try (Connection conn = dataSource.getConnection();
-             Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT batch_id, location_id, base_quantity FROM inventory_batch_balance "
-                     + "WHERE store_id=1 AND product_id=101 ORDER BY batch_id, location_id")) {
-            while (rs.next()) {
-                long batchId = rs.getLong("batch_id");
-                long locationId = rs.getLong("location_id");
-                BigDecimal balance = rs.getBigDecimal("base_quantity");
-                BigDecimal receiptTerm = receiptTermByKey.getOrDefault(batchId + ":" + locationId, BigDecimal.ZERO);
-                BigDecimal net = netMovements.getOrDefault(batchId + ":" + locationId, BigDecimal.ZERO);
-                BigDecimal expected = receiptTerm.add(net);
-                log("[L3] batch=" + batchId + " loc=" + locationId
-                        + " balance=" + balance.toPlainString()
-                        + " receipt_term=" + receiptTerm.toPlainString()
-                        + " net_movements=" + net.toPlainString());
-                assertDecimal("L3: batch=" + batchId + " loc=" + locationId + " balance != receipt_term+net",
-                        expected.toPlainString(), balance);
-                l3Rows++;
-            }
-        }
-        assertEquals(4, l3Rows, "核心 SKU 应有 4 条 (batch,location) 余额行");
-        // ORPHAN 方向检查：movement 的 (batch, location) 端点必须有余额行
-        int orphanGroups = 0;
-        try (Connection conn = dataSource.getConnection();
-             Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT batch_id, from_location_id, to_location_id FROM inventory_movement "
-                     + "WHERE product_id=101")) {
-            while (rs.next()) {
-                long batchId = rs.getLong("batch_id");
-                long from = rs.getLong("from_location_id");
-                boolean fromNull = rs.wasNull();
-                long to = rs.getLong("to_location_id");
-                boolean toNull = rs.wasNull();
-                if (!fromNull && jdbcLong("SELECT COUNT(*) FROM inventory_batch_balance WHERE batch_id=" + batchId
-                        + " AND location_id=" + from) == 0) {
-                    orphanGroups++;
+        var insufficient = couponSale(550L,9009L,1); insufficient.getItems().get(0).setQuantity(new BigDecimal("100"));
+        assertThrows(IllegalArgumentException.class,()->orderApplicationService.createPOSOrder(insufficient,1L));
+        assertEquals(before,pricingFacts(),"缺货不能保留券核销或收款");
+        assertEquals(1L,jdbcLong("SELECT status FROM customer_coupon WHERE id=9009"));
+
+        assertSameCouponCannotBeUsedConcurrently();
+        log("POS券加现金/微信/余额/混合、实际钱包拆分、授权防重、缺货及非法支付回滚验收通过");
+    }
+
+    /** 持有券锁让两个请求都停在券写入/当前读处，再释放，稳定复现旧的双核销。 */
+    private void assertSameCouponCannotBeUsedConcurrently() throws Exception {
+        exec("INSERT INTO `order`(id,order_no,store_id,customer_id,order_type,order_status,total_amount,pay_amount) VALUES(9501,'COUPON-CONCURRENT-1',1,550,1,1,100,100),(9502,'COUPON-CONCURRENT-2',1,550,1,1,100,100)");
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try (Connection blocker = DriverManager.getConnection(jdbcUrl,dbUser,dbPassword)) {
+            blocker.setAutoCommit(false);
+            try (Statement statement = blocker.createStatement()) { statement.executeQuery("SELECT id FROM customer_coupon WHERE id=9010 FOR UPDATE").close(); }
+            var first = executor.submit(() -> tryApplyCoupon(9501L,9010L));
+            var second = executor.submit(() -> tryApplyCoupon(9502L,9010L));
+            try {
+                long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+                long waiting = 0;
+                while (System.nanoTime() < deadline) {
+                    waiting = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks r ON r.ENGINE_LOCK_ID=w.REQUESTING_ENGINE_LOCK_ID WHERE r.OBJECT_SCHEMA=? AND r.OBJECT_NAME='customer_coupon'",Long.class,DB_NAME);
+                    if (waiting >= 2) break;
+                    Thread.sleep(50);
                 }
-                if (!toNull && jdbcLong("SELECT COUNT(*) FROM inventory_batch_balance WHERE batch_id=" + batchId
-                        + " AND location_id=" + to) == 0) {
-                    orphanGroups++;
-                }
+                assertTrue(waiting >= 2,"并发复现需要两个请求实际等待同一优惠券锁");
+            } finally { blocker.commit(); }
+            int successes = (first.get(15,java.util.concurrent.TimeUnit.SECONDS) ? 1 : 0) + (second.get(15,java.util.concurrent.TimeUnit.SECONDS) ? 1 : 0);
+            assertEquals(1,successes,"同一优惠券两个并发订单只能成交一个");
+            assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM order_payment WHERE coupon_id=9010"));
+        } finally { executor.shutdownNow(); }
+    }
+
+    private boolean tryApplyCoupon(Long orderId,Long couponId) {
+        try { orderPaymentService.applyCouponToOrder(orderRepository.findById(orderId).orElseThrow(),550L,couponId); return true; }
+        catch (IllegalArgumentException invalid) { return false; }
+    }
+    private POSOrderCreateCommand couponSale(Long customerId,Long couponId,int method) {
+        var command = posSale(120L,"1","袋","100",false,null,"90");
+        command.setCustomerId(customerId); command.setCouponId(couponId); command.setPaymentType(method); return command;
+    }
+    private com.agri_system.application.order.dto.command.PaymentDetailDTO paymentTender(int type,String amount) {
+        var tender = new com.agri_system.application.order.dto.command.PaymentDetailDTO();
+        tender.setPaymentType(type); tender.setAmount(new BigDecimal(amount)); return tender;
+    }
+    private BigDecimal paymentAmount(long orderId,int type) { return jdbcDecimal("SELECT COALESCE(SUM(amount),0) FROM order_payment WHERE order_id="+orderId+" AND payment_type="+type); }
+    private BigDecimal walletBalance(long customerId,int type) { return jdbcDecimal("SELECT balance FROM customer_wallet WHERE customer_id="+customerId+" AND wallet_type="+type); }
+
+    /** 报价、权限与成交价走真实 HTTP/数据库，不用客户端价格或模拟权限替代验收。 */
+    private void assertUnifiedPricingBusinessChain() throws Exception {
+        exec("INSERT INTO staff(id,code,name,store_id,role,status) VALUES(2,'PRICE-CASHIER','普通收银员',1,'STAFF',1)");
+        exec("INSERT INTO customer(id,code,name,phone,type,vip_level,vip_end_date,status) VALUES"
+                + "(501,'PRICE-MEMBER','有效会员','13800000501',2,4,DATE_ADD(CURRENT_DATE,INTERVAL 30 DAY),1),"
+                + "(502,'PRICE-EXPIRED','过期会员','13800000502',2,4,DATE_SUB(CURRENT_DATE,INTERVAL 1 DAY),1)");
+        exec("INSERT INTO product(id,code,name,main_unit,aux_unit,main_to_aux_ratio,suggested_retail_price,vip_price,min_price,avg_cost_price,status) VALUES"
+                + "(105,'PRICE-P105','基准单位定价验收','箱','瓶',3,10,9,8,2,1),"
+                + "(106,'PRICE-P106','未配置零售价商品','瓶',NULL,NULL,NULL,5,6,2,1)");
+        exec("INSERT INTO product_unit(id,product_id,unit_name,base_quantity_per_unit,is_base_unit,allow_purchase,allow_sale,allow_inventory,allow_transfer,status) VALUES"
+                + "(1051,105,'瓶',1,1,1,1,1,1,1),(1052,105,'箱',3,0,1,1,1,1,1),"
+                + "(1053,105,'件',12,0,1,1,1,1,1),(1061,106,'瓶',1,1,1,1,1,1,1)");
+        for (long productId : List.of(105L, 106L)) {
+            var inbound = new com.agri_system.application.inventory.dto.command.InventoryInCommand();
+            inbound.setStoreId(1L); inbound.setProductId(productId); inbound.setUnit("瓶");
+            inbound.setBatchNo("PRICE-" + productId); inbound.setQuantity(new BigDecimal("60"));
+            inbound.setCostPrice(new BigDecimal("2"));
+            inventoryApplicationService.inbound(inbound, 1L);
+        }
+
+        E2EToken manager = loginToken(1L);
+        E2EToken cashier = loginToken(2L);
+        JsonNode bottle = priceQuote(cashier, "瓶", null);
+        assertDecimal("普通收银员可以获取基准单位零售价", "10", bottle.path("suggestedUnitPrice").decimalValue());
+        assertDecimal("最低价按同一基准单位返回", "8", bottle.path("referenceFloor").decimalValue());
+        assertEquals("RETAIL", bottle.path("ruleVersion").asText());
+        assertDecimal("主单位按持久化系数换算", "30", priceQuote(cashier, "箱", null).path("suggestedUnitPrice").decimalValue());
+        JsonNode retailCase = priceQuote(cashier, "件", null);
+        assertDecimal("第三销售单位按12瓶换算，不能按主辅比例3换算", "120", retailCase.path("suggestedUnitPrice").decimalValue());
+        assertDecimal("第三单位最低价必须同步换算", "96", retailCase.path("referenceFloor").decimalValue());
+        JsonNode memberCase = priceQuote(cashier, "件", 501L);
+        assertDecimal("有效会员按基准单位会员价换算", "108", memberCase.path("suggestedUnitPrice").decimalValue());
+        assertDecimal("会员报价与最低价必须使用相同销售单位", "96", memberCase.path("referenceFloor").decimalValue());
+        assertTrue(!memberCase.path("belowReference").asBoolean(), "正常会员价应高于同单位最低价");
+        assertEquals("MEMBER", memberCase.path("ruleVersion").asText());
+        assertDecimal("过期会员恢复零售价", "120", priceQuote(cashier, "件", 502L).path("suggestedUnitPrice").decimalValue());
+
+        JsonNode forgedMember = objectMapper.readTree(mockMvc.perform(get("/api/admin/products/105/price-quote")
+                        .header(cashier.name(), cashier.value()).param("saleUnit", "瓶")
+                        .param("customerType", "2").param("vipLevel", "4"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8)).path("data");
+        assertDecimal("客户端伪造会员类型不能改变报价", "10", forgedMember.path("suggestedUnitPrice").decimalValue());
+
+        PricingFacts before = pricingFacts();
+        POSOrderCreateCommand faultyQuote = posSale(105L, "1", "瓶", "10.00", false, null, "16.00");
+        OrderItemDTO missingRetail = posSale(106L, "1", "瓶", "6.00", false, "试图用底价替代报价", "6.00").getItems().get(0);
+        faultyQuote.setItems(List.of(faultyQuote.getItems().get(0), missingRetail));
+        assertPOSRejected(manager, faultyQuote, 10001, "未配置有效零售价");
+        assertEquals(before, pricingFacts(), "报价失败不能采用前端价，不能留下订单、收款、审计或库存扣减");
+
+        POSOrderCreateCommand normalSale = posSale(105L, "1", "瓶", "10.00", false, null, "10.00");
+        normalSale.setStaffId(2L);
+        long ordinaryOrder = createPOSViaHttp(cashier, normalSale);
+        assertDecimal("没有议价权限仍能按正常报价开单", "10", jdbcDecimal("SELECT unit_price FROM order_item WHERE order_id=" + ordinaryOrder));
+        assertDecimal("正常开单只扣一瓶", "59", jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=105"));
+        assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM order_item_price_audit WHERE product_id=105"));
+
+        before = pricingFacts();
+        POSOrderCreateCommand deniedNegotiation = posSale(105L, "1", "瓶", "9.50", false, "老客户议价", "9.50");
+        deniedNegotiation.setStaffId(2L);
+        assertPOSRejected(cashier, deniedNegotiation, 10004, "order:price:override");
+        assertEquals(before, pricingFacts(), "没有议价权限时整单拒绝且不扣库存/收款");
+
+        POSOrderCreateCommand deniedDiscount = posSale(105L, "1", "瓶", "10.00", false, null, "1.00");
+        deniedDiscount.setStaffId(2L); deniedDiscount.setDiscountAmount(new BigDecimal("9.00"));
+        deniedDiscount.setRemark("整单优惠");
+        assertPOSRejected(cashier, deniedDiscount, 10004, "order:price:override");
+        assertEquals(before, pricingFacts(), "整单优惠不能绕过议价权限");
+
+        POSOrderCreateCommand staleQuote = posSale(105L, "1", "瓶", "10.00", false, null, "10.00");
+        staleQuote.setStaffId(2L); staleQuote.getItems().get(0).setQuotedUnitPrice(new BigDecimal("9.00"));
+        assertPOSRejected(cashier, staleQuote, 10001, "商品价格已变化");
+        assertEquals(before, pricingFacts(), "结算报价变化时须重新确认金额");
+
+        POSOrderCreateCommand missingReason = posSale(105L, "1", "件", "95.00", false, null, "95.00");
+        assertPOSRejected(manager, missingReason, 10001, "议价原因");
+        assertEquals(before, pricingFacts(), "即使有权限也必须填写议价原因");
+
+        POSOrderCreateCommand negotiated = posSale(105L, "1", "件", "95.00", false, "老客户整件优惠，确认低于底价", "95.00");
+        long negotiatedOrder = createPOSViaHttp(manager, negotiated);
+        long negotiatedItem = jdbcLong("SELECT id FROM order_item WHERE order_id=" + negotiatedOrder);
+        assertDecimal("订单保存实际成交单价", "95", jdbcDecimal("SELECT unit_price FROM order_item WHERE id=" + negotiatedItem));
+        assertDecimal("订单保存实际成交总额", "95", jdbcDecimal("SELECT total_amount FROM `order` WHERE id=" + negotiatedOrder));
+        assertDecimal("整件销售精确扣12瓶", "47", jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=105"));
+        assertEquals(1L, jdbcLong("SELECT COUNT(*) FROM order_item_price_audit WHERE order_item_id=" + negotiatedItem));
+        String auditWhere = " FROM order_item_price_audit WHERE order_item_id=" + negotiatedItem;
+        assertDecimal("审计保存服务端整件报价", "120", jdbcDecimal("SELECT suggested_unit_price" + auditWhere));
+        assertDecimal("审计保存人工成交价", "95", jdbcDecimal("SELECT final_unit_price" + auditWhere));
+        assertDecimal("审计保存价差", "-25", jdbcDecimal("SELECT price_difference" + auditWhere));
+        assertEquals(1053L, jdbcLong("SELECT sale_unit_id" + auditWhere));
+        assertEquals(1L, jdbcLong("SELECT operator_id" + auditWhere));
+        assertEquals(1L, jdbcLong("SELECT confirmer_id" + auditWhere));
+        assertEquals("老客户整件优惠，确认低于底价", jdbcString("SELECT change_reason" + auditWhere));
+        assertTrue(jdbcString("SELECT quote_id" + auditWhere) != null && !jdbcString("SELECT quote_id" + auditWhere).isBlank());
+
+        exec("UPDATE product SET suggested_retail_price=20,vip_price=18,min_price=16 WHERE id=105");
+        assertDecimal("商品调价后新报价使用新价", "240", priceQuote(cashier, "件", null).path("suggestedUnitPrice").decimalValue());
+        assertDecimal("商品调价不得覆盖历史成交价快照", "95", jdbcDecimal("SELECT unit_price FROM order_item WHERE id=" + negotiatedItem));
+        assertDecimal("商品调价不得覆盖历史报价审计", "120", jdbcDecimal("SELECT suggested_unit_price" + auditWhere));
+        POSOrderCreateCommand authorizedDiscount = posSale(105L, "1", "瓶", "20.00", false, null, "19.00");
+        authorizedDiscount.setDiscountAmount(new BigDecimal("1.00")); authorizedDiscount.setRemark("老客户整单优惠");
+        long discountedOrder = createPOSViaHttp(manager, authorizedDiscount);
+        assertDecimal("整单优惠单独保存金额", "1", jdbcDecimal("SELECT discount_amount FROM `order` WHERE id=" + discountedOrder));
+        assertTrue(jdbcString("SELECT remark FROM `order` WHERE id=" + discountedOrder).contains("老客户整单优惠"));
+
+        log("[价格] 零售/会员/第三单位、底价换算、报价失败回滚、普通收银及授权议价成交快照验收通过");
+    }
+
+    private E2EToken loginToken(long staffId) throws Exception {
+        JsonNode body = objectMapper.readTree(mockMvc.perform(get("/__e2e__/login").param("staffId", Long.toString(staffId)))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        return new E2EToken(body.path("tokenName").asText(), body.path("tokenValue").asText());
+    }
+
+    private JsonNode priceQuote(E2EToken token, String unit, Long customerId) throws Exception {
+        var request = get("/api/admin/products/105/price-quote").header(token.name(), token.value())
+                .param("storeId", "1").param("channel", "POS").param("saleUnit", unit);
+        if (customerId != null) request.param("customerId", customerId.toString());
+        JsonNode response = objectMapper.readTree(mockMvc.perform(request).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertEquals("200", response.path("code").asText(), response.toString());
+        return response.path("data");
+    }
+
+    private long createPOSViaHttp(E2EToken token, POSOrderCreateCommand command) throws Exception {
+        String response = mockMvc.perform(post("/api/admin/orders/pos").header(token.name(), token.value())
+                        .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(command)))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        JsonNode body = objectMapper.readTree(response);
+        assertTrue(body.isIntegralNumber() && body.asLong() > 0, "正常开单应返回订单ID: " + response);
+        return body.asLong();
+    }
+
+    private void assertPOSRejected(E2EToken token, POSOrderCreateCommand command, int code, String reason) throws Exception {
+        JsonNode response = objectMapper.readTree(mockMvc.perform(post("/api/admin/orders/pos")
+                        .header(token.name(), token.value()).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(command)))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertEquals(code, response.path("code").asInt(), response.toString());
+        assertTrue(response.path("message").asText().contains(reason), response.toString());
+    }
+
+    private PricingFacts pricingFacts() {
+        return new PricingFacts(jdbcLong("SELECT COUNT(*) FROM `order`"), jdbcLong("SELECT COUNT(*) FROM order_item"),
+                jdbcLong("SELECT COUNT(*) FROM order_payment"), jdbcLong("SELECT COUNT(*) FROM order_item_batch_allocation"),
+                movementCount(), jdbcLong("SELECT COUNT(*) FROM order_item_price_audit"),
+                jdbcLong("SELECT COUNT(*) FROM after_sales"), jdbcLong("SELECT COUNT(*) FROM after_sales_item"),
+                jdbcLong("SELECT COUNT(*) FROM staff_performance_log"), jdbcLong("SELECT COUNT(*) FROM performance_event_record"),
+                jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance"));
+    }
+
+    private record E2EToken(String name, String value) {}
+    private record PricingFacts(long orders, long items, long payments, long allocations,
+                                long movements, long audits, long afterSales, long afterSalesItems,
+                                long performanceLogs, long performanceEvents, BigDecimal balance) {}
+
+    /** 套餐整套开单→物料出库→真实售后退款→库存/提成回冲，所有操作只在本次临时库。 */
+    private void assertPackageBusinessChain() throws Exception {
+        exec("INSERT INTO product(id,code,name,main_unit,aux_unit,main_to_aux_ratio,suggested_retail_price,min_price,allow_special_fund,avg_cost_price,status) VALUES"
+                + "(110,'PACK-P110','套餐第三单位农资','箱','瓶',3,5,1,1,1,1),"
+                + "(111,'PACK-P111','套餐种子','袋',NULL,NULL,40,1,0,4,1),"
+                + "(113,'PACK-P113','一分套餐主物料','瓶',NULL,NULL,1,NULL,0,0.0001,1),"
+                + "(114,'PACK-P114','零元分摊赠品','瓶',NULL,NULL,0.01,NULL,0,0.0001,1)");
+        exec("INSERT INTO product_unit(id,product_id,unit_name,base_quantity_per_unit,is_base_unit,allow_purchase,allow_sale,allow_inventory,allow_transfer,status) VALUES"
+                + "(1101,110,'瓶',1,1,1,1,1,1,1),(1102,110,'箱',3,0,1,1,1,1,1),"
+                + "(1103,110,'件',12,0,1,1,1,1,1),(1111,111,'袋',1,1,1,1,1,1,1),"
+                + "(1131,113,'瓶',1,1,1,1,1,1,1),(1141,114,'瓶',1,1,1,1,1,1,1)");
+        for (long productId : List.of(110L,111L,113L,114L)) {
+            var inbound = new com.agri_system.application.inventory.dto.command.InventoryInCommand();
+            inbound.setStoreId(1L); inbound.setProductId(productId); inbound.setUnit(productId == 111L ? "袋" : "瓶");
+            inbound.setBatchNo("PACKAGE-STOCK-" + productId);
+            inbound.setQuantity(new BigDecimal(productId == 110L ? "200" : "20"));
+            inbound.setCostPrice(new BigDecimal(productId == 111L ? "4" : productId >= 113L ? "0.0001" : "1"));
+            inventoryApplicationService.inbound(inbound,1L);
+        }
+        exec("INSERT INTO product_package(id,code,name,suggested_retail_price,vip_price,min_price,status) VALUES"
+                + "(201,'PACK-201','单品一百套餐八十',80,72,60,1),(202,'PACK-202','整套缺货回滚',80,NULL,NULL,1),"
+                + "(203,'PACK-203','分次退款提成尾分',80,NULL,NULL,1),(204,'PACK-204','零元物料退货',0.01,NULL,NULL,1),"
+                + "(205,'PACK-205','三件一元分币退款',1,NULL,NULL,1)");
+        exec("INSERT INTO product_package_item(id,package_id,product_id,quantity,unit,sort_order) VALUES"
+                + "(2011,201,110,1,'件',1),(2012,201,111,1,'袋',2),"
+                + "(2021,202,110,20,'件',1),(2022,202,111,1,'袋',2),"
+                + "(2031,203,110,1,'件',1),(2032,203,111,1,'袋',2),"
+                + "(2041,204,113,1,'瓶',1),(2042,204,114,1,'瓶',2),"
+                + "(2051,205,113,3,'瓶',1),(2052,205,114,1,'瓶',2)");
+        exec("INSERT INTO commission_rule(id,legacy_rule_type,rule_category,target_id,calc_mode,calc_value,enabled,status,priority) VALUES"
+                + "(201,1,5,201,'FIXED',10,1,1,1),(203,1,5,203,'FIXED',0.01,1,1,1),"
+                + "(205,1,5,205,'FIXED',0.02,1,1,1)");
+        E2EToken cashier = loginToken(2L);
+        E2EToken manager = loginToken(1L);
+        JsonNode twoSets = packageQuote(cashier,201L,"2",null);
+        assertDecimal("单品合计100不覆盖套餐单价80", "80", twoSets.path("suggestedUnitPrice").decimalValue());
+        assertDecimal("两套按套餐价格成交160", "160", twoSets.path("totalAmount").decimalValue());
+        assertDecimal("专用金额度来自实际套餐分摊额", "96", twoSets.path("specialFundEligibleAmount").decimalValue());
+        assertDecimal("套餐会员价按套报价", "72", packageQuote(cashier,201L,"1",501L).path("suggestedUnitPrice").decimalValue());
+        long order = createPOSViaHttp(cashier,packageSale(201L,"2",twoSets,2L));
+        assertEquals(2L,jdbcLong("SELECT COUNT(*) FROM order_item WHERE order_id=" + order));
+        assertEquals(2L,jdbcLong("SELECT COUNT(*) FROM order_item WHERE order_id=" + order + " AND item_type=1 AND package_group_no IS NOT NULL"));
+        assertDecimal("套餐订单权威总额为160", "160", jdbcDecimal("SELECT total_amount FROM `order` WHERE id=" + order));
+        assertDecimal("物料分摊额必须精确合计160", "160", jdbcDecimal("SELECT SUM(total_price) FROM order_item WHERE order_id=" + order));
+        assertDecimal("两套物料按第三单位扣24瓶", "176", packageStock(110L));
+        assertDecimal("两套扣2袋种子", "18", packageStock(111L));
+        assertDecimal("固定套餐提成按两套计算一次", "20", commissionSum(order,1));
+        assertEquals(2L,jdbcLong("SELECT COUNT(*) FROM order_item WHERE order_id=" + order + " AND package_quantity=2 AND package_unit_price=80 AND package_name='单品一百套餐八十'"));
+
+        JsonNode oneSet = packageQuote(cashier,201L,"1",null);
+        exec("UPDATE product_package_item SET quantity=0.5 WHERE id=2011");
+        exec("UPDATE product_package_item SET quantity=1.75 WHERE id=2012");
+        PricingFacts before = pricingFacts();
+        assertPOSRejected(cashier,packageSale(201L,"1",oneSet,2L),10001,"组成已变化");
+        assertEquals(before,pricingFacts(),"价格不变但组成变化时旧指纹拒绝整单");
+        assertDecimal("旧指纹不能扣第三单位库存", "176", packageStock(110L));
+        assertDecimal("旧指纹不能扣种子库存", "18", packageStock(111L));
+        exec("UPDATE product_package_item SET quantity=1 WHERE id IN (2011,2012)");
+        POSOrderCreateCommand differentGroups = packageSale(201L,"2",packageQuote(cashier,201L,"2",null),2L);
+        differentGroups.setItems(List.of(differentGroups.getItems().get(0),packageSale(201L,"1",packageQuote(cashier,201L,"1",null),2L).getItems().get(0)));
+        differentGroups.setReceiveAmount(new BigDecimal("240"));
+        long groupedOrder = createPOSViaHttp(cashier,differentGroups);
+        assertEquals(2L,jdbcLong("SELECT COUNT(DISTINCT package_group_no) FROM order_item WHERE order_id=" + groupedOrder));
+        assertDecimal("同套餐不同销售组分别按2套和1套计提", "30", commissionSum(groupedOrder,1));
+        assertDecimal("三套准确扣36瓶", "140", packageStock(110L));
+        assertDecimal("三套准确扣3袋", "15", packageStock(111L));
+        before = pricingFacts();
+        assertPOSRejected(cashier,packageSale(202L,"1",packageQuote(cashier,202L,"1",null),2L),10001,"可用库存不足");
+        assertEquals(before,pricingFacts(),"套餐任一物料缺货必须回滚订单、支付、审计、分配、库存流水");
+        assertDecimal("缺货失败不留下部分出库", "140", packageStock(110L));
+        assertDecimal("缺货失败不扣其它物料", "15", packageStock(111L));
+
+        long tailOrder = createPOSViaHttp(cashier,packageSale(203L,"3",packageQuote(cashier,203L,"3",null),2L));
+        long cropItem = jdbcLong("SELECT id FROM order_item WHERE order_id=" + tailOrder + " AND product_id=110");
+        long seedItem = jdbcLong("SELECT id FROM order_item WHERE order_id=" + tailOrder + " AND product_id=111");
+        assertDecimal("三套每套1分提成，总计3分", "0.03", commissionSum(tailOrder,1));
+        for (long itemId : List.of(cropItem,seedItem)) {
+            String amount = itemId == cropItem ? "48.00" : "32.00";
+            for (int i=0;i<3;i++) {
+                long returned = returnViaHttp(manager,tailOrder,itemId,"1",amount);
+                BigDecimal reversal = commissionSum(tailOrder,4);
+                assertTrue(reversal.negate().compareTo(new BigDecimal("0.03")) <= 0,"分次退款不能超扣原提成");
+                long movementBefore = movementCount();
+                performanceEventListener.onOrderRefunded(new OrderRefundedEvent(tailOrder,new BigDecimal(amount),
+                        Map.of(itemId,BigDecimal.ONE),"AFTER_SALES:" + returned));
+                assertDecimal("重复退款事件不重复回冲", reversal.toPlainString(), commissionSum(tailOrder,4));
+                assertEquals(movementBefore,movementCount());
             }
         }
-        assertEquals(0, orphanGroups, "不应存在无余额行的移动孤儿组");
-        log("[L3] 无余额行的移动孤儿组=" + orphanGroups + "（ORPHAN 方向检查通过；断言范围仅核心 SKU 101，对照 SKU 102 已排除）");
+        assertDecimal("实退完所有物料后精确冲回全部3分提成", "-0.03", commissionSum(tailOrder,4));
+        assertDecimal("逐次退款实际金额合计240", "240", jdbcDecimal("SELECT SUM(refund_amount) FROM after_sales WHERE order_id=" + tailOrder + " AND status=50"));
+        assertDecimal("套餐退回原库存瓶数", "140", packageStock(110L));
+        assertDecimal("套餐退回原库存袋数", "15", packageStock(111L));
+        before = pricingFacts();
+        assertReturnRejected(manager,tailOrder,cropItem,"1","48.00");
+        assertEquals(before,pricingFacts(),"退完后重复实物退货不得再回库/退款");
 
-        // ============ 步骤 8：回滚 = save(LEGACY)，cutover 留痕保留、事实行计数不变 ============
-        long receiptsBefore = jdbcLong("SELECT COUNT(*) FROM inventory_receipt_batch WHERE store_id=1");
-        long balancesBefore = jdbcLong("SELECT COUNT(*) FROM inventory_batch_balance WHERE store_id=1");
-        long movementsBefore = jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE store_id=1");
-        long allocationsBefore = jdbcLong("SELECT COUNT(*) FROM order_item_batch_allocation WHERE store_id=1");
-        long auditsBefore = jdbcLong("SELECT COUNT(*) FROM order_item_price_audit WHERE product_id=101");
-        assertEquals(2L, receiptsBefore);
-        assertEquals(4L, balancesBefore);
-        assertEquals(3L, movementsBefore);
-        assertEquals(3L, allocationsBefore);
-        assertEquals(1L, auditsBefore);
+        JsonNode giftQuote = packageQuote(cashier,204L,"1",null);
+        assertDecimal("一分套餐的第二物料允许零元分摊", "0", giftQuote.path("items").get(1).path("totalPrice").decimalValue());
+        long giftOrder = createPOSViaHttp(cashier,packageSale(204L,"1",giftQuote,2L));
+        long paidItem = jdbcLong("SELECT id FROM order_item WHERE order_id=" + giftOrder + " AND product_id=113");
+        long freeItem = jdbcLong("SELECT id FROM order_item WHERE order_id=" + giftOrder + " AND product_id=114");
+        returnViaHttp(manager,giftOrder,paidItem,"1","0.01");
+        assertEquals(8L,jdbcLong("SELECT order_status FROM `order` WHERE id=" + giftOrder));
+        returnViaHttp(manager,giftOrder,freeItem,"1","0.00");
+        assertDecimal("全额退款后零元赠品仍能退回库存", "20", packageStock(114L));
+        assertDecimal("有金额物料回原库存", "20", packageStock(113L));
+        assertEquals(2L,jdbcLong("SELECT COUNT(*) FROM after_sales WHERE order_id=" + giftOrder + " AND status=50"));
 
-        Timestamp cutoverBefore = jdbcTimestamp("SELECT cutover_at FROM inventory_balance_feature_status WHERE store_id=1 AND product_id=101");
-        Timestamp updatedBefore = jdbcTimestamp("SELECT updated_at FROM inventory_balance_feature_status WHERE store_id=1 AND product_id=101");
-        assertNotNull(cutoverBefore, "回滚前 cutover_at 应已落值");
-        assertNotNull(updatedBefore);
+        long pennyOrder = createPOSViaHttp(cashier,packageSale(205L,"1",packageQuote(cashier,205L,"1",null),2L));
+        long pennyItem = jdbcLong("SELECT id FROM order_item WHERE order_id=" + pennyOrder + " AND product_id=113");
+        long pennyGift = jdbcLong("SELECT id FROM order_item WHERE order_id=" + pennyOrder + " AND product_id=114");
+        assertDecimal("MySQL必须保存12位物料分摊单价", "0.333333333333", jdbcDecimal("SELECT unit_price FROM order_item WHERE id=" + pennyItem));
+        assertDecimal("金额仍以分摊小计1元为准", "1.00", jdbcDecimal("SELECT total_price FROM order_item WHERE id=" + pennyItem));
+        returnViaHttp(manager,pennyOrder,pennyItem,"1","0.33");
+        returnViaHttp(manager,pennyOrder,pennyItem,"1","0.33");
+        returnViaHttp(manager,pennyOrder,pennyItem,"1","0.34");
+        assertDecimal("三次实退33/33/34分须精确退完1元", "1.00", jdbcDecimal("SELECT SUM(refund_amount) FROM after_sales WHERE order_id=" + pennyOrder));
+        assertDecimal("每次各退一件不能累计多扣2分原提成", "-0.02", commissionSum(pennyOrder,4));
+        returnViaHttp(manager,pennyOrder,pennyGift,"1","0.00");
+        assertDecimal("分币退款后原实物全部回库", "20", packageStock(113L));
+        assertDecimal("分币退款后0元物料也能回库", "20", packageStock(114L));
+        JsonNode standardQuote = packageQuote(cashier,201L,"1",null);
+        POSOrderCreateCommand deniedPackageDeal = packageSale(201L,"1",standardQuote,2L);
+        deniedPackageDeal.getItems().get(0).setUnitPrice(new BigDecimal("78"));
+        deniedPackageDeal.getItems().get(0).setPriceChangeReason("整套议价");
+        deniedPackageDeal.setReceiveAmount(new BigDecimal("78"));
+        before = pricingFacts();
+        assertPOSRejected(cashier,deniedPackageDeal,10004,"order:price:override");
+        assertEquals(before,pricingFacts(),"套餐议价无权限时不产生任何销售、收款或出库事实");
+        POSOrderCreateCommand negotiatedPackage = packageSale(201L,"1",standardQuote,1L);
+        negotiatedPackage.getItems().get(0).setUnitPrice(new BigDecimal("78"));
+        negotiatedPackage.getItems().get(0).setPriceChangeReason("整套议价");
+        negotiatedPackage.setDiscountAmount(new BigDecimal("8")); negotiatedPackage.setRemark("整单优惠");
+        negotiatedPackage.setReceiveAmount(new BigDecimal("70"));
+        long netOrder = createPOSViaHttp(manager,negotiatedPackage);
+        assertDecimal("套餐议价成交快照保留78元", "78",jdbcDecimal("SELECT SUM(total_price) FROM order_item WHERE order_id="+netOrder));
+        assertDecimal("整单优惠后实付70元", "70",jdbcDecimal("SELECT pay_amount FROM `order` WHERE id="+netOrder));
+        assertEquals(2L,jdbcLong("SELECT COUNT(*) FROM order_item_price_audit WHERE order_item_id IN (SELECT id FROM order_item WHERE order_id="+netOrder+")"));
+        long netCrop = jdbcLong("SELECT id FROM order_item WHERE order_id="+netOrder+" AND product_id=110");
+        long netSeed = jdbcLong("SELECT id FROM order_item WHERE order_id="+netOrder+" AND product_id=111");
+        before = pricingFacts();
+        assertReturnRejected(manager,netOrder,netCrop,"1","46.80");
+        assertEquals(before,pricingFacts(),"套餐退货不能把原整单优惠再次退成现金");
+        returnViaHttp(manager,netOrder,netCrop,"1","42.00");
+        returnViaHttp(manager,netOrder,netSeed,"1","28.00");
+        assertDecimal("净额退款准确合计原实付70元", "70",jdbcDecimal("SELECT SUM(refund_amount) FROM after_sales WHERE order_id="+netOrder));
+        assertDecimal("退货不改原成交物料金额78元", "78",jdbcDecimal("SELECT SUM(total_price) FROM order_item WHERE order_id="+netOrder));
+        assertDecimal("净额退款后提成完整回冲10元", "-10",commissionSum(netOrder,4));
+        assertDecimal("净额退款仍按实物回原批次", "140",packageStock(110L));
+        assertDecimal("净额退款仍按实物回原种子库存", "15",packageStock(111L));
+        log("[套餐] 整套报价、第三单位库存、组成指纹、分组提成、缺货回滚、分次退货尾分及零元物料验收通过");
+    }
 
-        // updated_at 为秒级精度 DATETIME：推进时钟，保证回滚写入严格晚于激活写入，供下方 after 断言
-        Thread.sleep(1100);
-        InventoryBalanceFeatureStatus feature = featureStatusRepository.findByStoreAndProduct(1L, 101L).orElseThrow();
-        feature.setBalanceMode(InventoryBalanceFeatureStatus.LEGACY);
-        featureStatusRepository.save(feature);
+    private JsonNode packageQuote(E2EToken token,long packageId,String quantity,Long customerId) throws Exception {
+        var request=get("/api/admin/product-packages/"+packageId+"/price-quote")
+                .header(token.name(),token.value()).param("storeId","1").param("quantity",quantity);
+        if(customerId!=null) request.param("customerId",customerId.toString());
+        JsonNode response=objectMapper.readTree(mockMvc.perform(request).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertEquals("200",response.path("code").asText(),response.toString()); return response.path("data");
+    }
 
-        assertEquals("LEGACY",
-                jdbcString("SELECT balance_mode FROM inventory_balance_feature_status WHERE store_id=1 AND product_id=101"),
-                "回滚应将 balance_mode 置回 LEGACY");
-        assertEquals(cutoverBefore,
-                jdbcTimestamp("SELECT cutover_at FROM inventory_balance_feature_status WHERE store_id=1 AND product_id=101"),
-                "回滚不得清空 cutover_at");
-        assertEquals(1L,
-                jdbcLong("SELECT cutover_by FROM inventory_balance_feature_status WHERE store_id=1 AND product_id=101"),
-                "回滚不得清空 cutover_by");
-        Timestamp updatedAfter = jdbcTimestamp("SELECT updated_at FROM inventory_balance_feature_status WHERE store_id=1 AND product_id=101");
-        assertTrue(updatedAfter.after(updatedBefore), "回滚写入应刷新 updated_at");
-        assertEquals(receiptsBefore, jdbcLong("SELECT COUNT(*) FROM inventory_receipt_batch WHERE store_id=1"));
-        assertEquals(balancesBefore, jdbcLong("SELECT COUNT(*) FROM inventory_batch_balance WHERE store_id=1"));
-        assertEquals(movementsBefore, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE store_id=1"));
-        assertEquals(allocationsBefore, jdbcLong("SELECT COUNT(*) FROM order_item_batch_allocation WHERE store_id=1"));
-        assertEquals(auditsBefore, jdbcLong("SELECT COUNT(*) FROM order_item_price_audit WHERE product_id=101"));
-        log("[step8] 回滚完成: balance_mode=LEGACY, cutover_at/cutover_by 保留, 5 张事实表计数不变");
+    private POSOrderCreateCommand packageSale(long packageId,String quantity,JsonNode quote,long staffId) {
+        OrderItemDTO item=new OrderItemDTO(); item.setItemType(2); item.setPackageId(packageId);
+        item.setQuantity(new BigDecimal(quantity)); item.setUnit("套");
+        item.setQuotedUnitPrice(quote.path("suggestedUnitPrice").decimalValue()); item.setPackageQuoteId(quote.path("quoteId").asText());
+        POSOrderCreateCommand command=new POSOrderCreateCommand(); command.setStoreId(1L); command.setStaffId(staffId);
+        command.setPaymentType(1); command.setDiscountAmount(BigDecimal.ZERO);
+        command.setReceiveAmount(quote.path("totalAmount").decimalValue()); command.setItems(List.of(item)); return command;
+    }
 
-        // 回滚后 legacy 入口恢复：补一条 legacy 批次后走 legacy 出库成功（brief §4 步骤 8 授权）
-        exec("INSERT INTO inventory_batch (store_id, product_id, batch_no, quantity, cost_price, is_active) "
-                + "VALUES (1, 101, 'LB-ROLLBACK', 1, 5.00, 1)");
-        inventoryApplicationService.outbound(outCmd(101L, "1", "箱"), 1L);
-        assertDecimal("回滚后 legacy 出库应扣减 LB-ROLLBACK 为 0",
-                "0", jdbcDecimal("SELECT quantity FROM inventory_batch WHERE store_id=1 AND product_id=101 AND batch_no='LB-ROLLBACK'"));
-        assertEquals(0L, jdbcLong("SELECT is_active FROM inventory_batch WHERE store_id=1 AND product_id=101 AND batch_no='LB-ROLLBACK'"),
-                "耗尽批次应归档 is_active=0");
-        log("[step8] 回滚后 legacy 出库成功（快照口径变化属预期，本步不断言）");
+    private long returnViaHttp(E2EToken token,long orderId,long itemId,String quantity,String amount) throws Exception {
+        JsonNode response=objectMapper.readTree(mockMvc.perform(post("/api/admin/after-sales")
+                        .header(token.name(),token.value()).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(returnCommand(orderId,itemId,quantity,amount))))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertTrue(response.isIntegralNumber()&&response.asLong()>0,response.toString()); return response.asLong();
+    }
 
-        // ============ 步骤 9：M4 HTTP 端点（MockMvc，登录拿 token 后带 header） ============
-        String loginJson = mockMvc.perform(get("/__e2e__/login").param("staffId", "1"))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        JsonNode login = objectMapper.readTree(loginJson);
-        String tokenName = login.path("tokenName").asText();
-        String tokenValue = login.path("tokenValue").asText();
-        assertTrue(tokenName != null && !tokenName.isEmpty(), "登录应返回 tokenName");
-        assertTrue(tokenValue != null && !tokenValue.isEmpty(), "登录应返回 tokenValue");
-        log("[step9] 登录成功 tokenName=" + tokenName);
+    private void assertReturnRejected(E2EToken token,long orderId,long itemId,String quantity,String amount) throws Exception {
+        JsonNode response=objectMapper.readTree(mockMvc.perform(post("/api/admin/after-sales")
+                        .header(token.name(),token.value()).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(returnCommand(orderId,itemId,quantity,amount))))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertEquals(10001,response.path("code").asInt(),response.toString());
+    }
 
-        String risksJson = mockMvc.perform(get("/api/admin/inventory/warning/risks")
-                        .param("storeId", "1")
-                        .header(tokenName, tokenValue))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        JsonNode risksRoot = objectMapper.readTree(risksJson);
-        assertEquals("200", risksRoot.path("code").asText(), "风险查询应返回 code=200");
-        JsonNode risksData = risksRoot.path("data");
-        assertTrue(risksData.isArray() && risksData.size() >= 1, "风险列表应非空，实际: " + risksJson);
-        boolean foundDateUnknown = false;
-        for (JsonNode item : risksData) {
-            assertTrue(item.hasNonNull("kind"), "风险条目必须含 kind: " + item);
-            if ("DATE_UNKNOWN".equals(item.path("kind").asText())) {
-                foundDateUnknown = true;
+    private AdminReturnCommand returnCommand(long orderId,long itemId,String quantity,String amount) {
+        AdminReturnCommand command=new AdminReturnCommand(); command.setOrderId(orderId);
+        command.setRefundAmount(new BigDecimal(amount)); command.setReason("套餐闭环验收退货");
+        AdminReturnCommand.ReturnItem item=new AdminReturnCommand.ReturnItem(); item.setOrderItemId(itemId);
+        item.setQuantity(new BigDecimal(quantity)); item.setRefundAmount(new BigDecimal(amount)); command.setItems(List.of(item)); return command;
+    }
+
+    private BigDecimal packageStock(long productId) {
+        return jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id="+productId);
+    }
+
+    private BigDecimal commissionSum(long orderId,int bizType) {
+        return jdbcDecimal("SELECT COALESCE(SUM(amount),0) FROM staff_performance_log WHERE biz_id="+orderId+" AND biz_type="+bizType);
+    }
+
+    private void assertExactAuxiliaryOperations() {
+        exec("INSERT INTO product(id,code,name,main_unit,aux_unit,main_to_aux_ratio,avg_cost_price,status) VALUES(103,'EXACT-P103','三瓶一箱验收','箱','瓶',3,30,1)");
+        exec("INSERT INTO product_unit(id,product_id,unit_name,base_quantity_per_unit,is_base_unit,status) VALUES(4,103,'瓶',1,1,1),(5,103,'箱',3,0,1)");
+        var inbound = new com.agri_system.application.inventory.dto.command.InventoryInCommand();
+        inbound.setStoreId(1L); inbound.setProductId(103L); inbound.setBatchNo("EXACT-3"); inbound.setUnit("瓶");
+        inbound.setQuantity(new BigDecimal("3")); inbound.setCostPrice(BigDecimal.TEN);
+        inventoryApplicationService.inbound(inbound, 1L);
+        var transfer = new com.agri_system.application.inventory.dto.command.InventoryTransferCommand();
+        transfer.setFromStoreId(1L); transfer.setToStoreId(2L); transfer.setProductId(103L); transfer.setUnit("瓶");
+        transfer.setQuantity(BigDecimal.ONE); transfer.setRequestKey("EXACT-ONE-BOTTLE");
+        inventoryApplicationService.transfer(transfer, 1L);
+        assertDecimal("调拨一瓶必须精确扣一瓶", "2", jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=103 AND store_id=1"));
+        assertDecimal("调入一瓶不能因为小数箱数出现尾差", "1", jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=103 AND store_id=2"));
+        var count = new com.agri_system.application.inventory.dto.command.InventoryAdjustCommand();
+        count.setStoreId(2L); count.setProductId(103L); count.setRequestKey("EXACT-COUNT-TWO-BOTTLES");
+        count.setExpectedQuantity(new BigDecimal("0.33333333")); count.setActualQuantity(new BigDecimal("2")); count.setUnit("瓶");
+        count.setQuantityDiff(new BigDecimal("0.33333333")); count.setType(1); count.setRemark("按实物瓶数盘点");
+        inventoryApplicationService.adjust(count, 1L);
+        assertDecimal("按瓶盘点不能先转小数箱再舍入", "2", jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=103 AND store_id=2"));
+        assertDecimal("主单位展示有明确8位精度", "0.66666667", jdbcDecimal("SELECT quantity FROM inventory WHERE product_id=103 AND store_id=2"));
+    }
+
+    private void assertMultiBatchPickupCompletesWithoutSecondDeduction() {
+        exec("INSERT INTO product(id,code,name,main_unit,suggested_retail_price,min_price,avg_cost_price,status) VALUES(104,'MULTI-P104','多批提货验收','瓶',5,1,2,1)");
+        exec("INSERT INTO product_unit(id,product_id,unit_name,base_quantity_per_unit,is_base_unit,status) VALUES(6,104,'瓶',1,1,1)");
+        var inbound = new com.agri_system.application.inventory.dto.command.InventoryInCommand();
+        inbound.setStoreId(1L); inbound.setProductId(104L); inbound.setUnit("瓶");
+        inbound.setQuantity(new BigDecimal("2")); inbound.setCostPrice(new BigDecimal("2"));
+        inbound.setBatchNo("MULTI-A"); inventoryApplicationService.inbound(inbound, 1L);
+        inbound.setBatchNo("MULTI-B"); inventoryApplicationService.inbound(inbound, 1L);
+        long order = orderApplicationService.createPOSOrder(posSale(104L,"3","瓶","5.00",true,null,"15.00"),1L);
+        long item = jdbcLong("SELECT id FROM order_item WHERE order_id=" + order);
+        long request = jdbcLong("SELECT id FROM order_pickup_request WHERE order_item_id=" + item);
+        List<Long> ids = rows("SELECT id FROM order_item_batch_allocation WHERE order_item_id=" + item)
+                .stream().map(row -> ((Number)row[0]).longValue()).toList();
+        assertEquals(2, ids.size());
+        long movements = movementCount();
+        var command = new PickupFulfillmentCommand(); command.setAllocationIds(ids);
+        pickupFulfillmentService.fulfill(request, command, 1L);
+        assertEquals("FULFILLED", jdbcString("SELECT status FROM order_pickup_request WHERE id=" + request));
+        assertEquals(movements, movementCount());
+        assertDecimal("多批确认不第二次扣货", "1", jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=104"));
+    }
+
+    private void assertConcurrentReturnCannotExceedOriginalSale() throws Exception {
+        long order = orderApplicationService.createPOSOrder(posSale(101L, "2", "瓶", "5.00", false, null, "10.00"), 1L);
+        long item = jdbcLong("SELECT id FROM order_item WHERE order_id=" + order);
+        long allocation = jdbcLong("SELECT id FROM order_item_batch_allocation WHERE order_item_id=" + item);
+        assertStock(1, "0.8", "16");
+        List<Boolean> outcomes = raceWithOldSnapshot(i -> {
+            var command = new com.agri_system.application.inventory.dto.command.InventoryInCommand();
+            command.setStoreId(1L); command.setProductId(101L); command.setUnit("瓶");
+            command.setQuantity(new BigDecimal("2")); command.setSourceType("SALES_RETURN");
+            command.setSourceId(9100L + i); command.setSourceLineNo(Math.toIntExact(item));
+            inventoryApplicationService.inbound(command, 1L);
+        }, "累计退货数量超过");
+        assertEquals(1L, outcomes.stream().filter(Boolean::booleanValue).count(),
+                "两笔不同退款单在旧快照并发退同一销售，必须只有一笔成功");
+        assertStock(1, "0.9", "18");
+        assertDecimal("累计退货不得超过原单实际销售的2瓶", "2", jdbcDecimal(
+                "SELECT COALESCE(SUM(base_quantity),0) FROM inventory_movement WHERE movement_type='RETURN'"
+                        + " AND reference_type='SALE_ALLOCATION' AND reference_id=" + allocation));
+        log("[并发] 两个 REPEATABLE_READ 旧快照退货事务只有一笔回库，另一笔超量回滚");
+    }
+
+    private void assertConcurrentSalesCannotOversell() throws Exception {
+        var initial = new com.agri_system.application.inventory.dto.command.InventoryInCommand();
+        initial.setStoreId(1L); initial.setProductId(102L); initial.setUnit("袋");
+        initial.setBatchNo("E2E-CONCURRENT-STOCK"); initial.setQuantity(new BigDecimal("2"));
+        initial.setCostPrice(new BigDecimal("3")); initial.setSourceType("E2E"); initial.setSourceId(9200L);
+        inventoryApplicationService.inbound(initial, 1L);
+        long before = movementCount();
+        List<Boolean> outcomes = raceWithOldSnapshot(i -> {
+            InventoryOutCommand command = outCmd(102L, "2", "袋");
+            command.setReferenceId(9201L + i);
+            inventoryApplicationService.outbound(command, 1L);
+        }, "可用库存不足");
+        assertEquals(1L, outcomes.stream().filter(Boolean::booleanValue).count(), "最后2袋被并发购买，必须只有一笔出库");
+        assertEquals(before + 1, movementCount(), "失败销售不得留下部分流水");
+        assertDecimal("并发销售后快照为0", "0", jdbcDecimal("SELECT quantity FROM inventory WHERE store_id=1 AND product_id=102"));
+        assertDecimal("并发销售后批次余额为0", "0", jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE store_id=1 AND product_id=102"));
+        log("[并发] 两个 REPEATABLE_READ 旧快照争抢最后2袋只有一笔出库，余额不负");
+    }
+
+    private List<Boolean> raceWithOldSnapshot(java.util.function.IntConsumer action, String expectedRejection) throws Exception {
+        var barrier = new java.util.concurrent.CyclicBarrier(2);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        List<java.util.concurrent.Future<Boolean>> futures = new ArrayList<>();
+        try {
+            for (int i = 0; i < 2; i++) {
+                final int index = i;
+                futures.add(pool.submit(() -> {
+                    var transaction = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+                    transaction.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_REPEATABLE_READ);
+                    transaction.setTimeout(20);
+                    try {
+                        transaction.execute(status -> {
+                            // 两边先建立一致性读快照，再放行写入，稳定复现旧快照漏看另一事务已退量。
+                            jdbcTemplate.queryForObject("SELECT COUNT(*) FROM inventory_movement", Long.class);
+                            try { barrier.await(10, java.util.concurrent.TimeUnit.SECONDS); }
+                            catch (Exception e) { throw new IllegalStateException("并发测试屏障失败", e); }
+                            action.accept(index);
+                            return null;
+                        });
+                        return true;
+                    } catch (IllegalArgumentException e) {
+                        assertTrue(e.getMessage() != null && e.getMessage().contains(expectedRejection),
+                                "失败必须来自业务数量守卫，不能用死锁或其它错误假装通过: " + e.getMessage());
+                        return false;
+                    }
+                }));
             }
-        }
-        assertTrue(foundDateUnknown, "风险列表应包含 DATE_UNKNOWN 条目");
-        log("[step9] GET /api/admin/inventory/warning/risks → data 条数=" + risksData.size() + "，含 DATE_UNKNOWN");
+            List<Boolean> result = new ArrayList<>();
+            for (var future : futures) result.add(future.get(25, java.util.concurrent.TimeUnit.SECONDS));
+            return result;
+        } finally { pool.shutdownNow(); }
+    }
 
-        Map<String, Object> decisionPayload = new HashMap<>();
-        decisionPayload.put("riskKind", "DATE_UNKNOWN");
-        decisionPayload.put("entityType", "BATCH");
-        decisionPayload.put("entityId", r1BatchId);
-        decisionPayload.put("decisionAction", "CONTINUE_SALE");
-        decisionPayload.put("decisionReason", "E2E日期未知人工确认继续销售");
-        String decisionsJson = mockMvc.perform(post("/api/admin/inventory/decisions")
-                        .header(tokenName, tokenValue)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsBytes(decisionPayload)))
-                .andExpect(status().isOk())
-                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
-        JsonNode decisionsRoot = objectMapper.readTree(decisionsJson);
-        assertEquals("200", decisionsRoot.path("code").asText(), "决策记录应返回 code=200");
-        JsonNode decisionId = decisionsRoot.path("data").path("decisionId");
-        assertTrue(decisionId.isNumber() && decisionId.asLong() > 0,
-                "决策应返回 data.decisionId，实际: " + decisionsJson);
-        assertEquals(1L, jdbcLong("SELECT COUNT(*) FROM inventory_decision_log"),
-                "人工决策应留痕 1 条");
-        log("[step9] POST /api/admin/inventory/decisions → decisionId=" + decisionId.asLong());
+    private long movementCount() { return jdbcLong("SELECT COUNT(*) FROM inventory_movement"); }
 
-        // ============ 步骤 10：M2 边界（service 级） ============
-        assertTrue(pickupFulfillmentService.listPickupRequests(9999L, null).isEmpty(),
-                "无请求门店应返回空列表");
-        PickupFulfillmentCommand blankCmd = new PickupFulfillmentCommand();
-        blankCmd.setScannedCode("   ");
-        IllegalArgumentException blankEx = assertThrows(IllegalArgumentException.class,
-                () -> pickupFulfillmentService.fulfill(reqCId, blankCmd, 1L),
-                "空白扫码应被拒绝");
-        assertTrue(blankEx.getMessage() != null && blankEx.getMessage().contains("必须扫描内部批次标签"),
-                "空白扫码拒绝消息应提示必须扫描内部批次标签，实际: " + blankEx.getMessage());
-        PickupFulfillmentCommand emptyLocCmd = new PickupFulfillmentCommand();
-        emptyLocCmd.setScannedCode("EMPTY-LOC");
-        IllegalArgumentException locEx = assertThrows(IllegalArgumentException.class,
-                () -> pickupFulfillmentService.fulfill(reqCId, emptyLocCmd, 1L),
-                "货位存在但无可用批次应被拒绝");
-        assertTrue(locEx.getMessage() != null && locEx.getMessage().contains("扫描码不能解析为内部批次标签"),
-                "无批次货位扫码拒绝消息应说明无法解析，实际: " + locEx.getMessage());
-        assertEquals("PENDING", jdbcString("SELECT status FROM order_pickup_request WHERE id=" + reqCId),
-                "被拒的履约不得改变请求状态");
-        assertEquals(3L, jdbcLong("SELECT COUNT(*) FROM order_item_batch_allocation"),
-                "被拒的履约不得写归属行");
-        log("[step10] 边界检查通过: 空列表/空白扫码拒绝/无批次货位拒绝");
+    private void assertStock(long store, String mainQuantity, String baseQuantity) {
+        assertDecimal("门店快照必须使用主单位", mainQuantity,
+                jdbcDecimal("SELECT quantity FROM inventory WHERE store_id=" + store + " AND product_id=101"));
+        assertDecimal("批次余额必须使用基准单位", baseQuantity,
+                jdbcDecimal("SELECT COALESCE(SUM(base_quantity),0) FROM inventory_batch_balance WHERE store_id=" + store + " AND product_id=101"));
+    }
 
-        log("十步弧线全部通过");
+    private void assertLedgerReconciles() {
+        assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_batch_balance b WHERE b.base_quantity<>"
+                + "(SELECT COALESCE(SUM(CASE WHEN m.to_location_id=b.location_id THEN m.base_quantity ELSE 0 END),0)"
+                + "-COALESCE(SUM(CASE WHEN m.from_location_id=b.location_id THEN m.base_quantity ELSE 0 END),0)"
+                + " FROM inventory_movement m WHERE m.batch_id=b.batch_id)"),
+                "每个批次货位余额必须精确等于流水净额，收货也必须入流水");
+        assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_batch_balance WHERE base_quantity<reserved_base_quantity OR base_quantity<0"));
     }
 
     // ------------------------------------------------------------------
     // 夹具（真实 NOT NULL 约束的最小集；legacy inventory 无 unit 列）
     // ------------------------------------------------------------------
     private void seedFixture() {
-        exec("INSERT INTO store (id, code, name, status) VALUES (1, 'E2E-STORE', '端到端门店', 1)");
+        exec("INSERT INTO store (id, code, name, status) VALUES (1, 'E2E-STORE', '端到端门店', 1), (2, 'E2E-TARGET', '调入门店', 1)");
         exec("INSERT INTO staff (id, code, name, store_id, role, status) "
                 + "VALUES (1, 'E2E-STAFF', '端到端员工', 1, 'STAFF', 1)");
         exec("INSERT INTO supplier (id, code, name) VALUES (1, 'E2E-SUP', '端到端供应商')");
@@ -754,20 +1058,14 @@ class RetailFactChainEndToEndTest {
         exec("INSERT INTO inventory_location (id, store_id, location_type, code, name, status) VALUES "
                 + "(1, 1, 'SALES_FLOOR', 'FLOOR-A', '前仓', 1), "
                 + "(2, 1, 'STORE_BACKROOM', 'BACK-A', '后仓', 1), "
-                + "(3, 1, 'OTHER_STORE', 'EMPTY-LOC', '空对照货位', 1)");
-        // legacy inventory 快照：核心 SKU 3 箱（主单位），对照 SKU 10 袋
-        exec("INSERT INTO inventory (store_id, product_id, quantity) VALUES (1, 101, 3), (1, 102, 10)");
-        exec("INSERT INTO inventory_batch (store_id, product_id, batch_no, quantity, cost_price, is_active) VALUES "
-                + "(1, 101, 'LB-A', 2, 5.00, 1), "
-                + "(1, 101, 'LB-B', 1, 5.00, 1), "
-                + "(1, 102, 'LB-C', 10, 3.00, 1)");
+                + "(3, 1, 'OTHER_STORE', 'EMPTY-LOC', '空对照货位', 1), (4, 2, 'STORE_BACKROOM', 'BACK-B', '调入后仓', 1)");
         exec("INSERT INTO purchase_order (id, purchase_no, supplier_id, store_id, total_amount, status) VALUES "
                 + "(1, 'PO-E2E-1', 1, 1, 200.00, 2), "
                 + "(2, 'PO-E2E-2', 1, 1, 90.00, 2)");
         exec("INSERT INTO purchase_order_item (id, purchase_order_id, product_id, quantity, unit, buy_price, total_price, sort_order) VALUES "
                 + "(1, 1, 101, 2, '箱', 100.00, 200.00, 1), "
                 + "(2, 2, 101, 1, '箱', 90.00, 90.00, 1)");
-        log("[fixture] 夹具就绪: store=1 staff=1 product=101(箱/瓶/20) + 对照 102, legacy 快照 3 箱, LB-A/LB-B");
+        log("[fixture] 两个门店与多单位商品已就绪，库存全部由业务入口建立");
     }
 
     // ------------------------------------------------------------------
@@ -900,7 +1198,7 @@ class RetailFactChainEndToEndTest {
 
     // ------------------------------------------------------------------
     // 测试专用 Spring 配置：扫描 application+infrastructure（排除 SaTokenConfigure，
-    // 保持 MockMvc 未鉴权先例），只 import M4 两个 controller + 登录端点 + 领域服务装配。
+    // 保持原库存 API 场景），价格/订单 API 通过真实 SaToken 注解权限与登录 token 验收。
     // ------------------------------------------------------------------
     @SpringBootConfiguration
     @EnableAutoConfiguration
@@ -908,7 +1206,8 @@ class RetailFactChainEndToEndTest {
     @MapperScan("com.agri_system.infrastructure")
     @ComponentScan(basePackages = {"com.agri_system.application", "com.agri_system.infrastructure"},
             excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = SaTokenConfigure.class))
-    @Import({InventoryController.class, InventoryWarningController.class,
+    @Import({InventoryController.class, InventoryWarningController.class, ProductController.class, OrderAdminController.class,
+            ProductPackageController.class, AfterSalesAdminController.class,
             RetailFactChainEndToEndTest.E2ELoginController.class, DomainServiceConfig.class})
     static class E2EConfig {
 
@@ -918,12 +1217,27 @@ class RetailFactChainEndToEndTest {
             return new StpInterface() {
                 @Override
                 public List<String> getPermissionList(Object loginId, String loginType) {
+                    if ("STAFF_2".equals(String.valueOf(loginId))) {
+                        return List.of("pos:order:create", "product:query");
+                    }
                     return List.of("*");
                 }
 
                 @Override
                 public List<String> getRoleList(Object loginId, String loginType) {
                     return List.of("E2E");
+                }
+            };
+        }
+
+        @Bean
+        WebMvcConfigurer pricingPermissionInterceptor() {
+            return new WebMvcConfigurer() {
+                @Override
+                public void addInterceptors(InterceptorRegistry registry) {
+                    registry.addInterceptor(new SaInterceptor())
+                            .addPathPatterns("/api/admin/products/**", "/api/admin/orders/**",
+                                    "/api/admin/product-packages/**", "/api/admin/after-sales/**");
                 }
             };
         }

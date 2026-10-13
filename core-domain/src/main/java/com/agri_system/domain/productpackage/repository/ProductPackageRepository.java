@@ -21,6 +21,9 @@ public interface ProductPackageRepository {
      * 根据ID查找套餐
      */
     Optional<ProductPackage> findById(Long id);
+
+    /** 同一业务事务内锁定当前行，序列化资金或套餐配置变更。 */
+    Optional<ProductPackage> findByIdForUpdate(Long id);
     
     /**
      * 根据编码查找套餐

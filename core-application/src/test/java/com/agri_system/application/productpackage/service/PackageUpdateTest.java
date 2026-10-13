@@ -2,6 +2,8 @@ package com.agri_system.application.productpackage.service;
 
 import com.agri_system.application.productpackage.dto.command.PackageItemDTO;
 import com.agri_system.application.productpackage.dto.command.ProductPackageUpdateCommand;
+import com.agri_system.application.product.service.ProductUnitService;
+import com.agri_system.domain.product.model.ProductUnit;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.productpackage.model.ProductPackage;
@@ -22,6 +24,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * 套餐更新测试
@@ -43,6 +46,9 @@ class PackageUpdateTest {
     
     @Mock
     private ProductPackageDomainService domainService;
+
+    @Mock
+    private ProductUnitService productUnitService;
     
     @InjectMocks
     private ProductPackageApplicationService packageService;
@@ -66,6 +72,14 @@ class PackageUpdateTest {
         existingPackage.setCode("PKG202401010001");
         existingPackage.setName("原套餐");
         existingPackage.setStatus(0);
+        existingPackage.setSuggestedRetailPrice(new BigDecimal("200.00"));
+        when(packageRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(existingPackage));
+        when(packageRepository.findById(1L)).thenReturn(Optional.of(existingPackage));
+        when(productUnitService.requireEnabledUnit(anyLong(), anyString(), eq(ProductUnitService.UnitOperation.SALE)))
+                .thenAnswer(inv -> {
+                    ProductUnit unit = new ProductUnit(); unit.setUnitName(inv.getArgument(1));
+                    unit.setBaseQuantityPerUnit(BigDecimal.ONE); return unit;
+                });
         
         testProduct1 = new Product();
         testProduct1.setId(1L);
@@ -171,6 +185,58 @@ class PackageUpdateTest {
             List<ProductPackageItem> itemList = (List<ProductPackageItem>) items;
             return itemList.size() == 2;
         }));
+    }
+    @Test
+    void invalidUpdateCannotDeleteExistingComposition() {
+        updateCommand.setVipPrice(new BigDecimal("190.00"));
+        updateCommand.setItems(List.of(component()));
+        assertThrows(IllegalArgumentException.class, () -> packageService.updatePackage(updateCommand));
+        verify(itemRepository, never()).deleteByPackageId(1L);
+    }
+
+    @Test
+    void disabledUnitPreventsUpdatingComposition() {
+        updateCommand.setItems(List.of(component()));
+        when(productUnitService.requireEnabledUnit(1L, "袋", ProductUnitService.UnitOperation.SALE))
+                .thenThrow(new IllegalArgumentException("单位停用"));
+        assertThrows(IllegalArgumentException.class, () -> packageService.updatePackage(updateCommand));
+        verify(itemRepository, never()).deleteByPackageId(1L);
+    }
+
+    @Test
+    void lockedCurrentPackageStateControlsUpdate() {
+        ProductPackage deleted = new ProductPackage(); deleted.setStatus(-1);
+        when(packageRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(deleted));
+        updateCommand.setItems(List.of(component()));
+        assertThrows(IllegalStateException.class, () -> packageService.updatePackage(updateCommand));
+        verify(itemRepository, never()).deleteByPackageId(1L);
+    }
+
+    @Test
+    void publishingRequiresPositiveCurrentPrice() {
+        existingPackage.setSuggestedRetailPrice(BigDecimal.ZERO);
+        when(itemRepository.findItemsByPackageId(1L)).thenReturn(List.of(storedComponent()));
+        assertThrows(IllegalArgumentException.class, () -> packageService.updateStatus(1L, 1));
+        verify(packageRepository, never()).updateStatus(1L, 1);
+    }
+
+    @Test
+    void publishingRechecksSalesUnitAfterItWasDisabled() {
+        when(itemRepository.findItemsByPackageId(1L)).thenReturn(List.of(storedComponent()));
+        when(productUnitService.requireEnabledUnit(1L, "袋", ProductUnitService.UnitOperation.SALE))
+                .thenThrow(new IllegalArgumentException("单位停用"));
+        assertThrows(IllegalArgumentException.class, () -> packageService.updateStatus(1L, 1));
+        verify(packageRepository, never()).updateStatus(1L, 1);
+    }
+
+    private PackageItemDTO component() {
+        PackageItemDTO item = new PackageItemDTO(); item.setProductId(1L);
+        item.setQuantity(BigDecimal.ONE); item.setUnit("袋"); return item;
+    }
+
+    private ProductPackageItem storedComponent() {
+        ProductPackageItem item = new ProductPackageItem(); item.setProductId(1L);
+        item.setQuantity(BigDecimal.ONE); item.setUnit("袋"); return item;
     }
 }
 

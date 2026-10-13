@@ -26,3 +26,6 @@ deploy/ssl/*.pem
 deploy/ssl/*.key
 deploy/ssl/*.crt
 .wt-task*/
+
+# 本地开发库备份（不进入版本控制）
+.local-backups/

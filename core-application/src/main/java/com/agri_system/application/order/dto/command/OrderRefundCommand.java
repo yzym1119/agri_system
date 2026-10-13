@@ -46,7 +46,7 @@ public class OrderRefundCommand {
         private BigDecimal quantity;
 
         @NotNull(message = "明细退款金额不能为空")
-        @DecimalMin(value = "0.01", message = "明细退款金额必须大于0")
+        @DecimalMin(value = "0.00", message = "明细退款金额不能为负数")
         @Schema(description = "明细退款金额", example = "50.00")
         private BigDecimal refundAmount;
     }

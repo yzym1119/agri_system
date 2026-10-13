@@ -3,6 +3,8 @@ package com.agri_system.application.productpackage.service;
 import com.agri_system.application.productpackage.dto.command.PackageItemDTO;
 import com.agri_system.application.productpackage.dto.command.ProductPackageCreateCommand;
 import com.agri_system.application.productpackage.exception.PackageErrorCode;
+import com.agri_system.application.product.service.ProductUnitService;
+import com.agri_system.domain.product.model.ProductUnit;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.productpackage.model.ProductPackage;
@@ -31,6 +33,7 @@ import static org.mockito.Mockito.*;
  * @author AI Generated
  */
 @ExtendWith(MockitoExtension.class)
+@org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
 class PackageCreateTest {
     
     @Mock
@@ -44,6 +47,9 @@ class PackageCreateTest {
     
     @Mock
     private ProductPackageDomainService domainService;
+
+    @Mock
+    private ProductUnitService productUnitService;
     
     @InjectMocks
     private ProductPackageApplicationService packageService;
@@ -71,6 +77,12 @@ class PackageCreateTest {
         testProduct.setId(1L);
         testProduct.setName("测试商品");
         testProduct.setStatus(1);
+        when(productRepository.findById(1L)).thenReturn(Optional.of(testProduct));
+        when(productUnitService.requireEnabledUnit(anyLong(), anyString(), eq(ProductUnitService.UnitOperation.SALE)))
+                .thenAnswer(inv -> {
+                    ProductUnit unit = new ProductUnit(); unit.setUnitName(inv.getArgument(1));
+                    unit.setBaseQuantityPerUnit(BigDecimal.ONE); return unit;
+                });
     }
     
     @Test
@@ -140,6 +152,36 @@ class PackageCreateTest {
         });
         
         assertTrue(exception.getMessage().contains(PackageErrorCode.PACKAGE_MUST_HAVE_ITEMS));
+    }
+    @Test
+    void memberPriceBelowPackageFloorIsRejectedBeforeSaving() {
+        createCommand.setVipPrice(new BigDecimal("140.00"));
+        assertThrows(IllegalArgumentException.class, () -> packageService.createPackage(createCommand));
+        verify(packageRepository, never()).save(any());
+    }
+
+    @Test
+    void unknownSaleUnitCannotEnterPackageConfiguration() {
+        when(productUnitService.requireEnabledUnit(1L, "袋", ProductUnitService.UnitOperation.SALE))
+                .thenThrow(new IllegalArgumentException("单位未启用"));
+        assertThrows(IllegalArgumentException.class, () -> packageService.createPackage(createCommand));
+        verify(packageRepository, never()).save(any());
+    }
+
+    @Test
+    void componentQuantityCannotBeRoundedFromMoreThanFourDecimals() {
+        createCommand.getItems().get(0).setQuantity(new BigDecimal("0.00001"));
+        assertThrows(IllegalArgumentException.class, () -> packageService.createPackage(createCommand));
+        verify(packageRepository, never()).save(any());
+    }
+
+    @Test
+    void duplicateProductsAreRejectedByRealDomainValidation() {
+        org.springframework.test.util.ReflectionTestUtils.setField(packageService, "domainService",
+                new ProductPackageDomainService(productRepository));
+        createCommand.setItems(List.of(createCommand.getItems().get(0), createCommand.getItems().get(0)));
+        assertThrows(IllegalArgumentException.class, () -> packageService.createPackage(createCommand));
+        verify(packageRepository, never()).save(any());
     }
 }
 

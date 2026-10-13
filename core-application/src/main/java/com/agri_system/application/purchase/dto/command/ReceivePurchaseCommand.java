@@ -12,6 +12,10 @@ import java.util.List;
 @Data
 @Schema(description = "采购收货命令")
 public class ReceivePurchaseCommand {
+    @jakarta.validation.constraints.NotBlank(message = "请求标识不能为空")
+    @jakarta.validation.constraints.Size(max = 64, message = "请求标识不能超过64字符")
+    private String requestKey;
+
     @NotNull(message = "采购单ID不能为空")
     private Long purchaseOrderId;
 

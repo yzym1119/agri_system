@@ -1,6 +1,7 @@
 /**
  * 套餐管理相关类型定义
  */
+import type { ProductUnitVO } from './product'
 
 export type { PageResponse } from './api'
 
@@ -25,13 +26,11 @@ export interface ProductPackageItemVO {
   quantity: number
   unit?: string
   sortOrder?: number
-  // 商品详细信息（用于价格计算）
-  productMainUnit?: string // 主单位
-  productAuxUnit?: string // 辅单位
-  productMainToAuxRatio?: number // 主辅换算比例
-  productSuggestedRetailPrice?: number // 商品零售价（最小单位单价）
-  currentUnitPrice?: number // 当前单位单价（计算后）
-  subtotal?: number // 小计（单价 * 数量）
+  saleUnits?: ProductUnitVO[] // 套餐档案维护物料时的可销售单位
+  saleUnitId?: number
+  unitPrice?: number // 后端分摊成交单价，可能超过两位小数
+  totalPrice?: number // 后端权威物料成交金额，金额按分保存
+  allowSpecialFund?: number
 }
 
 /**

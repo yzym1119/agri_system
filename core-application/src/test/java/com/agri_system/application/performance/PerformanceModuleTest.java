@@ -11,6 +11,8 @@ import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.order.model.OrderItem;
 import com.agri_system.domain.order.repository.OrderItemRepository;
 import com.agri_system.domain.order.repository.OrderRepository;
+import com.agri_system.domain.after_sales.repository.AfterSalesRepository;
+import com.agri_system.domain.after_sales.repository.AfterSalesItemRepository;
 import com.agri_system.domain.performance.model.CommissionRule;
 import com.agri_system.domain.performance.model.StaffCustomerRelation;
 import com.agri_system.domain.performance.model.StaffPerformanceLog;
@@ -88,7 +90,8 @@ class PerformanceModuleTest {
                 mock(ProductRepository.class),
                 relationRepository,
                 mock(ApplicationEventPublisher.class),
-                mock(CustomerSettlementService.class)
+                mock(CustomerSettlementService.class),
+                mock(AfterSalesRepository.class), mock(AfterSalesItemRepository.class)
         );
         listener.onCustomerFirstEffective(new CustomerFirstEffectiveEvent(3L, 8L, 11L));
         verify(logRepository).save(any(StaffPerformanceLog.class));
@@ -108,6 +111,7 @@ class PerformanceModuleTest {
         order.setId(9L);
         order.setPayAmount(new BigDecimal("100"));
         when(orderRepository.findById(9L)).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(9L)).thenReturn(Optional.of(order));
         OrderItemRepository orderItemRepository = mock(OrderItemRepository.class);
         OrderItem orderItem = new OrderItem();
         orderItem.setId(101L);
@@ -124,7 +128,8 @@ class PerformanceModuleTest {
                 mock(ProductRepository.class),
                 mock(StaffCustomerRelationRepository.class),
                 mock(ApplicationEventPublisher.class),
-                mock(CustomerSettlementService.class));
+                mock(CustomerSettlementService.class),
+                mock(AfterSalesRepository.class), mock(AfterSalesItemRepository.class));
         listener.onOrderRefunded(new OrderRefundedEvent(
                 9L,
                 new BigDecimal("50"),
@@ -164,7 +169,8 @@ class PerformanceModuleTest {
                 mock(ProductRepository.class),
                 mock(StaffCustomerRelationRepository.class),
                 mock(ApplicationEventPublisher.class),
-                mock(CustomerSettlementService.class)
+                mock(CustomerSettlementService.class),
+                mock(AfterSalesRepository.class), mock(AfterSalesItemRepository.class)
         );
     }
 

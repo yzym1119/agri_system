@@ -29,6 +29,8 @@ export interface POSOrderItemDTO {
   quantity: number
   unit?: string
   unitPrice?: number // 单价（可选，如果不提供则从价格体系查询）
+  quotedUnitPrice?: number // 展示时的标准报价，结算时重新校验
+  packageQuoteId?: string // 套餐价格及构成版本，不能使用过期挂单报价
   warehousePickup?: boolean // 是否库房取货（true 时后端生成取货请求）
   priceChangeReason?: string // 人工改价原因（提交价与服务端报价不一致时留痕）
 }
@@ -44,7 +46,7 @@ export interface POSPaymentDetail {
  */
 export interface CartItem {
   id: string // 唯一ID
-  itemType: 1 | 2 // 1-商品, 2-套餐（注意：新版本套餐会被炸开为多个商品）
+  itemType: 1 | 2 // 1-商品，2-独立定价套餐；前端不拆分套餐
   productId?: number
   packageId?: number
   name: string
@@ -56,10 +58,9 @@ export interface CartItem {
   auxUnit?: string
   mainToAuxRatio?: number
   allowSpecialFund?: number
-  // 套餐特有（已废弃，保留用于兼容）
-  packagePrice?: number
-  vipPrice?: number
-  packageItems?: ProductPackageItemVO[] // 套餐明细
+  // 套餐特有：以下物料数量和金额来自本次套数对应的后端报价
+  packageItems?: ProductPackageItemVO[]
+  specialFundEligibleAmount?: number
   // 购物车状态
   currentUnit: string // 当前选择的单位
   unitPrice: number // 当前单价
@@ -68,12 +69,16 @@ export interface CartItem {
   stock?: number // 当前门店库存（商品）
   _expanded?: boolean // 套餐是否展开（仅前端使用）
   fromPackage?: string // 标记来自哪个套餐（用于UI显示分组）
-  // 服务端报价（零售事实链 Task7/Task9，仅商品）
+  // 服务端报价（商品与套餐共用；套餐 quoteId 包含价格和组成版本）
   quoteId?: string | null // 服务端报价ID（后端返回字符串标识）
   belowReference?: boolean // 报价低于参考下限（需人工确认）
   referenceFloor?: number | null // 参考下限价格（低于下限时展示）
   priceChangeReason?: string // 人工改价原因（提交时留痕）
-  priceFallback?: boolean // 服务端报价失败，已回退本地价（仅提示）
+  priceFallback?: boolean // 服务端报价失败，禁止结算
+  pricePending?: boolean
+  quoteRequestId?: number
+  suggestedUnitPrice?: number
+  saleUnits?: { unitName: string }[]
   warehousePickup?: boolean // 库房取货（后仓拣货，不即时出库）
 }
 

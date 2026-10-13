@@ -26,6 +26,11 @@ public class InventoryRepositoryImpl implements InventoryRepository {
     private final InventoryMapper inventoryMapper;
     
     @Override
+    public void lockProduct(Long productId) {
+        if (inventoryMapper.lockProduct(productId) == null) throw new IllegalArgumentException("库存商品不存在");
+    }
+
+    @Override
     public void save(Inventory inventory) {
         if (inventory.getId() == null) {
             inventoryMapper.insert(inventory);
@@ -62,13 +67,13 @@ public class InventoryRepositoryImpl implements InventoryRepository {
     
     @Override
     public void createIfNotExists(Long storeId, Long productId, BigDecimal quantity) {
-        Optional<Inventory> existing = findByStoreAndProduct(storeId, productId);
-        if (existing.isEmpty()) {
-            Inventory inventory = new Inventory();
-            inventory.setStoreId(storeId);
-            inventory.setProductId(productId);
-            inventory.setQuantity(quantity);
-            inventoryMapper.insert(inventory);
+        inventoryMapper.ensureSnapshot(storeId, productId, quantity);
+    }
+
+    @Override
+    public void updateBaseSnapshot(Long storeId, Long productId, BigDecimal baseQuantity) {
+        if (inventoryMapper.projectBaseQuantity(storeId, productId, baseQuantity) != 1) {
+            throw new IllegalStateException("商品主单位尚未配置，不能生成库存快照");
         }
     }
 

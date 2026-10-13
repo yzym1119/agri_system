@@ -201,7 +201,7 @@ public class InventoryRiskService {
             }
 
             LocalDate expiryDate = batch.getExpiryDate();
-            boolean dateKnown = expiryDate != null && DATE_STATUS_KNOWN.equals(batch.getDateStatus());
+            boolean dateKnown = expiryDate != null;
             String kind;
             Integer daysToExpiry = null;
             if (!dateKnown) {

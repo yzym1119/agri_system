@@ -20,7 +20,12 @@
       <el-form-item :label="itemSectionLabel" required>
         <el-table :data="form.items" border style="width: 100%">
           <el-table-column type="index" label="#" width="60" />
-          <el-table-column prop="productName" label="商品名称" min-width="150" show-overflow-tooltip />
+          <el-table-column label="商品名称" min-width="150">
+            <template #default="{ row }">
+              <div>{{ row.productName }}</div>
+              <div v-if="row.packageGroupNo" style="font-size: 12px; color: #909399">来自套餐：{{ row.packageName }}</div>
+            </template>
+          </el-table-column>
           <el-table-column prop="quantity" label="购买数量" width="100" align="right">
             <template #default="{ row }">
               {{ row.quantity }} {{ row.unit }}
@@ -59,7 +64,7 @@
       <el-form-item label="退款金额" prop="refundAmount">
         <el-input-number
           v-model="form.refundAmount"
-          :min="0.01"
+          :min="0"
           :max="maxRefundAmount"
           :precision="2"
           :step="0.01"
@@ -130,6 +135,9 @@ interface RefundItem {
   refundableAmount: number
   returnQuantity: number
   refundAmount: number
+  totalPrice: number
+  packageGroupNo?: number
+  packageName?: string
 }
 
 const form = reactive<{
@@ -161,8 +169,10 @@ const rules = reactive<FormRules>({
     { required: true, message: '请输入退款金额', trigger: 'blur' },
     {
       validator: (rule, value, callback) => {
-        if (value <= 0) {
-          callback(new Error('退款金额必须大于0'))
+        const selectedItems = form.items.filter(item => item.returnQuantity > 0)
+        const onlyZeroAmountReturns = selectedItems.length > 0 && selectedItems.every(item => item.refundAmount === 0)
+        if (value < 0 || (value === 0 && !onlyZeroAmountReturns)) {
+          callback(new Error('请先选择退货商品，退款金额不能小于0'))
         } else if (value > maxRefundAmount.value) {
           callback(new Error(`退款金额不能超过${formatMoney(maxRefundAmount.value)}`))
         } else {
@@ -220,13 +230,16 @@ const loadOrderDetail = async () => {
             refundableQuantity: Number(item.refundableQuantity ?? item.quantity) || 0,
             unit: item.unit || '',
             unitPrice: Number(item.unitPrice) || 0,
+            totalPrice: Number(item.totalPrice) || 0,
+            packageGroupNo: item.packageGroupNo || undefined,
+            packageName: item.packageName || undefined,
             refundedAmount: Number(item.refundedAmount) || 0,
             refundableAmount: Number(item.refundableAmount ?? item.totalPrice) || 0,
             returnQuantity: 0,
             refundAmount: 0
           }
         })
-        .filter((item: RefundItem) => item.refundableQuantity > 0 && item.refundableAmount > 0)
+        .filter((item: RefundItem) => item.refundableQuantity > 0)
     }
   } catch (error) {
     console.error('加载订单详情失败:', error)
@@ -255,10 +268,11 @@ const calculateRefundAmount = () => {
   // 计算每个商品的退货金额
   form.items.forEach((item) => {
     if (item.returnQuantity > 0) {
-      item.refundAmount = item.unitPrice * item.returnQuantity
-      if (item.refundAmount > item.refundableAmount) {
-        item.refundAmount = item.refundableAmount
-      }
+      // 净可退总额包含已退与剩余份额；不能把整单优惠再次退给客户。
+      const netRefundTotal = Math.round((item.refundableAmount + item.refundedAmount) * 100) / 100
+      const amount = item.returnQuantity >= item.refundableQuantity ? item.refundableAmount
+        : Math.round(netRefundTotal * (item.refundedQuantity + item.returnQuantity) / item.quantity * 100) / 100 - item.refundedAmount
+      item.refundAmount = Math.round(Math.max(0, Math.min(amount, item.refundableAmount)) * 100) / 100
     } else {
       item.refundAmount = 0
     }
@@ -266,7 +280,7 @@ const calculateRefundAmount = () => {
 
   // 计算总退款金额
   const total = form.items.reduce((sum, item) => sum + item.refundAmount, 0)
-  form.refundAmount = Math.min(total, maxRefundAmount.value)
+  form.refundAmount = Math.round(Math.min(total, maxRefundAmount.value) * 100) / 100
 }
 
 const handleClose = () => {

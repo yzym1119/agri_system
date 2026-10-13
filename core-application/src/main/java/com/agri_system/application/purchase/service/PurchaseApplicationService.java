@@ -62,7 +62,7 @@ public class PurchaseApplicationService {
     private final InventoryReceiptRepository receiptRepository;
     private final InventoryReceiptLineRepository receiptLineRepository;
     private final InventoryReceiptBatchRepository receiptBatchRepository;
-    private final ObjectProvider<BatchBalanceService> batchBalanceServiceProvider;
+    private final BatchBalanceService batchBalanceService;
     
     /**
      * 创建采购单
@@ -232,6 +232,7 @@ public class PurchaseApplicationService {
         batch.setExpiryDate(inboundItem == null ? null : inboundItem.getExpireDate());
 
         ReceivePurchaseCommand receiveCommand = new ReceivePurchaseCommand();
+        receiveCommand.setRequestKey("PURCHASE-INBOUND:" + order.getId());
         receiveCommand.setPurchaseOrderId(order.getId());
         ReceivePurchaseCommand.ReceiptLineCommand line = new ReceivePurchaseCommand.ReceiptLineCommand();
         line.setPurchaseOrderItemId(item.getId());
@@ -248,6 +249,13 @@ public class PurchaseApplicationService {
         checkCanReceive(order);
         List<PurchaseOrderItem> orderItems = itemRepository.findByOrderId(order.getId());
         return receiveLocked(command, receiverId, order, orderItems);
+    }
+
+    public List<com.agri_system.application.purchase.dto.vo.ReceiptBatchLabelVO> receiptLabels(Long receiptId) {
+        return receiptBatchRepository.findByReceiptId(receiptId).stream()
+                .map(b -> new com.agri_system.application.purchase.dto.vo.ReceiptBatchLabelVO(b.getId(), b.getProductId(),
+                        b.getInternalReceiptBatchNo(), b.getSupplierBatchNo(), b.getOriginalUnitName(), b.getOriginalQuantity(),
+                        b.getProductionDate(), b.getExpiryDate(), b.getDateStatus())).toList();
     }
 
     /** 调用方必须先持有 purchase_order 的行锁，避免 legacy adapter 二次锁定。 */
@@ -297,8 +305,12 @@ public class PurchaseApplicationService {
             throw new IllegalArgumentException("累计收货超过采购数量，必须填写exceptionReason");
         }
 
+        if (!hasText(command.getRequestKey())) throw new IllegalArgumentException("收货请求标识不能为空");
+        preparedLines.stream().map(l -> l.purchaseItem.getProductId()).distinct().sorted()
+                .forEach(id -> batchBalanceService.lockStock(order.getStoreId(), id));
         LocalDateTime now = LocalDateTime.now();
         InventoryReceipt receipt = new InventoryReceipt();
+        receipt.setRequestKey(command.getRequestKey());
         receipt.setReceiptNo(newReceiptNo(now));
         receipt.setPurchaseOrderId(order.getId());
         receipt.setSupplierId(order.getSupplierId());
@@ -350,13 +362,9 @@ public class PurchaseApplicationService {
             }
         }
 
-        BatchBalanceService balanceService = batchBalanceServiceProvider.getIfAvailable();
-        if (balanceService != null) {
-            for (InventoryReceiptBatch persistedBatch : persistedBatches) {
-                balanceService.increaseFromReceipt(receipt.getId(), persistedBatch);
-            }
+        for (InventoryReceiptBatch persistedBatch : persistedBatches) {
+            batchBalanceService.increaseFromReceipt(receipt.getId(), persistedBatch);
         }
-        // Task 4 尚未提供受事务保护的门店余额事实，当前不写 avgCostPrice 展示缓存。
         if (isOrderFullyReceived(orderItems)) {
             order.completeInbound();
             order.setUpdatedAt(now);
@@ -420,10 +428,7 @@ public class PurchaseApplicationService {
         }
         boolean hasProductionDate = batchCommand.getProductionDate() != null;
         boolean hasExpiryDate = batchCommand.getExpiryDate() != null;
-        if (hasProductionDate != hasExpiryDate) {
-            throw new IllegalArgumentException("生产日期和有效期必须同时提供，或同时缺失并记录UNKNOWN");
-        }
-        if (hasProductionDate && batchCommand.getProductionDate().isAfter(batchCommand.getExpiryDate())) {
+        if (hasProductionDate && hasExpiryDate && batchCommand.getProductionDate().isAfter(batchCommand.getExpiryDate())) {
             throw new IllegalArgumentException("生产日期不能晚于有效期");
         }
         ProductUnit originalUnit = requirePurchasableUnit(productId, batchCommand.getOriginalUnit());
@@ -432,7 +437,7 @@ public class PurchaseApplicationService {
         BigDecimal baseUnitCost = batchCommand.getOriginalUnitCost()
                 .divide(conversion.baseQuantityPerUnit(), 8, RoundingMode.HALF_UP);
         return new PreparedReceiptBatch(batchCommand, originalUnit, conversion.baseQuantity(), baseUnitCost,
-                hasProductionDate ? "KNOWN" : "UNKNOWN");
+                hasProductionDate && hasExpiryDate ? "KNOWN" : hasProductionDate || hasExpiryDate ? "PARTIAL" : "UNKNOWN");
     }
 
     private boolean isOrderFullyReceived(List<PurchaseOrderItem> orderItems) {

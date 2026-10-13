@@ -40,16 +40,21 @@
           <span v-if="item.manufacturer" class="item-manufacturer">{{ item.manufacturer }}</span>
         </div>
 
+        <div v-if="item.itemType === 2" class="cart-item-meta" style="display: block">
+          <div v-for="(material, materialIndex) in item.packageItems" :key="`${material.productId}_${materialIndex}`">
+            {{ material.productName }} × {{ material.quantity }}{{ material.unit }}
+          </div>
+        </div>
+
         <!-- 服务端报价提示：低于参考下限 / 本地价降级；库房取货标记 -->
-        <div v-if="item.belowReference || item.priceFallback || item.itemType === 1" class="cart-item-flags">
+        <div class="cart-item-flags">
           <el-tag v-if="item.belowReference" type="danger" size="small" effect="plain">
             低于参考下限{{ item.referenceFloor ? ` ¥${item.referenceFloor.toFixed(2)}` : '' }}
           </el-tag>
           <el-tag v-else-if="item.priceFallback" type="warning" size="small" effect="plain">
-            本地价
+            报价失败
           </el-tag>
           <el-checkbox
-            v-if="item.itemType === 1"
             :model-value="!!item.warehousePickup"
             size="small"
             @change="(checked: any) => handlePickupChange(item, !!checked)"
@@ -59,11 +64,12 @@
         </div>
 
         <!-- 低于参考下限时记录人工原因（选填，随单留痕） -->
-        <div v-if="item.belowReference" class="cart-item-reason">
+        <div v-if="item.belowReference || item.unitPrice !== item.suggestedUnitPrice" class="cart-item-reason">
           <el-input
             v-model="item.priceChangeReason"
             size="small"
-            placeholder="低于参考价原因（选填）"
+            placeholder="议价原因（必填，最多255字）"
+            :maxlength="255"
             @change="emit('update', [...props.cartItems])"
           />
         </div>
@@ -71,16 +77,18 @@
         <!-- 第三行：单价 + 数量控制器 + 单位 + 删除 -->
         <div class="cart-item-footer">
           <div class="item-price-unit">
-            <span class="item-price">¥{{ item.unitPrice.toFixed(2) }}</span>
+            <el-input-number v-if="canChangePrice" :model-value="item.unitPrice"
+              :min="0.01" :precision="2" :controls="false" :disabled="item.pricePending || item.priceFallback"
+              size="small" :aria-label="item.itemType === 2 ? '每套成交价' : '成交单价'" style="width: 100px" @change="(value: number | undefined) => handlePriceChange(item, value)" />
+            <span v-else class="item-price">¥{{ item.unitPrice.toFixed(2) }}</span>
             <el-select
-              v-if="item.itemType === 1 && item.auxUnit"
+              v-if="item.itemType === 1 && (item.saleUnits?.length || 0) > 1"
               :model-value="item.currentUnit"
               size="small"
               class="unit-select"
               @change="(newUnit: string) => handleUnitChange(item, newUnit)"
             >
-              <el-option :label="item.mainUnit" :value="item.mainUnit" />
-              <el-option :label="item.auxUnit" :value="item.auxUnit" />
+              <el-option v-for="unit in item.saleUnits" :key="unit.unitName" :label="unit.unitName" :value="unit.unitName" />
             </el-select>
             <span v-else class="unit-text">{{ item.currentUnit }}</span>
           </div>
@@ -115,7 +123,8 @@
 </template>
 
 <script setup lang="ts">
-import {ref} from 'vue'
+import { usePermissionStore } from '@/store/permission'
+import {computed, ref} from 'vue'
 import {Box, Delete, Minus, Plus} from '@element-plus/icons-vue'
 import CustomerBar from './CustomerBar.vue'
 import type {CartItem, POSCustomerInfo} from '@/types/pos'
@@ -130,55 +139,32 @@ const emit = defineEmits<{
   update: [items: CartItem[]]
   customerChange: [customer: POSCustomerInfo | null]
   unitChange: [payload: { id: string; oldUnit: string; newUnit: string }]
+  packageChange: [payload: { id: string }]
 }>()
+
+const permissionStore = usePermissionStore()
+const canChangePrice = computed(() => permissionStore.permissions.includes('*') || permissionStore.permissions.includes('order:price:override'))
+const handlePriceChange = (item: CartItem, value?: number) => {
+  if (!canChangePrice.value || value == null || value <= 0) return
+  item.unitPrice = value
+  item.subtotal = Math.round(item.quantity * value * 100) / 100
+  item.belowReference = item.referenceFloor != null && value < item.referenceFloor
+  if (item.itemType === 2) {
+    item.pricePending = true
+    emit('packageChange', { id: item.id })
+  }
+  emit('update', [...props.cartItems])
+}
 
 const customerBarRef = ref<InstanceType<typeof CustomerBar> | null>(null)
 
-// 单位切换
-// 价格存储规则：
-// 1. 有辅单位的商品：零售价是辅单位的价格（最小单位）
-// 2. 没有辅单位的商品：零售价是主单位的价格
+// 切换单位后由父组件重新取服务端报价，前端不进行价格换算。
 const handleUnitChange = (item: CartItem, newUnit: string) => {
-  if (item.itemType !== 1 || !item.mainUnit || !item.auxUnit || !item.mainToAuxRatio) {
-    return
-  }
-
-  // 如果单位没有变化，不需要处理
-  if (item.currentUnit === newUnit) {
-    return
-  }
-
-  // 获取基础价格（辅单位价格）
-  // 根据旧单位计算基础价格（辅单位价格）
-  let basePrice: number // 辅单位价格（基础价格）
-  
+  if (item.currentUnit === newUnit) return
   const oldUnit = item.currentUnit
-  if (oldUnit === item.mainUnit) {
-    // 旧单位是主单位，需要转换为辅单位价格：辅单位价格 = 主单位价格 / 比例
-    // 例如：主单位30元/箱，比例3，辅单位价格 = 30 / 3 = 10元/瓶
-    basePrice = item.unitPrice / (item.mainToAuxRatio || 1)
-  } else {
-    // 旧单位是辅单位，当前价格就是基础价格（辅单位价格）
-    basePrice = item.unitPrice
-  }
-  
-  // 根据新单位设置价格
-  if (newUnit === item.auxUnit) {
-    // 切换到辅单位：直接使用基础价格（辅单位价格）
-    item.unitPrice = basePrice
-  } else {
-    // 切换到主单位：主单位价格 = 辅单位价格 × 比例
-    // 例如：辅单位10元/瓶，比例3，主单位价格 = 10 × 3 = 30元/箱
-    item.unitPrice = basePrice * (item.mainToAuxRatio || 1)
-  }
-  
-  // 更新单位
   item.currentUnit = newUnit
-
-  // 重新计算小计
-  item.subtotal = item.quantity * item.unitPrice
-
-  // 显式上报单位变更：购物车对象已被就地修改，父级无法通过前后对比推断变更项
+  item.quoteId = null
+  item.pricePending = true
   emit('unitChange', { id: item.id, oldUnit, newUnit })
   emit('update', [...props.cartItems])
 }
@@ -191,9 +177,13 @@ const handlePickupChange = (item: CartItem, checked: boolean) => {
 
 // 数量变化
 const handleQuantityChange = (item: CartItem, newQuantity: number) => {
-  if (newQuantity < 1) return
+  if (newQuantity < 1 || (item.itemType === 2 && !Number.isInteger(newQuantity))) return
   item.quantity = newQuantity
-  item.subtotal = item.quantity * item.unitPrice
+  item.subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
+  if (item.itemType === 2) {
+    item.pricePending = true
+    emit('packageChange', { id: item.id })
+  }
   emit('update', [...props.cartItems])
 }
 

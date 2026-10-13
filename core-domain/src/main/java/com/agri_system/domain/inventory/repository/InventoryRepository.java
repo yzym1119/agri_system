@@ -18,6 +18,9 @@ public interface InventoryRepository {
      * 保存或更新库存快照
      */
     void save(Inventory inventory);
+
+    /** 库存写入先锁商品，使成本汇总和跨店调拨遵循相同锁序。 */
+    void lockProduct(Long productId);
     
     /**
      * 根据门店和商品查找库存快照
@@ -31,6 +34,9 @@ public interface InventoryRepository {
      * @param productId 商品ID
      * @param quantity 新数量
      */
+    /** 从基准数量投影为商品主单位；所有外部库存数量继续使用明确的主单位口径。 */
+    void updateBaseSnapshot(Long storeId, Long productId, BigDecimal baseQuantity);
+
     void updateSnapshot(Long storeId, Long productId, BigDecimal quantity);
 
     /**

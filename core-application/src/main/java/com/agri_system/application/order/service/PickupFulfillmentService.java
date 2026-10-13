@@ -38,120 +38,38 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/**
- * 库房取货与销售批次证据应用服务（零售事实链 Task5）。
- *
- * <p>POS 结账不要求收银员选择批次：货架可立即交付时按配置规则落 {@code RULE_ALLOCATED}
- * （货架单批次）或 {@code UNKNOWN}（混批），均不阻断结账；货架无货或操作员选择库房取货时
- * 创建取货请求，拣货员扫描内部批次/货位标签得到 {@code SCANNED}，或显式确认批次与货位得到
- * {@code FULFILLMENT_CONFIRMED}，并以实际拣货移动（PICK）回填真实批次成本与移动事实。</p>
- *
- * <p>所有新链路写入以 {@link BatchBalanceService#isBatchLocationEnabled(Long, Long)} 为闸门：
- * 未激活的 SKU 不产生任何归属/取货事实，调用方继续 legacy 出库路径。</p>
- */
+/** 核实已出库订单的提货批次。确认提货不再次移动或扣减库存。 */
 @Service
 @RequiredArgsConstructor
 public class PickupFulfillmentService {
 
-    /** 货架单批次自动归属规则名。 */
-    static final String RULE_FLOOR_SINGLE_BATCH = "FLOOR_SINGLE_BATCH";
-    /** 扫描内部批次标签的归属规则名。 */
-    static final String RULE_PICK_SCAN = "PICK_SCAN";
-    /** 显式确认批次与货位的归属规则名。 */
-    static final String RULE_PICK_CONFIRM = "PICK_CONFIRM";
-    /** 归属规则版本；规则调整时递增以便对账追溯。 */
-    static final String ALLOCATION_RULE_VERSION = "R1";
-
     private final OrderItemBatchAllocationRepository allocationRepository;
     private final OrderPickupRequestRepository pickupRequestRepository;
-    private final BatchBalanceService batchBalanceService;
-    private final ProductUnitService productUnitService;
     private final InventoryLocationRepository locationRepository;
-    private final InventoryBatchBalanceRepository batchBalanceRepository;
     private final InventoryReceiptBatchRepository receiptBatchRepository;
     private final OrderRepository orderRepository;
     private final OrderItemRepository itemRepository;
-    private final OrderCostAllocationService orderCostAllocationService;
     private final ProductRepository productRepository;
 
-    /**
-     * POS 直接销售时的批次证据归属。
-     *
-     * @return true 表示新链路已处理（结账不再走 legacy outbound）；false 表示 SKU 未激活，调用方保持现状
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public boolean recordDirectSaleEvidence(Order order, OrderItem item, boolean warehousePickup, Long operatorId) {
-        if (order == null || item == null || item.getProductId() == null || order.getStoreId() == null
-                || !batchBalanceService.isBatchLocationEnabled(order.getStoreId(), item.getProductId())) {
-            return false;
-        }
-        BigDecimal baseQuantity = toBaseQuantity(item);
-        Optional<InventoryLocation> floor = salesFloor(order.getStoreId());
-        List<InventoryBatchBalance> floorBalances = floor
-                .map(location -> safeBalances(
-                        batchBalanceRepository.findByLocationAndProduct(location.getId(), item.getProductId())))
-                .orElseGet(List::of);
-        BigDecimal floorAvailable = floorBalances.stream()
-                .map(InventoryBatchBalance::availableBaseQuantity)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-        boolean floorCanFulfill = !warehousePickup && floor.isPresent()
-                && floorAvailable.compareTo(baseQuantity) >= 0;
-
-        if (floorCanFulfill && floorBalances.size() == 1) {
-            InventoryBatchBalance single = floorBalances.get(0);
-            BigDecimal unitCost = receiptBatchRepository.findById(single.getBatchId())
-                    .map(InventoryReceiptBatch::getBaseUnitCost)
-                    .orElse(null);
-            OrderItemBatchAllocation allocation = baseAllocation(order, item, operatorId, baseQuantity);
-            allocation.setBatchId(single.getBatchId());
-            allocation.setLocationId(floor.get().getId());
-            allocation.setBatchUnitCost(unitCost);
-            allocation.setAllocatedCost(unitCost == null ? null : unitCost.multiply(baseQuantity));
-            allocation.setEvidenceLevel(BatchEvidenceLevel.RULE_ALLOCATED.name());
-            allocation.setAllocationRule(RULE_FLOOR_SINGLE_BATCH);
-            allocation.setAllocationRuleVersion(ALLOCATION_RULE_VERSION);
-            allocationRepository.save(allocation);
-            // 事实链最终确定后刷新订单行批次成本展示快照（仅 ACTUAL 口径写入，重跑幂等）
-            orderCostAllocationService.refreshOrderItemSnapshot(item.getId(), operatorId);
-            return true;
-        }
-
-        // 货架混批或货架无货/选择库房取货：结账绝不阻断，落 UNKNOWN 证据
-        OrderItemBatchAllocation allocation = baseAllocation(order, item, operatorId, baseQuantity);
-        allocation.setLocationId(floorCanFulfill ? floor.get().getId() : null);
-        allocation.setEvidenceLevel(BatchEvidenceLevel.UNKNOWN.name());
-        allocation = allocationRepository.save(allocation);
-
-        if (warehousePickup || !floorCanFulfill) {
-            Long requestId = savePendingRequest(order.getStoreId(), order.getId(), item, baseQuantity,
-                    resolveBackroomLocationId(order.getStoreId()), operatorId);
-            allocation.setPickupRequestId(requestId);
-            allocationRepository.save(allocation);
-        }
-        // 事实链最终确定后刷新订单行批次成本展示快照（UNKNOWN 证据不写，保持估算边界）
-        orderCostAllocationService.refreshOrderItemSnapshot(item.getId(), operatorId);
-        return true;
-    }
+    private final com.agri_system.domain.after_sales.repository.AfterSalesRepository afterSalesRepository;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     /** 货架无货或选择库房取货时创建后仓拣货请求。 */
     @Transactional(rollbackFor = Exception.class)
     public Long createRequest(Long orderId, Long orderItemId, Long sourceLocationId) {
+        OrderItem item = itemRepository.findByIdForUpdate(orderItemId)
+                .orElseThrow(() -> new IllegalArgumentException("订单明细不存在: " + orderItemId));
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("订单不存在: " + orderId));
-        OrderItem item = itemRepository.findById(orderItemId)
-                .orElseThrow(() -> new IllegalArgumentException("订单明细不存在: " + orderItemId));
         if (!orderId.equals(item.getOrderId())) {
             throw new IllegalArgumentException("订单明细与订单不匹配: " + orderItemId);
-        }
-        if (order.getStoreId() == null
-                || !batchBalanceService.isBatchLocationEnabled(order.getStoreId(), item.getProductId())) {
-            throw new IllegalStateException("该SKU未启用批次货位余额，不能创建库房取货请求");
         }
         if (pickupRequestRepository.findPendingByOrderItemId(orderItemId).isPresent()) {
             throw new IllegalStateException("该订单明细已有未完成的库房取货请求");
         }
-        if (hasFinalEvidence(allocationRepository.findByOrderItemId(orderItemId))) {
-            throw new IllegalStateException("该订单明细已有最终批次证据，不能重复创建取货请求");
+        List<OrderItemBatchAllocation> assigned = allocationRepository.findByOrderItemId(orderItemId);
+        if (assigned.isEmpty() || assigned.stream().anyMatch(a -> a.getSourceMovementId() == null)) {
+            throw new IllegalStateException("订单明细尚未实际出库，不能创建取货请求");
         }
         if (sourceLocationId != null && locationRepository.findById(sourceLocationId).isEmpty()) {
             throw new IllegalArgumentException("库存位置不存在: " + sourceLocationId);
@@ -159,13 +77,25 @@ public class PickupFulfillmentService {
         Long resolvedSource = sourceLocationId != null
                 ? sourceLocationId
                 : resolveBackroomLocationId(order.getStoreId());
-        return savePendingRequest(order.getStoreId(), orderId, item, toBaseQuantity(item), resolvedSource, null);
+        BigDecimal assignedQuantity = assigned.stream().map(OrderItemBatchAllocation::getAllocatedBaseQuantity)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertCanHandOver(order);
+        assertNotReturned(assigned);
+        if (assigned.stream().anyMatch(a -> a.getPickupRequestId() != null)) {
+            throw new IllegalStateException("出库分配已有取货请求，不能重复登记");
+        }
+        Long requestId = savePendingRequest(order.getStoreId(), orderId, item, assignedQuantity, resolvedSource, null);
+        for (OrderItemBatchAllocation allocation : assigned) {
+            allocation.setPickupRequestId(requestId);
+            allocationRepository.save(allocation);
+        }
+        return requestId;
     }
 
     /**
      * 查询门店取货工作项（管理端取货待办页用）。
      *
-     * <p>批量装配订单/商品/货位标签：固定 4 条查询，绝不按行回查。关联行缺失时标签字段为 null。</p>
+     * <p>批量装配订单/商品/货位标签：固定 6 条查询，绝不按行回查。关联行缺失时标签字段为 null。</p>
      */
     public List<PickupWorkItemVO> listPickupRequests(Long storeId, String status) {
         if (storeId == null) {
@@ -186,23 +116,25 @@ public class PickupFulfillmentService {
                 .filter(id -> id != null).collect(Collectors.toSet());
         Set<Long> productIds = requests.stream().map(OrderPickupRequest::getProductId)
                 .filter(id -> id != null).collect(Collectors.toSet());
-        Set<Long> locationIds = requests.stream().map(OrderPickupRequest::getSourceLocationId)
-                .filter(id -> id != null).collect(Collectors.toSet());
+        Map<Long, List<OrderItemBatchAllocation>> allocationsByRequest = allocationRepository.findByRequestIds(
+                requests.stream().map(OrderPickupRequest::getId).toList()).stream()
+                .collect(Collectors.groupingBy(OrderItemBatchAllocation::getPickupRequestId));
         Map<Long, Order> ordersById = orderRepository.findByIds(orderIds).stream()
                 .collect(Collectors.toMap(Order::getId, Function.identity(), (left, right) -> left));
         Map<Long, Product> productsById = productRepository.findByIds(productIds).stream()
                 .collect(Collectors.toMap(Product::getId, Function.identity(), (left, right) -> left));
         Map<Long, InventoryLocation> locationsById = locationRepository.findByStoreId(storeId).stream()
-                .filter(location -> locationIds.contains(location.getId()))
                 .collect(Collectors.toMap(InventoryLocation::getId, Function.identity(), (left, right) -> left));
+        Map<Long, InventoryReceiptBatch> batchesById = receiptBatchRepository.findByStore(storeId).stream()
+                .collect(Collectors.toMap(InventoryReceiptBatch::getId, Function.identity(), (left, right) -> left));
         return requests.stream()
-                .map(request -> toPickupWorkItem(request, ordersById, productsById, locationsById))
+                .map(request -> toPickupWorkItem(request, ordersById, productsById, locationsById, batchesById, allocationsByRequest.getOrDefault(request.getId(), List.of())))
                 .collect(Collectors.toList());
     }
 
     private PickupWorkItemVO toPickupWorkItem(OrderPickupRequest request, Map<Long, Order> ordersById,
                                               Map<Long, Product> productsById,
-                                              Map<Long, InventoryLocation> locationsById) {
+                                              Map<Long, InventoryLocation> locationsById, Map<Long, InventoryReceiptBatch> batchesById, List<OrderItemBatchAllocation> allocations) {
         PickupWorkItemVO vo = new PickupWorkItemVO();
         vo.setId(request.getId());
         vo.setOrderId(request.getOrderId());
@@ -220,132 +152,92 @@ public class PickupFulfillmentService {
         vo.setSourceLocationName(location == null ? null : location.getName());
         vo.setStatus(request.getStatus());
         vo.setCreatedAt(request.getCreatedAt());
+        vo.setAllocations(allocations.stream().map(allocation -> {
+            PickupWorkItemVO.AllocationVO line = new PickupWorkItemVO.AllocationVO();
+            line.setId(allocation.getId()); line.setBatchId(allocation.getBatchId());
+            InventoryReceiptBatch batch = batchesById.get(allocation.getBatchId());
+            line.setInternalReceiptBatchNo(batch == null ? null : batch.getInternalReceiptBatchNo());
+            line.setLocationId(allocation.getLocationId());
+            InventoryLocation actualLocation = locationsById.get(allocation.getLocationId());
+            line.setLocationName(actualLocation == null ? null : actualLocation.getName());
+            line.setAllocatedBaseQuantity(allocation.getAllocatedBaseQuantity());
+            return line;
+        }).toList());
         return vo;
     }
 
-    /**
-     * 拣货完成：扫描内部批次标签得到 SCANNED，显式确认批次与货位得到 FULFILLMENT_CONFIRMED，
-     * 通过 PICK 移动回填真实批次成本与移动事实。
-     */
+    /** 核对已出库分配并确认交货，永不再次扣库存。 */
     @Transactional(rollbackFor = Exception.class)
     public List<OrderItemBatchAllocation> fulfill(Long pickupRequestId, PickupFulfillmentCommand command,
                                                   Long operatorId) {
-        // 必须先锁请求行再锁订单明细行：请求行锁串行化同一请求的并发履约，明细行锁串行化同一明细上
-        // 不同请求的并发履约；此后普通读才能看到最新已提交的最终证据，最终证据校验才是安全的
         OrderPickupRequest request = pickupRequestRepository.findByIdForUpdate(pickupRequestId)
-                .orElseThrow(() -> new IllegalArgumentException("库房取货请求不存在: " + pickupRequestId));
-        if (!OrderPickupRequest.Status.PENDING.name().equals(request.getStatus())) {
-            throw new IllegalStateException("库房取货请求状态不允许拣货: " + request.getStatus());
+                .orElseThrow(() -> new IllegalArgumentException("库房取货请求不存在"));
+        if (!OrderPickupRequest.Status.PENDING.name().equals(request.getStatus())) throw new IllegalStateException("取货请求已完成");
+        OrderItem item = itemRepository.findByIdForUpdate(request.getOrderItemId()).orElseThrow();
+        if (!request.getOrderId().equals(item.getOrderId())) throw new IllegalStateException("取货请求与订单明细不一致");
+        List<OrderItemBatchAllocation> assigned = allocationRepository.findByOrderItemId(request.getOrderItemId());
+        if (assigned.isEmpty() || assigned.stream().anyMatch(a -> a.getSourceMovementId() == null)) throw new IllegalStateException("订单缺少实际出库记录");
+        assertCanHandOver(orderRepository.findById(request.getOrderId()).orElseThrow(() -> new IllegalStateException("订单不存在")));
+        assertNotReturned(assigned);
+        if (assigned.stream().anyMatch(a -> !request.getId().equals(a.getPickupRequestId())
+                || !request.getProductId().equals(a.getProductId()) || !request.getStoreId().equals(a.getStoreId()))) {
+            throw new IllegalStateException("出库分配的请求归属不一致");
         }
-        itemRepository.findByIdForUpdate(request.getOrderItemId())
-                .orElseThrow(() -> new IllegalStateException("订单明细不存在: " + request.getOrderItemId()));
-        if (hasFinalEvidence(allocationRepository.findByOrderItemId(request.getOrderItemId()))) {
-            throw new IllegalStateException("该订单明细已有最终批次证据，不能重复拣货");
-        }
-        if (command == null) {
-            throw new IllegalArgumentException("拣货命令不能为空");
-        }
-
-        Long sourceLocationId;
-        String evidenceLevel;
-        String allocationRule;
-        InventoryReceiptBatch batch;
-        if (StringUtils.hasText(command.getScannedCode())) {
-            // 仅内部批次标签或货位码可解析；仅表示 SKU 的 EAN/GS1 不产生批次证据
-            Optional<InventoryReceiptBatch> internalScanned = receiptBatchRepository
-                    .findByInternalReceiptBatchNo(command.getScannedCode());
-            if (internalScanned.isPresent()) {
-                batch = internalScanned.get();
-                sourceLocationId = request.getSourceLocationId() != null
-                        ? request.getSourceLocationId()
-                        : resolveBackroomLocationId(request.getStoreId());
-            } else {
-                // 非批次标签：按货位码解析；货位内必须恰好有一个可用批次，否则拒绝
-                InventoryLocation scannedLocation = locationRepository
-                        .findByStoreIdAndCode(request.getStoreId(), command.getScannedCode())
-                        .orElseThrow(() -> scanRejection(command.getScannedCode()));
-                List<Long> availableBatchIds = safeBalances(batchBalanceRepository
-                        .findByLocationAndProduct(scannedLocation.getId(), request.getProductId()))
-                        .stream()
-                        .filter(balance -> balance.availableBaseQuantity() != null
-                                && balance.availableBaseQuantity().compareTo(BigDecimal.ZERO) > 0)
-                        .map(InventoryBatchBalance::getBatchId)
-                        .distinct()
-                        .toList();
-                if (availableBatchIds.size() != 1) {
-                    throw scanRejection(command.getScannedCode());
-                }
-                batch = receiptBatchRepository.findById(availableBatchIds.get(0))
-                        .orElseThrow(() -> scanRejection(command.getScannedCode()));
-                sourceLocationId = scannedLocation.getId();
+        BigDecimal allocatedQuantity = assigned.stream().map(OrderItemBatchAllocation::getAllocatedBaseQuantity)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (allocatedQuantity.compareTo(request.getRequestedBaseQuantity()) != 0) throw new IllegalStateException("请求数量与实际出库记录不一致");
+        if (command == null) throw new IllegalArgumentException("取货确认不能为空");
+        boolean scanned = StringUtils.hasText(command.getScannedCode());
+        if (command.getAllocationIds() != null) {
+            List<Long> confirmed = command.getAllocationIds();
+            Set<Long> confirmedIds = new java.util.HashSet<>(confirmed);
+            Set<Long> assignedIds = assigned.stream().map(OrderItemBatchAllocation::getId).collect(Collectors.toSet());
+            if (scanned || command.getBatchId() != null || command.getLocationId() != null
+                    || confirmedIds.size() != confirmed.size() || !confirmedIds.equals(assignedIds)) {
+                throw new IllegalArgumentException("请完整核对本请求全部出库分配，不允许遗漏、重复或混入其他请求");
             }
-            evidenceLevel = BatchEvidenceLevel.SCANNED.name();
-            allocationRule = RULE_PICK_SCAN;
         } else {
-            if (command.getBatchId() == null) {
-                throw new IllegalArgumentException("必须扫描内部批次标签或明确指定批次与货位");
+            Long confirmedBatch = command.getBatchId();
+            if (scanned) {
+                confirmedBatch = receiptBatchRepository.findByInternalReceiptBatchNo(command.getScannedCode().trim())
+                        .orElseThrow(() -> new IllegalArgumentException("扫描码不能解析为内部批次标签，仅表示SKU的条码不产生批次证据: " + command.getScannedCode())).getId();
             }
-            batch = receiptBatchRepository.findById(command.getBatchId())
-                    .orElseThrow(() -> new IllegalArgumentException("批次不存在: " + command.getBatchId()));
-            sourceLocationId = command.getLocationId() != null
-                    ? command.getLocationId()
-                    : request.getSourceLocationId();
-            if (sourceLocationId == null) {
-                throw new IllegalArgumentException("必须明确指定拣货货位");
+            if (confirmedBatch == null) throw new IllegalArgumentException("必须核对出库批次");
+            final Long actualBatch = confirmedBatch;
+            if (assigned.stream().anyMatch(a -> !actualBatch.equals(a.getBatchId())
+                    || (command.getLocationId() != null && !command.getLocationId().equals(a.getLocationId())))) {
+                throw new IllegalArgumentException("取货批次与已出库记录不一致，请逐项完整核对所有出库分配");
             }
-            locationRepository.findById(sourceLocationId)
-                    .orElseThrow(() -> new IllegalArgumentException("库存位置不存在: " + sourceLocationId));
-            evidenceLevel = BatchEvidenceLevel.FULFILLMENT_CONFIRMED.name();
-            allocationRule = RULE_PICK_CONFIRM;
         }
-        if (!batch.getProductId().equals(request.getProductId())) {
-            throw new IllegalArgumentException("批次商品与订单明细不一致，批次ID: " + batch.getId());
+        for (OrderItemBatchAllocation allocation : assigned) {
+            allocation.setEvidenceLevel(scanned ? "SCANNED" : "FULFILLMENT_CONFIRMED");
+            allocationRepository.save(allocation);
         }
-        if (sourceLocationId == null) {
-            throw new IllegalArgumentException("门店未配置库房货位，无法完成库房取货");
-        }
-
-        InventoryLocation floor = salesFloor(request.getStoreId())
-                .orElseThrow(() -> new IllegalStateException("门店未配置销售货位，无法完成库房取货"));
-        BigDecimal baseQuantity = request.getRequestedBaseQuantity();
-        BigDecimal unitCost = batch.getBaseUnitCost();
-        InventoryMovement movement = batchBalanceService.move(new BatchBalanceService.MoveRequest(
-                batch.getId(), sourceLocationId, floor.getId(), BatchBalanceService.MovementPurpose.PICK,
-                null, batch.getOriginalUnitId(), batch.getOriginalUnitName(),
-                pickedOriginalQuantity(batch, baseQuantity), baseQuantity, unitCost,
-                "PICKUP_REQUEST", pickupRequestId, operatorId, "库房取货履约", null,
-                "PICK:" + pickupRequestId + ":" + batch.getId() + ":" + sourceLocationId));
-
-        List<OrderItemBatchAllocation> existing = allocationRepository.findByOrderItemId(request.getOrderItemId());
-        OrderItemBatchAllocation allocation = existing.isEmpty() ? new OrderItemBatchAllocation() : existing.get(0);
-        if (existing.isEmpty()) {
-            allocation.setOrderItemId(request.getOrderItemId());
-            allocation.setProductId(request.getProductId());
-            allocation.setStoreId(request.getStoreId());
-            allocation.setCreatedAt(LocalDateTime.now());
-            allocation.setCreatedBy(operatorId);
-        }
-        allocation.setBatchId(batch.getId());
-        allocation.setLocationId(floor.getId());
-        allocation.setPickupRequestId(pickupRequestId);
-        allocation.setAllocatedBaseQuantity(baseQuantity);
-        allocation.setBatchUnitCost(unitCost);
-        allocation.setAllocatedCost(unitCost == null ? null : unitCost.multiply(baseQuantity));
-        allocation.setEvidenceLevel(evidenceLevel);
-        allocation.setAllocationRule(allocationRule);
-        allocation.setAllocationRuleVersion(ALLOCATION_RULE_VERSION);
-        allocation.setSourceMovementId(movement.getId());
-        allocationRepository.save(allocation);
-
         request.setStatus(OrderPickupRequest.Status.FULFILLED.name());
-        request.setFulfilledAt(LocalDateTime.now());
-        request.setFulfilledBy(operatorId);
+        request.setFulfilledAt(LocalDateTime.now()); request.setFulfilledBy(operatorId);
         pickupRequestRepository.save(request);
+        return assigned;
+    }
 
-        // 归属事实最终确定后刷新订单行批次成本展示快照（base_unit_id/base_quantity/unit_cost）
-        orderCostAllocationService.refreshOrderItemSnapshot(request.getOrderItemId(), operatorId);
+    /** 锁原订单行后再用 current read 查已回库流水，不能受旧的 REPEATABLE READ 快照影响。 */
+    private void assertNotReturned(List<OrderItemBatchAllocation> assigned) {
+        List<Long> ids = assigned.stream().map(OrderItemBatchAllocation::getId).toList();
+        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        List<Long> returned = jdbc.queryForList("SELECT id FROM inventory_movement WHERE movement_type='RETURN' "
+                + "AND reference_type='SALE_ALLOCATION' AND reference_id IN (" + placeholders + ") FOR UPDATE",
+                Long.class, ids.toArray());
+        if (!returned.isEmpty()) throw new IllegalStateException("原销售商品已经回库，不能再次交货");
+    }
 
-        return List.of(allocation);
+    private void assertCanHandOver(Order order) {
+        if (order.getOrderStatus() == null || !Set.of(2, 3, 4, 5, 6).contains(order.getOrderStatus())) {
+            throw new IllegalStateException("订单未支付、已取消或退款，不能继续取货交付");
+        }
+        if (afterSalesRepository.findByOrderId(order.getId()).stream()
+                .anyMatch(afterSales -> !Integer.valueOf(com.agri_system.domain.after_sales.model.AfterSales.STATUS_REJECTED)
+                        .equals(afterSales.getStatus()))) {
+            throw new IllegalStateException("订单已有退货或售后申请，不能继续取货交付");
+        }
     }
 
     private Long savePendingRequest(Long storeId, Long orderId, OrderItem item, BigDecimal baseQuantity,
@@ -363,38 +255,6 @@ public class PickupFulfillmentService {
         return pickupRequestRepository.save(request).getId();
     }
 
-    private OrderItemBatchAllocation baseAllocation(Order order, OrderItem item, Long operatorId,
-                                                    BigDecimal baseQuantity) {
-        OrderItemBatchAllocation allocation = new OrderItemBatchAllocation();
-        allocation.setOrderItemId(item.getId());
-        allocation.setProductId(item.getProductId());
-        allocation.setStoreId(order.getStoreId());
-        allocation.setAllocatedBaseQuantity(baseQuantity);
-        allocation.setCreatedAt(LocalDateTime.now());
-        allocation.setCreatedBy(operatorId);
-        return allocation;
-    }
-
-    private BigDecimal toBaseQuantity(OrderItem item) {
-        UnitConversionSnapshot snapshot = productUnitService.toBaseQuantity(
-                item.getProductId(), item.getUnit(), item.getQuantity());
-        return snapshot.baseQuantity();
-    }
-
-    private BigDecimal pickedOriginalQuantity(InventoryReceiptBatch batch, BigDecimal baseQuantity) {
-        if (batch.getOriginalQuantity() == null || batch.getBaseQuantity() == null
-                || batch.getBaseQuantity().compareTo(BigDecimal.ZERO) == 0) {
-            return baseQuantity;
-        }
-        return batch.getOriginalQuantity().multiply(baseQuantity)
-                .divide(batch.getBaseQuantity(), 8, RoundingMode.HALF_UP);
-    }
-
-    private Optional<InventoryLocation> salesFloor(Long storeId) {
-        return locationRepository.findEnabledByStoreAndType(storeId,
-                InventoryLocation.LocationType.SALES_FLOOR.name());
-    }
-
     private Long resolveBackroomLocationId(Long storeId) {
         return locationRepository.findEnabledByStoreAndType(storeId,
                         InventoryLocation.LocationType.STORE_BACKROOM.name())
@@ -402,19 +262,4 @@ public class PickupFulfillmentService {
                 .orElse(null);
     }
 
-    private List<InventoryBatchBalance> safeBalances(List<InventoryBatchBalance> balances) {
-        return balances == null ? List.of() : balances;
-    }
-
-    private boolean hasFinalEvidence(List<OrderItemBatchAllocation> allocations) {
-        return allocations.stream()
-                .map(OrderItemBatchAllocation::getEvidenceLevel)
-                .anyMatch(level -> BatchEvidenceLevel.SCANNED.name().equals(level)
-                        || BatchEvidenceLevel.FULFILLMENT_CONFIRMED.name().equals(level));
-    }
-
-    private IllegalArgumentException scanRejection(String scannedCode) {
-        return new IllegalArgumentException(
-                "扫描码不能解析为内部批次标签，仅表示SKU的条码不产生批次证据: " + scannedCode);
-    }
 }
