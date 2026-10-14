@@ -87,8 +87,19 @@ class OrderRefundFlowTest {
     @InjectMocks
     private OrderApplicationService orderService;
 
+    @org.junit.jupiter.api.BeforeEach
+    void cashFundingResultForExistingReturnFlow() {
+        org.mockito.Mockito.lenient().when(paymentService.refund(any(),any(),any())).thenAnswer(i->new OrderPaymentService.RefundResult(i.getArgument(1),BigDecimal.ZERO));
+        // 此组只验证订单编排；真实资金守恒与拒绝未知来源由RefundFundingConservationTest覆盖。
+        org.mockito.Mockito.lenient().when(paymentService.previewRefund(any(),any())).thenAnswer(i->{
+            Order order=i.getArgument(0);BigDecimal amount=i.getArgument(1);
+            return new OrderPaymentService.RefundFundingPreview(amount,BigDecimal.ZERO,amount,BigDecimal.ZERO,order.getPayAmount(),false,"cash-funding",List.of());
+        });
+    }
+
     @Test
     void refundOrderShouldSupportPartialRefundWithItemDetails() {
+
         Order order = new Order();
         order.setId(10L);
         order.setStoreId(2L);
@@ -127,6 +138,7 @@ class OrderRefundFlowTest {
         when(afterSalesRepository.findByOrderId(10L)).thenReturn(List.of());
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
+        command.setQuoteId(confirmedQuote(command));
         orderService.refundOrder(command, 7L);
         ArgumentCaptor<List<com.agri_system.domain.after_sales.model.AfterSalesItem>> facts = ArgumentCaptor.forClass(List.class);
         verify(afterSalesItemRepository).saveBatch(facts.capture());
@@ -169,9 +181,10 @@ class OrderRefundFlowTest {
         OrderRefundCommand.RefundItem requested = new OrderRefundCommand.RefundItem(); requested.setOrderItemId(101L);
         requested.setQuantity(BigDecimal.ONE); requested.setRefundAmount(new BigDecimal("0.00")); command.setItems(List.of(requested));
 
+        command.setQuoteId(confirmedQuote(command));
         orderService.refundOrder(command,7L);
 
-        org.mockito.Mockito.verifyNoInteractions(paymentService);
+        verify(paymentService).refund(eq(order),eq(new BigDecimal("0.00")),eq(7L));
         verify(inventoryService).inbound(any(),eq(7L));
         ArgumentCaptor<List<com.agri_system.domain.after_sales.model.AfterSalesItem>> facts = ArgumentCaptor.forClass(List.class);
         verify(afterSalesItemRepository).saveBatch(facts.capture());
@@ -182,4 +195,12 @@ class OrderRefundFlowTest {
         assertEquals("AFTER_SALES:300",event.getValue().refundKey());
     }
 
+    private String confirmedQuote(OrderRefundCommand command) {
+        var request=new com.agri_system.application.order.dto.command.OrderRefundPreviewCommand();
+        request.setItems(command.getItems().stream().map(i->{
+            var row=new com.agri_system.application.order.dto.command.OrderRefundPreviewCommand.Item();
+            row.setOrderItemId(i.getOrderItemId());row.setQuantity(i.getQuantity());row.setRefundAmount(i.getRefundAmount());return row;
+        }).toList());
+        return orderService.previewRefund(command.getOrderId(),request).quoteId();
+    }
 }

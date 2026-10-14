@@ -402,28 +402,32 @@ test('编辑独立套餐价，加载单品资料不得覆盖已保存每套价�
   assert.equal(page.formData.suggestedRetailPrice, 80)
 })
 
-test('套餐物料全部退完剩余数量时，退款必须包含金额尾差', () => {
+test('套餐物料退完时采用后端含尾差的冲销金额', async () => {
   const page = loadPage('src/views/order/components/RefundDialog.vue', ['form', 'calculateRefundAmount'], {
-    defineProps: () => ({ order: { id: 1, orderStatus: 5 } })
+    defineProps: () => ({ modelValue: true, order: { id: 1, orderStatus: 5 } }),
+    getRefundPreview: async (_id, data) => ({quoteId: '服务端尾差预览', orderId: 1, refundAmount: data.items[0].quantity === 3 ? 1 : 0.34,
+      items: [{...data.items[0], refundAmount: data.items[0].quantity === 3 ? 1 : 0.34}], creditReductionAmount: 0, cashRefundAmount: data.items[0].quantity === 3 ? 1 : 0.34})
   })
   page.form.items = [{ orderItemId: 11, productName: '套餐物料', quantity: 3,
     refundedQuantity: 0, refundableQuantity: 3, unit: '袋', unitPrice: 0.33,
     refundedAmount: 0, refundableAmount: 1, totalPrice: 1, packageGroupNo: 1,
     returnQuantity: 3, refundAmount: 0 }]
-  page.calculateRefundAmount()
+  await page.calculateRefundAmount()
   assert.equal(page.form.items[0].refundAmount, 1)
   assert.equal(page.form.refundAmount, 1)
 })
 
-test('套餐物料部分退货按历史金额比例，连续退货不丢失尾差', () => {
+test('套餐物料部分退货采用后端累计份额，保留尾差', async () => {
   const page = loadPage('src/views/order/components/RefundDialog.vue', ['form', 'calculateRefundAmount'], {
-    defineProps: () => ({ order: { id: 1, orderStatus: 5 } })
+    defineProps: () => ({ modelValue: true, order: { id: 1, orderStatus: 5 } }),
+    getRefundPreview: async (_id, data) => ({quoteId: '服务端尾差预览', orderId: 1, refundAmount: data.items[0].quantity === 3 ? 1 : 0.34,
+      items: [{...data.items[0], refundAmount: data.items[0].quantity === 3 ? 1 : 0.34}], creditReductionAmount: 0, cashRefundAmount: data.items[0].quantity === 3 ? 1 : 0.34})
   })
   page.form.items = [{ orderItemId: 11, productName: '套餐物料', quantity: 3,
     refundedQuantity: 1, refundableQuantity: 2, unit: '袋', unitPrice: 0.33,
     refundedAmount: 0.33, refundableAmount: 0.67, totalPrice: 1, packageGroupNo: 1,
     returnQuantity: 1, refundAmount: 0 }]
-  page.calculateRefundAmount()
+  await page.calculateRefundAmount()
   assert.equal(page.form.items[0].refundAmount, 0.34)
 })
 
@@ -525,9 +529,11 @@ test('套餐数量变化事件必须触发后端预览，预览失败立即阻�
   assert.equal(pos.checkoutVisible.value, false)
 })
 
-test('套餐含整单优惠时，物料分次退款按净可退0.90元分配，不退回原成交1元', () => {
+test('套餐含整单优惠时，物料分次退款使用后端净份额0.90元，不退回原成交1元', async () => {
   const page = loadPage('src/views/order/components/RefundDialog.vue', ['form', 'calculateRefundAmount'], {
-    defineProps: () => ({ order: { id: 1, orderStatus: 5 } })
+    defineProps: () => ({ modelValue: true, order: { id: 1, orderStatus: 5 } }),
+    getRefundPreview: async (_id, data) => ({quoteId: '净份额预览', orderId: 1, refundAmount: 0.3, creditReductionAmount: 0, cashRefundAmount: 0.3,
+      items: [{...data.items[0], refundAmount: 0.3}]})
   })
   let total = 0
   for (let returned = 0; returned < 3; returned++) {
@@ -536,7 +542,7 @@ test('套餐含整单优惠时，物料分次退款按净可退0.90元分配，�
       refundedAmount: Math.round(returned * 0.3 * 100) / 100,
       refundableAmount: Math.round((0.9 - returned * 0.3) * 100) / 100,
       totalPrice: 1, packageGroupNo: 1, returnQuantity: 1, refundAmount: 0 }]
-    page.calculateRefundAmount()
+    await page.calculateRefundAmount()
     assert.equal(page.form.items[0].refundAmount, 0.3)
     total += page.form.refundAmount
   }
@@ -548,7 +554,9 @@ test('现金已退完的状态8订单，可选择剩余零金额物料退货，�
   const page = loadPage('src/views/order/components/RefundDialog.vue', [
     'form', 'formRef', 'rules', 'loadOrderDetail', 'calculateRefundAmount', 'handleSubmit'
   ], {
-    defineProps: () => ({ order: { id: 1, orderStatus: 8 } }),
+    defineProps: () => ({ modelValue: true, order: { id: 1, orderStatus: 8 } }),
+    getRefundPreview: async (_id, data) => ({quoteId: '零金额退货', orderId: 1, refundAmount: 0, creditReductionAmount: 0, cashRefundAmount: 0,
+      items: [{...data.items[0], refundAmount: 0}]}),
     getOrderDetail: async () => ({ id: 1, orderStatus: 8, items: [
       { id: 11, productName: '未退赠品', quantity: 1, refundedQuantity: 0, refundableQuantity: 1,
         unit: '袋', unitPrice: 0, totalPrice: 0, refundedAmount: 0, refundableAmount: 0, packageGroupNo: 1 },
@@ -562,10 +570,7 @@ test('现金已退完的状态8订单，可选择剩余零金额物料退货，�
   assert.equal(page.form.items[0].orderItemId, 11)
   page.form.items[0].returnQuantity = 1
   page.form.reason = '赠品一并退回'
-  page.calculateRefundAmount()
-  let validationError
-  page.rules.refundAmount[1].validator(null, page.form.refundAmount, error => { validationError = error })
-  assert.equal(validationError, undefined)
+  await page.calculateRefundAmount()
   page.formRef.value = { validate: async callback => callback(true), clearValidate() {} }
   await page.handleSubmit()
   assert.equal(submissions.length, 1)
@@ -591,7 +596,9 @@ test('套餐物料3件净可退1分，逐件退货允许零现金并累计只退
   const page = loadPage('src/views/order/components/RefundDialog.vue', [
     'form', 'formRef', 'rules', 'loadOrderDetail', 'calculateRefundAmount', 'handleSubmit'
   ], {
-    defineProps: () => ({ order }),
+    defineProps: () => ({ modelValue: true, order }),
+    getRefundPreview: async (_id, data) => ({quoteId: '分次净份额-' + returnedQuantity, orderId: 1, refundAmount: [0, 0.01, 0][returnedQuantity],
+      creditReductionAmount: 0, cashRefundAmount: [0, 0.01, 0][returnedQuantity], items: [{...data.items[0], refundAmount: [0, 0.01, 0][returnedQuantity]}]}),
     getOrderDetail: async () => ({ id: 1, orderStatus: order.orderStatus, items: [
       { id: 11, productName: '套餐低金额物料', quantity: 3, refundedQuantity: returnedQuantity,
         refundableQuantity: 3 - returnedQuantity, unit: '袋', unitPrice: 0.003333333333,
@@ -606,11 +613,8 @@ test('套餐物料3件净可退1分，逐件退货允许零现金并累计只退
     assert.equal(page.form.items.length, 1)
     page.form.items[0].returnQuantity = 1
     page.form.reason = '套餐物料逐件退回'
-    page.calculateRefundAmount()
+    await page.calculateRefundAmount()
     assert.equal(page.form.refundAmount, expectedRefund)
-    let validationError
-    page.rules.refundAmount[1].validator(null, page.form.refundAmount, error => { validationError = error })
-    assert.equal(validationError, undefined)
     page.formRef.value = { validate: async callback => callback(true), clearValidate() {} }
     await page.handleSubmit()
     const submission = submissions.at(-1)

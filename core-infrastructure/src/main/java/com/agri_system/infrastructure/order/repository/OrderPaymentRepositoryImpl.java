@@ -23,6 +23,7 @@ public class OrderPaymentRepositoryImpl implements OrderPaymentRepository {
     @Override
     public OrderPayment save(OrderPayment payment) {
         if (payment.getId() == null) {
+            payment.setRefundedAmount(java.math.BigDecimal.ZERO.setScale(2));
             mapper.insert(payment);
         } else {
             mapper.update(payment);
@@ -44,6 +45,12 @@ public class OrderPaymentRepositoryImpl implements OrderPaymentRepository {
                         .where("order_id = ?", orderId)
                         .orderBy("created_at", true)
         );
+    }
+
+    @Override
+    public List<OrderPayment> findByOrderIdForUpdate(Long orderId) {
+        return mapper.selectListByQuery(com.mybatisflex.core.query.QueryWrapper.create()
+                .where("order_id = ?", orderId).orderBy("created_at DESC", "id DESC").forUpdate());
     }
 
     @Override

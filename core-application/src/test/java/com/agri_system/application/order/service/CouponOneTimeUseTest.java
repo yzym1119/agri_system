@@ -48,6 +48,9 @@ class CouponOneTimeUseTest {
     @Mock
     private ProductRepository productRepository;
 
+    @Mock
+    private com.agri_system.domain.order.repository.OrderRepository orderRepository;
+
     @InjectMocks
     private OrderPaymentService paymentService;
     

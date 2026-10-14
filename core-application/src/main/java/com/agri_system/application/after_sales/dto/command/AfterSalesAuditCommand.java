@@ -11,7 +11,7 @@ import lombok.Data;
 @Schema(description = "售后审核命令")
 public class AfterSalesAuditCommand {
 
-    @NotNull(message = "售后单ID不能为空")
+    @Schema(description = "由请求地址的售后单编号填入", accessMode = Schema.AccessMode.READ_ONLY)
     private Long afterSalesId;
 
     @NotNull(message = "审核结果不能为空")

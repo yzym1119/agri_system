@@ -55,7 +55,7 @@ public class OrderPageVO {
     @Schema(description = "优惠券金额", example = "10.00")
     private BigDecimal couponAmount;
     
-    @Schema(description = "实付金额", example = "990.00")
+    @Schema(description = "净应结算额（含赊销）", example = "990.00")
     private BigDecimal payAmount;
 
     @Schema(description = "已收金额（不含赊销）", example = "690.00")
@@ -63,6 +63,11 @@ public class OrderPageVO {
 
     @Schema(description = "赊销金额", example = "300.00")
     private BigDecimal creditAmount;
+    private BigDecimal creditReductionAmount;
+    private BigDecimal cashRefundedAmount;
+    private BigDecimal remainingCreditAmount;
+    private BigDecimal repaidAmount;
+
     
     @Schema(description = "主支付方式", example = "1")
     private Integer paymentMethod;

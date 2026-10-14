@@ -4,18 +4,20 @@
     :title="dialogTitle"
     width="700px"
     :close-on-click-modal="false"
+    :close-on-press-escape="!submitting && !validating"
+    :show-close="!submitting && !validating"
     @close="handleClose"
   >
-    <div v-if="order" style="margin-bottom: 20px">
+    <div v-if="displayOrder" style="margin-bottom: 20px">
       <el-descriptions :column="2" border size="small">
-        <el-descriptions-item label="订单号">{{ order.orderNo }}</el-descriptions-item>
+        <el-descriptions-item label="订单号">{{ displayOrder.orderNo }}</el-descriptions-item>
         <el-descriptions-item label="应收净额">¥{{ formatMoney(orderPaymentSummary.netReceivable) }}</el-descriptions-item>
-        <el-descriptions-item label="客户">{{ order.customerName || '散客' }}</el-descriptions-item>
-        <el-descriptions-item label="下单时间">{{ formatDateTime(order.createdAt) }}</el-descriptions-item>
+        <el-descriptions-item label="客户">{{ displayOrder.customerName || '散客' }}</el-descriptions-item>
+        <el-descriptions-item label="下单时间">{{ formatDateTime(displayOrder.createdAt) }}</el-descriptions-item>
       </el-descriptions>
     </div>
 
-    <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
+    <el-form v-loading="detailsLoading" ref="formRef" :model="form" :rules="rules" label-width="120px">
       <!-- 商品列表 -->
       <el-form-item :label="itemSectionLabel" required>
         <el-table :data="form.items" border style="width: 100%">
@@ -45,8 +47,9 @@
                 v-model="form.items[$index].returnQuantity"
                 :min="0"
                 :max="row.refundableQuantity"
-                :precision="Number.isInteger(row.refundableQuantity) ? 0 : 4"
-                :step="Number.isInteger(row.refundableQuantity) ? 1 : 0.01"
+                :disabled="submitting || validating || detailsLoading || !!pendingFormalRequest"
+                :precision="4"
+                :step="0.01"
                 style="width: 100%"
                 @change="calculateRefundAmount"
               />
@@ -60,26 +63,36 @@
         </el-table>
       </el-form-item>
 
-      <!-- 退款金额 -->
-      <el-form-item label="退款金额" prop="refundAmount">
-        <el-input-number
-          v-model="form.refundAmount"
-          :min="0"
-          :max="maxRefundAmount"
-          :precision="2"
-          :step="0.01"
-          style="width: 100%"
-          placeholder="请输入退款金额"
-        />
-        <div style="font-size: 12px; color: #909399; margin-top: 4px">
-          最大可退：¥{{ formatMoney(maxRefundAmount) }}
-        </div>
-      </el-form-item>
+      <el-alert v-if="pendingFormalRequest" title="本次退货结果尚未确认，请按原请求核对。系统不会换新报价再次退货。" type="warning" :closable="false" style="margin-bottom: 16px" />
+      <el-table v-if="completedAfterSales.length" :data="completedAfterSales" border size="small" style="margin-bottom: 16px">
+        <el-table-column prop="afterSalesNo" label="已完成退货" />
+        <el-table-column label="成交冲销"><template #default="{ row }">¥{{ formatMoney(row.refundAmount) }}</template></el-table-column>
+        <el-table-column label="冲欠款"><template #default="{ row }">{{ row.creditReductionAmount == null ? '待核对' : '¥' + formatMoney(row.creditReductionAmount) }}</template></el-table-column>
+        <el-table-column label="退已收款"><template #default="{ row }">{{ row.cashRefundAmount == null ? '待核对' : '¥' + formatMoney(row.cashRefundAmount) }}</template></el-table-column>
+      </el-table>
+      <el-alert v-if="previewError" :title="previewError" type="error" :closable="false" style="margin-bottom: 16px" />
+      <div v-loading="previewLoading" style="width: 100%; margin-bottom: 20px">
+        <el-descriptions v-if="refundPreview" :column="2" border size="small">
+          <el-descriptions-item label="本次成交冲销">¥{{ formatMoney(refundPreview.refundAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="本次冲欠款">¥{{ formatMoney(refundPreview.creditReductionAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="本次退已收款">¥{{ formatMoney(refundPreview.cashRefundAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="原单当前欠款">¥{{ formatMoney(refundPreview.remainingDebt) }}</el-descriptions-item>
+        </el-descriptions>
+        <div v-else class="preview-hint">选择退货数量后，系统核对原单欠款和已收资金。</div>
+        <div v-if="refundPreview" class="preview-hint">退已收款包括现金、原支付和已分配到此单的还款，不会退回其他订单资金。</div>
+        <el-table v-if="refundPreview?.sources?.length" :data="refundPreview.sources" border size="small" style="margin-top: 10px">
+          <el-table-column prop="paymentMethodName" label="原收款来源" />
+          <el-table-column label="本次退回" align="right"><template #default="{ row }">¥{{ formatMoney(row.amount) }}</template></el-table-column>
+          <el-table-column label="退款前可退" align="right"><template #default="{ row }">¥{{ formatMoney(row.refundableAmount) }}</template></el-table-column>
+        </el-table>
+        <el-button v-if="previewError" text type="primary" :loading="previewLoading" @click="calculateRefundAmount">重新核对金额</el-button>
+      </div>
 
       <!-- 退货原因 -->
       <el-form-item :label="reasonLabel" prop="reason">
         <el-input
           v-model="form.reason"
+          :disabled="submitting || validating || !!pendingFormalRequest"
           type="textarea"
           :rows="3"
           :placeholder="reasonPlaceholder"
@@ -90,20 +103,21 @@
     </el-form>
 
     <template #footer>
-      <el-button @click="handleClose">取消</el-button>
-      <el-button type="primary" :loading="submitting" @click="handleSubmit">确定</el-button>
+      <el-button :disabled="submitting || validating" @click="handleClose">取消</el-button>
+      <el-button type="primary" :loading="submitting || validating" :disabled="previewLoading || detailsLoading || (!refundPreview && !pendingFormalRequest) || !!(pendingFormalRequest && pendingFormalRequest.data.orderId !== props.order?.id)" @click="handleSubmit">{{ pendingFormalRequest ? '核对本次退货' : '确定' }}</el-button>
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
 import {computed, reactive, ref, watch} from 'vue'
+import {useUserStore} from '@/store/user'
 import type {FormInstance, FormRules} from 'element-plus'
 import {ElMessage} from 'element-plus'
 import {createAfterSales} from '@/api/afterSales'
-import {getOrderDetail, refundOrder} from '@/api/order'
+import {getOrderDetail, getRefundPreview, refundOrder} from '@/api/order'
 import {getOrderPaymentSummary} from '@/utils/orderPayment'
-import type {OrderBase, OrderDetail} from '@/types/order'
+import type {OrderBase, OrderDetail, RefundPreview} from '@/types/order'
 
 interface Props {
   modelValue: boolean
@@ -121,7 +135,35 @@ const emit = defineEmits<Emits>()
 const dialogVisible = ref(false)
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
+const validating = ref(false)
 const orderDetail = ref<OrderDetail | null>(null)
+const userStore = useUserStore()
+interface RefundSubmission {
+  direct: boolean
+  operatorId?: number
+  order: OrderBase
+  displayItems: RefundItem[]
+  preview: RefundPreview
+  data: {orderId: number; quoteId: string; refundAmount: number; refundReason: string;
+    items: Array<{orderItemId: number; quantity: number; refundAmount: number}>}
+}
+const pendingFormalRequest = ref<RefundSubmission | null>(null)
+const displayOrder = computed(() => pendingFormalRequest.value?.order ?? props.order)
+const completedAfterSales = computed(() => (orderDetail.value?.afterSalesList || []).filter(row => row.status === 50))
+const definiteBusinessRejection = (error: any) => {
+  const code = Number(error?.apiBusinessCode)
+  return code === 10001 || (code >= 400 && code < 500) || String(error?.message || '').startsWith('REFUND_QUOTE_STALE')
+}
+const detailsLoading = ref(false)
+const refundPreview = ref<RefundPreview | null>(null)
+const previewLoading = ref(false)
+const previewError = ref('')
+let previewVersion = 0
+let detailVersion = 0
+let dialogSessionVersion = 0
+let previewSignature = ''
+const selectionSignature = () => JSON.stringify({orderId: props.order?.id,
+  items: form.items.filter(item => item.returnQuantity > 0).map(item => ({orderItemId: item.orderItemId, quantity: item.returnQuantity}))})
 
 interface RefundItem {
   orderItemId: number
@@ -155,33 +197,12 @@ const useDirectRefund = computed(() => directRefundStatuses.includes(Number(prop
 const dialogTitle = computed(() => useDirectRefund.value ? '订单退款' : '退货退款')
 const itemSectionLabel = computed(() => useDirectRefund.value ? '退款商品' : '退货商品')
 const quantityColumnLabel = computed(() => useDirectRefund.value ? '退款数量' : '退货数量')
-const amountColumnLabel = computed(() => useDirectRefund.value ? '退款金额' : '退货金额')
+const amountColumnLabel = computed(() => '成交冲销')
 const reasonLabel = computed(() => useDirectRefund.value ? '退款原因' : '退货原因')
 const reasonPlaceholder = computed(() => useDirectRefund.value ? '请输入退款原因' : '请输入退货原因')
-const orderPaymentSummary = computed(() => getOrderPaymentSummary(props.order))
-
-const maxRefundAmount = computed(() => {
-  return form.items.reduce((sum, item) => sum + Number(item.refundableAmount || 0), 0)
-})
+const orderPaymentSummary = computed(() => getOrderPaymentSummary(displayOrder.value))
 
 const rules = reactive<FormRules>({
-  refundAmount: [
-    { required: true, message: '请输入退款金额', trigger: 'blur' },
-    {
-      validator: (rule, value, callback) => {
-        const selectedItems = form.items.filter(item => item.returnQuantity > 0)
-        const onlyZeroAmountReturns = selectedItems.length > 0 && selectedItems.every(item => item.refundAmount === 0)
-        if (value < 0 || (value === 0 && !onlyZeroAmountReturns)) {
-          callback(new Error('请先选择退货商品，退款金额不能小于0'))
-        } else if (value > maxRefundAmount.value) {
-          callback(new Error(`退款金额不能超过${formatMoney(maxRefundAmount.value)}`))
-        } else {
-          callback()
-        }
-      },
-      trigger: 'blur'
-    }
-  ],
   reason: [
     {
       validator: (rule, value, callback) => {
@@ -197,11 +218,17 @@ const rules = reactive<FormRules>({
 })
 
 watch(
-  () => props.modelValue,
-  (val) => {
+  () => [props.modelValue, props.order?.id] as const,
+  ([val]) => {
+    ++dialogSessionVersion
     dialogVisible.value = val
     if (val && props.order) {
-      loadOrderDetail()
+      resetForm()
+      if (pendingFormalRequest.value) {
+        if (pendingFormalRequest.value.data.orderId !== props.order.id) previewError.value = '上一订单退货结果尚待核对，请返回原订单；当前不能发起另一笔退货'
+        return
+      }
+      void loadOrderDetail()
     } else {
       resetForm()
     }
@@ -214,9 +241,13 @@ watch(dialogVisible, (val) => {
 
 const loadOrderDetail = async () => {
   if (!props.order?.id) return
-
+  const orderId = props.order.id
+  const version = ++detailVersion
+  detailsLoading.value = true
   try {
-    orderDetail.value = await getOrderDetail(props.order.id)
+    const detail = await getOrderDetail(orderId)
+    if (version !== detailVersion || !props.modelValue || props.order?.id !== orderId) return
+    orderDetail.value = detail
     if (orderDetail.value && orderDetail.value.items) {
       // 使用 reactive 确保响应式
       form.items = orderDetail.value.items
@@ -243,11 +274,29 @@ const loadOrderDetail = async () => {
     }
   } catch (error) {
     console.error('加载订单详情失败:', error)
-    ElMessage.error((error as any)?.message || '加载订单详情失败')
+    if (version === detailVersion) ElMessage.error((error as any)?.message || '加载订单详情失败')
+  } finally {
+    if (version === detailVersion) detailsLoading.value = false
   }
 }
 
 const resetForm = () => {
+  ++previewVersion
+  ++detailVersion
+  detailsLoading.value = false
+  previewLoading.value = false
+  previewError.value = ''
+  if (pendingFormalRequest.value) {
+    const request = pendingFormalRequest.value
+    form.items = request.displayItems.map(item => ({...item}))
+    form.reason = request.data.refundReason
+    form.refundAmount = request.data.refundAmount
+    refundPreview.value = request.preview
+    return
+  }
+  refundPreview.value = null
+  previewSignature = ''
+  orderDetail.value = null
   form.items = []
   form.refundAmount = 0
   form.reason = ''
@@ -264,84 +313,129 @@ const formatDateTime = (dateTime: string | null | undefined) => {
   return dateTime.replace('T', ' ')
 }
 
-const calculateRefundAmount = () => {
-  // 计算每个商品的退货金额
-  form.items.forEach((item) => {
-    if (item.returnQuantity > 0) {
-      // 净可退总额包含已退与剩余份额；不能把整单优惠再次退给客户。
-      const netRefundTotal = Math.round((item.refundableAmount + item.refundedAmount) * 100) / 100
-      const amount = item.returnQuantity >= item.refundableQuantity ? item.refundableAmount
-        : Math.round(netRefundTotal * (item.refundedQuantity + item.returnQuantity) / item.quantity * 100) / 100 - item.refundedAmount
-      item.refundAmount = Math.round(Math.max(0, Math.min(amount, item.refundableAmount)) * 100) / 100
-    } else {
-      item.refundAmount = 0
+const calculateRefundAmount = async () => {
+  if (pendingFormalRequest.value) return
+  const version = ++previewVersion
+  const orderId = props.order?.id
+  const items = form.items.filter(item => item.returnQuantity > 0)
+    .map(item => ({orderItemId: item.orderItemId, quantity: item.returnQuantity}))
+  const signature = selectionSignature()
+  refundPreview.value = null
+  previewSignature = ''
+  previewError.value = ''
+  form.refundAmount = 0
+  form.items.forEach(item => { item.refundAmount = 0 })
+  if (!orderId || !items.length) { previewLoading.value = false; return }
+  previewLoading.value = true
+  try {
+    const result = await getRefundPreview(orderId, {items})
+    if (version !== previewVersion || signature !== selectionSignature() || !props.modelValue) return
+    if (!result.quoteId || result.orderId !== orderId || !Array.isArray(result.items)
+        || result.items.length !== items.length || items.some(requested => !result.items.some(item =>
+          item.orderItemId === requested.orderItemId && Number(item.quantity) === requested.quantity))) {
+      throw new Error('退货预览与所选商品不一致，请重新核对')
     }
-  })
-
-  // 计算总退款金额
-  const total = form.items.reduce((sum, item) => sum + item.refundAmount, 0)
-  form.refundAmount = Math.round(Math.min(total, maxRefundAmount.value) * 100) / 100
+    form.items.forEach(item => {
+      const quoted = result.items.find(row => row.orderItemId === item.orderItemId)
+      item.refundAmount = quoted ? Number(quoted.refundAmount) : 0
+    })
+    form.refundAmount = Number(result.refundAmount)
+    refundPreview.value = result
+    previewSignature = signature
+  } catch (error: any) {
+    if (version === previewVersion) previewError.value = error?.message || '无法核对退货资金，请重试'
+  } finally {
+    if (version === previewVersion) previewLoading.value = false
+  }
 }
 
 const handleClose = () => {
+  if (submitting.value) return
   dialogVisible.value = false
   resetForm()
 }
 
-const handleSubmit = async () => {
-  if (!formRef.value) return
-
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-
-    if (!props.order) {
-      ElMessage.error('订单信息不存在')
-      return
-    }
-
-    // 检查是否有退款/退货商品
-    const validItems = form.items.filter((item) => item.returnQuantity > 0)
-    if (validItems.length === 0) {
-      ElMessage.warning(`请至少选择一个商品进行${useDirectRefund.value ? '退款' : '退货'}`)
-      return
-    }
-
-    submitting.value = true
-    try {
-      const data = {
-        orderId: props.order.id,
-        refundAmount: form.refundAmount,
-        refundReason: form.reason,
-        items: validItems.map((item) => ({
-          orderItemId: item.orderItemId,
-          quantity: item.returnQuantity,
-          refundAmount: item.refundAmount
-        }))
-      }
-
-      if (useDirectRefund.value) {
-        await refundOrder(props.order.id, data)
-        ElMessage.success('订单退款成功')
-      } else {
-        await createAfterSales({
-          orderId: data.orderId,
-          refundAmount: data.refundAmount,
-          reason: form.reason,
-          items: data.items
-        })
-        ElMessage.success('退货退款成功')
-      }
+const executeRefundRequest = async (request: RefundSubmission) => {
+  if (submitting.value) return
+  if (request.operatorId !== userStore.userInfo?.id) {
+    ElMessage.warning('本次退货需由原操作员工核对，不能换员工重放')
+    return
+  }
+  submitting.value = true
+  pendingFormalRequest.value = request
+  try {
+    const data = request.data
+    if (request.direct) await refundOrder(data.orderId, data)
+    else await createAfterSales({orderId: data.orderId, quoteId: data.quoteId, refundAmount: data.refundAmount,
+      reason: data.refundReason, items: data.items})
+    pendingFormalRequest.value = null
+    ElMessage.success(request.direct ? '订单退款成功' : '退货退款成功')
+    submitting.value = false
+    if (props.order?.id === data.orderId) {
       emit('success')
       handleClose()
-    } catch (error) {
-      console.error(`${useDirectRefund.value ? '订单退款' : '退货退款'}失败:`, error)
-      ElMessage.error((error as any)?.message || `${useDirectRefund.value ? '订单退款' : '退货退款'}失败`)
-    } finally {
-      submitting.value = false
+    } else {
+      resetForm()
+      await loadOrderDetail()
     }
-  })
+  } catch (error: any) {
+    console.error('退货确认失败:', error)
+    ElMessage.error(error?.message || '本次退货结果未确认，请按原请求核对')
+    if (definiteBusinessRejection(error)) {
+      pendingFormalRequest.value = null
+      ++previewVersion
+      refundPreview.value = null
+      previewSignature = ''
+      form.refundAmount = 0
+      await loadOrderDetail()
+      previewError.value = '已重新读取已完成退货和剩余数量，请重新选择后核对金额'
+    }
+  } finally {
+    submitting.value = false
+  }
+}
+const handleSubmit = async () => {
+  if (submitting.value || validating.value || !props.modelValue || !formRef.value) return
+  if (pendingFormalRequest.value) {
+    if (pendingFormalRequest.value.data.orderId !== props.order?.id) return ElMessage.warning('请返回原订单核对本次退货')
+    await executeRefundRequest(pendingFormalRequest.value)
+    return
+  }
+  if (previewLoading.value || !refundPreview.value || previewSignature !== selectionSignature()) {
+    ElMessage.warning('请先核对最新退货金额，再确认操作')
+    return
+  }
+  if (!props.order) { ElMessage.error('订单信息不存在'); return }
+  const items = form.items.filter(item => item.returnQuantity > 0)
+  if (!items.length) { ElMessage.warning('请至少选择一件商品退货'); return }
+  const session = dialogSessionVersion
+  const version = previewVersion
+  const signature = selectionSignature()
+  const request: RefundSubmission = {direct: useDirectRefund.value, operatorId: userStore.userInfo?.id,
+    order: {...props.order}, displayItems: form.items.map(item => ({...item})), preview: refundPreview.value,
+    data: {orderId: props.order.id, quoteId: refundPreview.value.quoteId, refundAmount: form.refundAmount,
+      refundReason: form.reason, items: items.map(item => ({orderItemId: item.orderItemId,
+        quantity: item.returnQuantity, refundAmount: item.refundAmount}))}}
+  validating.value = true
+  try {
+    await formRef.value.validate(async (valid) => {
+      if (!valid) return
+      if (!props.modelValue || session !== dialogSessionVersion || version !== previewVersion
+          || props.order?.id !== request.data.orderId || refundPreview.value?.quoteId !== request.data.quoteId
+          || previewLoading.value || signature !== selectionSignature() || previewSignature !== signature
+          || form.reason !== request.data.refundReason || userStore.userInfo?.id !== request.operatorId
+          || useDirectRefund.value !== request.direct) {
+        ElMessage.warning('退货操作已变化，请重新核对并确认')
+        return
+      }
+      await executeRefundRequest(request)
+    })
+  } finally {
+    validating.value = false
+  }
 }
 </script>
 
 <style scoped lang="scss">
+.preview-hint { margin-top: 8px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.6; }
 </style>

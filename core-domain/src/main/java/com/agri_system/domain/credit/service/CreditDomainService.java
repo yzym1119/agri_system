@@ -23,7 +23,10 @@ public class CreditDomainService {
         return sum == null ? BigDecimal.ZERO : sum;
     }
 
-    public void addDebt(Long customerId, Long orderId, BigDecimal amount) {
+    public void addDebt(Long customerId, Long orderId, BigDecimal amount, Long storeId) {
+        if (customerId == null || orderId == null || storeId == null || amount == null || amount.signum() <= 0 || amount.scale() > 2) {
+            throw new IllegalArgumentException("赊销必须绑定原订单、客户、门店及精确到分的正金额");
+        }
         // 幂等性校验：防止重复记账
         accountRepository.findByOrderId(orderId).ifPresent(existing -> {
             throw new IllegalStateException("该订单已记为欠款，请勿重复操作");
@@ -32,6 +35,7 @@ public class CreditDomainService {
         CreditAccount account = new CreditAccount();
         account.setCustomerId(customerId);
         account.setOrderId(orderId);
+        account.setStoreId(storeId);
         account.setCreditAmount(amount);
         account.setPaidAmount(BigDecimal.ZERO);
         account.setRemainingAmount(amount);

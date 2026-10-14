@@ -38,9 +38,8 @@ public class CreditAccountRepositoryImpl implements CreditAccountRepository {
     public List<CreditAccount> findOutstandingAccounts(Long customerId) {
         QueryWrapper qw = QueryWrapper.create()
                 .where("customer_id = ?", customerId)
-                .and("status = ?", 1)
                 .and("remaining_amount > 0")
-                .orderBy("created_at", true);
+                .orderBy("created_at", true).orderBy("id", true);
         return mapper.selectListByQuery(qw);
     }
 
@@ -127,6 +126,40 @@ public class CreditAccountRepositoryImpl implements CreditAccountRepository {
         QueryWrapper qw = QueryWrapper.create()
                 .where("order_id = ?", orderId);
         return Optional.ofNullable(mapper.selectOneByQuery(qw));
+    }
+    @Override public Optional<CreditAccount> findByOrderIdForUpdate(Long orderId) {
+        return Optional.ofNullable(mapper.selectOneByQuery(QueryWrapper.create().where("order_id = ?", orderId).forUpdate()));
+    }
+    @Override public List<CreditAccount> findOutstandingForUpdate(Long customerId, Long storeId) {
+        return mapper.selectListByQuery(QueryWrapper.create().where("customer_id = ?", customerId)
+                .and("store_id = ?", storeId).and("remaining_amount > 0")
+                .orderBy("created_at", true).orderBy("id", true).forUpdate());
+    }
+    private QueryWrapper scoped(Long customerId, Integer status, Long storeId, LocalDate start, LocalDate end) {
+        QueryWrapper query = QueryWrapper.create();
+        if (customerId != null) query.where("customer_id = ?", customerId);
+        if (status != null) query.and("status = ?", status);
+        if (storeId != null) query.and("store_id = ?", storeId);
+        if (start != null) query.and("created_at >= ?", start.atStartOfDay());
+        if (end != null) query.and("created_at < ?", end.plusDays(1).atStartOfDay());
+        return query;
+    }
+    @Override public List<CreditAccount> listAccounts(Long customerId, Integer status, Long storeId, LocalDate start, LocalDate end) {
+        return mapper.selectListByQuery(scoped(customerId, status, storeId, start, end).orderBy("created_at", false).orderBy("id", false));
+    }
+    @Override public com.mybatisflex.core.paginate.Page<CreditAccount> findPage(Long customerId, Integer status, Long storeId, int pageNum, int pageSize) {
+        return mapper.paginate(pageNum, pageSize, scoped(customerId, status, storeId, null, null).orderBy("created_at", false).orderBy("id", false));
+    }
+    @Override public BigDecimal sumRemainingAmount(Long customerId, Long storeId) {
+        Object value = mapper.selectObjectByQuery(scoped(customerId, null, storeId, null, null).select("COALESCE(SUM(remaining_amount),0)"));
+        return value == null ? BigDecimal.ZERO : new BigDecimal(value.toString());
+    }
+    @Override public BigDecimal sumRemainingAmountAllStores(Long customerId) { return mapper.sumRemainingAmountAllStores(customerId); }
+    @Override public LocalDateTime findLatestDebtDate(Long customerId, Long storeId) {
+        Object value = mapper.selectObjectByQuery(scoped(customerId, null, storeId, null, null).select("MAX(created_at)"));
+        if (value instanceof LocalDateTime time) return time;
+        if (value instanceof java.sql.Timestamp time) return time.toLocalDateTime();
+        return null;
     }
 }
 

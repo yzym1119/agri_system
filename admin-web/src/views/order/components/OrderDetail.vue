@@ -191,16 +191,19 @@
               ¥{{ formatMoney(paymentSummary.netReceivable) }}
             </span>
           </el-descriptions-item>
-          <el-descriptions-item label="已收金额">
+          <el-descriptions-item label="开单已收金额">
             <span style="font-size: 18px; font-weight: 600; color: #f56c6c">
               ¥{{ formatMoney(paymentSummary.receivedAmount) }}
             </span>
           </el-descriptions-item>
-          <el-descriptions-item v-if="paymentSummary.creditAmount > 0" label="赊销金额">
+          <el-descriptions-item v-if="paymentSummary.creditAmount > 0" label="原赊销金额">
             <span style="font-size: 16px; font-weight: 600; color: #e6a23c">
               ¥{{ formatMoney(paymentSummary.creditAmount) }}
             </span>
           </el-descriptions-item>
+          <el-descriptions-item v-if="paymentSummary.creditAmount > 0" label="原单累计还款">{{ orderDetail.repaidAmount == null ? '待核对' : '¥' + formatMoney(orderDetail.repaidAmount) }}</el-descriptions-item>
+          <el-descriptions-item v-if="paymentSummary.creditAmount > 0" label="原单当前欠款">{{ orderDetail.remainingCreditAmount == null ? '待核对' : '¥' + formatMoney(orderDetail.remainingCreditAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="累计退已收款">{{ orderDetail.cashRefundedAmount == null ? '待核对' : '¥' + formatMoney(orderDetail.cashRefundedAmount) }}</el-descriptions-item>
           <el-descriptions-item label="主支付方式">
             {{ paymentMethodLabel }}
           </el-descriptions-item>
@@ -230,12 +233,14 @@
           <span style="font-weight: 600">退款汇总</span>
         </template>
         <el-descriptions :column="2" border>
-          <el-descriptions-item label="累计已退金额">
+          <el-descriptions-item label="累计成交冲销">
             <span style="color: #f56c6c; font-weight: 600">¥{{ formatMoney(refundSummary.refundedAmount) }}</span>
           </el-descriptions-item>
-          <el-descriptions-item label="剩余可退金额">
+          <el-descriptions-item label="剩余可冲销金额">
             <span>¥{{ formatMoney(refundSummary.refundableAmount) }}</span>
           </el-descriptions-item>
+          <el-descriptions-item label="累计冲欠款">{{ orderDetail.creditReductionAmount == null ? '待核对' : '¥' + formatMoney(orderDetail.creditReductionAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="累计退已收款">{{ orderDetail.cashRefundedAmount == null ? '待核对' : '¥' + formatMoney(orderDetail.cashRefundedAmount) }}</el-descriptions-item>
           <el-descriptions-item label="已退款商品行">
             {{ refundSummary.refundedItemCount }} / {{ refundSummary.totalItemCount }}
           </el-descriptions-item>
@@ -280,9 +285,11 @@
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="refundAmount" label="退款金额" width="120" align="right">
+          <el-table-column prop="refundAmount" label="成交冲销" width="120" align="right">
             <template #default="{ row }">¥{{ formatMoney(row.refundAmount) }}</template>
           </el-table-column>
+          <el-table-column label="冲欠款" width="115" align="right"><template #default="{ row }">{{ row.creditReductionAmount == null ? '待核对' : '¥' + formatMoney(row.creditReductionAmount) }}</template></el-table-column>
+          <el-table-column label="退已收款" width="115" align="right"><template #default="{ row }">{{ row.cashRefundAmount == null ? '待核对' : '¥' + formatMoney(row.cashRefundAmount) }}</template></el-table-column>
           <el-table-column prop="reason" label="原因" show-overflow-tooltip />
           <el-table-column prop="createdAt" label="申请时间" width="170">
             <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
@@ -454,10 +461,10 @@ const terminalStateDescription = computed(() => {
     return '该订单已取消，不再继续履约。'
   }
   if (status === 8) {
-    return `该订单已累计退款 ¥${formatMoney(refundSummary.value.refundedAmount)}。`
+    return `该订单已累计成交冲销 ¥${formatMoney(refundSummary.value.refundedAmount)}。`
   }
   if (status === 9) {
-    return `该订单已累计退款 ¥${formatMoney(refundSummary.value.refundedAmount)}，仍有部分商品或金额可继续退款。`
+    return `该订单已累计成交冲销 ¥${formatMoney(refundSummary.value.refundedAmount)}，仍有部分商品或金额可继续退款。`
   }
   return ''
 })

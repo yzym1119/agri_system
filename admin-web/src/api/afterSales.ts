@@ -16,6 +16,7 @@ import type {
  * 创建退货售后（管理端）
  */
 export function createAfterSales(data: {
+  quoteId: string
   orderId: number
   refundAmount: number
   reason: string
@@ -24,7 +25,7 @@ export function createAfterSales(data: {
     quantity: number
     refundAmount: number
   }>
-}): Promise<{ id: number }> {
+}): Promise<number> {
   return request({
     url: '/api/admin/after-sales',
     method: 'post',

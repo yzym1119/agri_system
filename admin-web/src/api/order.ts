@@ -6,7 +6,9 @@ import type {
   OrderPageResponse,
   PickupFulfillmentDTO,
   PickupRequestCreateDTO,
-  PickupWorkItemVO
+  PickupWorkItemVO,
+  RefundPreview,
+  RefundPreviewRequest
 } from '@/types/order'
 
 /**
@@ -86,6 +88,7 @@ export function shipOrder(orderId: number, data: {
  * 退款
  */
 export function refundOrder(orderId: number, data: {
+  quoteId: string
   refundAmount: number
   refundReason: string
   items?: Array<{
@@ -96,6 +99,15 @@ export function refundOrder(orderId: number, data: {
 }): Promise<void> {
   return request({
     url: `/api/admin/orders/${orderId}/refund`,
+    method: 'post',
+    data
+  })
+}
+
+/** 原单退货资金预览，冲欠款和退款金额只由服务端计算。 */
+export function getRefundPreview(orderId: number, data: RefundPreviewRequest): Promise<RefundPreview> {
+  return request({
+    url: `/api/admin/orders/${orderId}/refund-preview`,
     method: 'post',
     data
   })

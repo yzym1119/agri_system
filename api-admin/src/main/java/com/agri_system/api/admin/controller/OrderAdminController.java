@@ -175,6 +175,13 @@ public class OrderAdminController {
     /**
      * 退款
      */
+    @PostMapping("/{orderId}/refund-preview")
+    @SaCheckPermission(value={"order:refund","afterSales:refund"},mode=cn.dev33.satoken.annotation.SaMode.OR)
+    public ResponseEntity<com.agri_system.application.order.dto.vo.OrderRefundPreviewVO> previewRefund(@PathVariable Long orderId,
+            @Valid @RequestBody(required=false) com.agri_system.application.order.dto.command.OrderRefundPreviewCommand command) {
+        return ResponseEntity.ok(orderService.previewRefund(orderId,command));
+    }
+
     @PostMapping("/{orderId}/refund")
     @Operation(summary = "退款", description = "订单退款，按LIFO顺序退回")
     @SaCheckPermission("order:refund")

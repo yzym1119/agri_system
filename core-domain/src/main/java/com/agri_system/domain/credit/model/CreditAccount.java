@@ -1,6 +1,7 @@
 package com.agri_system.domain.credit.model;
 
 import com.mybatisflex.annotation.Id;
+import com.mybatisflex.annotation.Column;
 import com.mybatisflex.annotation.KeyType;
 import com.mybatisflex.annotation.Table;
 import lombok.Data;
@@ -18,6 +19,8 @@ public class CreditAccount {
 
     private Long customerId;
     private Long orderId;
+    @Column(tenantId = true)
+    private Long storeId;
     private BigDecimal creditAmount;
     private BigDecimal paidAmount;
     private BigDecimal remainingAmount;
@@ -41,13 +44,19 @@ public class CreditAccount {
 
         this.paidAmount = paid.add(actual);
         this.remainingAmount = remaining.subtract(actual);
-        if (this.remainingAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            this.remainingAmount = BigDecimal.ZERO;
-            this.status = 2;
-        } else {
-            this.status = 1;
-        }
+        refreshSettlementStatus();
         return actual;
+    }
+
+    /** 还款与退货冲欠款共用状态规则；缺失历史到期日不猜测为未逾期。 */
+    public void refreshSettlementStatus() {
+        if (remainingAmount == null || remainingAmount.signum() < 0) throw new IllegalArgumentException("应收余额不能为空或为负数");
+        if (remainingAmount.signum() == 0) {
+            status = 2;
+        } else {
+            boolean overdue = dueDate == null ? Integer.valueOf(3).equals(status) : dueDate.isBefore(LocalDate.now());
+            status = overdue ? 3 : 1;
+        }
     }
 }
 

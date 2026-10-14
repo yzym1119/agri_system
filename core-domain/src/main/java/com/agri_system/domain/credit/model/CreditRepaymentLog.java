@@ -17,6 +17,10 @@ public class CreditRepaymentLog {
     private Long id;
 
     private String repaymentNo;
+    private Long creditAccountId;
+    private String requestKey;
+    /** NULL 表示旧来源尚未核对，不能当作0放开退款。 */
+    private BigDecimal refundedAmount;
     private Long customerId;
     @Column(tenantId = true)
     private Long storeId;

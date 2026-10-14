@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 
 @Data
 public class CreditDebtVO {
+    private Long storeId;
     private BigDecimal totalDebt;
     private BigDecimal creditLimit;
     private BigDecimal remainingCredit;

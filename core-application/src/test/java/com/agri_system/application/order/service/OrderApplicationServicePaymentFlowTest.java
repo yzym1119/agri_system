@@ -114,6 +114,12 @@ class OrderApplicationServicePaymentFlowTest {
     @InjectMocks
     private OrderApplicationService orderService;
 
+    @org.junit.jupiter.api.BeforeEach
+    void existingCustomerForPosWithWalletOrCredit() {
+        var customer=new com.agri_system.domain.customer.model.Customer();customer.setId(12L);customer.setStatus(1);
+        org.mockito.Mockito.lenient().when(customerRepository.findByIdWithLock(any())).thenAnswer(i->{var current=new com.agri_system.domain.customer.model.Customer();current.setId(i.getArgument(0));current.setStatus(1);return Optional.of(current);});
+    }
+
     @Test
     void payOrderReturnsPreviewWhenExternalPaymentStillRequired() {
         Order order = mockPendingClientOrder();
@@ -121,7 +127,7 @@ class OrderApplicationServicePaymentFlowTest {
         OrderPayCommand command = new OrderPayCommand();
         command.setOrderId(order.getId());
 
-        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
         when(paymentService.previewPayment(order, null, null, null)).thenReturn(preview);
 
         OrderPayPreviewVO result = orderService.payOrder(command, order.getCustomerId());
@@ -173,12 +179,14 @@ class OrderApplicationServicePaymentFlowTest {
 
         when(paymentIntentRepository.findByIntentNo(intent.getIntentNo())).thenReturn(Optional.of(intent));
         when(paymentService.previewPayment(order, null, null, null)).thenReturn(preview);
-        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
         when(itemRepository.findByOrderId(order.getId())).thenReturn(Collections.singletonList(item));
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(paymentIntentRepository.save(any(OrderPaymentIntent.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
+        var actualExternal=new com.agri_system.domain.order.model.OrderPayment();actualExternal.setPaymentType(2);actualExternal.setAmount(new BigDecimal("50.00"));
+        when(paymentService.executePayment(any(),any(),any(),any(),any(),anyBoolean(),any(),any(),any())).thenReturn(java.util.List.of(actualExternal));
         orderService.confirmExternalPayment(command, order.getCustomerId());
 
         verify(paymentService).executePayment(
@@ -218,7 +226,7 @@ class OrderApplicationServicePaymentFlowTest {
         command.setExternalTransactionNo("wx202604110002");
 
         when(paymentIntentRepository.findByIntentNo(intent.getIntentNo())).thenReturn(Optional.of(intent));
-        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
         when(paymentService.previewPayment(order, null, null, null)).thenReturn(preview);
 
         assertThrows(IllegalArgumentException.class,
@@ -613,6 +621,44 @@ class OrderApplicationServicePaymentFlowTest {
         assertEquals(0,facts.payments().size());
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"plain", "coupon", "discount", "details"})
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void pureCreditPreservesNetSettlementAndAllowsExistingDiscounts(String kind) {
+        var facts = couponPosFixture("10.00");
+        var debt = new java.util.concurrent.atomic.AtomicReference<>(BigDecimal.ZERO);
+        org.mockito.Mockito.doAnswer(invocation -> { debt.updateAndGet(v->v.add(invocation.getArgument(2))); return null; })
+                .when(creditService).addDebt(eq(12L),eq(500L),any());
+        var command = couponPosCommand(6);
+        if (!"coupon".equals(kind)) command.setCouponId(null);
+        if ("discount".equals(kind)) { command.setDiscountAmount(new BigDecimal("10.00")); command.setRemark("破损包装优惠"); }
+        if ("details".equals(kind)) command.setPayments(java.util.List.of(paymentDetail(6,"100.00")));
+        orderService.createPOSOrder(command,8L);
+        var orders = ArgumentCaptor.forClass(Order.class); verify(orderRepository,org.mockito.Mockito.atLeastOnce()).save(orders.capture());
+        BigDecimal expected = new BigDecimal("coupon".equals(kind) || "discount".equals(kind) ? "90.00" : "100.00");
+        assertEquals(expected,orders.getValue().getPayAmount());
+        assertEquals(expected,debt.get());
+        assertPaymentTotal(facts.payments(),6,expected.toPlainString());
+        assertEquals(new BigDecimal("200.00"),facts.wallet().get());
+        InOrder locks=org.mockito.Mockito.inOrder(customerRepository,itemRepository,creditService,inventoryService);
+        locks.verify(customerRepository).findByIdWithLock(12L);
+        locks.verify(itemRepository).save(any());
+        locks.verify(creditService).addDebt(12L,500L,expected);
+        locks.verify(inventoryService).lockProducts(eq(3L),any());
+
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void fullCouponCreditSaleDoesNotCreateZeroValueDebtAccount() {
+        var facts=couponPosFixture("100.00");
+        org.mockito.Mockito.doAnswer(invocation->{if(((BigDecimal)invocation.getArgument(2)).signum()<=0) throw new IllegalArgumentException("新增欠款必须为正");return null;})
+                .when(creditService).addDebt(any(),any(),any());
+        var command=couponPosCommand(6);
+        orderService.createPOSOrder(command,8L);
+        assertPaymentTotal(facts.payments(),5,"100.00");assertEquals(1,facts.payments().size());
+    }
+
     private record CouponPosFacts(com.agri_system.domain.coupon.model.CustomerCoupon coupon,
                                   java.util.List<com.agri_system.domain.order.model.OrderPayment> payments,
                                   java.util.concurrent.atomic.AtomicReference<BigDecimal> wallet,
@@ -650,7 +696,10 @@ class OrderApplicationServicePaymentFlowTest {
             authUses.incrementAndGet(); return 1;
         });
         ReflectionTestUtils.setField(orderService, "paymentService", new OrderPaymentService(paymentRepository,
-                couponRepository, walletService, orderDomainService, itemRepository, productRepository));
+                couponRepository, walletService, orderDomainService, itemRepository, productRepository,
+                orderRepository, customerRepository,
+                org.mockito.Mockito.mock(com.agri_system.domain.credit.repository.CreditAccountRepository.class),
+                org.mockito.Mockito.mock(com.agri_system.domain.credit.repository.CreditRepaymentLogRepository.class), afterSalesRepository, afterSalesItemRepository));
         return new CouponPosFacts(coupon, payments, wallet, authUses);
     }
 

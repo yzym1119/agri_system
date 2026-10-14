@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -16,6 +17,10 @@ import java.util.List;
 @Data
 @Schema(description = "管理端退货命令")
 public class AdminReturnCommand {
+    /** 正式退款必须确认预览；同一预览标识防止网络重试重复退款。 */
+    @NotBlank(message = "请先确认最新退货资金预览")
+    private String quoteId;
+
 
     @NotNull(message = "订单ID不能为空")
     @Schema(description = "订单ID")

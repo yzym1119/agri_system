@@ -29,6 +29,8 @@ public class OrderPayment {
     
     /** 该方式支付金额（元） */
     private BigDecimal amount;
+    /** 累计已退；NULL 表示历史来源尚未核对。新来源保存时初始化为0。 */
+    private BigDecimal refundedAmount;
     
     /** 红包/优惠券ID（当payment_type=5时填充） */
     private Long couponId;

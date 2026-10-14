@@ -17,6 +17,10 @@ public interface AfterSalesRepository {
 
     Optional<AfterSales> findById(Long id);
 
+    Optional<AfterSales> findByIdForUpdate(Long id);
+
+    Optional<AfterSales> findByRefundQuoteIdForUpdate(String quoteId);
+
     Optional<AfterSales> findProcessingByOrderId(Long orderId);
 
     List<AfterSales> findByOrderId(Long orderId);

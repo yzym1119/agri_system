@@ -27,6 +27,9 @@ public interface OrderPaymentRepository {
      */
     List<OrderPayment> findByOrderId(Long orderId);
 
+    /** 锁定原收款来源的当前累计已退。 */
+    List<OrderPayment> findByOrderIdForUpdate(Long orderId);
+
     /**
      * 根据订单ID和外部流水号查询支付明细
      */

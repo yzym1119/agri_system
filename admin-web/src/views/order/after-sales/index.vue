@@ -81,8 +81,14 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="退款金额" width="130" align="right">
+        <el-table-column label="成交冲销" width="130" align="right">
           <template #default="{ row }">¥{{ formatMoney(row.refundAmount) }}</template>
+        </el-table-column>
+        <el-table-column label="冲欠款" width="120" align="right">
+          <template #default="{ row }">{{ row.creditReductionAmount == null ? '待核对' : '¥' + formatMoney(row.creditReductionAmount) }}</template>
+        </el-table-column>
+        <el-table-column label="退已收款" width="120" align="right">
+          <template #default="{ row }">{{ row.cashRefundAmount == null ? '待核对' : '¥' + formatMoney(row.cashRefundAmount) }}</template>
         </el-table-column>
         <el-table-column label="原因" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ row.reason || '-' }}</template>
@@ -151,7 +157,9 @@
           <el-descriptions-item label="客户">{{ detailData.customerName || '散客' }}</el-descriptions-item>
           <el-descriptions-item label="手机号">{{ detailData.customerPhone || '-' }}</el-descriptions-item>
           <el-descriptions-item label="门店">{{ detailData.storeName || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="退款金额">¥{{ formatMoney(detailData.refundAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="成交冲销">¥{{ formatMoney(detailData.refundAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="冲欠款">{{ detailData.creditReductionAmount == null ? '待核对' : '¥' + formatMoney(detailData.creditReductionAmount) }}</el-descriptions-item>
+          <el-descriptions-item label="退已收款">{{ detailData.cashRefundAmount == null ? '待核对' : '¥' + formatMoney(detailData.cashRefundAmount) }}</el-descriptions-item>
           <el-descriptions-item label="类型">{{ getTypeText(detailData.type) }}</el-descriptions-item>
           <el-descriptions-item label="状态">{{ getStatusText(detailData.status) }}</el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ formatDateTime(detailData.createdAt) }}</el-descriptions-item>
@@ -203,37 +211,44 @@
 
     <el-dialog
       v-model="refundDialogVisible"
-      title="确认退款"
-      width="420px"
+      title="确认退货资金处理"
+      width="520px"
+      :close-on-press-escape="!refundSubmitting"
+      :show-close="!refundSubmitting"
       :close-on-click-modal="false"
     >
       <el-form ref="refundFormRef" :model="refundForm" :rules="refundRules" label-width="100px">
         <el-form-item label="售后单号">
           <el-input :model-value="currentRow?.afterSalesNo || ''" disabled />
         </el-form-item>
-        <el-form-item label="退款金额" prop="refundAmount">
-          <el-input-number
-            v-model="refundForm.refundAmount"
-            :min="0.01"
-            :precision="2"
-            :step="0.01"
-            style="width: 100%"
-          />
-        </el-form-item>
+        <el-alert v-if="pendingRefundRequest" title="本次资金处理结果尚未确认，请按原请求核对，不会重新取报价再次退款。" type="warning" :closable="false" style="margin-bottom: 16px" />
+        <div v-loading="refundPreviewLoading">
+          <el-alert v-if="refundPreviewError" :title="refundPreviewError" type="error" :closable="false" />
+          <el-descriptions v-if="refundPreview" :column="1" border>
+            <el-descriptions-item label="本次成交冲销">¥{{ formatMoney(refundPreview.refundAmount) }}</el-descriptions-item>
+            <el-descriptions-item label="本次冲欠款">¥{{ formatMoney(refundPreview.creditReductionAmount) }}</el-descriptions-item>
+            <el-descriptions-item label="本次退已收款">¥{{ formatMoney(refundPreview.cashRefundAmount) }}</el-descriptions-item>
+            <el-descriptions-item label="原单当前欠款">¥{{ formatMoney(refundPreview.remainingDebt) }}</el-descriptions-item>
+          </el-descriptions>
+          <el-button v-if="refundPreviewError" text type="primary" :loading="refundPreviewLoading" @click="refreshAfterSalesPreview">重新核对</el-button>
+        </div>
       </el-form>
       <template #footer>
-        <el-button @click="refundDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="refundSubmitting" @click="submitRefund">确定</el-button>
+        <el-button :disabled="refundSubmitting" @click="refundDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="refundSubmitting" :disabled="refundPreviewLoading || !refundPreview" @click="submitRefund">{{ pendingRefundRequest ? '核对本次处理' : '确定' }}</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
+import { useUserStore } from '@/store/user'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import { auditAfterSales, getAfterSalesDetail, getAfterSalesPage, refundAfterSales } from '@/api/afterSales'
+import { getRefundPreview } from '@/api/order'
+import type { RefundPreview } from '@/types/order'
 import { getAllStores } from '@/api/store'
 import type {
   AfterSalesDetail,
@@ -254,6 +269,8 @@ const currentRow = ref<AfterSalesPageItem>()
 
 const auditDialogVisible = ref(false)
 const auditSubmitting = ref(false)
+const auditValidating = ref(false)
+let auditSessionVersion = 0
 const auditFormRef = ref<FormInstance>()
 const auditForm = reactive({
   approved: true,
@@ -280,9 +297,25 @@ const refundFormRef = ref<FormInstance>()
 const refundForm = reactive({
   refundAmount: 0
 })
-const refundRules: FormRules = {
-  refundAmount: [{ required: true, message: '请输入退款金额', trigger: 'blur' }]
+const refundRules: FormRules = {}
+const refundPreview = ref<RefundPreview | null>(null)
+const userStore = useUserStore()
+interface AfterSalesSubmission {afterSalesId: number; quoteId: string; refundAmount: number; operatorId?: number; row: AfterSalesPageItem; preview: RefundPreview}
+const pendingRefundRequest = ref<AfterSalesSubmission | null>(null)
+const definiteRefundRejection = (error: any) => {
+  const code = Number(error?.apiBusinessCode)
+  return code === 10001 || (code >= 400 && code < 500) || String(error?.message || '').startsWith('REFUND_QUOTE_STALE')
 }
+const refundPreviewLoading = ref(false)
+const refundPreviewError = ref('')
+let refundPreviewVersion = 0
+watch(refundDialogVisible, value => {
+  if (!value) {
+    ++refundPreviewVersion
+    if (!pendingRefundRequest.value) refundPreview.value = null
+    refundPreviewLoading.value = false
+  }
+})
 
 const queryParams = reactive<AfterSalesPageQuery & { timeRange?: string[] }>({
   pageNum: 1,
@@ -406,60 +439,133 @@ const handleViewDetail = async (row: AfterSalesPageItem) => {
 }
 
 const openAuditDialog = (row: AfterSalesPageItem, approved: boolean) => {
+  ++auditSessionVersion
   currentRow.value = row
   auditForm.approved = approved
   auditForm.remark = ''
   auditDialogVisible.value = true
 }
 
-const submitAudit = () => {
-  auditFormRef.value?.validate(async valid => {
-    if (!valid || !currentRow.value) return
-    auditSubmitting.value = true
-    try {
-      await auditAfterSales(currentRow.value.id, {
-        approved: auditForm.approved,
-        remark: auditForm.remark?.trim() || undefined
-      })
-      ElMessage.success(auditForm.approved ? '审核通过' : '已驳回')
-      auditDialogVisible.value = false
-      loadTable()
-      if (detailVisible.value && detailData.value?.id === currentRow.value.id) {
-        detailData.value = await getAfterSalesDetail(currentRow.value.id)
+const submitAudit = async () => {
+  if (!auditFormRef.value || !currentRow.value || !auditDialogVisible.value || auditSubmitting.value || auditValidating.value) return
+  const afterSalesId = currentRow.value.id
+  const version = auditSessionVersion
+  const data = {approved: auditForm.approved, remark: auditForm.remark?.trim() || undefined}
+  auditValidating.value = true
+  try {
+    await auditFormRef.value.validate(async valid => {
+      if (!valid || !auditDialogVisible.value || currentRow.value?.id !== afterSalesId || version !== auditSessionVersion
+          || auditForm.approved !== data.approved || (auditForm.remark?.trim() || undefined) !== data.remark) return
+      auditSubmitting.value = true
+      try {
+        await auditAfterSales(afterSalesId, data)
+        if (version !== auditSessionVersion || currentRow.value?.id !== afterSalesId || !auditDialogVisible.value) return
+        ElMessage.success(data.approved ? '审核通过' : '已驳回')
+        auditDialogVisible.value = false
+        void loadTable()
+        if (detailVisible.value && detailData.value?.id === afterSalesId) {
+          const detail = await getAfterSalesDetail(afterSalesId)
+          if (detailVisible.value && detailData.value?.id === afterSalesId) detailData.value = detail
+        }
+      } catch (error) {
+        console.error('审核售后失败:', error)
+      } finally {
+        auditSubmitting.value = false
       }
-    } catch (error) {
-      console.error('审核售后失败:', error)
-    } finally {
-      auditSubmitting.value = false
-    }
-  })
+    })
+  } finally {
+    auditValidating.value = false
+  }
 }
 
-const openRefundDialog = (row: AfterSalesPageItem) => {
+const refreshAfterSalesPreview = async () => {
+  if (pendingRefundRequest.value) return
+  const afterSalesId = currentRow.value?.id
+  if (!afterSalesId) return
+  const version = ++refundPreviewVersion
+  refundPreview.value = null
+  refundPreviewError.value = ''
+  refundPreviewLoading.value = true
+  try {
+    const detail = await getAfterSalesDetail(afterSalesId)
+    if (version !== refundPreviewVersion || !refundDialogVisible.value) return
+    if (!detail.orderId || !detail.items?.length || detail.items.some(item => !item.orderItemId || item.quantity == null)) {
+      throw new Error('售后缺少原订单或退货明细，需核对后处理')
+    }
+    const result = await getRefundPreview(detail.orderId, {afterSalesId, items: detail.items.map(item => ({
+      orderItemId: item.orderItemId!, quantity: Number(item.quantity), refundAmount: item.refundAmount
+    }))})
+    if (version !== refundPreviewVersion || !refundDialogVisible.value) return
+    if (!result.quoteId || result.orderId !== detail.orderId) throw new Error('退货资金预览无效，请重新核对')
+    refundForm.refundAmount = Number(result.refundAmount)
+    refundPreview.value = result
+  } catch (error: any) {
+    if (version === refundPreviewVersion) refundPreviewError.value = error?.message || '退货资金核对失败'
+  } finally {
+    if (version === refundPreviewVersion) refundPreviewLoading.value = false
+  }
+}
+const openRefundDialog = async (row: AfterSalesPageItem) => {
+  if (pendingRefundRequest.value) {
+    if (pendingRefundRequest.value.afterSalesId !== row.id) return ElMessage.warning('请先核对上一笔售后处理结果')
+    currentRow.value = pendingRefundRequest.value.row
+    refundPreview.value = pendingRefundRequest.value.preview
+    refundForm.refundAmount = pendingRefundRequest.value.refundAmount
+    refundDialogVisible.value = true
+    return
+  }
   currentRow.value = row
-  refundForm.refundAmount = Number(row.refundAmount || 0)
+  refundForm.refundAmount = 0
   refundDialogVisible.value = true
+  await refreshAfterSalesPreview()
 }
 
-const submitRefund = () => {
-  refundFormRef.value?.validate(async valid => {
-    if (!valid || !currentRow.value) return
-    refundSubmitting.value = true
-    try {
-      await refundAfterSales(currentRow.value.id, {
-        refundAmount: refundForm.refundAmount
-      })
-      ElMessage.success('退款已确认')
-      refundDialogVisible.value = false
-      loadTable()
-      if (detailVisible.value && detailData.value?.id === currentRow.value.id) {
-        detailData.value = await getAfterSalesDetail(currentRow.value.id)
-      }
-    } catch (error) {
-      console.error('确认售后退款失败:', error)
-    } finally {
-      refundSubmitting.value = false
+const executeAfterSalesRefund = async (request: AfterSalesSubmission) => {
+  if (refundSubmitting.value) return
+  if (request.operatorId !== userStore.userInfo?.id) return ElMessage.warning('本次退款需由原操作员工核对')
+  refundSubmitting.value = true
+  pendingRefundRequest.value = request
+  try {
+    await refundAfterSales(request.afterSalesId, {refundAmount: request.refundAmount, quoteId: request.quoteId})
+    pendingRefundRequest.value = null
+    ElMessage.success('退款已确认')
+    refundDialogVisible.value = false
+    void loadTable()
+    if (detailVisible.value && detailData.value?.id === request.afterSalesId) {
+      void getAfterSalesDetail(request.afterSalesId).then(detail => { detailData.value = detail })
+        .catch(error => ElMessage.error(error?.message || '退款已完成，详情刷新失败'))
     }
+  } catch (error: any) {
+    console.error('确认售后退款失败:', error)
+    ElMessage.error(error?.message || '本次退款结果未确认，请按原请求核对')
+    if (definiteRefundRejection(error)) {
+      pendingRefundRequest.value = null
+      await refreshAfterSalesPreview()
+      void loadTable()
+    }
+  } finally {
+    refundSubmitting.value = false
+  }
+}
+const submitRefund = async () => {
+  if (refundSubmitting.value || !refundFormRef.value) return
+  if (pendingRefundRequest.value) {
+    await executeAfterSalesRefund(pendingRefundRequest.value)
+    return
+  }
+  if (refundPreviewLoading.value || !refundPreview.value || !currentRow.value) return
+  const afterSalesId = currentRow.value.id
+  const quoteId = refundPreview.value.quoteId
+  const version = refundPreviewVersion
+  await refundFormRef.value.validate(async valid => {
+    if (!valid || !currentRow.value) return
+    if (refundPreviewLoading.value || !refundPreview.value || currentRow.value.id !== afterSalesId
+        || refundPreview.value.quoteId !== quoteId || refundPreviewVersion !== version) {
+      ElMessage.warning('售后单或资金预览已变化，请重新核对后确认')
+      return
+    }
+    await executeAfterSalesRefund({afterSalesId, quoteId, refundAmount: refundForm.refundAmount,
+      operatorId: userStore.userInfo?.id, row: {...currentRow.value}, preview: refundPreview.value})
   })
 }
 

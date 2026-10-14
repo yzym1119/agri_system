@@ -109,9 +109,11 @@
             <div>
               <div>订单总额：¥{{ formatMoney(row.totalAmount) }}</div>
               <div>应收净额：¥{{ formatMoney(getNetReceivable(row)) }}</div>
-              <div style="color: #67c23a; font-weight: 600">已收：¥{{ formatMoney(getPaidCash(row)) }}</div>
+              <div style="color: #67c23a; font-weight: 600">开单已收：¥{{ formatMoney(getPaidCash(row)) }}</div>
               <div style="margin-top:6px">
-                <span v-if="getOweAmount(row) > 0" style="color:#f56c6c; font-weight:600">赊销：¥{{ formatMoney(getOweAmount(row)) }}</span>
+                <span v-if="getOweAmount(row) > 0" style="color:#f56c6c; font-weight:600">原赊销：¥{{ formatMoney(getOweAmount(row)) }}</span>
+                <span v-if="getOweAmount(row) > 0" style="display: block; color:#67c23a">累计实还：{{ row.repaidAmount == null ? '待核对' : '¥' + formatMoney(row.repaidAmount) }}</span>
+                <span v-if="getOweAmount(row) > 0" style="display: block; color:#e6a23c">当前欠款：{{ row.remainingCreditAmount == null ? '待核对' : '¥' + formatMoney(row.remainingCreditAmount) }}</span>
               </div>
               <div style="margin-top:6px">
                 <el-tag size="small" :type="getPaymentMethodTagType(getDisplayPaymentType(row))">

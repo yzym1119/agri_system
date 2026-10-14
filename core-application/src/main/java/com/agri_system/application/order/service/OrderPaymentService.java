@@ -41,6 +41,12 @@ public class OrderPaymentService {
     private final OrderDomainService orderDomainService;
     private final OrderItemRepository itemRepository;
     private final ProductRepository productRepository;
+    private final com.agri_system.domain.order.repository.OrderRepository orderRepository;
+    private final com.agri_system.domain.customer.repository.CustomerRepository customerRepository;
+    private final com.agri_system.domain.credit.repository.CreditAccountRepository creditAccountRepository;
+    private final com.agri_system.domain.credit.repository.CreditRepaymentLogRepository repaymentRepository;
+    private final com.agri_system.domain.after_sales.repository.AfterSalesRepository afterSalesRepository;
+    private final com.agri_system.domain.after_sales.repository.AfterSalesItemRepository afterSalesItemRepository;
     
     /**
      * 预运算支付金额（不实际扣减）
@@ -225,7 +231,29 @@ public class OrderPaymentService {
             throw new IllegalArgumentException(OrderErrorCode.PAYMENT_AMOUNT_MISMATCH + ": 支付总额不匹配");
         }
         
+        // 优惠券是成交优惠，不是实收。完成收款后才固化原净应结算额，预览不能改订单。
+        BigDecimal usedCoupon=payments.stream().filter(p->Integer.valueOf(PaymentMethod.COUPON.getCode()).equals(p.getPaymentType()))
+                .map(OrderPayment::getAmount).reduce(BigDecimal.ZERO,BigDecimal::add);
+        BigDecimal netAmount=order.getPayAmount().subtract(usedCoupon);
+        BigDecimal received=payments.stream().filter(p->!Integer.valueOf(PaymentMethod.COUPON.getCode()).equals(p.getPaymentType()))
+                .map(OrderPayment::getAmount).reduce(BigDecimal.ZERO,BigDecimal::add);
+        if(netAmount.signum()<0 || received.compareTo(netAmount)!=0) {
+            throw new IllegalArgumentException(OrderErrorCode.PAYMENT_AMOUNT_MISMATCH + ": 尚未完成订单原净额收款");
+        }
+        order.setCouponAmount((order.getCouponAmount()==null?BigDecimal.ZERO:order.getCouponAmount()).add(usedCoupon).setScale(2));
+        order.setPayAmount(netAmount.setScale(2));
+        order.setPaymentMethod(completedMainPaymentMethod(payments));
+        orderRepository.save(order);
         return payments;
+    }
+
+    private int completedMainPaymentMethod(List<OrderPayment> payments) {
+        var methods=payments.stream().filter(p->p.getAmount().signum()>0 && !Integer.valueOf(PaymentMethod.COUPON.getCode()).equals(p.getPaymentType()))
+                .map(p->Integer.valueOf(PaymentMethod.SPECIAL_FUND.getCode()).equals(p.getPaymentType())
+                        ? OrderMainPaymentMethod.BALANCE.getCode():p.getPaymentType()).distinct().toList();
+        if(methods.isEmpty()) return OrderMainPaymentMethod.COUPON.getCode();
+        if(methods.size()>1) return OrderMainPaymentMethod.MIXED.getCode();
+        return methods.get(0);
     }
 
     /** 仅核销优惠券并记录抵扣，不扣钱包、不生成其它收款流水。 */
@@ -286,78 +314,211 @@ public class OrderPaymentService {
         return externalPaymentType;
     }
     
-    /**
-     * 退款（LIFO顺序：外部支付 -> 本金余额 -> 专用金 -> 优惠券）
-     * 
-     * @param order 订单
-     * @param refundAmount 退款金额（为空则全额退款）
-     * @param createdBy 操作人ID
-     */
-    @Transactional(rollbackFor = Exception.class)
-    public void refund(Order order, BigDecimal refundAmount, Long createdBy) {
-        // 赊销订单不支持退款
-        if (order.getPaymentMethod() != null && order.getPaymentMethod().equals(OrderMainPaymentMethod.CREDIT.getCode())) {
-            throw new IllegalArgumentException(OrderErrorCode.CREDIT_ORDER_NO_REFUND + ": 赊销订单不支持退款");
-        }
-        
-        if (refundAmount == null) {
-            refundAmount = order.getPayAmount();
-        }
-        // 是否全额退款：refundAmount == 实付金额（buildRefundPlan 的 fullRefund 判定与此一致；
-        // refundAmount 经校验不会超过实付金额，故 == 0 即全额）。订单状态 8/9 在本方法返回后才设置，
-        // 故此处以金额判定，不依赖 orderStatus。
-        BigDecimal payAmount = order.getPayAmount();
-        boolean isFullRefund = payAmount != null && refundAmount.compareTo(payAmount) == 0;
+    public record RefundResult(BigDecimal cashRefundAmount, BigDecimal creditReductionAmount) {}
+    public record RefundSourceView(String sourceType, Long sourceId, String paymentMethodName,
+                                   BigDecimal amount, BigDecimal refundableAmount) {}
+    public record RefundFundingPreview(BigDecimal refundAmount, BigDecimal creditReductionAmount,
+                                       BigDecimal cashRefundAmount, BigDecimal remainingDebt,
+                                       BigDecimal remainingRefundableAmount, boolean creditOrder,
+                                       String state, List<RefundSourceView> sources) {}
+    public record FinancialSummary(BigDecimal creditReductionAmount, BigDecimal cashRefundedAmount,
+                                   BigDecimal remainingCreditAmount, BigDecimal repaidAmount) {}
+    private record Source(OrderPayment payment, com.agri_system.domain.credit.model.CreditRepaymentLog repayment,
+                          String type, Long id, String methodName, BigDecimal amount, BigDecimal refunded,
+                          LocalDateTime createdAt) {
+        BigDecimal available() { return amount.subtract(refunded); }
+    }
+    private record Funding(Order order, com.agri_system.domain.credit.model.CreditAccount account,
+                           List<OrderPayment> payments, List<Source> sources, BigDecimal debt,
+                           BigDecimal alreadyReturned, String state) {}
 
-        // 查询支付明细（按创建时间倒序，LIFO）
-        List<OrderPayment> payments = paymentRepository.findByOrderId(order.getId());
-        payments.sort((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()));
-        
-        BigDecimal remaining = refundAmount;
-        
-        for (OrderPayment payment : payments) {
-            if (remaining.compareTo(BigDecimal.ZERO) <= 0) {
-                break;
-            }
-            
-            BigDecimal refund = payment.getAmount().compareTo(remaining) > 0 ? remaining : payment.getAmount();
-            
-            // 根据支付类型退款
-            Integer paymentType = payment.getPaymentType();
-            if (paymentType == null) {
-                remaining = remaining.subtract(refund);
-                continue;
-            }
+    /** 同一锁序用于预览和执行；不会从未知历史来源猜测可退金额。 */
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public RefundFundingPreview previewRefund(Order order, BigDecimal returnAmount) {
+        return preview(loadFunding(order), returnAmount);
+    }
 
-            if (paymentType.equals(PaymentMethod.CASH.getCode())
-                    || paymentType.equals(PaymentMethod.WECHAT.getCode())
-                    || paymentType.equals(PaymentMethod.ALIPAY.getCode())) {
-                // 外部支付：原路退回（TODO: 调用第三方退款接口）
-                // 这里只记录，实际退款由第三方处理
-            } else if (paymentType.equals(PaymentMethod.BALANCE.getCode())) {
-                // 本金余额：退回余额
-                walletService.refundBalance(order.getCustomerId(), refund, "ORDER_REFUND", order.getId(), createdBy);
-            } else if (paymentType.equals(PaymentMethod.SPECIAL_FUND.getCode())) {
-                // 专用金：退回专用金
-                walletService.refundSpecialFund(order.getCustomerId(), refund, "ORDER_REFUND", order.getId(), createdBy);
-            } else if (paymentType.equals(PaymentMethod.COUPON.getCode())) {
-                // 优惠券：仅全额退款且券未过期时退回（恢复为未使用，客户可在后续订单复用）；
-                // 部分退款或券已过期均不退。是否实际恢复由 CustomerCoupon.restore() 按状态/过期判定。
-                if (isFullRefund && payment.getCouponId() != null) {
-                    restoreCoupon(payment.getCouponId());
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public RefundResult refund(Order order, BigDecimal returnAmount, Long createdBy) {
+        Funding funding = loadFunding(order);
+        RefundFundingPreview plan = preview(funding, returnAmount);
+        // 所有来源及恒等式在任何资金变化前已核对。
+        if (plan.creditReductionAmount().signum() > 0) {
+            var account = funding.account();
+            account.setRemainingAmount(account.getRemainingAmount().subtract(plan.creditReductionAmount()));
+            account.refreshSettlementStatus();
+            creditAccountRepository.save(account);
+        }
+        for (RefundSourceView selected : plan.sources()) {
+            Source source = funding.sources().stream().filter(item -> item.type().equals(selected.sourceType())
+                    && item.id().equals(selected.sourceId())).findFirst().orElseThrow();
+            BigDecimal amount = selected.amount();
+            if (source.payment() != null) {
+                int type = source.payment().getPaymentType();
+                if (type == PaymentMethod.BALANCE.getCode()) {
+                    walletService.refundBalance(order.getCustomerId(), amount, "ORDER_REFUND", order.getId(), createdBy);
+                } else if (type == PaymentMethod.SPECIAL_FUND.getCode()) {
+                    walletService.refundSpecialFund(order.getCustomerId(), amount, "ORDER_REFUND", order.getId(), createdBy);
                 }
+                source.payment().setRefundedAmount(source.refunded().add(amount));
+                paymentRepository.save(source.payment());
+            } else {
+                // 还款4是银行转账，不是本金钱包；实际退已收以原来源累计计数记账。
+                source.repayment().setRefundedAmount(source.refunded().add(amount));
+                repaymentRepository.save(source.repayment());
             }
-            
-            remaining = remaining.subtract(refund);
+        }
+        return new RefundResult(plan.cashRefundAmount(), plan.creditReductionAmount());
+    }
+
+    private RefundFundingPreview preview(Funding funding, BigDecimal requested) {
+        BigDecimal remaining = funding.order().getPayAmount().subtract(funding.alreadyReturned());
+        BigDecimal amount = requested == null ? remaining : money(requested, "成交冲销金额");
+        if (amount.compareTo(remaining) > 0) throw invalid("累计成交冲销不能超过原净应结算额");
+        BigDecimal writeOff = amount.min(funding.debt());
+        BigDecimal cash = amount.subtract(writeOff), left = cash;
+        List<RefundSourceView> chosen = new ArrayList<>();
+        for (Source source : funding.sources()) {
+            if (left.signum() == 0) break;
+            BigDecimal take = source.available().min(left);
+            if (take.signum() > 0) chosen.add(new RefundSourceView(source.type(), source.id(), source.methodName(), take, source.available()));
+            left = left.subtract(take);
+        }
+        if (left.signum() != 0) throw invalid("原单可退已收款来源不足，请核对收款及还款分配");
+        return new RefundFundingPreview(amount,writeOff,cash,funding.debt(),remaining,
+                funding.account() != null,funding.state(),List.copyOf(chosen));
+    }
+
+    private Funding loadFunding(Order requested) {
+        Order order = orderRepository.findByIdForUpdate(requested.getId())
+                .orElseThrow(() -> invalid("订单不存在"));
+        BigDecimal net = money(order.getPayAmount(), "原净应结算额");
+        if (order.getCustomerId() != null) customerRepository.findByIdWithLock(order.getCustomerId())
+                .orElseThrow(() -> invalid("原订单客户不存在，须核对历史账款"));
+        var account = creditAccountRepository.findByOrderIdForUpdate(order.getId()).orElse(null);
+        List<OrderPayment> payments = paymentRepository.findByOrderIdForUpdate(order.getId());
+        List<com.agri_system.domain.credit.model.CreditRepaymentLog> repayments = account == null ? List.of()
+                : repaymentRepository.findByCreditAccountIdForUpdate(account.getId());
+        BigDecimal returned = BigDecimal.ZERO, writtenOff = BigDecimal.ZERO, cashReturned = BigDecimal.ZERO;
+        StringBuilder state = new StringBuilder().append(order.getId()).append('|').append(net);
+        List<com.agri_system.domain.after_sales.model.AfterSales> history = afterSalesRepository.findByOrderId(order.getId());
+        history = history.stream().sorted(java.util.Comparator.comparing(com.agri_system.domain.after_sales.model.AfterSales::getId)).toList();
+        for (var fact : history) {
+            if (!Integer.valueOf(com.agri_system.domain.after_sales.model.AfterSales.STATUS_FINISHED).equals(fact.getStatus())) continue;
+            BigDecimal r = money(fact.getRefundAmount(), "历史成交冲销"), w = money(fact.getCreditReductionAmount(), "历史冲欠款"), f = money(fact.getCashRefundAmount(), "历史退已收款");
+            if (r.compareTo(w.add(f)) != 0) throw invalid("历史售后资金拆分不守恒");
+            returned=returned.add(r); writtenOff=writtenOff.add(w);cashReturned=cashReturned.add(f);
+            state.append("|AS:").append(fact.getId()).append(':').append(r).append(':').append(w).append(':').append(f);
+        }
+        BigDecimal originalCash = BigDecimal.ZERO, originalCredit = BigDecimal.ZERO, sourceRefunded = BigDecimal.ZERO;
+        List<Source> sources = new ArrayList<>();
+        for (OrderPayment payment : payments) {
+            if (!java.util.Objects.equals(payment.getOrderId(),order.getId()) || payment.getId()==null) throw invalid("收款来源缺少原单归属");
+            BigDecimal amount = money(payment.getAmount(), "原支付金额");
+            Integer type=payment.getPaymentType();
+            if (type == null) throw invalid("原支付方式未知，须核对");
+            if (type == PaymentMethod.COUPON.getCode()) continue;
+            if (type == PaymentMethod.CREDIT.getCode()) {originalCredit=originalCredit.add(amount);continue;}
+            String name = paymentName(type,false);
+            BigDecimal refunded=counter(payment.getRefundedAmount(),amount);
+            originalCash=originalCash.add(amount);sourceRefunded=sourceRefunded.add(refunded);
+            sources.add(new Source(payment,null,"ORDER_PAYMENT",payment.getId(),name,amount,refunded,payment.getCreatedAt()));
+        }
+        BigDecimal paid=BigDecimal.ZERO,debt=BigDecimal.ZERO;
+        if (account != null) {
+            if (!java.util.Objects.equals(account.getOrderId(),order.getId()) || !java.util.Objects.equals(account.getCustomerId(),order.getCustomerId())
+                    || !java.util.Objects.equals(account.getStoreId(),order.getStoreId())) throw invalid("赊销账户与原单归属不一致");
+            BigDecimal credit=money(account.getCreditAmount(),"原赊销"), allocated=BigDecimal.ZERO;
+            paid=money(account.getPaidAmount(),"累计实际还款");debt=money(account.getRemainingAmount(),"剩余欠款");
+            if (credit.compareTo(originalCredit)!=0 || credit.subtract(paid).subtract(writtenOff).compareTo(debt)!=0) throw invalid("原单欠款与还款、退货冲账不守恒");
+            for (var repayment : repayments) {
+                if (repayment.getId()==null || !java.util.Objects.equals(repayment.getCreditAccountId(),account.getId())
+                        || !java.util.Objects.equals(repayment.getCustomerId(),order.getCustomerId())
+                        || !java.util.Objects.equals(repayment.getStoreId(),order.getStoreId())) throw invalid("历史还款缺少明确原单分配，须核对");
+                BigDecimal amount=money(repayment.getAmount(),"原单还款"),refunded=counter(repayment.getRefundedAmount(),amount);
+                String name=paymentName(repayment.getPaymentMethod(),true);
+                allocated=allocated.add(amount);sourceRefunded=sourceRefunded.add(refunded);
+                sources.add(new Source(null,repayment,"CREDIT_REPAYMENT",repayment.getId(),name,amount,refunded,repayment.getCreatedAt()));
+            }
+            if (allocated.compareTo(paid)!=0) throw invalid("原单还款分配与累计实际还款不一致，不能猜测历史来源");
+            state.append("|CA:").append(account.getId()).append(':').append(credit).append(':').append(paid).append(':').append(debt);
+        } else if (originalCredit.signum()!=0 || writtenOff.signum()!=0) throw invalid("原单缺少赊销账户");
+        if (net.compareTo(originalCash.add(originalCredit))!=0 || returned.compareTo(net)>0
+                || sourceRefunded.compareTo(cashReturned)!=0 || returned.compareTo(writtenOff.add(cashReturned))!=0
+                || net.subtract(returned).compareTo(originalCash.add(paid).subtract(cashReturned).add(debt))!=0) {
+            throw invalid("原成交、收款、欠款及退货事实不守恒，须先核对");
+        }
+        sources.sort(java.util.Comparator.comparing(Source::createdAt,java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())).reversed()
+                .thenComparing(Source::type).thenComparing(Source::id,java.util.Comparator.reverseOrder()));
+        for (Source source:sources) state.append('|').append(source.type()).append(':').append(source.id()).append(':').append(source.amount()).append(':').append(source.refunded()).append(':').append(source.methodName()).append(':').append(source.createdAt());
+        return new Funding(order,account,payments,sources,debt,returned,state.toString());
+    }
+
+    /** 完成成交冲销及全部实物退回后才恢复券，不能保留0元或尾分物料复用券。 */
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public void restoreCouponIfFullyReturned(Order order) {
+        List<com.agri_system.domain.after_sales.model.AfterSales> finished=afterSalesRepository.findByOrderId(order.getId()).stream()
+                .filter(a->Integer.valueOf(com.agri_system.domain.after_sales.model.AfterSales.STATUS_FINISHED).equals(a.getStatus())).toList();
+        BigDecimal returned=finished.stream().map(com.agri_system.domain.after_sales.model.AfterSales::getRefundAmount).reduce(BigDecimal.ZERO,BigDecimal::add);
+        if(returned.compareTo(order.getPayAmount())!=0) return;
+        {
+            List<OrderItem> goods=itemRepository.findByOrderId(order.getId());
+            if(goods.isEmpty()) return;
+            java.util.Map<Long,BigDecimal> quantities=new java.util.HashMap<>();
+            for(var fact:finished) for(var item:afterSalesItemRepository.findByAfterSalesId(fact.getId())) {
+                if(item.getQuantity()==null || item.getOrderItemId()==null) throw invalid("历史实退数量不明，不能恢复券");
+                quantities.merge(item.getOrderItemId(),item.getQuantity(),BigDecimal::add);
+            }
+            if(goods.stream().anyMatch(item->quantities.getOrDefault(item.getId(),BigDecimal.ZERO).compareTo(item.getQuantity())!=0)) return;
+        }
+        for(OrderPayment payment:paymentRepository.findByOrderIdForUpdate(order.getId())) {
+            if(Integer.valueOf(PaymentMethod.COUPON.getCode()).equals(payment.getPaymentType()) && payment.getCouponId()!=null) {
+                couponRepository.findByIdForUpdate(payment.getCouponId()).ifPresent(coupon->{
+                    if(java.util.Objects.equals(coupon.getUsedOrderId(),order.getId()) && coupon.restore()) couponRepository.save(coupon);
+                });
+            }
         }
     }
+
+    /** 查询展示不改写历史未知拆分；NULL仍表示须核对。 */
+    public FinancialSummary financialSummary(Order order) {
+        var account=creditAccountRepository.findByOrderId(order.getId()).orElse(null);
+        BigDecimal written=BigDecimal.ZERO,cash=BigDecimal.ZERO;
+        for(var fact:afterSalesRepository.findByOrderId(order.getId())) {
+            if(!Integer.valueOf(com.agri_system.domain.after_sales.model.AfterSales.STATUS_FINISHED).equals(fact.getStatus())) continue;
+            written=written==null || fact.getCreditReductionAmount()==null ? null : written.add(fact.getCreditReductionAmount());
+            cash=cash==null || fact.getCashRefundAmount()==null ? null : cash.add(fact.getCashRefundAmount());
+        }
+        return new FinancialSummary(written,cash,account==null?BigDecimal.ZERO:account.getRemainingAmount(),account==null?BigDecimal.ZERO:account.getPaidAmount());
+    }
+    private BigDecimal counter(BigDecimal value,BigDecimal original) {
+        BigDecimal amount=money(value,"历史来源累计已退（未知需核对）");
+        if(amount.compareTo(original)>0) throw invalid("来源累计已退不能超过原金额");
+        return amount;
+    }
+    private BigDecimal money(BigDecimal value,String label) {
+        if(value==null || value.signum()<0 || value.stripTrailingZeros().scale()>2) throw invalid(label+"必须为明确的非负分金额");
+        return value.setScale(2);
+    }
+    private String paymentName(Integer type,boolean repayment) {
+        if(type==null) throw invalid("原资金来源收款方式未知");
+        return switch(type) {
+            case 1 -> "现金";
+            case 2 -> "微信";
+            case 3 -> "支付宝";
+            case 4 -> repayment?"银行转账":"本金余额";
+            case 8 -> {if(repayment)throw invalid("还款来源方式未知");yield "专用金";}
+            default -> throw invalid("原资金来源收款方式未知，不能自动退款");
+        };
+    }
+    private IllegalArgumentException invalid(String message) {return new IllegalArgumentException(message);}
 
     /**
      * 退回优惠券（仅全额退款时调用）：券是否实际恢复为"未使用"由
      * {@link CustomerCoupon#restore()} 按"已使用且未过期"判定；不满足则不改动、不保存。
      */
     private void restoreCoupon(Long couponId) {
-        couponRepository.findById(couponId).ifPresent(coupon -> {
+        couponRepository.findByIdForUpdate(couponId).ifPresent(coupon -> {
             if (coupon.restore()) {
                 couponRepository.save(coupon);
             }

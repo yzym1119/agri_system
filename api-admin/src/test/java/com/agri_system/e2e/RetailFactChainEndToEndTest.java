@@ -10,6 +10,7 @@ import com.agri_system.api.admin.controller.OrderAdminController;
 import com.agri_system.api.admin.controller.ProductController;
 import com.agri_system.api.admin.controller.ProductPackageController;
 import com.agri_system.api.admin.controller.AfterSalesAdminController;
+import com.agri_system.api.admin.controller.CreditAdminController;
 import com.agri_system.application.after_sales.dto.command.AdminReturnCommand;
 import com.agri_system.application.performance.listener.PerformanceEventListener;
 import com.agri_system.application.performance.event.OrderRefundedEvent;
@@ -84,6 +85,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -137,6 +139,10 @@ class RetailFactChainEndToEndTest {
     @Autowired private org.springframework.transaction.PlatformTransactionManager transactionManager;
     @Autowired private com.agri_system.application.order.service.OrderPaymentService orderPaymentService;
     @Autowired private com.agri_system.domain.order.repository.OrderRepository orderRepository;
+    @Autowired private com.agri_system.domain.order.repository.OrderPaymentRepository paymentRepository;
+    @Autowired private com.agri_system.domain.credit.repository.CreditRepaymentLogRepository repaymentRepository;
+    @Autowired private com.agri_system.domain.after_sales.repository.AfterSalesRepository afterSalesRepository;
+    @Autowired private com.agri_system.application.after_sales.service.AfterSalesApplicationService afterSalesApplicationService;
 
     // ------------------------------------------------------------------
     // 数据源：建一次性库 + Flyway 编程式迁移 + 自证（行数==迁移文件数、failed==0）
@@ -281,6 +287,32 @@ class RetailFactChainEndToEndTest {
     // 十步弧线（一个有序 @Test，顺序即 brief §4，断言内联）
     // ------------------------------------------------------------------
     @Test
+    void declaredTransactionIsolationAppliesToSharedConnection() {
+        var committed = new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+        committed.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
+        committed.execute(status -> {
+            org.apache.ibatis.session.SqlSession session = org.mybatis.spring.SqlSessionUtils.getSqlSession(sqlSessionFactory);
+            try {
+                assertEquals(Connection.TRANSACTION_READ_COMMITTED, session.getConnection().getTransactionIsolation(),
+                        "事务注解指定的隔离级别必须作用于实际Flex连接");
+                assertEquals("READ-COMMITTED", jdbcTemplate.queryForObject("SELECT @@transaction_isolation", String.class));
+                try (Statement st = session.getConnection().createStatement(); ResultSet rs = st.executeQuery("SELECT CONNECTION_ID()")) {
+                    rs.next();
+                    assertEquals(rs.getLong(1), jdbcTemplate.queryForObject("SELECT CONNECTION_ID()", Long.class));
+                }
+                status.setRollbackOnly();
+                return null;
+            } catch (SQLException e) { throw new IllegalStateException(e); }
+            finally { org.mybatis.spring.SqlSessionUtils.closeSqlSession(session, sqlSessionFactory); }
+        });
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager).execute(status -> {
+            assertEquals("REPEATABLE-READ", jdbcTemplate.queryForObject("SELECT @@transaction_isolation", String.class),
+                    "事务结束后连接池必须恢复原默认隔离级别，不污染下一笔操作");
+            return null;
+        });
+    }
+
+    @Test
     void unifiedInventoryBusinessChain() throws Exception {
         assertTrue(sqlSessionFactory.getConfiguration().getEnvironment().getDataSource() == jdbcTemplate.getDataSource(),
                 "JdbcTemplate 必须使用 MyBatis 同一个事务数据源");
@@ -413,9 +445,569 @@ class RetailFactChainEndToEndTest {
         assertUnifiedPricingBusinessChain();
         assertPackageBusinessChain();
         assertPosCouponPaymentChain();
+        assertCreditSettlementBusinessChain();
         assertLedgerReconciles();
         assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_balance_feature_status"));
         log("收货、销售、原单退货、提货、调拨、盘点及失败回滚使用同一账本，验收通过");
+    }
+
+    /** 原销售单的应收、实还、冲欠款、已退来源和实物回库均走真实HTTP/事务。 */
+    private void assertCreditSettlementBusinessChain() throws Exception {
+        seedCreditFixture();
+        E2EToken manager = loginToken(1L), cashier = loginToken(2L), otherStore = loginToken(3L);
+        long unpaid = creditSale(manager,600,1,"10","0","100");
+        assertCreditState(unpaid,"0","100","0","0","0","100");
+        assertDecimal("新支付来源0必须由MyBatis回读", "0", paymentRepository.findByOrderId(unpaid).get(0).getRefundedAmount());
+        JsonNode unpaidQuote = creditPreview(manager,unpaid,"3");
+        assertPreview(unpaidQuote,"30","30","0");
+        assertEquals(0,unpaidQuote.path("sources").size(),"全冲欠款不得虚构现金退款来源");
+        creditReturn(manager,unpaid,unpaidQuote);
+        assertCreditState(unpaid,"0","100","0","30","0","70");
+        assertOrderReturned(unpaid,"3");
+
+        long partial = creditSale(manager,601,1,"10","0","100");
+        JsonNode bankBatch = requireCreditSuccess(repay(manager,601,"40",4,"CREDIT-BANK-40",null,null));
+        assertDecimal("还款批次保存原单40元","40",bankBatch.path("amount").decimalValue());
+        assertEquals(1,bankBatch.path("allocations").size());
+        assertDecimal("新还款来源0由MyBatis回读","0",repaymentRepository.findByRequestKey(1L,"CREDIT-BANK-40").get(0).getRefundedAmount());
+        JsonNode partialQuote = creditPreview(manager,partial,"8");
+        assertPreview(partialQuote,"80","60","20");
+        assertEquals("CREDIT_REPAYMENT",partialQuote.path("sources").get(0).path("sourceType").asText());
+        assertTrue(partialQuote.path("sources").get(0).path("paymentMethodName").asText().contains("银行"),partialQuote.toString());
+        long partialAfterSales = creditReturn(manager,partial,partialQuote);
+        assertCreditState(partial,"0","100","40","60","20","0");
+        assertOrderReturned(partial,"8");
+        assertDecimal("售后实际冲欠款60","60",afterSalesRepository.findById(partialAfterSales).orElseThrow().getCreditReductionAmount());
+        assertDecimal("售后实际退还款20","20",afterSalesRepository.findById(partialAfterSales).orElseThrow().getCashRefundAmount());
+        assertEquals(0L,jdbcLong("SELECT COUNT(*) FROM wallet_transaction WHERE customer_id=601 AND wallet_type IN(1,2)"),
+                "银行还款编码4不能当作本金钱包退款");
+        assertEquals(0L,jdbcLong("SELECT COUNT(*) FROM customer_wallet WHERE customer_id=601 AND wallet_type IN(1,2)"));
+
+        long mixed = creditSale(manager,602,1,"10","40","60");
+        requireCreditSuccess(repay(manager,602,"20",1,"CREDIT-MIXED-20",null,null));
+        JsonNode mixedQuote = creditPreview(manager,mixed,"10");
+        assertPreview(mixedQuote,"100","40","60");
+        assertEquals(2,mixedQuote.path("sources").size(),"先退原单20元还款，再退原现金40元");
+        creditReturn(manager,mixed,mixedQuote);
+        assertCreditState(mixed,"40","60","20","40","60","0");
+        assertOrderReturned(mixed,"10");
+        assertDecimal("原现金来源只累计退40","40",jdbcDecimal("SELECT refunded_amount FROM order_payment WHERE order_id="+mixed+" AND payment_type=1"));
+        assertDecimal("原还款来源只累计退20","20",jdbcDecimal("SELECT refunded_amount FROM credit_repayment_log WHERE request_key='CREDIT-MIXED-20'"));
+
+        long cash = creditSale(manager,603,1,"10","100","0");
+        for (String quantity : List.of("3","3","4")) creditReturn(manager,cash,creditPreview(manager,cash,quantity));
+        assertCreditState(cash,"100","0","0","0","100","0");
+        assertOrderReturned(cash,"10");
+        assertDecimal("分次现金退款原来源封顶100","100",jdbcDecimal("SELECT refunded_amount FROM order_payment WHERE order_id="+cash+" AND payment_type=1"));
+        CreditFacts cashFacts=creditFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/after-sales",Map.of("orderId",cash,"refundAmount",10,
+                "reason","重复已全退单","items",List.of(Map.of("orderItemId",creditItem(cash),"quantity",1,"refundAmount",10)))));
+        assertEquals(cashFacts,creditFacts(),"全退后重复退货不得改资金、数量或库存");
+
+        long stale = creditSale(manager,604,1,"10","0","100");
+        JsonNode staleQuote = creditPreview(manager,stale,"3");
+        requireCreditSuccess(repay(manager,604,"90",2,"CREDIT-STALE-90",null,null));
+        CreditFacts staleFacts=creditFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/after-sales",creditReturnBody(stale,staleQuote)));
+        assertEquals(staleFacts,creditFacts(),"还款改变资金拆分后旧预览整单拒绝，无钱货数量副作用");
+        JsonNode freshQuote = creditPreview(manager,stale,"3");
+        assertTrue(!staleQuote.path("quoteId").asText().equals(freshQuote.path("quoteId").asText()),"还款改变资金指纹");
+        assertPreview(freshQuote,"30","10","20");
+        creditReturn(manager,stale,freshQuote);
+        assertCreditState(stale,"0","100","90","10","20","0");
+        assertOrderReturned(stale,"3");
+
+        long sameKey = creditSale(manager,605,1,"10","0","100");
+        List<JsonNode> same = raceCreditHttp(index -> repay(manager,605,"40",1,"CREDIT-SAME-KEY",null,null));
+        assertTrue(same.stream().allMatch(RetailFactChainEndToEndTest::creditSuccess),same.toString());
+        assertEquals(same.get(0).path("repaymentNo").asText(),same.get(1).path("repaymentNo").asText());
+        assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM credit_repayment_log WHERE request_key='CREDIT-SAME-KEY'"));
+        assertCreditState(sameKey,"0","100","40","0","0","60");
+        CreditFacts retryFacts=creditFacts();
+        requireCreditSuccess(repay(manager,605,"40",1,"CREDIT-SAME-KEY",null,null));
+        assertEquals(retryFacts,creditFacts(),"相同还款重试只返回原批次");
+        long crossCustomer = creditSale(manager,606,1,"10","0","100");
+        CreditFacts crossFacts=creditFacts();
+        assertCreditRejected(repay(manager,606,"40",1,"CREDIT-SAME-KEY",null,null));
+        assertEquals(crossFacts,creditFacts(),"请求标识不能绑另一客户");
+        assertCreditState(crossCustomer,"0","100","0","0","0","100");
+
+        long competing = creditSale(manager,607,1,"10","0","100");
+        List<JsonNode> different = raceCreditHttp(index -> repay(manager,607,"60",1,"CREDIT-DIFFERENT-"+index,null,null));
+        assertEquals(1L,different.stream().filter(RetailFactChainEndToEndTest::creditSuccess).count(),different.toString());
+        different.stream().filter(result->!creditSuccess(result)).forEach(result->{
+            assertCreditRejected(result);assertTrue(result.path("message").asText().contains("剩余欠款"),result.toString());
+        });
+        assertCreditState(competing,"0","100","60","0","0","40");
+        requireCreditSuccess(repay(manager,607,"40",1,"CREDIT-CLEAR-40",null,null));
+        assertCreditState(competing,"0","100","100","0","0","0");
+
+        long racing = creditSale(manager,608,1,"10","0","100");
+        JsonNode beforeRace = creditPreview(manager,racing,"10");
+        List<JsonNode> repaymentVsReturn = raceCreditHttp(index -> index==0
+                ? repay(manager,608,"100",1,"CREDIT-VS-RETURN",null,null)
+                : postCreditJson(manager,"/api/admin/after-sales",creditReturnBody(racing,beforeRace)));
+        assertEquals(1L,repaymentVsReturn.stream().filter(RetailFactChainEndToEndTest::creditSuccess).count(),
+                "先还款则旧退款预览拒绝；先全退则无欠款可还："+repaymentVsReturn);
+        repaymentVsReturn.stream().filter(result->!creditSuccess(result)).forEach(result->{
+            assertCreditRejected(result);String message=result.path("message").asText();
+            assertTrue(message.contains("无欠款") || message.contains("预览已变化"),result.toString());
+        });
+        if (creditSuccess(repaymentVsReturn.get(0))) {
+            assertCreditState(racing,"0","100","100","0","0","0");
+            JsonNode afterRace=creditPreview(manager,racing,"10");
+            assertPreview(afterRace,"100","0","100");
+            creditReturn(manager,racing,afterRace);
+            assertCreditState(racing,"0","100","100","0","100","0");
+        } else assertCreditState(racing,"0","100","0","100","0","0");
+        assertOrderReturned(racing,"10");
+
+        long fifoFirst=creditSale(manager,609,1,"6","0","60");
+        long fifoSecond=creditSale(manager,609,1,"4","0","40");
+        JsonNode fifo=requireCreditSuccess(repay(manager,609,"70",3,"CREDIT-FIFO-70",null,null));
+        assertEquals(2,fifo.path("allocations").size(),"一次收款保存两笔原单分配");
+        assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM credit_repayment_log WHERE request_key='CREDIT-FIFO-70'"),"只有批次首分配持有唯一请求标识");
+        assertEquals(2L,jdbcLong("SELECT COUNT(*) FROM credit_repayment_log WHERE customer_id=609 AND repayment_no='"+fifo.path("repaymentNo").asText()+"'"),"批次查询必须包含request_key为NULL的第二分配");
+        CreditFacts fifoFacts=creditFacts();
+        JsonNode fifoReplay=requireCreditSuccess(repay(manager,609,"70",3,"CREDIT-FIFO-70",null,null));
+        assertEquals(2,fifoReplay.path("allocations").size(),"首分配防重重放仍返回完整原单分配");
+        assertEquals(fifo.path("repaymentNo").asText(),fifoReplay.path("repaymentNo").asText());
+        assertEquals(fifoFacts,creditFacts(),"多原单批次重放不能另记收款");
+        assertCreditState(fifoFirst,"0","60","60","0","0","0");
+        assertCreditState(fifoSecond,"0","40","10","0","0","30");
+        JsonNode list=objectMapper.readTree(mockMvc.perform(get("/api/admin/credit/repayments").header(manager.name(),manager.value()).param("customerId","609"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertTrue(list.isArray()&&list.size()==1,list.toString());
+        assertEquals(2,list.get(0).path("allocations").size());
+        List<String> allocatedOrderNos=new ArrayList<>();
+        for(JsonNode allocation:list.get(0).path("allocations")) allocatedOrderNos.add(allocation.path("orderNo").asText());
+        assertTrue(allocatedOrderNos.contains(jdbcString("SELECT order_no FROM `order` WHERE id="+fifoFirst)),list.toString());
+        assertTrue(allocatedOrderNos.contains(jdbcString("SELECT order_no FROM `order` WHERE id="+fifoSecond)),list.toString());
+
+        long storeOne=creditSale(manager,610,1,"10","0","100");
+        long storeTwo=creditSale(otherStore,610,3,"10","0","100");
+        CreditFacts scopeFacts=creditFacts();
+        assertCreditRejected(repay(cashier,610,"10",1,"CREDIT-WRONG-STORE",2L,null));
+        assertCreditRejected(repay(cashier,610,"10",1,"CREDIT-WRONG-EMPLOYEE",null,1L));
+        assertEquals(scopeFacts,creditFacts(),"普通员工不能借请求体伪造门店或操作员");
+        JsonNode scopeSummary=objectMapper.readTree(mockMvc.perform(get("/api/admin/credit/statistics")
+                        .header(cashier.name(),cashier.value()).param("customerId","610"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertDecimal("普通员工本店欠款不是客户两店总额","100",scopeSummary.path("totalDebt").decimalValue());
+        assertEquals(1,scopeSummary.path("storeId").asInt());
+        requireCreditSuccess(repay(manager,610,"20",1,"CREDIT-ADMIN-STORE-2",2L,null));
+        assertCreditState(storeOne,"0","100","0","0","0","100");
+        assertCreditState(storeTwo,"0","100","20","0","0","80");
+        JsonNode accounts=objectMapper.readTree(mockMvc.perform(get("/api/admin/credit/accounts")
+                        .header(cashier.name(),cashier.value()).param("customerId","610"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertEquals(1,accounts.path("records").size());
+        assertEquals(storeOne,accounts.path("records").get(0).path("orderId").asLong());
+
+        assertRefundQuoteReplaysOneFact(manager);
+        assertZeroNetCouponReturnsAndClientCancellation(manager);
+        assertNewCreditSaleAndReturnLockOrder(manager);
+        assertCashReturnAndNewSaleLockOrder(manager);
+        assertNewCreditSaleAndRepaymentLockOrder(manager);
+        assertCrossCustomerSameKeyHasSingleWinner(manager);
+        assertDifferentCustomerBatchReplaysStayIndependent(manager);
+        assertUnknownHistoricalFundingRemainsUnknown(manager);
+        log("[赊销] 纯赊/混付、银行还款、原单退款来源、FIFO批次、重复与并发还款、还款退货竞态及本店范围均按真实资金和库存事实验收");
+    }
+
+    /** 完整报价事实就是请求身份，双提交和丢响应重放只能取原完成结果。 */
+    private void assertRefundQuoteReplaysOneFact(E2EToken manager) throws Exception {
+        long order=creditSale(manager,619,1,"10","100","0");
+        JsonNode quote=creditPreview(manager,order,"1");
+        Map<String,Object> body=creditReturnBody(order,quote);
+        Map<String,Object> noQuote=new LinkedHashMap<>(body);noQuote.remove("quoteId");
+        CreditFacts before=creditFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/after-sales",noQuote));
+        assertEquals(before,creditFacts(),"无报价不能开第二条现金退款路径，钱货和事件均不改变");
+        List<JsonNode> results=raceCreditHttp(index->postCreditJson(manager,"/api/admin/after-sales",body));
+        assertTrue(results.stream().allMatch(JsonNode::isIntegralNumber),results.toString());
+        assertEquals(results.get(0).asLong(),results.get(1).asLong(),"相同报价并发应返回同一完成售后ID");
+        long afterSales=results.get(0).asLong();
+        assertEquals(quote.path("quoteId").asText(),jdbcString("SELECT refund_quote_id FROM after_sales WHERE id="+afterSales));
+        assertTrue(jdbcString("SELECT refund_request_hash FROM after_sales WHERE id="+afterSales).matches("[0-9a-f]{64}"),"新请求元数据保存完整SHA256，不能截断或塞可读备注");
+        assertEquals(before.trading().afterSales()+1,jdbcLong("SELECT COUNT(*) FROM after_sales"));
+        assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM after_sales WHERE order_id="+order));
+        assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM performance_event_record WHERE event_type='ORDER_REFUNDED' AND biz_id="+order));
+        assertCreditState(order,"100","0","0","0","10","0");assertOrderReturned(order,"1");
+        CreditFacts completed=creditFacts();
+        JsonNode replay=postCreditJson(manager,"/api/admin/after-sales",body);
+        assertEquals(afterSales,replay.asLong(),"丢成功响应后相同请求返回原完成结果");
+        assertEquals(completed,creditFacts(),"响应重放不得再退10元或回库第二件");
+        for(Map<String,Object> changed:List.<Map<String,Object>>of(
+                Map.of("refundAmount",20,"items",List.of(Map.of("orderItemId",creditItem(order),"quantity",2,"refundAmount",20))),
+                Map.of("items",List.of(Map.of("orderItemId",creditItem(order),"quantity",2,"refundAmount",10))),
+                Map.of("reason","不能改成另一退货原因"))) {
+            Map<String,Object> edited=new LinkedHashMap<>(body);edited.putAll(changed);
+            assertCreditRejected(postCreditJson(manager,"/api/admin/after-sales",edited));
+            assertEquals(completed,creditFacts(),"同报价改变参数不能冒用原成功结果");
+        }
+        E2EToken anotherActor=loginToken(4L);
+        assertCreditRejected(postCreditJson(anotherActor,"/api/admin/after-sales",body));
+        assertEquals(completed,creditFacts(),"同报价不能复用到另一退款员工");
+        log("[退货请求] 相同quote并发/丢响应重放仅一售后、一笔10元退款、一件原批次回库、一个退款事件；篡改参数/员工均拒绝");
+    }
+
+    /** 全券0元也按剩余实物判断券恢复；线上取消的售后子明细沿原净额。 */
+    private void assertZeroNetCouponReturnsAndClientCancellation(E2EToken manager) throws Exception {
+        exec("INSERT INTO customer_coupon(id,customer_id,name,amount,start_time,end_time,status) VALUES"
+                +"(9501,615,'两件全额券',20,DATE_SUB(NOW(),INTERVAL 1 DAY),DATE_ADD(NOW(),INTERVAL 1 DAY),1),"
+                +"(9502,616,'线上30元券',30,DATE_SUB(NOW(),INTERVAL 1 DAY),DATE_ADD(NOW(),INTERVAL 1 DAY),1)");
+        var free=posSale(130L,"2","袋","10",false,null,"20");free.setCustomerId(615L);free.setCouponId(9501L);
+        long freeOrder=createPOSViaHttp(manager,free);
+        assertDecimal("两件券全抵净应结算为0","0",jdbcDecimal("SELECT pay_amount FROM `order` WHERE id="+freeOrder));
+        assertEquals(2L,jdbcLong("SELECT status FROM customer_coupon WHERE id=9501"));
+        JsonNode first=creditPreview(manager,freeOrder,"1");assertPreview(first,"0","0","0");creditReturn(manager,freeOrder,first);
+        assertEquals(2L,jdbcLong("SELECT status FROM customer_coupon WHERE id=9501"),"只退一件，N=0不能提前恢复全额券");
+        assertOrderReturned(freeOrder,"1");
+        JsonNode second=creditPreview(manager,freeOrder,"1");assertPreview(second,"0","0","0");creditReturn(manager,freeOrder,second);
+        assertEquals(1L,jdbcLong("SELECT status FROM customer_coupon WHERE id=9501"),"两件全部实退才恢复全额券");
+        assertOrderReturned(freeOrder,"2");assertCreditState(freeOrder,"0","0","0","0","0","0");
+
+        exec("UPDATE store SET support_pickup=1 WHERE id=1");
+        exec("INSERT INTO customer_wallet(customer_id,wallet_type,balance) VALUES(616,1,100)");
+        var online=new com.agri_system.application.order.dto.command.OrderCreateCommand();online.setStoreId(1L);online.setOrderType(2);online.setCustomerId(616L);
+        var material=new OrderItemDTO();material.setProductId(130L);material.setQuantity(new BigDecimal("10"));material.setUnit("袋");online.setItems(List.of(material));
+        long onlineOrder=orderApplicationService.createOrder(online,616L);
+        var pay=new com.agri_system.application.order.dto.command.OrderPayCommand();pay.setOrderId(onlineOrder);pay.setUseBalance(true);pay.setCouponId(9502L);
+        assertNull(orderApplicationService.payOrder(pay,616L),"线上本金足够，应通过真实内部支付完成，不制造外部支付成功");
+        assertDecimal("线上商品原gross100","100",jdbcDecimal("SELECT total_amount FROM `order` WHERE id="+onlineOrder));
+        assertDecimal("线上券后净应收70","70",jdbcDecimal("SELECT pay_amount FROM `order` WHERE id="+onlineOrder));
+        assertDecimal("线上钱包只实扣70","30",walletBalance(616,1));
+        var application=new com.agri_system.application.after_sales.dto.command.ClientApplyCommand();application.setOrderId(onlineOrder);application.setReason("客户端券后净额取消验收");
+        long afterSales=afterSalesApplicationService.applyFromClient(application,616L);
+        var pending=afterSalesRepository.findById(afterSales).orElseThrow();
+        assertNull(pending.getCreditReductionAmount(),"待处理售后尚无实际冲欠款，保存NULL而非假0");
+        assertNull(pending.getCashRefundAmount(),"待处理售后尚无实际退款，保存NULL而非假0");
+        assertDecimal("客户端申请子明细保存净70不是gross100","70",jdbcDecimal("SELECT SUM(refund_amount) FROM after_sales_item WHERE after_sales_id="+afterSales));
+        JsonNode detail=objectMapper.readTree(mockMvc.perform(get("/api/admin/after-sales/"+afterSales).header(manager.name(),manager.value()))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        assertDecimal("真实API子明细净额70","70",detail.path("items").get(0).path("refundAmount").decimalValue());
+        JsonNode audit=postCreditJson(manager,"/api/admin/after-sales/"+afterSales+"/audit",Map.of("approved",true,"remark","拦截取消通过"));
+        assertTrue(audit==null||audit.isNull()||creditSuccess(audit));
+        JsonNode quote=postCreditJson(manager,"/api/admin/orders/"+onlineOrder+"/refund-preview",
+                Map.of("afterSalesId",afterSales,"items",List.of(Map.of("orderItemId",creditItem(onlineOrder),"quantity",10,"refundAmount",70))));
+        requireCreditSuccess(quote);assertPreview(quote,"70","0","70");
+        postCreditJson(manager,"/api/admin/after-sales/"+afterSales+"/refund",Map.of("refundAmount",70,"quoteId",quote.path("quoteId").asText()));
+        assertEquals(50L,jdbcLong("SELECT status FROM after_sales WHERE id="+afterSales));
+        assertDecimal("线上原本金退款恢复100","100",walletBalance(616,1));
+        assertOrderReturned(onlineOrder,"10");assertCreditState(onlineOrder,"70","0","0","0","70","0");
+        assertEquals(1L,jdbcLong("SELECT status FROM customer_coupon WHERE id=9502"));
+    }
+
+    /** 两业务先在同一客户锁排队，稳定检查customer→库存顺序，禁止把死锁当通过。 */
+    private void assertNewCreditSaleAndReturnLockOrder(E2EToken manager) throws Exception {
+        long original=creditSale(manager,614,1,"10","0","100");
+        JsonNode quote=creditPreview(manager,original,"3");
+        var newSale=posSale(130L,"2","袋","10",false,null,"0");newSale.setCustomerId(614L);newSale.setPaymentType(6);
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+        try(Connection hold=dataSource.getConnection()) {
+            hold.setAutoCommit(false);
+            try(PreparedStatement lock=hold.prepareStatement("SELECT id FROM customer WHERE id=614 FOR UPDATE")) {
+                try(ResultSet rs=lock.executeQuery()) { assertTrue(rs.next()); }
+            }
+            var returning=pool.submit(()->postCreditJson(manager,"/api/admin/after-sales",creditReturnBody(original,quote)));
+            waitForCustomerWaiters(1);
+            var selling=pool.submit(()->postCreditJson(manager,"/api/admin/orders/pos",newSale));
+            waitForCustomerWaiters(2);
+            hold.commit();
+            JsonNode returned=returning.get(35,java.util.concurrent.TimeUnit.SECONDS);
+            JsonNode sold=selling.get(35,java.util.concurrent.TimeUnit.SECONDS);
+            requireCreditSuccess(returned);requireCreditSuccess(sold);
+            assertTrue(sold.isIntegralNumber()&&sold.asLong()>0,sold.toString());
+            assertCreditState(original,"0","100","0","30","0","70");
+            assertCreditState(sold.asLong(),"0","20","0","0","0","20");
+            assertOrderReturned(original,"3");
+            log("[锁序] 已观测两请求同customer排队，原单退货与新赊销无死锁且双方钱货仅记一次");
+        } finally { pool.shutdownNow(); }
+    }
+    /** 现金也只有报价后的正式入口，与新POS遵守相同customer→库存锁序。 */
+    private void assertCashReturnAndNewSaleLockOrder(E2EToken manager) throws Exception {
+        long original=creditSale(manager,618,1,"10","100","0");
+        var newSale=posSale(130L,"2","袋","10",false,null,"20");newSale.setCustomerId(618L);
+        JsonNode quote=creditPreview(manager,original,"3");
+        Map<String,Object> returnBody=creditReturnBody(original,quote);
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+        try(Connection hold=dataSource.getConnection()) {
+            hold.setAutoCommit(false);
+            try(PreparedStatement lock=hold.prepareStatement("SELECT id FROM customer WHERE id=618 FOR UPDATE")) {
+                try(ResultSet rs=lock.executeQuery()) { assertTrue(rs.next()); }
+            }
+            // 新销售先排队，现金正式退货后排队；同一锁序下双方均能完成。
+            var selling=pool.submit(()->postCreditJson(manager,"/api/admin/orders/pos",newSale));
+            waitForCustomerWaiters(1);
+            var returning=pool.submit(()->postCreditJson(manager,"/api/admin/after-sales",returnBody));
+            waitForCustomerWaiters(2);
+            hold.commit();
+            JsonNode sold=selling.get(35,java.util.concurrent.TimeUnit.SECONDS);
+            JsonNode returned=returning.get(35,java.util.concurrent.TimeUnit.SECONDS);
+            requireCreditSuccess(sold);requireCreditSuccess(returned);
+            assertTrue(sold.isIntegralNumber()&&sold.asLong()>0,sold.toString());
+            assertCreditState(original,"100","0","0","0","30","0");
+            assertCreditState(sold.asLong(),"20","0","0","0","0","0");
+            assertOrderReturned(original,"3");
+            log("[锁序] 强制quote现金退货与新销售已观测customer排队，双方成功、无死锁、钱货不重记");
+        } finally { pool.shutdownNow(); }
+    }
+
+    /** 新POS先等待customer，随后还款排队；外键写store时不能形成反向门店锁环。 */
+    private void assertNewCreditSaleAndRepaymentLockOrder(E2EToken manager) throws Exception {
+        long original=creditSale(manager,621,1,"10","0","100");
+        var newSale=posSale(130L,"2","袋","10",false,null,"0");
+        newSale.setCustomerId(621L);newSale.setPaymentType(6);
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+        CreditFacts before=creditFacts();
+        try(Connection hold=dataSource.getConnection()) {
+            hold.setAutoCommit(false);
+            try(PreparedStatement lock=hold.prepareStatement("SELECT id FROM customer WHERE id=621 FOR UPDATE")) {
+                try(ResultSet rs=lock.executeQuery()) { assertTrue(rs.next()); }
+            }
+            var selling=pool.submit(()->postCreditJson(manager,"/api/admin/orders/pos",newSale));
+            waitForCustomerWaiters(1);
+            var repaying=pool.submit(()->repay(manager,621,"40",1,"CREDIT-POS-VS-REPAY",null,null));
+            waitForCustomerWaiters(2);
+            hold.commit();
+            JsonNode sold=requireCreditSuccess(selling.get(35,java.util.concurrent.TimeUnit.SECONDS));
+            JsonNode batch=requireCreditSuccess(repaying.get(35,java.util.concurrent.TimeUnit.SECONDS));
+            assertTrue(sold.isIntegralNumber()&&sold.asLong()>0,sold.toString());
+            assertEquals(1,batch.path("allocations").size());
+            assertEquals(original,batch.path("allocations").get(0).path("orderId").asLong(),"还款沿最早原单分配，不改新挂账20元");
+            assertCreditState(original,"0","100","40","0","0","60");
+            assertCreditState(sold.asLong(),"0","20","0","0","0","20");
+            assertOrderReturned(original,"0");assertOrderReturned(sold.asLong(),"0");
+            assertEquals(before.repayments()+1,jdbcLong("SELECT COUNT(*) FROM credit_repayment_log"));
+            assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM credit_repayment_log WHERE request_key='CREDIT-POS-VS-REPAY'"));
+            assertDecimal("新赊销只实出库2袋","2",jdbcDecimal("SELECT SUM(a.allocated_base_quantity) FROM order_item_batch_allocation a JOIN order_item i ON i.id=a.order_item_id WHERE i.order_id="+sold.asLong()));
+            log("[锁序] MySQL已观测POS与还款先后等待同customer，order及credit_account门店外键写入均成功，无store/customer死锁");
+        } finally { pool.shutdownNow(); }
+    }
+
+    /** 不同customer无需串行锁门店，唯一请求身份必须使一个胜出且另一事务完整回滚。 */
+    private void assertCrossCustomerSameKeyHasSingleWinner(E2EToken manager) throws Exception {
+        long first=creditSale(manager,622,1,"10","0","100");
+        long second=creditSale(manager,623,1,"10","0","100");
+        CreditFacts before=creditFacts();
+        List<JsonNode> responses=raceCreditHttp(index->repay(manager,index==0?622:623,"40",1,"CREDIT-CROSS-CUSTOMER-RACE",null,null));
+        assertEquals(1L,responses.stream().filter(RetailFactChainEndToEndTest::creditSuccess).count(),responses.toString());
+        responses.stream().filter(result->!creditSuccess(result)).forEach(this::assertCreditRejected);
+        long winner=jdbcLong("SELECT customer_id FROM credit_repayment_log WHERE request_key='CREDIT-CROSS-CUSTOMER-RACE'");
+        assertTrue(winner==622||winner==623);
+        assertCreditState(first,"0","100",winner==622?"40":"0","0","0",winner==622?"60":"100");
+        assertCreditState(second,"0","100",winner==623?"40":"0","0","0",winner==623?"60":"100");
+        assertEquals(before.repayments()+1,jdbcLong("SELECT COUNT(*) FROM credit_repayment_log"),"跨客户争用不能保留失败批次");
+        assertDecimal("仅胜者累计实还40",before.paid().add(new BigDecimal("40")).toPlainString(),jdbcDecimal("SELECT COALESCE(SUM(paid_amount),0) FROM credit_account"));
+        assertDecimal("总欠款只减少一次40",before.debt().subtract(new BigDecimal("40")).toPlainString(),jdbcDecimal("SELECT COALESCE(SUM(remaining_amount),0) FROM credit_account"));
+        CreditFacts completed=creditFacts();
+        JsonNode replay=requireCreditSuccess(repay(manager,winner,"40",1,"CREDIT-CROSS-CUSTOMER-RACE",null,null));
+        assertEquals(winner,replay.path("customerId").asLong());assertEquals(completed,creditFacts());
+        assertCreditRejected(repay(manager,winner==622?623:622,"40",1,"CREDIT-CROSS-CUSTOMER-RACE",null,null));
+        assertEquals(completed,creditFacts(),"败者不能改客户复用已完成请求");
+        log("[还款请求] 跨客户同店同key并发唯一胜者、失败完整回滚；胜者重放/败者复用均无新事实");
+    }
+
+    private void assertDifferentCustomerBatchReplaysStayIndependent(E2EToken manager) throws Exception {
+        creditSale(manager,624,1,"10","0","100");
+        creditSale(manager,625,1,"10","0","100");
+        JsonNode first=requireCreditSuccess(repay(manager,624,"40",1,"CREDIT-BATCH-A",null,null));
+        JsonNode second=requireCreditSuccess(repay(manager,625,"40",1,"CREDIT-BATCH-B",null,null));
+        var plan=jdbcTemplate.queryForList("EXPLAIN FORMAT=TRADITIONAL SELECT * FROM credit_repayment_log WHERE store_id=? AND repayment_no=? ORDER BY id FOR UPDATE",
+                1,first.path("repaymentNo").asText());
+        assertEquals("idx_credit_repayment_batch",plan.get(0).get("key"),"完整批次当前读不能扫描整个门店并锁到别的客户");
+        CreditFacts before=creditFacts();
+        for(int attempt=0;attempt<10;attempt++) {
+            List<JsonNode> replay=raceCreditHttp(index-> index==0
+                    ? repay(manager,624,"40",1,"CREDIT-BATCH-A",null,null)
+                    : repay(manager,625,"40",1,"CREDIT-BATCH-B",null,null));
+            assertEquals(first.path("repaymentNo").asText(),requireCreditSuccess(replay.get(0)).path("repaymentNo").asText());
+            assertEquals(second.path("repaymentNo").asText(),requireCreditSuccess(replay.get(1)).path("repaymentNo").asText());
+            assertEquals(before,creditFacts(),"不同客户批次并发重放不能多收款、互相核销或扩大锁范围");
+        }
+        log("[批次] 实际MySQL使用门店+还款号索引，不同客户已完成批次十轮并发重放均成功且事实不变");
+    }
+
+    private void waitForCustomerWaiters(int expected) throws Exception {
+        long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+        while(System.nanoTime()<deadline) {
+            long waiting=jdbcLong("SELECT COUNT(*) FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l"
+                    +" ON w.REQUESTING_ENGINE_LOCK_ID=l.ENGINE_LOCK_ID WHERE l.OBJECT_SCHEMA='"+DB_NAME+"' AND l.OBJECT_NAME='customer'");
+            if(waiting>=expected) return;
+            Thread.sleep(25);
+        }
+        fail("未观测到本次测试库"+expected+"个customer锁等待，不能假称已覆盖并发锁序");
+    }
+
+    private void seedCreditFixture() {
+        exec("INSERT INTO staff(id,code,name,store_id,role,status) VALUES(3,'CREDIT-STAFF-STORE-2','第二店员工',2,'STAFF',1),(4,'CREDIT-REFUND-ACTOR','另一退款员工',1,'STAFF',1)");
+        exec("INSERT INTO sys_staff_role(staff_id,role_id) SELECT 1,id FROM sys_role WHERE code='SUPER_ADMIN' ON DUPLICATE KEY UPDATE staff_id=VALUES(staff_id)");
+        exec("INSERT INTO sys_role(id,name,code,status) VALUES(902,'账款普通员工','E2E_CREDIT_CLERK',1)");
+        exec("INSERT INTO sys_staff_role(staff_id,role_id) VALUES(2,902),(3,902),(4,902)");
+        assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM sys_staff_role sr JOIN sys_role r ON r.id=sr.role_id WHERE sr.staff_id=1 AND r.code='SUPER_ADMIN'"));
+        assertEquals(0L,jdbcLong("SELECT COUNT(*) FROM sys_staff_role sr JOIN sys_role r ON r.id=sr.role_id WHERE sr.staff_id=2 AND r.code IN('ADMIN','SUPER_ADMIN')"));
+        exec("INSERT INTO product(id,code,name,main_unit,suggested_retail_price,avg_cost_price,status) VALUES(130,'CREDIT-P130','原单账款验收农资','袋',10,1,1)");
+        exec("INSERT INTO product_unit(id,product_id,unit_name,base_quantity_per_unit,is_base_unit,allow_purchase,allow_sale,allow_inventory,allow_transfer,status) VALUES(1301,130,'袋',1,1,1,1,1,1,1)");
+        for(long storeId:List.of(1L,2L)) {
+            var inbound=new com.agri_system.application.inventory.dto.command.InventoryInCommand();
+            inbound.setStoreId(storeId);inbound.setProductId(130L);inbound.setUnit("袋");inbound.setBatchNo("CREDIT-STOCK-"+storeId);
+            inbound.setQuantity(new BigDecimal("500"));inbound.setCostPrice(BigDecimal.ONE);inventoryApplicationService.inbound(inbound,1L);
+        }
+        for(int customerId=600;customerId<=625;customerId++) exec("INSERT INTO customer(id,code,name,phone,type,status,credit_limit) VALUES("+customerId+",'CREDIT-C"+customerId+"','原单账款客户"+customerId+"','13800000"+customerId+"',1,1,1000)");
+    }
+
+    private long creditSale(E2EToken token,long customerId,long staffId,String quantity,String cash,String debt) throws Exception {
+        POSOrderCreateCommand command=posSale(130L,quantity,"袋","10",false,null,cash);
+        command.setCustomerId(customerId);command.setStaffId(staffId);
+        if(new BigDecimal(debt).signum()>0) {
+            if(new BigDecimal(cash).signum()==0) command.setPaymentType(6);
+            else { command.setPaymentType(10);command.setPayments(List.of(paymentTender(1,cash),paymentTender(6,debt))); }
+        }
+        return createPOSViaHttp(token,command);
+    }
+    private long creditItem(long orderId) { return jdbcLong("SELECT id FROM order_item WHERE order_id="+orderId+" AND product_id=130"); }
+    private JsonNode creditPreview(E2EToken token,long orderId,String quantity) throws Exception {
+        JsonNode result=postCreditJson(token,"/api/admin/orders/"+orderId+"/refund-preview",
+                Map.of("items",List.of(Map.of("orderItemId",creditItem(orderId),"quantity",new BigDecimal(quantity)))));
+        requireCreditSuccess(result);assertTrue(!result.path("quoteId").asText().isBlank(),result.toString());return result;
+    }
+    private void assertPreview(JsonNode quote,String amount,String reduction,String cash) {
+        assertDecimal("预览成交冲销",amount,quote.path("refundAmount").decimalValue());
+        assertDecimal("预览冲欠款",reduction,quote.path("creditReductionAmount").decimalValue());
+        assertDecimal("预览退已收款",cash,quote.path("cashRefundAmount").decimalValue());
+    }
+    private Map<String,Object> creditReturnBody(long orderId,JsonNode quote) {
+        List<Map<String,Object>> items=new ArrayList<>();
+        for(JsonNode line:quote.path("items")) items.add(Map.of("orderItemId",line.path("orderItemId").asLong(),
+                "quantity",line.path("quantity").decimalValue(),"refundAmount",line.path("refundAmount").decimalValue()));
+        return Map.of("orderId",orderId,"quoteId",quote.path("quoteId").asText(),"refundAmount",quote.path("refundAmount").decimalValue(),
+                "reason","原单账款闭环退货","items",items);
+    }
+    private long creditReturn(E2EToken token,long orderId,JsonNode quote) throws Exception {
+        JsonNode result=postCreditJson(token,"/api/admin/after-sales",creditReturnBody(orderId,quote));
+        assertTrue(result.isIntegralNumber()&&result.asLong()>0,result.toString());return result.asLong();
+    }
+    private JsonNode repay(E2EToken token,long customerId,String amount,int method,String requestKey,Long storeId,Long createdBy) throws Exception {
+        Map<String,Object> body=new LinkedHashMap<>();body.put("customerId",customerId);body.put("amount",new BigDecimal(amount));
+        body.put("paymentMethod",method);body.put("requestKey",requestKey);body.put("transactionId","EXT-"+requestKey);
+        if(storeId!=null) body.put("storeId",storeId);if(createdBy!=null) body.put("createdBy",createdBy);
+        return postCreditJson(token,"/api/admin/credit/repay",body);
+    }
+    private JsonNode postCreditJson(E2EToken token,String url,Object body) throws Exception {
+        String response=mockMvc.perform(post(url).header(token.name(),token.value()).contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(body))).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        return response.isBlank() ? objectMapper.getNodeFactory().nullNode() : objectMapper.readTree(response);
+    }
+    private static boolean creditSuccess(JsonNode body) { return !body.has("code") || body.path("code").asInt()==200; }
+    private JsonNode requireCreditSuccess(JsonNode body) { assertTrue(creditSuccess(body),body.toString());return body; }
+    private void assertCreditRejected(JsonNode body) {
+        assertEquals(10001,body.path("code").asInt(),"应由业务守卫拒绝，不得将死锁或500当验收通过："+body);
+    }
+    @FunctionalInterface private interface CreditHttpAction { JsonNode execute(int index) throws Exception; }
+    private List<JsonNode> raceCreditHttp(CreditHttpAction action) throws Exception {
+        var barrier=new java.util.concurrent.CyclicBarrier(2);var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+        List<java.util.concurrent.Future<JsonNode>> futures=new ArrayList<>();
+        try {
+            for(int i=0;i<2;i++) { final int index=i;futures.add(pool.submit(()->{barrier.await(10,java.util.concurrent.TimeUnit.SECONDS);return action.execute(index);})); }
+            List<JsonNode> responses=new ArrayList<>();for(var future:futures) responses.add(future.get(35,java.util.concurrent.TimeUnit.SECONDS));return responses;
+        } finally { pool.shutdownNow(); }
+    }
+    private void assertCreditState(long orderId,String cash,String debt,String paid,String reduction,String refunded,String remaining) {
+        BigDecimal n=jdbcDecimal("SELECT pay_amount FROM `order` WHERE id="+orderId);
+        BigDecimal c=jdbcDecimal("SELECT COALESCE(SUM(amount),0) FROM order_payment WHERE order_id="+orderId+" AND payment_type IN(1,2,3,4,8)");
+        BigDecimal b=jdbcDecimal("SELECT COALESCE(SUM(amount),0) FROM order_payment WHERE order_id="+orderId+" AND payment_type=6");
+        BigDecimal p=jdbcDecimal("SELECT COALESCE(SUM(paid_amount),0) FROM credit_account WHERE order_id="+orderId);
+        BigDecimal d=jdbcDecimal("SELECT COALESCE(SUM(remaining_amount),0) FROM credit_account WHERE order_id="+orderId);
+        BigDecimal w=jdbcDecimal("SELECT COALESCE(SUM(credit_reduction_amount),0) FROM after_sales WHERE order_id="+orderId+" AND status=50");
+        BigDecimal f=jdbcDecimal("SELECT COALESCE(SUM(cash_refund_amount),0) FROM after_sales WHERE order_id="+orderId+" AND status=50");
+        BigDecimal r=jdbcDecimal("SELECT COALESCE(SUM(refund_amount),0) FROM after_sales WHERE order_id="+orderId+" AND status=50");
+        assertDecimal("原非赊销收款C",cash,c);assertDecimal("原赊销B",debt,b);assertDecimal("累计实际还款P不可因退还款而减少",paid,p);
+        assertDecimal("累计冲欠款W",reduction,w);assertDecimal("累计退已收款F",refunded,f);assertDecimal("原单剩余欠款D",remaining,d);
+        assertDecimal("N=C+B",n.toPlainString(),c.add(b));
+        assertDecimal("D=B-P-W",d.toPlainString(),b.subtract(p).subtract(w));
+        assertDecimal("R=W+F",r.toPlainString(),w.add(f));
+        assertDecimal("N-R=(C+P-F)+D",n.subtract(r).toPlainString(),c.add(p).subtract(f).add(d));
+        BigDecimal paidSources=jdbcDecimal("SELECT COALESCE(SUM(l.amount),0) FROM credit_repayment_log l JOIN credit_account a ON a.id=l.credit_account_id WHERE a.order_id="+orderId);
+        assertDecimal("实际还款来源等于账户paid_amount",p.toPlainString(),paidSources);
+        BigDecimal sourceRefund=jdbcDecimal("SELECT (SELECT COALESCE(SUM(refunded_amount),0) FROM order_payment WHERE order_id="+orderId+")"
+                +"+(SELECT COALESCE(SUM(l.refunded_amount),0) FROM credit_repayment_log l JOIN credit_account a ON a.id=l.credit_account_id WHERE a.order_id="+orderId+")");
+        assertDecimal("支付和还款来源已退counter等于实际退已收F",f.toPlainString(),sourceRefund);
+        assertEquals(0L,jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+orderId+" AND (refunded_amount<0 OR refunded_amount>amount)"));
+        assertEquals(0L,jdbcLong("SELECT COUNT(*) FROM credit_repayment_log l JOIN credit_account a ON a.id=l.credit_account_id WHERE a.order_id="+orderId+" AND (l.refunded_amount<0 OR l.refunded_amount>l.amount)"));
+        log("[原单资金] order="+orderId+" N="+n+" C="+c+" B="+b+" P="+p+" W="+w+" F="+f+" R="+r+" D="+d+" 四式及来源counter守恒");
+    }
+    private void assertOrderReturned(long orderId,String quantity) {
+        BigDecimal actual=jdbcDecimal("SELECT COALESCE(SUM(m.base_quantity),0) FROM inventory_movement m JOIN order_item_batch_allocation a ON a.id=m.reference_id JOIN order_item oi ON oi.id=a.order_item_id"
+                +" WHERE m.movement_type='RETURN' AND m.reference_type='SALE_ALLOCATION' AND oi.order_id="+orderId);
+        assertDecimal("原单实际回库数量",quantity,actual);
+        assertDecimal("退货记录数量等于原批次回库",quantity,jdbcDecimal("SELECT COALESCE(SUM(i.quantity),0) FROM after_sales_item i JOIN after_sales a ON a.id=i.after_sales_id WHERE a.order_id="+orderId+" AND a.status=50"));
+        assertEquals(0L,jdbcLong("SELECT COUNT(*) FROM inventory_movement m JOIN order_item_batch_allocation a ON a.id=m.reference_id JOIN order_item oi ON oi.id=a.order_item_id"
+                +" WHERE m.movement_type='RETURN' AND m.reference_type='SALE_ALLOCATION' AND oi.order_id="+orderId+" AND (m.batch_id<>a.batch_id OR m.unit_cost<>a.batch_unit_cost)"),"所有退货沿原销售批次及原成本");
+    }
+    private CreditFacts creditFacts() {
+        return new CreditFacts(pricingFacts(),jdbcLong("SELECT COUNT(*) FROM credit_account"),jdbcLong("SELECT COUNT(*) FROM credit_repayment_log"),
+                jdbcDecimal("SELECT COALESCE(SUM(paid_amount),0) FROM credit_account"),jdbcDecimal("SELECT COALESCE(SUM(remaining_amount),0) FROM credit_account"),
+                jdbcDecimal("SELECT COALESCE(SUM(refunded_amount),0) FROM order_payment"),jdbcDecimal("SELECT COALESCE(SUM(refunded_amount),0) FROM credit_repayment_log"),
+                jdbcDecimal("SELECT COALESCE(SUM(credit_reduction_amount),0) FROM after_sales"),jdbcDecimal("SELECT COALESCE(SUM(cash_refund_amount),0) FROM after_sales"),
+                jdbcDecimal("SELECT COALESCE(SUM(quantity),0) FROM after_sales_item"),jdbcLong("SELECT COUNT(*) FROM wallet_transaction"),jdbcDecimal("SELECT COALESCE(SUM(balance),0) FROM customer_wallet"));
+    }
+    private record CreditFacts(PricingFacts trading,long accounts,long repayments,BigDecimal paid,BigDecimal debt,
+            BigDecimal paymentRefunded,BigDecimal repaymentRefunded,BigDecimal reduction,BigDecimal cashRefund,
+            BigDecimal returnedQuantity,long walletTransactions,BigDecimal walletBalance) {}
+    private void assertUnknownHistoricalFundingRemainsUnknown(E2EToken manager) throws Exception {
+        // 审核是第一次回库入口，必须在任何状态/库存写之前拒绝未核实的原资金。
+        exec("INSERT INTO customer_wallet(customer_id,wallet_type,balance) VALUES(620,1,100)");
+        var pendingOrder=new com.agri_system.application.order.dto.command.OrderCreateCommand();pendingOrder.setStoreId(1L);pendingOrder.setOrderType(2);pendingOrder.setCustomerId(620L);
+        var pendingMaterial=new OrderItemDTO();pendingMaterial.setProductId(130L);pendingMaterial.setQuantity(new BigDecimal("10"));pendingMaterial.setUnit("袋");pendingOrder.setItems(List.of(pendingMaterial));
+        long approvalOrder=orderApplicationService.createOrder(pendingOrder,620L);
+        var pendingPay=new com.agri_system.application.order.dto.command.OrderPayCommand();pendingPay.setOrderId(approvalOrder);pendingPay.setUseBalance(true);
+        assertNull(orderApplicationService.payOrder(pendingPay,620L));
+        var pendingApply=new com.agri_system.application.after_sales.dto.command.ClientApplyCommand();pendingApply.setOrderId(approvalOrder);pendingApply.setReason("原资金未知不可审核回库");
+        long approval=afterSalesApplicationService.applyFromClient(pendingApply,620L);
+        exec("UPDATE order_payment SET refunded_amount=NULL WHERE order_id="+approvalOrder);
+        CreditFacts beforeApproval=creditFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/after-sales/"+approval+"/audit",Map.of("approved",true,"remark","未知资金应拒绝")));
+        assertEquals(beforeApproval,creditFacts(),"审核失败不得改售后状态、提前回库或取消原订单");
+        assertEquals(10L,jdbcLong("SELECT status FROM after_sales WHERE id="+approval));
+        assertEquals(3L,jdbcLong("SELECT order_status FROM `order` WHERE id="+approvalOrder));
+        assertEquals(0L,jdbcLong("SELECT COUNT(*) FROM inventory_movement m JOIN order_item_batch_allocation a ON a.id=m.reference_id JOIN order_item oi ON oi.id=a.order_item_id WHERE m.movement_type='RETURN' AND m.reference_type='SALE_ALLOCATION' AND oi.order_id="+approvalOrder));
+
+        long oldPayment=creditSale(manager,611,1,"10","100","0");
+        exec("UPDATE order_payment SET refunded_amount=NULL WHERE order_id="+oldPayment);
+        assertNull(paymentRepository.findByOrderId(oldPayment).get(0).getRefundedAmount(),"历史支付NULL不能被MyBatis变成0");
+        CreditFacts oldFacts=creditFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/"+oldPayment+"/refund-preview",Map.of("items",List.of(Map.of("orderItemId",creditItem(oldPayment),"quantity",1)))));
+        assertEquals(oldFacts,creditFacts(),"未知历史支付金额不能重新开放自动退款");
+
+        long oldRepayment=creditSale(manager,612,1,"10","0","100");
+        long account=jdbcLong("SELECT id FROM credit_account WHERE order_id="+oldRepayment);
+        exec("UPDATE credit_account SET paid_amount=40,remaining_amount=60 WHERE id="+account);
+        exec("INSERT INTO credit_repayment_log(repayment_no,customer_id,store_id,credit_account_id,amount,payment_method,refunded_amount) VALUES('LEGACY-UNKNOWN-40',612,1,"+account+",40,4,NULL)");
+        assertNull(repaymentRepository.findByCreditAccountIdForUpdate(account).get(0).getRefundedAmount(),"历史还款NULL不能猜为0");
+        oldFacts=creditFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/"+oldRepayment+"/refund-preview",Map.of("items",List.of(Map.of("orderItemId",creditItem(oldRepayment),"quantity",1)))));
+        assertEquals(oldFacts,creditFacts());
+
+        long unallocatedOrder=creditSale(manager,617,1,"10","0","100");
+        exec("UPDATE credit_account SET paid_amount=40,remaining_amount=60 WHERE order_id="+unallocatedOrder);
+        exec("INSERT INTO credit_repayment_log(repayment_no,customer_id,store_id,amount,payment_method) VALUES('LEGACY-UNALLOCATED-40',617,1,40,1)");
+        var unallocated=repaymentRepository.listByCustomer(617L).get(0);
+        assertNull(unallocated.getCreditAccountId());assertNull(unallocated.getRequestKey());assertNull(unallocated.getRefundedAmount());
+        oldFacts=creditFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/"+unallocatedOrder+"/refund-preview",Map.of("items",List.of(Map.of("orderItemId",creditItem(unallocatedOrder),"quantity",1)))));
+        assertCreditRejected(repay(manager,617,"10",1,"CREDIT-UNKNOWN-REPAY",null,null));
+        assertEquals(oldFacts,creditFacts(),"缺原单分配的历史还款不能猜归属后继续退款或收款");
+
+        long oldReturn=creditSale(manager,613,1,"10","100","0");
+        exec("INSERT INTO after_sales(after_sales_no,order_id,customer_id,store_id,type,status,refund_amount,credit_reduction_amount,cash_refund_amount) VALUES('LEGACY-UNKNOWN-RETURN',"+oldReturn+",613,1,2,50,10,NULL,NULL)");
+        var unknown=afterSalesRepository.findByOrderId(oldReturn).get(0);
+        assertNull(unknown.getCreditReductionAmount());assertNull(unknown.getCashRefundAmount(),"历史售后资金拆分必须保留未知");
+        assertNull(unknown.getRefundQuoteId(),"旧售后不能猜测补造退款请求身份");
+        assertNull(unknown.getRefundRequestHash(),"旧售后未知请求摘要由真实MyBatis保留NULL");
+        oldFacts=creditFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/"+oldReturn+"/refund-preview",Map.of("items",List.of(Map.of("orderItemId",creditItem(oldReturn),"quantity",1)))));
+        assertEquals(oldFacts,creditFacts());
     }
 
     /** POS券核销与收款使用真实服务/事务，钱包、券、授权及库存均直接核账。 */
@@ -872,19 +1464,20 @@ class RetailFactChainEndToEndTest {
     }
 
     private long returnViaHttp(E2EToken token,long orderId,long itemId,String quantity,String amount) throws Exception {
-        JsonNode response=objectMapper.readTree(mockMvc.perform(post("/api/admin/after-sales")
-                        .header(token.name(),token.value()).contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(returnCommand(orderId,itemId,quantity,amount))))
-                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
+        JsonNode quote=postCreditJson(token,"/api/admin/orders/"+orderId+"/refund-preview",Map.of("items",List.of(
+                Map.of("orderItemId",itemId,"quantity",new BigDecimal(quantity),"refundAmount",new BigDecimal(amount)))));
+        requireCreditSuccess(quote);
+        AdminReturnCommand command=returnCommand(orderId,itemId,quantity,amount);command.setQuoteId(quote.path("quoteId").asText());
+        JsonNode response=postCreditJson(token,"/api/admin/after-sales",command);
         assertTrue(response.isIntegralNumber()&&response.asLong()>0,response.toString()); return response.asLong();
     }
 
     private void assertReturnRejected(E2EToken token,long orderId,long itemId,String quantity,String amount) throws Exception {
-        JsonNode response=objectMapper.readTree(mockMvc.perform(post("/api/admin/after-sales")
-                        .header(token.name(),token.value()).contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(returnCommand(orderId,itemId,quantity,amount))))
-                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString());
-        assertEquals(10001,response.path("code").asInt(),response.toString());
+        JsonNode quote=postCreditJson(token,"/api/admin/orders/"+orderId+"/refund-preview",Map.of("items",List.of(
+                Map.of("orderItemId",itemId,"quantity",new BigDecimal(quantity),"refundAmount",new BigDecimal(amount)))));
+        if (!creditSuccess(quote)) {assertCreditRejected(quote);return;}
+        AdminReturnCommand command=returnCommand(orderId,itemId,quantity,amount);command.setQuoteId(quote.path("quoteId").asText());
+        assertCreditRejected(postCreditJson(token,"/api/admin/after-sales",command));
     }
 
     private AdminReturnCommand returnCommand(long orderId,long itemId,String quantity,String amount) {
@@ -1207,7 +1800,7 @@ class RetailFactChainEndToEndTest {
     @ComponentScan(basePackages = {"com.agri_system.application", "com.agri_system.infrastructure"},
             excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = SaTokenConfigure.class))
     @Import({InventoryController.class, InventoryWarningController.class, ProductController.class, OrderAdminController.class,
-            ProductPackageController.class, AfterSalesAdminController.class,
+            ProductPackageController.class, AfterSalesAdminController.class, CreditAdminController.class,
             RetailFactChainEndToEndTest.E2ELoginController.class, DomainServiceConfig.class})
     static class E2EConfig {
 
@@ -1218,7 +1811,8 @@ class RetailFactChainEndToEndTest {
                 @Override
                 public List<String> getPermissionList(Object loginId, String loginType) {
                     if ("STAFF_2".equals(String.valueOf(loginId))) {
-                        return List.of("pos:order:create", "product:query");
+                        return List.of("pos:order:create", "product:query", "credit:repay",
+                                "credit:account:view", "credit:repayment:view", "credit:statistics:view");
                     }
                     return List.of("*");
                 }
@@ -1237,7 +1831,18 @@ class RetailFactChainEndToEndTest {
                 public void addInterceptors(InterceptorRegistry registry) {
                     registry.addInterceptor(new SaInterceptor())
                             .addPathPatterns("/api/admin/products/**", "/api/admin/orders/**",
-                                    "/api/admin/product-packages/**", "/api/admin/after-sales/**");
+                                    "/api/admin/product-packages/**", "/api/admin/after-sales/**", "/api/admin/credit/**");
+                    // 测试不加载生产租户工厂；仅还原请求级身份缓存清理，不能跨token复用旧员工。
+                    registry.addInterceptor(new org.springframework.web.servlet.HandlerInterceptor() {
+                        @Override public boolean preHandle(jakarta.servlet.http.HttpServletRequest request,
+                                jakarta.servlet.http.HttpServletResponse response, Object handler) {
+                            com.agri_system.application.auth.util.CurrentUser.clearRequestCache(); return true;
+                        }
+                        @Override public void afterCompletion(jakarta.servlet.http.HttpServletRequest request,
+                                jakarta.servlet.http.HttpServletResponse response, Object handler, Exception exception) {
+                            com.agri_system.application.auth.util.CurrentUser.clearRequestCache();
+                        }
+                    }).addPathPatterns("/**");
                 }
             };
         }

@@ -33,6 +33,8 @@ export interface AfterSalesPageItem {
   type?: number
   status?: number
   refundAmount?: number
+  creditReductionAmount?: number | null
+  cashRefundAmount?: number | null
   reason?: string
   auditRemark?: string
   auditBy?: number
@@ -55,6 +57,7 @@ export interface AfterSalesAuditRequest {
 
 export interface AfterSalesRefundRequest {
   refundAmount?: number
+  quoteId: string
 }
 
 export interface PageResult<T> {

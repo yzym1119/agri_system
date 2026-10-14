@@ -13,9 +13,12 @@ public class CreditAccountVO {
     private String customerName;
     private String customerPhone;
     private Long orderId;
+    private Long storeId;
     private String orderNo;
     private BigDecimal creditAmount;
     private BigDecimal paidAmount;
+    private BigDecimal creditReductionAmount;
+    private BigDecimal refundedRepaymentAmount;
     private BigDecimal remainingAmount;
     private LocalDate dueDate;
     private Integer status;

@@ -12,24 +12,27 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 按历史成交小计限制退款；套餐按累计实退数量结清分钱尾差。 */
+/** 所有物料按原净成交份额与累计实退数量限制退款，末次退货结清分钱尾差。 */
 public final class RefundAmountPolicy {
     private RefundAmountPolicy() {}
 
-    /** 单品保留已有人工退款口径，套餐不能挪用尚未退回物料的成交金额。 */
+    /** 未提供净额分摊时使用原成交小计，实际订单入口使用带净额的重载。 */
     public static BigDecimal maximumForReturn(OrderItem item, BigDecimal alreadyReturnedQuantity,
                                               BigDecimal alreadyRefundedAmount, BigDecimal requestedQuantity) {
         return maximumForReturn(item, alreadyReturnedQuantity, alreadyRefundedAmount, requestedQuantity,
                 grossLineTotal(item));
     }
 
-    /** 含套餐订单可传入按原实付分配的净额份额，成交快照仍保留原小计。 */
+    /** 按原应结算额分配净份额，成交快照仍保留原小计。 */
     public static BigDecimal maximumForReturn(OrderItem item, BigDecimal alreadyReturnedQuantity,
                                               BigDecimal alreadyRefundedAmount, BigDecimal requestedQuantity,
                                               BigDecimal netLineTotal) {
         if (item == null || item.getQuantity() == null || item.getQuantity().signum() <= 0
                 || requestedQuantity == null || requestedQuantity.signum() <= 0) {
             throw new IllegalArgumentException("退货数量必须大于0且有原销售数量");
+        }
+        if (requestedQuantity.stripTrailingZeros().scale() > 4) {
+            throw new IllegalArgumentException("退货数量最多支持4位有效小数");
         }
         BigDecimal cumulativeQuantity = amount(alreadyReturnedQuantity).add(requestedQuantity);
         if (cumulativeQuantity.compareTo(item.getQuantity()) > 0) {
@@ -39,17 +42,16 @@ public final class RefundAmountPolicy {
         if (total == null || total.signum() < 0) {
             throw new IllegalArgumentException("订单物料缺少有效可退款金额");
         }
-        if (item.getPackageId() != null) {
+        {
             BigDecimal cumulativeLimit = cumulativeQuantity.compareTo(item.getQuantity()) == 0
                     ? total : total.multiply(cumulativeQuantity).divide(item.getQuantity(), 2, RoundingMode.HALF_UP);
             return cumulativeLimit.subtract(amount(alreadyRefundedAmount)).max(BigDecimal.ZERO);
         }
-        return total.subtract(amount(alreadyRefundedAmount)).max(BigDecimal.ZERO);
     }
 
     /**
-     * 套餐订单把整单优惠和优惠券按原成交小计分到物料，按分守恒。
-     * 纯单品保留原人工退款口径；运费等超过商品小计的实付部分不提高物料退款额度。
+     * 所有商品把整单优惠和优惠券按原成交小计分到物料，按分守恒。
+     * 人工少退仍可在净份额内执行；超过商品小计的实付部分不提高物料退款额度。
      */
     public static Map<Long, BigDecimal> refundableBaseAmounts(Order order, List<OrderItem> items) {
         Map<Long, BigDecimal> gross = new LinkedHashMap<>();
@@ -58,7 +60,6 @@ public final class RefundAmountPolicy {
                 throw new IllegalArgumentException("订单明细必须有唯一ID");
             }
         }
-        if (items.stream().noneMatch(item -> item.getPackageId() != null)) return gross;
         BigDecimal grossTotal = gross.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal paid = amount(order.getPayAmount());
         if (paid.signum() < 0) throw new IllegalArgumentException("原订单实付金额无效");

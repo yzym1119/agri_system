@@ -31,6 +31,11 @@ public class AfterSales {
 
     private String afterSalesNo;
 
+    /** 正式退款确认的报价身份，历史未知保持NULL。 */
+    private String refundQuoteId;
+    /** 原请求及实际员工的完整规范化摘要，用于重放核对。 */
+    private String refundRequestHash;
+
     private Long orderId;
 
     private Long customerId;
@@ -43,6 +48,10 @@ public class AfterSales {
     private Integer status;
 
     private BigDecimal refundAmount;
+    /** 退货成交冲销中实际冲减原单欠款的金额，历史未知为NULL。 */
+    private BigDecimal creditReductionAmount;
+    /** 退货成交冲销中退回已收款的金额（包括钱包），历史未知为NULL。 */
+    private BigDecimal cashRefundAmount;
 
     private String reason;
 

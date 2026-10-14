@@ -30,6 +30,14 @@ public interface CreditAccountRepository {
     LocalDateTime findLatestDebtDate(Long customerId);
 
     Optional<CreditAccount> findByOrderId(Long orderId);
+    Optional<CreditAccount> findByOrderIdForUpdate(Long orderId);
+    List<CreditAccount> findOutstandingForUpdate(Long customerId, Long storeId);
+    List<CreditAccount> listAccounts(Long customerId, Integer status, Long storeId, LocalDate startDate, LocalDate endDate);
+    com.mybatisflex.core.paginate.Page<CreditAccount> findPage(Long customerId, Integer status, Long storeId, int pageNum, int pageSize);
+    BigDecimal sumRemainingAmount(Long customerId, Long storeId);
+    /** 仅内部客户额度核对使用，不返回其他门店明细。 */
+    BigDecimal sumRemainingAmountAllStores(Long customerId);
+    LocalDateTime findLatestDebtDate(Long customerId, Long storeId);
 }
 
 

@@ -12,31 +12,24 @@
     <div class="metric-grid">
       <div class="metric-card tone-red">
         <div class="metric-value">¥{{ formatMoney(summaryStats.totalOutstanding) }}</div>
-        <div class="metric-label">未清欠款总额</div>
+        <div class="metric-label">本页未清欠款</div>
       </div>
       <div class="metric-card tone-orange">
         <div class="metric-value">{{ summaryStats.overdueCount }}</div>
-        <div class="metric-label">逾期笔数</div>
+        <div class="metric-label">本页逾期笔数</div>
       </div>
       <div class="metric-card tone-blue">
         <div class="metric-value">{{ summaryStats.customerCount }}</div>
-        <div class="metric-label">涉及客户数</div>
+        <div class="metric-label">本页涉及客户数</div>
       </div>
       <div class="metric-card tone-green">
         <div class="metric-value">¥{{ formatMoney(summaryStats.totalPaid) }}</div>
-        <div class="metric-label">累计已还</div>
+        <div class="metric-label">本页累计实还</div>
       </div>
     </div>
 
     <el-card shadow="never">
       <div class="toolbar">
-        <el-input
-          v-model="keyword"
-          clearable
-          placeholder="客户名/手机号/订单号"
-          style="width: 240px"
-          @keyup.enter="handleSearch"
-        />
         <el-select v-model="statusFilter" clearable placeholder="全部状态" style="width: 140px" @change="handleSearch">
           <el-option label="未还清" :value="1" />
           <el-option label="已还清" :value="2" />
@@ -61,11 +54,17 @@
             <span v-else>{{ row.orderNo || '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="挂账金额" width="130" align="right">
+        <el-table-column label="原赊销金额" width="130" align="right">
           <template #default="{ row }">¥{{ formatMoney(row.creditAmount) }}</template>
         </el-table-column>
-        <el-table-column label="已还金额" width="130" align="right">
+        <el-table-column label="累计实还" width="130" align="right">
           <template #default="{ row }">¥{{ formatMoney(row.paidAmount) }}</template>
+        </el-table-column>
+        <el-table-column label="退货冲欠款" width="130" align="right">
+          <template #default="{ row }">{{ row.creditReductionAmount == null ? '待核对' : '¥' + formatMoney(row.creditReductionAmount) }}</template>
+        </el-table-column>
+        <el-table-column label="已退还款" width="130" align="right">
+          <template #default="{ row }">{{ row.refundedRepaymentAmount == null ? '待核对' : '¥' + formatMoney(row.refundedRepaymentAmount) }}</template>
         </el-table-column>
         <el-table-column label="剩余欠款" width="130" align="right">
           <template #default="{ row }">
@@ -114,7 +113,6 @@ import type { CreditAccountItem } from '@/types/credit'
 const loading = ref(false)
 const accountList = ref<CreditAccountItem[]>([])
 const total = ref(0)
-const keyword = ref('')
 const statusFilter = ref<number | undefined>(undefined)
 const pageNum = ref(1)
 const pageSize = ref(20)
@@ -198,7 +196,6 @@ const handleSearch = () => {
 }
 
 const handleReset = () => {
-  keyword.value = ''
   statusFilter.value = undefined
   pageNum.value = 1
   loadAccounts()

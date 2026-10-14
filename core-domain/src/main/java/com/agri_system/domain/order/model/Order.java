@@ -109,8 +109,7 @@ public class Order {
     public boolean canRefund() {
         return orderStatus != null
                 && (orderStatus == 2 || orderStatus == 3 || orderStatus == 4)
-                && paymentMethod != null
-                && !paymentMethod.equals(OrderMainPaymentMethod.CREDIT.getCode());
+                && paymentMethod != null;
     }
     
     /**

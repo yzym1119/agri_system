@@ -10,6 +10,7 @@ public class CreditStatementGenerateCommand {
 
     @NotNull
     private Long customerId;
+    private Long storeId;
 
     @NotNull
     private LocalDate startDate;

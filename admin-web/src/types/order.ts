@@ -25,7 +25,7 @@ export interface OrderItemSummary {
   unitPrice: number
   totalPrice: number
   refundedQuantity?: number
-  refundedAmount?: number
+  refundedAmount?: number | null
   refundableQuantity?: number
   refundableAmount?: number
   specification?: string | null
@@ -38,6 +38,8 @@ export interface OrderAfterSalesRecord {
   type?: number
   status?: number
   refundAmount?: number
+  creditReductionAmount?: number | null
+  cashRefundAmount?: number | null
   reason?: string
   createdAt?: string | null
   refundTime?: string | null
@@ -52,8 +54,12 @@ export interface OrderBase {
   discountAmount?: number
   couponAmount?: number
   payAmount: number
-  receivedAmount?: number
-  creditAmount?: number
+  receivedAmount?: number | null
+  creditAmount?: number | null
+  remainingCreditAmount?: number | null
+  repaidAmount?: number | null
+  cashRefundedAmount?: number | null
+  creditReductionAmount?: number | null
   paymentMethod?: number | null
   paymentMethodName?: string | null
   customerId?: number | null
@@ -68,6 +74,35 @@ export interface OrderBase {
   createdAt?: string | null
   items?: OrderItemSummary[]
   payments?: OrderPaymentRecord[]
+}
+
+export interface RefundPreviewRequest {
+  afterSalesId?: number
+  items: Array<{ orderItemId: number; quantity: number; refundAmount?: number }>
+}
+
+export interface RefundPreview {
+  quoteId: string
+  orderId: number
+  refundAmount: number
+  creditReductionAmount: number
+  cashRefundAmount: number
+  remainingDebt: number
+  remainingRefundableAmount: number
+  items: Array<{
+    orderItemId: number
+    quantity: number
+    refundAmount: number
+    refundableQuantity: number
+    refundableAmount: number
+  }>
+  sources: Array<{
+    sourceType: string
+    sourceId: number
+    paymentMethodName: string
+    amount: number
+    refundableAmount: number
+  }>
 }
 
 export interface OrderPageItem extends OrderBase {

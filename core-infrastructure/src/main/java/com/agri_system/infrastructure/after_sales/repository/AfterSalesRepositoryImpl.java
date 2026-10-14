@@ -36,6 +36,16 @@ public class AfterSalesRepositoryImpl implements AfterSalesRepository {
     }
 
     @Override
+    public Optional<AfterSales> findByIdForUpdate(Long id) {
+        return Optional.ofNullable(mapper.selectOneByQuery(QueryWrapper.create().where("id = ?",id).forUpdate()));
+    }
+
+    @Override
+    public Optional<AfterSales> findByRefundQuoteIdForUpdate(String quoteId) {
+        return Optional.ofNullable(mapper.selectOneByQuery(QueryWrapper.create().where("refund_quote_id = ?",quoteId).forUpdate()));
+    }
+
+    @Override
     public Optional<AfterSales> findProcessingByOrderId(Long orderId) {
         QueryWrapper wrapper = QueryWrapper.create()
                 .where("order_id = ?", orderId)

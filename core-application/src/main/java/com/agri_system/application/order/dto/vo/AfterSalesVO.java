@@ -29,6 +29,8 @@ public class AfterSalesVO {
     
     @Schema(description = "退款金额", example = "100.00")
     private BigDecimal refundAmount;
+    private BigDecimal creditReductionAmount;
+    private BigDecimal cashRefundAmount;
     
     @Schema(description = "售后原因", example = "商品质量问题")
     private String reason;

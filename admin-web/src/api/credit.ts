@@ -3,7 +3,9 @@ import type {
   CreditAccountItem,
   CreditDebtSummary,
   CreditRepaymentItem,
-  CreditStatementGenerateRequest
+  CreditRepayRequest,
+  CreditStatementGenerateRequest,
+  CreditStatementResult
 } from '@/types/credit'
 
 /**
@@ -23,15 +25,7 @@ export function updateCreditLimit(customerId: number, creditLimit: number): Prom
 /**
  * 录入还款并执行核销
  */
-export function repayCredit(data: {
-  customerId: number
-  storeId?: number
-  amount: number
-  paymentMethod: number
-  transactionId?: string
-  remark?: string
-  createdBy?: number
-}): Promise<any> {
+export function repayCredit(data: CreditRepayRequest): Promise<CreditRepaymentItem> {
   return request({
     url: '/api/admin/credit/repay',
     method: 'post',
@@ -79,7 +73,7 @@ export function getCreditStatistics(customerId: number): Promise<CreditDebtSumma
   })
 }
 
-export function generateCreditStatement(data: CreditStatementGenerateRequest): Promise<void> {
+export function generateCreditStatement(data: CreditStatementGenerateRequest): Promise<CreditStatementResult> {
   return request({
     url: '/api/admin/credit/statements',
     method: 'post',

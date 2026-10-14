@@ -78,7 +78,7 @@ service.interceptors.response.use(
         // 其他错误，显示错误消息（优先使用 message 字段）
         const errorMessage = apiRes.message || '请求失败'
         ElMessage.error(errorMessage)
-        return Promise.reject(new Error(errorMessage))
+        return Promise.reject(Object.assign(new Error(errorMessage), {apiBusinessCode: Number(code)}))
       }
       // code 存在但非数字（如业务字段 code=CUST_xxx），视为普通数据返回
       return res
@@ -119,6 +119,7 @@ service.interceptors.response.use(
         // 400 错误通常包含具体的错误信息
         const errorMessage = data?.message || data?.data?.message || '请求参数错误'
         ElMessage.error(errorMessage)
+        error.apiBusinessCode = data?.code ?? status
       } else {
         // 其他错误，尝试提取错误消息
         const errorMessage = data?.message || data?.data?.message || '请求失败'
