@@ -496,7 +496,7 @@ const handleSubmitOrder = async (orderData: any) => {
       staffId: staffId.value!
     })
 
-    ElMessage.success('订单创建成功')
+    ElMessage.success(orderData.deliveryType === 2 ? '订单创建成功，待配送' : '订单创建成功')
     
     // 先关闭弹窗，避免状态混乱
     checkoutVisible.value = false
@@ -509,7 +509,7 @@ const handleSubmitOrder = async (orderData: any) => {
 
     // 库房取货提示：后端已随订单自动生成取货请求，此处仅提示并提供补登记入口
     const createdOrderId = createdOrder?.id ?? createdOrder?.orderId ?? null
-    if (pickupFlaggedItems.length > 0 && createdOrderId) {
+    if (orderData.deliveryType !== 2 && pickupFlaggedItems.length > 0 && createdOrderId) {
       pickupOrderId.value = Number(createdOrderId)
       pickupItems.value = pickupFlaggedItems
       pickupVisible.value = true

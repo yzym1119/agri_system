@@ -10,10 +10,10 @@ import java.math.BigDecimal;
 @Data
 public class CreditRiskVO {
 
-    /** 总欠款 */
+    /** 所选门店未结清应收余额，包含正常及逾期账户。 */
     private BigDecimal totalDebt;
 
-    /** 逾期欠款 */
+    /** 所选门店逾期且余额大于0的应收；明确逾期状态保留历史到期日未知的事实。 */
     private BigDecimal overdueDebt;
 
     /** 回款率(%) */

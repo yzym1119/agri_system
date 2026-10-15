@@ -63,6 +63,7 @@ class CommissionFreezeListenerTest {
         when(eventRecordRepository.existsByEventKey(any())).thenReturn(false);
         when(eventRecordRepository.save(any())).thenReturn(null);
         when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
         when(orderItemRepository.findByOrderId(order.getId())).thenReturn(List.of(item));
         when(productRepository.findById(item.getProductId())).thenReturn(Optional.of(product));
         // 计算结果给出正提成,触发写 log
@@ -133,6 +134,7 @@ class CommissionFreezeListenerTest {
         when(orderRepository.findById(7L)).thenReturn(Optional.of(order));
         when(orderRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(order));
         when(logRepository.findByOrderId(7L)).thenReturn(List.of(positive));
+        when(eventRecordRepository.existsByEventKey("ORDER_FINISHED:7")).thenReturn(true);
 
         listener.onOrderRefunded(new OrderRefundedEvent(7L, new BigDecimal("100"), null, "rk1"));
 
@@ -166,6 +168,7 @@ class CommissionFreezeListenerTest {
         when(orderRepository.findById(7L)).thenReturn(Optional.of(order));
         when(orderRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(order));
         when(logRepository.findByOrderId(7L)).thenReturn(List.of(positive));
+        when(eventRecordRepository.existsByEventKey("ORDER_FINISHED:7")).thenReturn(true);
 
         listener.onOrderRefunded(new OrderRefundedEvent(7L, new BigDecimal("100"), null, "rk2"));
 

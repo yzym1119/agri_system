@@ -35,6 +35,9 @@ public class OrderPageQuery {
     
     @Schema(description = "配送方式：1-自提，2-同城配送，3-快递", example = "1")
     private Integer deliveryType;
+
+    @Schema(description = "配送状态：2-待派单，3-配送中，4-已签收")
+    private Integer deliveryStatus;
     
     @Schema(description = "订单状态：1-待支付，2-已支付，3-待自提，4-待发货，5-已发货，6-已完成，7-已取消，8-已退款，9-部分退款。支持多状态查询，用逗号分隔，如：7,8,9", example = "2")
     private String orderStatus;

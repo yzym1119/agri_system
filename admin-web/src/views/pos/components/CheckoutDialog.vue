@@ -41,6 +41,20 @@
           </div>
         </div>
 
+        <div class="delivery-section">
+          <div class="section-label">交货方式</div>
+          <el-radio-group v-model="deliveryForm.deliveryType" :disabled="props.submitting">
+            <el-radio :value="1" :label="1">当场交货</el-radio>
+            <el-radio :value="2" :label="2">门店人工配送</el-radio>
+          </el-radio-group>
+          <div v-if="deliveryForm.deliveryType === 2" class="receiver-fields">
+            <el-input v-model="deliveryForm.receiverName" aria-label="收货人" placeholder="收货人（必填）" maxlength="50" :disabled="props.submitting" />
+            <el-input v-model="deliveryForm.receiverPhone" aria-label="收货电话" placeholder="收货电话（必填）" maxlength="30" :disabled="props.submitting" />
+            <el-input v-model="deliveryForm.receiverAddress" aria-label="收货地址" placeholder="收货地址（必填）" type="textarea" :rows="2" maxlength="255" :disabled="props.submitting" />
+            <div class="delivery-hint">收款后进入待配送，由店员派单并确认签收。</div>
+          </div>
+        </div>
+
         <!-- 找零仅对现金支付有意义 -->
         <div class="change-section" v-if="paymentType === 1">
           <div class="change-label">找零</div>
@@ -344,6 +358,20 @@ const confirmForm = ref({
   remark: '' 
 })
 
+const deliveryForm = reactive({
+  deliveryType: 1 as 1 | 2,
+  receiverName: '',
+  receiverPhone: '',
+  receiverAddress: ''
+})
+const resetReceiver = () => {
+  deliveryForm.receiverName = props.customer?.name || ''
+  deliveryForm.receiverPhone = props.customer?.phone || ''
+  deliveryForm.receiverAddress = ''
+}
+const hasReceiverInformation = computed(() => deliveryForm.deliveryType !== 2
+  || !!(deliveryForm.receiverName.trim() && deliveryForm.receiverPhone.trim() && deliveryForm.receiverAddress.trim()))
+
 interface WalletPaymentPreview {
   requested: number
   specialFund: number
@@ -587,6 +615,7 @@ const getMixedMaxAmount = (key: string) => {
 
 // 是否可以确认
 const canConfirm = computed(() => {
+  if (!hasReceiverInformation.value) return false
   // 1. 实收金额必须 > 0 (除非应收本身就是0)
   if (actualAmount.value > 0 && confirmForm.value.receiveAmount <= 0) return false
   
@@ -629,15 +658,21 @@ watch(
 )
 
 // 加载客户优惠券
+let couponRequest = 0
 const loadCustomerCoupons = async () => {
-  if (!props.customer?.id) {
+  const customerId = props.customer?.id
+  const requestId = ++couponRequest
+  const isCurrent = () => requestId === couponRequest && visible.value && props.customer?.id === customerId
+  if (!customerId) {
     availableCoupons.value = []
     return
   }
   try {
-    const response = await getCustomerCoupons(props.customer.id, 1, 1, 100)
+    const response = await getCustomerCoupons(customerId, 1, 1, 100)
+    if (!isCurrent()) return
     availableCoupons.value = response.records || []
   } catch (error) {
+    if (!isCurrent()) return
     console.error('加载优惠券失败:', error)
     availableCoupons.value = []
   }
@@ -682,6 +717,12 @@ const handlePaymentSelect = (type: number) => {
 watch(
   () => props.customer?.id,
   () => {
+    couponRequest++
+    availableCoupons.value = []
+    selectedCouponId.value = null
+    walletAuthCode.value = ''
+    resetMixed()
+    resetReceiver()
     if (visible.value && props.customer?.id) {
       loadCustomerCoupons()
     }
@@ -690,7 +731,11 @@ watch(
 
 // 弹窗打开初始化
 watch(visible, (val) => {
+  couponRequest++
+  availableCoupons.value = []
   if (val) {
+    deliveryForm.deliveryType = 1
+    resetReceiver()
     paymentType.value = props.checkoutData.paymentType || 1
     walletAuthCode.value = props.checkoutData.walletAuthCode || ''
     selectedCouponId.value = null
@@ -713,6 +758,7 @@ watch(visible, (val) => {
 
 // 确认提交
 const handleConfirm = () => {
+  if (!hasReceiverInformation.value) return ElMessage.warning('请填写收货人、电话和地址')
   if (!canConfirm.value) {
     if (paymentType.value === 10) {
       if (Math.abs(allocatedAmount.value - actualAmount.value) > 0.01) {
@@ -739,6 +785,10 @@ const handleConfirm = () => {
   // 构造基础订单数据
   const orderData: any = {
     customerId: props.customer?.id,
+    deliveryType: deliveryForm.deliveryType,
+    receiverName: deliveryForm.deliveryType === 2 ? deliveryForm.receiverName.trim() : undefined,
+    receiverPhone: deliveryForm.deliveryType === 2 ? deliveryForm.receiverPhone.trim() : undefined,
+    receiverAddress: deliveryForm.deliveryType === 2 ? deliveryForm.receiverAddress.trim() : undefined,
     items: props.cartItems.map((item) => ({
       productId: item.productId,
       packageId: item.packageId,
@@ -748,8 +798,8 @@ const handleConfirm = () => {
       unitPrice: item.unitPrice !== item.suggestedUnitPrice ? item.unitPrice : undefined,
       quotedUnitPrice: item.suggestedUnitPrice,
       packageQuoteId: item.itemType === 2 ? item.quoteId : undefined,
-      // 库房取货：由后端生成取货请求（后仓拣货，不即时出库）
-      warehousePickup: item.warehousePickup === true ? true : undefined,
+      // 人工配送使用同一组已出库物料，不额外创建自提任务。
+      warehousePickup: deliveryForm.deliveryType === 1 && item.warehousePickup === true ? true : undefined,
       // 低于参考下限等原因留痕
       priceChangeReason: item.priceChangeReason?.trim() || undefined
     })),
@@ -798,6 +848,13 @@ const handleClose = () => {
 </script>
 
 <style scoped lang="scss">
+.receiver-fields {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.delivery-hint { color: #606266; font-size: 12px; line-height: 1.5; }
+.delivery-section { margin-bottom: 20px; }
 .checkout-dialog {
   :deep(.el-dialog__body) {
     padding: 20px;

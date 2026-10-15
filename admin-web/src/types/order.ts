@@ -71,6 +71,8 @@ export interface OrderBase {
   receiverName?: string | null
   receiverPhone?: string | null
   receiverAddress?: string | null
+  canShip?: boolean
+  canConfirmReceipt?: boolean
   createdAt?: string | null
   items?: OrderItemSummary[]
   payments?: OrderPaymentRecord[]
@@ -109,11 +111,15 @@ export interface OrderPageItem extends OrderBase {
   storeId?: number | null
   storeName?: string | null
   deliveryType?: number | null
+  deliveryStatus?: number | null
   pickupCode?: string | null
 }
 
 export interface OrderDeliveryInfo {
   deliveryType?: number | null
+  deliveryStatus?: number | null
+  deliveryAt?: string | null
+  receivedAt?: string | null
   logisticsCompany?: string | null
   trackingNo?: string | null
   deliveryStaffName?: string | null
@@ -136,6 +142,7 @@ export interface OrderListQuery extends PageRequest {
   customerId?: number | null
   orderType?: number | null
   deliveryType?: number | null
+  deliveryStatus?: number | null
   startTime?: string
   endTime?: string
   orderStatus?: string | null

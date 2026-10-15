@@ -1,7 +1,6 @@
 package com.agri_system.application.order.dto.command;
 
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 /**
@@ -13,7 +12,6 @@ import lombok.Data;
 @Schema(description = "订单发货命令")
 public class OrderShipCommand {
     
-    @NotNull(message = "订单ID不能为空")
     @Schema(description = "订单ID", example = "1")
     private Long orderId;
     

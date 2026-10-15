@@ -760,6 +760,55 @@ class OrderApplicationServicePaymentFlowTest {
         assertEquals(0, itemCaptor.getValue().getUnitPrice().compareTo(new BigDecimal("100.00")));
     }
 
+    private POSOrderCreateCommand deliveryPosCommand(boolean warehouse) throws Exception {
+        var command=cashPosCommand(warehouse);
+        var json=new com.fasterxml.jackson.databind.ObjectMapper()
+                .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES,false);
+        var node=json.valueToTree(command);
+        ((com.fasterxml.jackson.databind.node.ObjectNode)node).put("deliveryType",2)
+                .put("receiverName","张三").put("receiverPhone","13800000000").put("receiverAddress","东街3号");
+        return json.treeToValue(node,POSOrderCreateCommand.class);
+    }
+
+    @Test void posDeliveryRejectsMissingReceiverBeforeAnyBusinessWrites() throws Exception {
+        var command=deliveryPosCommand(false);
+        var json=new com.fasterxml.jackson.databind.ObjectMapper()
+                .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES,false);
+        var node=(com.fasterxml.jackson.databind.node.ObjectNode)json.valueToTree(command);
+        node.put("receiverPhone"," ");command=json.treeToValue(node,POSOrderCreateCommand.class);
+        final var submitted=command;
+        var error=assertThrows(IllegalArgumentException.class,()->orderService.createPOSOrder(submitted,8L));
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("收货"));
+        verifyNoBusinessWrites();
+    }
+
+    @Test void posDeliveryCreatesWaitingDeliveryWhileSettlingSaleExactlyOnce() throws Exception {
+        stubCashPosOrderPersistence();
+        orderService.createPOSOrder(deliveryPosCommand(true),8L);
+        var orders=ArgumentCaptor.forClass(Order.class);verify(orderRepository,org.mockito.Mockito.atLeastOnce()).save(orders.capture());
+        assertEquals(1,orders.getValue().getOrderType());assertEquals(4,orders.getValue().getOrderStatus());
+        assertEquals("张三",orders.getValue().getReceiverName());
+        var delivery=ArgumentCaptor.forClass(com.agri_system.domain.order.model.OrderDelivery.class);
+        verify(deliveryRepository).save(delivery.capture());
+        assertEquals(500L,delivery.getValue().getOrderId());assertEquals(2,delivery.getValue().getDeliveryType());
+        assertEquals(2,delivery.getValue().getDeliveryStatus());
+        assertSaleOutbound();verify(eventPublisher).publishEvent(any(OrderFinishedEvent.class));
+        verify(pickupFulfillmentService,never()).createRequest(any(),any(),any());
+    }
+
+    @Test void defaultPosSaleRemainsImmediateWithoutDeliveryRelation() {
+        stubCashPosOrderPersistence();orderService.createPOSOrder(cashPosCommand(false),8L);
+        var orders=ArgumentCaptor.forClass(Order.class);verify(orderRepository,org.mockito.Mockito.atLeastOnce()).save(orders.capture());
+        assertEquals(6,orders.getValue().getOrderStatus());verify(deliveryRepository,never()).save(any());
+        verify(eventPublisher).publishEvent(any(OrderFinishedEvent.class));
+    }
+
+    private void verifyNoBusinessWrites() {
+        verify(orderRepository,never()).save(any());verify(paymentRepository,never()).save(any());
+        verify(itemRepository,never()).save(any());verify(inventoryService,never()).outbound(any(),any());
+        verify(creditService,never()).addDebt(any(),any(),any());verify(eventPublisher,never()).publishEvent(any(Object.class));
+    }
+
     private POSOrderCreateCommand cashPosCommand(boolean warehousePickup) {
         POSOrderCreateCommand command = new POSOrderCreateCommand();
         command.setStaffId(8L);

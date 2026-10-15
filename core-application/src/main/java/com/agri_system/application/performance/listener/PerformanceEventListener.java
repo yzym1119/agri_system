@@ -25,6 +25,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -57,19 +58,21 @@ public class PerformanceEventListener {
     private static final String EVENT_CUSTOMER_FIRST_EFFECTIVE = "CUSTOMER_FIRST_EFFECTIVE";
 
     @EventListener
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public void onOrderFinished(OrderFinishedEvent event) {
         Long orderId = event.orderId();
+        Order order = orderRepository.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new IllegalStateException("订单不存在：" + orderId));
         if (!markEvent(EVENT_ORDER_FINISHED, orderId)) {
             return;
         }
-        Order order = orderRepository.findById(orderId)
-                .orElseThrow(() -> new IllegalStateException("订单不存在：" + orderId));
-        
-        // ⛔️ Critical Fix: 调用客户结算服务，更新客户统计和发放积分
         customerSettlementService.onOrderFinished(order);
-        
-        List<OrderItem> items = orderItemRepository.findByOrderId(orderId);
+        settleSalesCommission(order);
+        reconcileCompletedReturns(order);
+    }
+
+    private void settleSalesCommission(Order order) {
+        List<OrderItem> items = orderItemRepository.findByOrderId(order.getId());
         if (items == null || items.isEmpty() || order.getStaffId() == null) {
             return;
         }
@@ -125,7 +128,27 @@ public class PerformanceEventListener {
             logRepository.saveBatch(logs);
         }
 
-        handleNewCustomerIfNeeded(order, items, totalProfit);
+        handleNewCustomerIfNeeded(order, items, totalProfit, saleFacts);
+    }
+
+    /** 首次签收前的退款只保存售后事实；首次结算后沿原事实补齐回冲，不另造调整账。 */
+    private void reconcileCompletedReturns(Order order) {
+        List<AfterSales> facts = afterSalesRepository.findByOrderId(order.getId());
+        if (facts == null) return;
+        for (AfterSales fact : facts) {
+            if (!Integer.valueOf(AfterSales.STATUS_FINISHED).equals(fact.getStatus())) continue;
+            Map<Long, BigDecimal> quantities = new LinkedHashMap<>();
+            var returnedItems = afterSalesItemRepository.findByAfterSalesId(fact.getId());
+            if (returnedItems != null) {
+                for (var item : returnedItems) {
+                    if (item.getOrderItemId() != null && item.getQuantity() != null && item.getQuantity().signum() > 0) {
+                        quantities.merge(item.getOrderItemId(), item.getQuantity(), BigDecimal::add);
+                    }
+                }
+            }
+            onOrderRefunded(new OrderRefundedEvent(order.getId(), fact.getRefundAmount(), quantities,
+                    "AFTER_SALES:" + fact.getId()));
+        }
     }
 
     private SaleFact saleFact(OrderItem item, Product product) {
@@ -185,12 +208,16 @@ public class PerformanceEventListener {
     private record PackageGroup(Long packageId, Integer groupNo) {}
 
     @EventListener
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public void onOrderRefunded(OrderRefundedEvent event) {
         Long orderId = event.orderId();
         // 先锁订单再做一致性读，累计售后数量和已回冲提成不能取到并发退款之前的旧快照。
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new IllegalStateException("订单不存在：" + orderId));
+        // 线上单在首次交付时才记成交；此前不能扣减客户其它订单的统计或提前消费退款身份。
+        if (!eventRecordRepository.existsByEventKey(EVENT_ORDER_FINISHED + ":" + orderId)) {
+            return;
+        }
         String refundEventKey = buildRefundEventKey(event);
         if (!markEvent(refundEventKey, EVENT_ORDER_REFUNDED, orderId)) {
             return;
@@ -392,7 +419,8 @@ public class PerformanceEventListener {
         logRepository.save(logEntry);
     }
 
-    private void handleNewCustomerIfNeeded(Order order, List<OrderItem> items, BigDecimal totalProfit) {
+    private void handleNewCustomerIfNeeded(Order order, List<OrderItem> items, BigDecimal totalProfit,
+                                           Map<OrderItem, SaleFact> saleFacts) {
         if (order.getCustomerId() == null) {
             return;
         }
@@ -406,10 +434,51 @@ public class PerformanceEventListener {
         if (!"QR".equalsIgnoreCase(relation.getBindSource())) {
             return;
         }
-        boolean hitCategory = false;
-        if (!properties.getNewCustomerCategoryWhitelist().isEmpty()) {
+        if (order.getPayAmount() == null) return;
+        Map<Long, OrderItem> originalItems = new HashMap<>();
+        for (OrderItem item : items) originalItems.put(item.getId(), item);
+        Map<Long, BigDecimal> returnedQuantities = new HashMap<>();
+        BigDecimal refundedAmount = BigDecimal.ZERO;
+        boolean quantitiesKnown = true;
+        var completedReturns = afterSalesRepository.findByOrderId(order.getId());
+        if (completedReturns != null) {
+            for (AfterSales fact : completedReturns) {
+                if (!Integer.valueOf(AfterSales.STATUS_FINISHED).equals(fact.getStatus())) continue;
+                // 未知历史金额不能猜成0，未知物料不能按金额反推已退数量。
+                if (fact.getRefundAmount() == null || fact.getRefundAmount().signum() < 0) return;
+                refundedAmount = refundedAmount.add(fact.getRefundAmount());
+                var materialReturns = afterSalesItemRepository.findByAfterSalesId(fact.getId());
+                if (materialReturns == null || materialReturns.isEmpty()) quantitiesKnown = false;
+                if (materialReturns == null) continue;
+                for (var returned : materialReturns) {
+                    OrderItem original = originalItems.get(returned.getOrderItemId());
+                    if (original == null || returned.getQuantity() == null || returned.getQuantity().signum() <= 0
+                            || original.getQuantity() == null || original.getQuantity().signum() <= 0) {
+                        quantitiesKnown = false;
+                        continue;
+                    }
+                    returnedQuantities.merge(original.getId(), returned.getQuantity(), BigDecimal::add);
+                    if (returnedQuantities.get(original.getId()).compareTo(original.getQuantity()) > 0) quantitiesKnown = false;
+                }
+            }
+        }
+        BigDecimal amount = order.getPayAmount().subtract(refundedAmount);
+        if (amount.signum() < 0) return;
+        BigDecimal remainingProfit = totalProfit.subtract(refundedAmount);
+        if (quantitiesKnown) {
             for (OrderItem item : items) {
-                if (item.getProductId() == null) {
+                BigDecimal returned = returnedQuantities.getOrDefault(item.getId(), BigDecimal.ZERO);
+                if (returned.signum() > 0) {
+                    remainingProfit = remainingProfit.add(saleFacts.get(item).costAmount()
+                            .multiply(returned).divide(item.getQuantity(), 12, RoundingMode.HALF_UP));
+                }
+            }
+        }
+        boolean hitCategory = false;
+        if (quantitiesKnown && !properties.getNewCustomerCategoryWhitelist().isEmpty()) {
+            for (OrderItem item : items) {
+                if (item.getProductId() == null || item.getQuantity() == null
+                        || item.getQuantity().compareTo(returnedQuantities.getOrDefault(item.getId(), BigDecimal.ZERO)) <= 0) {
                     continue;
                 }
                 Product product = productRepository.findById(item.getProductId()).orElse(null);
@@ -419,9 +488,8 @@ public class PerformanceEventListener {
                 }
             }
         }
-        BigDecimal amount = order.getPayAmount() == null ? BigDecimal.ZERO : order.getPayAmount();
         boolean effective = amount.compareTo(properties.getNewCustomerAmountThreshold()) >= 0
-                || totalProfit.compareTo(properties.getNewCustomerProfitThreshold()) >= 0
+                || (quantitiesKnown && remainingProfit.compareTo(properties.getNewCustomerProfitThreshold()) >= 0)
                 || (hitCategory && amount.compareTo(properties.getNewCustomerMinCategoryAmount()) >= 0);
         if (effective) {
             eventPublisher.publishEvent(new CustomerFirstEffectiveEvent(order.getCustomerId(),

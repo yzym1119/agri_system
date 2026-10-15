@@ -88,14 +88,24 @@ public class ReportAnalysisService {
         }
         BigDecimal gmv = orderMapper.selectOneByQueryAs(
                 orderQ.clone().select("COALESCE(SUM(total_amount),0) AS total"), BigDecimal.class);
-        BigDecimal netSales = orderMapper.selectOneByQueryAs(
-                orderQ.clone().select("COALESCE(SUM(pay_amount),0) AS total"), BigDecimal.class);
+        // 今天创建的销售单原净应结算 N（含赊销）减累计已完成退货 R，不是今日现金流。
+        QueryWrapper netSalesQ = QueryWrapper.create()
+                .where("created_at between ? and ?", start, end)
+                .and("order_status in (2,3,4,5,6,8,9)");
+        if (storeId != null) netSalesQ.and("store_id = ?", storeId);
+        BigDecimal netSales = orderMapper.selectOneByQueryAs(netSalesQ.select("""
+                COALESCE(SUM(CASE WHEN order_status = 8 THEN 0 ELSE COALESCE(pay_amount,0) -
+                    COALESCE((SELECT SUM(af.refund_amount) FROM after_sales af
+                        WHERE af.order_id = `order`.id AND af.store_id = `order`.store_id
+                          AND af.status = 50),0) END),0) AS total
+                """), BigDecimal.class);
         Long orderCount = orderMapper.selectOneByQueryAs(
                 orderQ.clone().select("COUNT(1) AS cnt"), Long.class);
 
-        // 今日新增赊销额（来自 credit_account，该表无 store_id 字段）
+        // 今日新增原始赊销额，按应收账户所属门店统计。
         QueryWrapper creditQ = QueryWrapper.create()
                 .where("created_at between ? and ?", start, end);
+        if (storeId != null) creditQ.and("store_id = ?", storeId);
         BigDecimal newCreditAmount = creditAccountMapper.selectOneByQueryAs(
                 creditQ.select("COALESCE(SUM(credit_amount),0) AS total"), BigDecimal.class);
 
@@ -113,14 +123,32 @@ public class ReportAnalysisService {
         }
         Long pendingAfterSales = afterSalesMapper.selectCountByQuery(afterSalesQ);
 
-        // 待审核同城配送数（order.delivery_status=1 WAIT_AUDIT）
+        // 按真实配送单统计可派订单；POS及部分退款单共用实际出库/回库事实。
         QueryWrapper deliveryQ = QueryWrapper.create()
-                .where("order_type = 3")
-                .and("delivery_status = 1");
+                .where("order_status in (4,9)")
+                .and("EXISTS (SELECT 1 FROM order_delivery d WHERE d.order_id = `order`.id AND d.delivery_status = 2 AND d.delivery_type in (2,3))")
+                .and("NOT EXISTS (SELECT 1 FROM after_sales af WHERE af.order_id = `order`.id AND af.status in (10,40))")
+                .and("""
+                        EXISTS (SELECT 1 FROM order_item_batch_allocation a
+                            JOIN order_item i ON i.id = a.order_item_id
+                            JOIN inventory_movement s ON s.id = a.source_movement_id
+                            WHERE i.order_id = `order`.id AND a.store_id = `order`.store_id
+                              AND s.movement_type = 'SALE' AND s.base_quantity > 0
+                              AND s.base_quantity = a.allocated_base_quantity
+                              AND s.store_id = a.store_id AND s.product_id = a.product_id
+                              AND s.batch_id = a.batch_id AND s.from_location_id = a.location_id
+                              AND s.reference_type = 'ORDER' AND s.reference_id = `order`.id
+                              AND a.allocated_base_quantity > COALESCE((
+                                  SELECT SUM(r.base_quantity) FROM inventory_movement r
+                                  WHERE r.movement_type = 'RETURN' AND r.reference_type = 'SALE_ALLOCATION'
+                                    AND r.reference_id = a.id AND r.base_quantity > 0
+                                    AND r.store_id = a.store_id AND r.product_id = a.product_id AND r.batch_id = a.batch_id
+                              ),0))
+                        """);
         if (storeId != null) {
             deliveryQ.and("store_id = ?", storeId);
         }
-        Long pendingDelivery = orderMapper.selectOneByQueryAs(deliveryQ, Long.class);
+        Long pendingDelivery = orderMapper.selectCountByQuery(deliveryQ);
 
         // 库存预警数（简单用库龄 > 180 天的批次数量代表）
         LocalDate threshold = today.minusDays(180);
@@ -436,25 +464,23 @@ public class ReportAnalysisService {
 
     /**
      * 财务风控分析
-     * @param storeId 门店ID（可选，仅影响还款记录筛选；赊销账户无门店字段）
+     * @param storeId 门店ID（可选，应收和还款均按所属门店筛选）
      */
     @Transactional(readOnly = true)
     public CreditRiskVO creditRisk(Long storeId) {
         // 总欠款
+        QueryWrapper debtQ = QueryWrapper.create()
+                .where("status in (1,3)").and("remaining_amount > 0");
+        if (storeId != null) debtQ.and("store_id = ?", storeId);
         BigDecimal totalDebt = creditAccountMapper.selectOneByQueryAs(
-                QueryWrapper.create()
-                        .select("COALESCE(SUM(remaining_amount),0) AS total")
-                        .where("status = 1"), // 未还清
-                BigDecimal.class);
+                debtQ.clone().select("COALESCE(SUM(remaining_amount),0) AS total"), BigDecimal.class);
         totalDebt = defaultZero(totalDebt);
         
-        // 逾期欠款（due_date < NOW）
+        // 已明确逾期的历史账户即使到期日未知，也保留其逾期事实。
         BigDecimal overdueDebt = creditAccountMapper.selectOneByQueryAs(
-                QueryWrapper.create()
+                debtQ.clone()
                         .select("COALESCE(SUM(remaining_amount),0) AS total")
-                        .where("status = 1")
-                        .and("due_date is not null")
-                        .and("due_date < CURDATE()"),
+                        .and("(status = 3 OR due_date < ?)", LocalDate.now()),
                 BigDecimal.class);
         overdueDebt = defaultZero(overdueDebt);
         
@@ -464,11 +490,11 @@ public class ReportAnalysisService {
         LocalDateTime monthStartTime = monthStart.atStartOfDay();
         LocalDateTime monthEndTime = monthEnd.atTime(LocalTime.MAX);
         
-        BigDecimal monthlyNewCredit = creditAccountMapper.selectOneByQueryAs(
-                QueryWrapper.create()
-                        .select("COALESCE(SUM(credit_amount),0) AS total")
-                        .where("created_at between ? and ?", monthStartTime, monthEndTime),
-                BigDecimal.class);
+        QueryWrapper monthlyCreditQ = QueryWrapper.create()
+                .select("COALESCE(SUM(credit_amount),0) AS total")
+                .where("created_at between ? and ?", monthStartTime, monthEndTime);
+        if (storeId != null) monthlyCreditQ.and("store_id = ?", storeId);
+        BigDecimal monthlyNewCredit = creditAccountMapper.selectOneByQueryAs(monthlyCreditQ, BigDecimal.class);
         monthlyNewCredit = defaultZero(monthlyNewCredit);
         
         // 本月实收还款额（credit_repayment_log.created_at在本月）

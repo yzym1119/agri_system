@@ -1,0 +1,37 @@
+package com.agri_system.api.admin.controller;
+
+import cn.dev33.satoken.stp.StpUtil;
+import com.agri_system.application.order.dto.command.OrderShipCommand;
+import com.agri_system.application.order.service.OrderApplicationService;
+import com.agri_system.application.order.service.PickupFulfillmentService;
+import com.agri_system.infrastructure.common.exception.GlobalExceptionHandler;
+import com.agri_system.infrastructure.common.util.RedisDistributedLock;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+class OrderShipPathValidationTest {
+    @Test void shippingBodyNeedsNoDuplicateOrderIdAndUsesSelectedPath() throws Exception {
+        var service=mock(OrderApplicationService.class);
+        var validator=new LocalValidatorFactoryBean();validator.afterPropertiesSet();
+        var mvc=MockMvcBuilders.standaloneSetup(new OrderAdminController(service,
+                mock(PickupFulfillmentService.class),mock(RedisDistributedLock.class)))
+                .setValidator(validator).setControllerAdvice(new GlobalExceptionHandler()).build();
+        try(var auth=mockStatic(StpUtil.class)) {
+            auth.when(StpUtil::getLoginIdAsString).thenReturn("STAFF_7");
+            mvc.perform(post("/api/admin/orders/42/ship").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"deliveryStaffId\":7}"))
+                .andExpect(status().isOk()).andExpect(content().string(""));
+            var command=ArgumentCaptor.forClass(OrderShipCommand.class);
+            verify(service).shipOrder(command.capture(),eq(7L));
+            assertEquals(42L,command.getValue().getOrderId());
+        }
+    }
+}

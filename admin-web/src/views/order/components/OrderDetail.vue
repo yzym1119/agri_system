@@ -10,9 +10,9 @@
       <el-steps v-if="showProgressSteps" :active="getStatusStep" finish-status="success" style="margin-bottom: 24px">
         <el-step title="待支付" />
         <el-step title="已支付" />
-        <el-step :title="orderDetail.orderType === 1 ? '已完成' : '待发货/自提'" />
-        <el-step v-if="orderDetail.orderType !== 1" title="配送中" />
-        <el-step v-if="orderDetail.orderType !== 1" title="已完成" />
+        <el-step :title="isDeliveryOrder ? '待派送' : orderDetail.orderType === 1 ? '已完成' : '待自提'" />
+        <el-step v-if="isDeliveryOrder || orderDetail.orderType !== 1" title="配送中" />
+        <el-step v-if="isDeliveryOrder || orderDetail.orderType !== 1" title="已完成" />
       </el-steps>
       <el-alert
         v-else
@@ -77,7 +77,7 @@
             </el-descriptions-item>
           </el-descriptions>
         </div>
-        <div v-else-if="orderDetail.orderType === 1">
+        <div v-else-if="orderDetail.orderType === 1 && !isDeliveryOrder">
           <!-- POS / 现场提货 -->
           <el-descriptions :column="1" border>
             <el-descriptions-item label="配送方式">现场提货</el-descriptions-item>
@@ -89,18 +89,21 @@
             <el-descriptions-item label="配送方式">
               {{ getDeliveryTypeText(orderDetail.delivery?.deliveryType) }}
             </el-descriptions-item>
+            <el-descriptions-item label="配送状态">{{ getDeliveryStatusText(orderDetail.delivery?.deliveryStatus) }}</el-descriptions-item>
             <el-descriptions-item label="收货人">{{ orderDetail.receiverName }}</el-descriptions-item>
             <el-descriptions-item label="联系电话">{{ orderDetail.receiverPhone }}</el-descriptions-item>
             <el-descriptions-item label="收货地址">{{ orderDetail.receiverAddress }}</el-descriptions-item>
-            <el-descriptions-item v-if="orderDetail.delivery" label="物流公司">
+            <el-descriptions-item v-if="orderDetail.delivery?.deliveryType === 3" label="物流公司">
               {{ orderDetail.delivery.logisticsCompany || '-' }}
             </el-descriptions-item>
-            <el-descriptions-item v-if="orderDetail.delivery" label="物流单号">
+            <el-descriptions-item v-if="orderDetail.delivery?.deliveryType === 3" label="物流单号">
               {{ orderDetail.delivery.trackingNo || '-' }}
             </el-descriptions-item>
             <el-descriptions-item v-if="orderDetail.delivery && orderDetail.delivery.deliveryStaffName" label="配送员">
               {{ orderDetail.delivery.deliveryStaffName }}
             </el-descriptions-item>
+            <el-descriptions-item label="派送时间">{{ formatDateTime(orderDetail.delivery?.deliveryAt) }}</el-descriptions-item>
+            <el-descriptions-item label="签收时间">{{ formatDateTime(orderDetail.delivery?.receivedAt) }}</el-descriptions-item>
           </el-descriptions>
         </div>
       </el-card>
@@ -342,10 +345,14 @@ const packageGroups = computed(() => {
 })
 const printPaperWidth = ref<'receipt_80' | 'invoice_std' | string>('receipt_80')
 const terminalStatuses = [7, 8, 9]
+const isDeliveryOrder = computed(() => [2, 3].includes(Number(orderDetail.value?.delivery?.deliveryType)))
+const getDeliveryStatusText = (status?: number | null) => ({2: '待派送', 3: '配送中', 4: '已签收'}[Number(status)] || '待核对')
+let detailRequest = 0
 
 watch(
-  () => props.modelValue,
-  (val) => {
+  () => [props.modelValue, props.orderId] as const,
+  ([val]) => {
+    detailRequest++
     drawerVisible.value = val
     if (val && props.orderId) {
       loadOrderDetail()
@@ -368,6 +375,12 @@ const getStatusStep = computed(() => {
   if (!orderDetail.value) return 0
   const status = orderDetail.value.orderStatus
   const type = orderDetail.value.orderType
+  if (isDeliveryOrder.value) {
+    const deliveryStatus = orderDetail.value.delivery?.deliveryStatus
+    if (deliveryStatus === 4) return 5
+    if (deliveryStatus === 3) return 3
+    if (deliveryStatus === 2) return 2
+  }
 
   if (status === 1) return 0 // 待支付
   if (status === 2) return 1 // 已支付
@@ -471,16 +484,21 @@ const terminalStateDescription = computed(() => {
 
 const loadOrderDetail = async () => {
   if (!props.orderId) return
-
+  const orderId = props.orderId
+  const requestId = ++detailRequest
+  const isCurrent = () => requestId === detailRequest && props.modelValue && props.orderId === orderId
   loading.value = true
+  orderDetail.value = null
   try {
-    const data = await getOrderDetail(props.orderId)
+    const data = await getOrderDetail(orderId)
+    if (!isCurrent()) return
     orderDetail.value = data
   } catch (error) {
+    if (!isCurrent()) return
     console.error('加载订单详情失败:', error)
     ElMessage.error((error as any)?.message || '加载订单详情失败')
   } finally {
-    loading.value = false
+    if (isCurrent()) loading.value = false
   }
 }
 

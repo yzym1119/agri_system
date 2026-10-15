@@ -71,9 +71,12 @@ public class OrderRepositoryImpl implements OrderRepository {
 
     @Override
     public java.util.List<Order> findShippedOrdersBefore(java.time.LocalDateTime beforeTime) {
-        QueryWrapper query = QueryWrapper.create()
-                .where("order_status = ?", 5) // 已发货
-                .and("updated_at < ?", beforeTime);
+        QueryWrapper query = QueryWrapper.create().from(Order.class).as("o").select("o.*")
+                .innerJoin("order_delivery").as("od").on("od.order_id = o.id")
+                .where("o.order_status IN (5,9)")
+                .and("od.delivery_type = 3 AND od.delivery_status = 3")
+                .and("od.delivery_at < ?", beforeTime)
+                .orderBy("o.id");
         return mapper.selectListByQuery(query);
     }
 
@@ -89,9 +92,16 @@ public class OrderRepositoryImpl implements OrderRepository {
             String startTime,
             String endTime,
             Long customerId) {
+        return findPage(pageNum, pageSize, keyword, storeId, orderType, deliveryType, orderStatus, startTime, endTime, customerId, null);
+    }
+
+    @Override
+    public com.mybatisflex.core.paginate.Page<Order> findPage(Integer pageNum, Integer pageSize, String keyword,
+            Long storeId, Integer orderType, Integer deliveryType, String orderStatus, String startTime,
+            String endTime, Long customerId, Integer deliveryStatus) {
         // 注意：order 是 MySQL 保留关键字，MyBatis-Flex 的 from() 方法接受 Class 类型时会自动处理表名和反引号
         QueryWrapper query = QueryWrapper.create()
-                .from(Order.class).as("o")
+                .from(Order.class).as("o").select("o.*")
                 .leftJoin("store").as("s").on("o.store_id = s.id")
                 .leftJoin("customer").as("c").on("o.customer_id = c.id")
                 .leftJoin("order_delivery").as("od").on("o.id = od.order_id");
@@ -112,15 +122,14 @@ public class OrderRepositoryImpl implements OrderRepository {
 
         if (deliveryType != null) {
             if (deliveryType == 1) {
-                query.and("o.order_type = ?", 2); // 自提
-            } else if (deliveryType == 2) {
-                query.and("o.order_type = ?", 3)
-                        .and("od.delivery_type = ?", 2);
-            } else if (deliveryType == 3) {
-                query.and("o.order_type = ?", 3)
-                        .and("(od.delivery_type = ? OR od.id IS NULL)", 3);
+                query.and("o.order_type = ?", 2);
+            } else if (deliveryType == 2 || deliveryType == 3) {
+                query.and("od.delivery_type = ?", deliveryType);
+            } else {
+                throw new IllegalArgumentException("配送方式无效");
             }
         }
+        if (deliveryStatus != null) query.and("od.delivery_status = ?", deliveryStatus);
 
         if (orderStatus != null && !orderStatus.trim().isEmpty()) {
             // 支持多状态查询，用逗号分隔，如：7,8,9
@@ -150,6 +159,28 @@ public class OrderRepositoryImpl implements OrderRepository {
 
         com.mybatisflex.core.paginate.Page<Order> page = new com.mybatisflex.core.paginate.Page<>(pageNum, pageSize);
         return mapper.paginate(page, query);
+    }
+
+    @Override
+    public boolean hasRemainingDeliveryQuantity(Long orderId) {
+        QueryWrapper query = QueryWrapper.create().select("COUNT(*)")
+                .from("order_item_batch_allocation").as("a")
+                .innerJoin("order_item").as("i").on("i.id = a.order_item_id")
+                .innerJoin(Order.class).as("o").on("o.id = i.order_id AND o.store_id = a.store_id")
+                .innerJoin("inventory_movement").as("s").on("s.id = a.source_movement_id")
+                .where("o.id = ?", orderId)
+                .and("s.movement_type = 'SALE' AND s.base_quantity > 0 AND s.base_quantity = a.allocated_base_quantity")
+                .and("s.store_id = a.store_id AND s.product_id = a.product_id AND s.batch_id = a.batch_id AND s.from_location_id = a.location_id")
+                .and("s.reference_type = 'ORDER' AND s.reference_id = o.id")
+                .and("""
+                        a.allocated_base_quantity > COALESCE((
+                            SELECT SUM(r.base_quantity) FROM inventory_movement r
+                            WHERE r.movement_type = 'RETURN' AND r.reference_type = 'SALE_ALLOCATION'
+                              AND r.reference_id = a.id AND r.base_quantity > 0
+                              AND r.store_id = a.store_id AND r.product_id = a.product_id AND r.batch_id = a.batch_id
+                        ), 0)
+                        """);
+        return mapper.selectCountByQuery(query) > 0;
     }
 
     @Override

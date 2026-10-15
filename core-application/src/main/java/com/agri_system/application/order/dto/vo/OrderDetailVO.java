@@ -33,6 +33,11 @@ public class OrderDetailVO {
     
     @Schema(description = "订单状态", example = "2")
     private Integer orderStatus;
+
+    @Schema(description = "当前是否可以派单，由配送和实出库事实计算")
+    private boolean canShip;
+    @Schema(description = "当前是否可以签收，由配送和实出库事实计算")
+    private boolean canConfirmReceipt;
     
     @Schema(description = "订单总金额", example = "100.00")
     private BigDecimal totalAmount;

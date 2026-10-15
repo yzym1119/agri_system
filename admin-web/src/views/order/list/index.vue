@@ -54,8 +54,9 @@
       <el-tabs v-model="activeTab" @tab-change="handleTabChange">
         <el-tab-pane label="全部" name="all" />
         <el-tab-pane label="待付款" name="1" />
-        <el-tab-pane label="待发货/自提" name="3,4" />
-        <el-tab-pane label="配送中" name="5" />
+        <el-tab-pane label="待自提" name="3" />
+        <el-tab-pane label="待派送" name="delivery-2" />
+        <el-tab-pane label="配送中" name="delivery-3" />
         <el-tab-pane label="已完成" name="6" />
         <el-tab-pane label="退款/售后" name="refund" />
       </el-tabs>
@@ -77,7 +78,7 @@
               <span v-else>📱</span>
               <span>{{ getOrderTypeText(row.orderType) }}</span>
             </div>
-            <div v-if="row.orderType !== 1" style="margin-top: 4px">
+            <div v-if="row.deliveryType" style="margin-top: 4px">
               <el-tag v-if="row.deliveryType === 1" size="small" type="info">[自提]</el-tag>
               <el-tag v-else-if="row.deliveryType === 2" size="small" type="warning">[同城]</el-tag>
               <el-tag v-else-if="row.deliveryType === 3" size="small" type="success">[快递]</el-tag>
@@ -135,6 +136,7 @@
             <el-tag :type="getStatusTagType(row.orderStatus)">
               {{ getStatusText(row.orderStatus) }}
             </el-tag>
+            <div v-if="row.deliveryStatus" style="margin-top: 4px; font-size: 12px">{{ getDeliveryStatusText(row.deliveryStatus) }}</div>
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="下单时间" width="170" />
@@ -176,14 +178,14 @@
             </template>
             <!-- 配送中状态 -->
             <el-button
-              v-if="row.orderStatus === 5"
+              v-if="canConfirmDelivery(row)"
               v-permission="'order:ship'"
               link
               type="success"
               :loading="actionLoading[row.id]"
               @click="handleConfirmReceipt(row)"
             >
-              确认收货
+              确认签收
             </el-button>
             <!-- 退款按钮 -->
             <el-button
@@ -253,6 +255,7 @@ const total = ref(0)
 const activeTab = ref('all')
 const storeOptions = ref<StoreDetailVO[]>([])
 const actionLoading = ref<Record<number, boolean>>({})
+let listRequest = 0
 const shipVisible = ref(false)
 const verifyVisible = ref(false)
 const refundVisible = ref(false)
@@ -268,6 +271,7 @@ const queryParams = reactive({
   storeId: null as number | null,
   orderType: null as number | null,
   deliveryType: null as number | null,
+  deliveryStatus: null as number | null,
   timeRange: null as [string, string] | null,
   orderStatus: null as string | null
 })
@@ -292,17 +296,22 @@ const canVerifyPickup = (row: OrderPageItem) => {
   return row.deliveryType === 1 && row.orderStatus === 3
 }
 
-const isPendingDeliveryOrder = (row: OrderPageItem) => {
-  return row.orderType === 3 && (row.orderStatus === 3 || row.orderStatus === 4)
-}
+const isPendingDeliveryOrder = (row: OrderPageItem) => row.canShip === true
+  && row.deliveryStatus === 2 && ![7, 8].includes(row.orderStatus)
 
 const canShipByExpress = (row: OrderPageItem) => {
-  return isPendingDeliveryOrder(row) && (row.deliveryType == null || row.deliveryType === 3)
+  return isPendingDeliveryOrder(row) && row.deliveryType === 3
 }
 
 const canShipByLocal = (row: OrderPageItem) => {
-  return isPendingDeliveryOrder(row) && (row.deliveryType == null || row.deliveryType === 2)
+  return isPendingDeliveryOrder(row) && row.deliveryType === 2
 }
+
+const canConfirmDelivery = (row: OrderPageItem) => row.canConfirmReceipt === true
+  && row.deliveryStatus === 3 && (row.deliveryType === 2 || row.deliveryType === 3)
+  && ![7, 8].includes(row.orderStatus)
+
+const getDeliveryStatusText = (status: number) => ({2: '待派送', 3: '配送中', 4: '已签收'}[status] || '')
 
 const getRefundActionText = (row: OrderPageItem) => {
   if (row.orderStatus === 8) return '继续退货'
@@ -423,6 +432,7 @@ const handleReset = () => {
     storeId: null,
     orderType: null,
     deliveryType: null,
+    deliveryStatus: null,
     timeRange: null,
     orderStatus: null
   })
@@ -431,8 +441,12 @@ const handleReset = () => {
 }
 
 const handleTabChange = (tabName: string) => {
+  queryParams.deliveryStatus = null
   if (tabName === 'all') {
     queryParams.orderStatus = null
+  } else if (tabName.startsWith('delivery-')) {
+    queryParams.orderStatus = null
+    queryParams.deliveryStatus = Number(tabName.slice('delivery-'.length))
   } else if (tabName === 'refund') {
     // 退款/售后：状态 8-已退款，9-部分退款
     queryParams.orderStatus = '8,9'
@@ -444,6 +458,7 @@ const handleTabChange = (tabName: string) => {
 }
 
 const loadData = async () => {
+  const requestId = ++listRequest
   loading.value = true
   try {
     const params: OrderListQuery = {
@@ -463,6 +478,7 @@ const loadData = async () => {
     if (queryParams.deliveryType) {
       params.deliveryType = queryParams.deliveryType
     }
+    if (queryParams.deliveryStatus) params.deliveryStatus = queryParams.deliveryStatus
     if (queryParams.timeRange && queryParams.timeRange.length === 2) {
       params.startTime = queryParams.timeRange[0]
       params.endTime = queryParams.timeRange[1]
@@ -472,6 +488,7 @@ const loadData = async () => {
     }
 
     const response: OrderPageResponse = await getOrderList(params)
+    if (requestId !== listRequest) return
     // 后端直接返回 Page<OrderPageVO>，包含 records 和 totalRow/total
     if (response) {
       tableData.value = response.records || []
@@ -482,10 +499,11 @@ const loadData = async () => {
       total.value = 0
     }
   } catch (error) {
+    if (requestId !== listRequest) return
     console.error('加载订单列表失败:', error)
     ElMessage.error('加载订单列表失败')
   } finally {
-    loading.value = false
+    if (requestId === listRequest) loading.value = false
   }
 }
 
@@ -545,8 +563,9 @@ const handleRefundSuccess = () => {
 }
 
 const handleConfirmReceipt = async (row: OrderPageItem) => {
+  if (!canConfirmDelivery(row) || actionLoading.value[row.id]) return
   try {
-    await ElMessageBox.confirm('确认强制完成订单？', '确认收货', {
+    await ElMessageBox.confirm('确认剩余配送商品已交给收货人？', '确认签收', {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
       type: 'warning'
@@ -554,7 +573,7 @@ const handleConfirmReceipt = async (row: OrderPageItem) => {
 
     actionLoading.value[row.id] = true
     await confirmReceipt(row.id)
-    ElMessage.success('确认收货成功')
+    ElMessage.success('确认签收成功')
     loadData()
   } catch (error: any) {
     if (error !== 'cancel') {

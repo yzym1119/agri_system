@@ -65,6 +65,7 @@ const dialogVisible = ref(false)
 const formRef = ref<FormInstance>()
 const submitting = ref(false)
 const deliveryStaffOptions = ref<any[]>([])
+let formSession = 0
 
 const form = reactive({
   logisticsCompany: '',
@@ -90,8 +91,9 @@ const rules = computed<FormRules>(() => {
 })
 
 watch(
-  () => props.modelValue,
-  (val) => {
+  () => [props.modelValue, props.order?.id, props.mode] as const,
+  ([val]) => {
+    formSession++
     dialogVisible.value = val
     if (val) {
       resetForm()
@@ -111,42 +113,41 @@ const resetForm = () => {
 }
 
 const handleClose = () => {
+  formSession++
   dialogVisible.value = false
   resetForm()
 }
 
 const handleSubmit = async () => {
-  if (!formRef.value) return
-
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-
-    if (!props.order) {
-      ElMessage.error('订单信息不存在')
-      return
-    }
-
-    submitting.value = true
-    try {
-      const data: any = {}
-      if (props.mode === 'express') {
-        data.logisticsCompany = form.logisticsCompany
-        data.trackingNo = form.trackingNo
-      } else {
-        data.deliveryStaffId = form.deliveryStaffId
-      }
-
-      await shipOrder(props.order.id, data)
-      ElMessage.success(props.mode === 'express' ? '发货成功' : '派单成功')
+  if (!formRef.value || submitting.value || !props.order) return
+  const session = formSession
+  const orderId = props.order.id
+  const mode = props.mode
+  const data = mode === 'express'
+    ? {logisticsCompany: form.logisticsCompany, trackingNo: form.trackingNo}
+    : {deliveryStaffId: form.deliveryStaffId!}
+  const isCurrent = () => session === formSession && props.modelValue && props.order?.id === orderId && props.mode === mode
+  submitting.value = true
+  try {
+    await formRef.value.validate(async (valid) => {
+      if (!valid || !isCurrent()) return
+      if (mode === 'express'
+        ? data.logisticsCompany !== form.logisticsCompany || data.trackingNo !== form.trackingNo
+        : data.deliveryStaffId !== form.deliveryStaffId) return
+      await shipOrder(orderId, data)
+      if (!isCurrent()) return
+      ElMessage.success(mode === 'express' ? '发货成功' : '派单成功')
       emit('success')
       handleClose()
-    } catch (error) {
+    })
+  } catch (error) {
+    if (isCurrent()) {
       console.error('操作失败:', error)
       ElMessage.error((error as any)?.message || '操作失败')
-    } finally {
-      submitting.value = false
     }
-  })
+  } finally {
+    submitting.value = false
+  }
 }
 
 // 加载配送员列表

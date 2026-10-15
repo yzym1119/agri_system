@@ -42,9 +42,15 @@ public class OrderPageVO {
     
     @Schema(description = "配送方式：1-自提，2-同城配送，3-快递", example = "1")
     private Integer deliveryType;
+    private Integer deliveryStatus;
     
     @Schema(description = "订单状态", example = "2")
     private Integer orderStatus;
+
+    @Schema(description = "当前是否可以派单，由配送和实出库事实计算")
+    private boolean canShip;
+    @Schema(description = "当前是否可以签收，由配送和实出库事实计算")
+    private boolean canConfirmReceipt;
     
     @Schema(description = "订单总金额", example = "1050.00")
     private BigDecimal totalAmount;

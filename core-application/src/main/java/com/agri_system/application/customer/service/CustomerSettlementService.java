@@ -56,7 +56,7 @@ public class CustomerSettlementService {
         }
         
         // 查询客户
-        Customer customer = customerRepository.findById(order.getCustomerId())
+        Customer customer = customerRepository.findByIdWithLock(order.getCustomerId())
                 .orElseThrow(() -> new IllegalArgumentException("客户不存在: " + order.getCustomerId()));
         
         // ⛔️ 1. 更新客户统计（Critical Fix）
@@ -164,7 +164,7 @@ public class CustomerSettlementService {
             return;
         }
 
-        Customer customer = customerRepository.findById(order.getCustomerId()).orElse(null);
+        Customer customer = customerRepository.findByIdWithLock(order.getCustomerId()).orElse(null);
         if (customer == null) {
             return;
         }

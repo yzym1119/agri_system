@@ -23,7 +23,8 @@
         @click="go(m.route)"
       >
         <div class="metric-label">
-          <span>{{ m.title }}</span>
+          <el-tooltip v-if="m.description" :content="m.description" placement="top"><span>{{ m.title }}</span></el-tooltip>
+          <span v-else>{{ m.title }}</span>
           <el-icon><component :is="m.icon" /></el-icon>
         </div>
         <div class="metric-value">{{ m.value }}</div>
@@ -168,9 +169,9 @@ const metrics = computed(() => {
   const pending = toNumber(dashboard.value.pendingAfterSalesCount) + toNumber(dashboard.value.pendingDeliveryCount)
   return [
     { title: '今日订单', value: `${toNumber(dashboard.value.orderCount)}`, foot: `GMV ${currency(dashboard.value.gmv)}`, icon: ShoppingCart, tone: 'tone-blue', route: '/order' },
-    { title: '今日净销额', value: currency(dashboard.value.netSales), foot: `新增赊销 ${currency(dashboard.value.newCreditAmount)}`, icon: Money, tone: 'tone-green', route: '/operation/report' },
+    { title: '今日净销额', value: currency(dashboard.value.netSales), description: '今日销售单截至当前的净成交，含赊销；已扣完成退货', foot: `含赊销 · 已扣完成退货 / 新增赊销 ${currency(dashboard.value.newCreditAmount)}`, icon: Money, tone: 'tone-green', route: '/operation/report' },
     { title: '今日新增客户', value: `${toNumber(dashboard.value.newCustomerCount)}`, foot: '点击查看客户列表', icon: User, tone: 'tone-orange', route: '/marketing/customer/list' },
-    { title: '待处理事项', value: `${pending}`, foot: `售后 ${toNumber(dashboard.value.pendingAfterSalesCount)} / 配送 ${toNumber(dashboard.value.pendingDeliveryCount)}`, icon: Document, tone: 'tone-red', route: '/after-sales' },
+    { title: '待处理事项', value: `${pending}`, foot: `售后 ${toNumber(dashboard.value.pendingAfterSalesCount)} / 待派送 ${toNumber(dashboard.value.pendingDeliveryCount)}`, icon: Document, tone: 'tone-red', route: '/after-sales' },
     { title: '库存预警', value: `${toNumber(dashboard.value.inventoryAlertCount)}`, foot: '库龄 > 180 天批次', icon: Warning, tone: 'tone-sand', route: '/inventory/warning' },
     { title: '库存占用', value: currency(inventoryValue.value.totalInventoryValue), foot: `180 天+ ${currency(inventoryValue.value.over180DaysValue)}`, icon: Box, tone: 'tone-ink', route: '/inventory/warning' },
     { title: '总欠款', value: currency(creditRisk.value.totalDebt), foot: `逾期 ${currency(creditRisk.value.overdueDebt)}`, icon: Coin, tone: 'tone-wine', route: '/credit' },

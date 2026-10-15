@@ -27,6 +27,8 @@ class ClientCouponSettlementTest {
     private final OrderItemRepository items=mock(OrderItemRepository.class);
     private final OrderPaymentRepository payments=mock(OrderPaymentRepository.class);
     private final OrderPaymentIntentRepository intents=mock(OrderPaymentIntentRepository.class);
+    private final OrderDeliveryRepository deliveries=mock(OrderDeliveryRepository.class);
+    private final com.agri_system.domain.store.repository.StaffRepository staff=mock(com.agri_system.domain.store.repository.StaffRepository.class);
     private final CustomerCouponRepository coupons=mock(CustomerCouponRepository.class);
     private final com.agri_system.domain.customer.repository.CustomerRepository customers=mock(com.agri_system.domain.customer.repository.CustomerRepository.class);
     private final WalletApplicationService wallet=mock(WalletApplicationService.class);
@@ -60,10 +62,10 @@ class ClientCouponSettlementTest {
         var afterItems=mock(com.agri_system.domain.after_sales.repository.AfterSalesItemRepository.class);
         funding=new OrderPaymentService(payments,coupons,wallet,domain,items,products,orders,customers,
                 mock(com.agri_system.domain.credit.repository.CreditAccountRepository.class),mock(com.agri_system.domain.credit.repository.CreditRepaymentLogRepository.class),afterSales,afterItems);
-        service=new OrderApplicationService(orders,items,payments,intents,mock(OrderDeliveryRepository.class),domain,funding,inventory,wallet,
+        service=new OrderApplicationService(orders,items,payments,intents,deliveries,domain,funding,inventory,wallet,
                 mock(com.agri_system.application.credit.service.CreditApplicationService.class),products,
                 mock(com.agri_system.application.product.service.ProductPricingService.class),mock(com.agri_system.application.productpackage.service.PackagePricingService.class),
-                mock(com.agri_system.domain.store.repository.StaffRepository.class),mock(com.agri_system.domain.store.repository.StoreRepository.class),customers,
+                staff,mock(com.agri_system.domain.store.repository.StoreRepository.class),customers,
                 afterSales,afterItems,mock(org.springframework.context.ApplicationEventPublisher.class),mock(com.agri_system.domain.wallet.repository.WalletAuthCodeRepository.class),mock(PickupFulfillmentService.class),mock(ManualPriceAuditService.class));
         when(intents.save(any())).thenAnswer(i->{OrderPaymentIntent intent=i.getArgument(0);intent.setId(70L);storedIntents.put(intent.getIntentNo(),intent);return intent;});
         when(intents.findByIntentNo(anyString())).thenAnswer(i->Optional.ofNullable(storedIntents.get(i.getArgument(0))));
@@ -132,5 +134,44 @@ class ClientCouponSettlementTest {
         coupon.setStatus(2);when(orders.findById(1L)).thenReturn(Optional.of(stale));
         assertNull(assertDoesNotThrow(()->service.payOrder(command(true,false),10L)));assertEquals(m("70"),order.getPayAmount());
         verify(coupons,never()).save(any());verify(payments,never()).save(any());verifyNoInteractions(inventory);
+    }
+
+    @Test void localDeliveryWalletPaymentBecomesDispatchableWithoutPaymentReplayRewindingIt() {
+        assertDeliveryPaymentChain(2);
+    }
+    @Test void expressDeliveryWalletPaymentBecomesDispatchableWithoutPaymentReplayRewindingIt() {
+        assertDeliveryPaymentChain(3);
+    }
+    @Test void deliveryIntentDoesNotDispatchUntilActualExternalConfirmation() {
+        OrderDelivery delivery=onlineDelivery(2);
+        when(wallet.getBalance(10L)).thenReturn(m("20"));var request=command(true,false);request.setExternalPaymentType(3);
+        service.previewOrderPayment(request,10L);var intent=service.createExternalPaymentIntent(request,10L);
+        assertEquals(1,delivery.getDeliveryStatus());verify(deliveries,never()).save(any());
+        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("delivery-alipay-50");
+        service.confirmExternalPayment(confirm,10L);assertEquals(2,delivery.getDeliveryStatus());
+        service.shipOrder(shipment(2),8L);service.confirmExternalPayment(confirm,10L);
+        assertEquals(3,delivery.getDeliveryStatus());verify(inventory,times(1)).outbound(any(),isNull());
+    }
+    private void assertDeliveryPaymentChain(int type) {
+        OrderDelivery delivery=onlineDelivery(type);var request=command(true,false);
+        service.previewOrderPayment(request,10L);assertEquals(1,delivery.getDeliveryStatus());
+        service.payOrder(request,10L);assertEquals(4,order.getOrderStatus());assertEquals(2,delivery.getDeliveryStatus());
+        assertNet("70","30",4);
+        service.shipOrder(shipment(type),8L);var dispatched=delivery.getDeliveryAt();
+        service.payOrder(request,10L);assertEquals(3,delivery.getDeliveryStatus());assertEquals(dispatched,delivery.getDeliveryAt());
+        service.confirmReceipt(1L,8L);var received=delivery.getReceivedAt();
+        service.payOrder(request,10L);assertEquals(4,delivery.getDeliveryStatus());assertEquals(received,delivery.getReceivedAt());
+        verify(inventory,times(1)).outbound(any(),isNull());assertEquals(2,sources.size());
+    }
+    private OrderDelivery onlineDelivery(int type) {
+        order.setOrderType(3);var delivery=new OrderDelivery();delivery.setOrderId(1L);delivery.setDeliveryType(type);delivery.setDeliveryStatus(1);
+        when(deliveries.findByOrderId(1L)).thenReturn(Optional.of(delivery));when(orders.hasRemainingDeliveryQuantity(1L)).thenReturn(true);
+        var driver=new com.agri_system.domain.store.model.Staff();driver.setId(8L);driver.setStoreId(1L);driver.setStatus(1);
+        when(staff.findById(8L)).thenReturn(Optional.of(driver));return delivery;
+    }
+    private OrderShipCommand shipment(int type) {
+        var command=new OrderShipCommand();command.setOrderId(1L);
+        if(type==2) command.setDeliveryStaffId(8L);else {command.setLogisticsCompany("物流");command.setTrackingNo("delivery-tracking");}
+        return command;
     }
 }

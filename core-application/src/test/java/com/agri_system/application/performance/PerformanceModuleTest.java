@@ -117,12 +117,14 @@ class PerformanceModuleTest {
         orderItem.setId(101L);
         orderItem.setQuantity(new BigDecimal("4"));
         when(orderItemRepository.findByOrderId(9L)).thenReturn(List.of(orderItem));
+        var settledEvents = prepareEventRepo();
+        when(settledEvents.existsByEventKey("ORDER_FINISHED:9")).thenReturn(true);
         PerformanceEventListener listener = new PerformanceEventListener(
                 new PerformanceProperties(),
                 new PerformanceDomainService(),
                 mock(CommissionRuleRepository.class),
                 logRepository,
-                prepareEventRepo(),
+                settledEvents,
                 orderRepository,
                 orderItemRepository,
                 mock(ProductRepository.class),

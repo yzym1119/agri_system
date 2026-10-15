@@ -29,4 +29,7 @@ public class OrderDeliveryVO {
 
     @Schema(description = "配送时间")
     private LocalDateTime deliveryAt;
+
+    @Schema(description = "实际签收时间")
+    private LocalDateTime receivedAt;
 }

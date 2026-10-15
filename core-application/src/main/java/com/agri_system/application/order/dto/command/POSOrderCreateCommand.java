@@ -26,6 +26,12 @@ public class POSOrderCreateCommand {
     @Schema(description = "客户ID（可为空，支持散客）", example = "1")
     private Long customerId;
     
+    @Schema(description = "履约方式：1-当场交货（默认），2-门店配送")
+    private Integer deliveryType;
+    private String receiverName;
+    private String receiverPhone;
+    private String receiverAddress;
+
     @NotEmpty(message = "订单明细不能为空")
     @Valid
     @Schema(description = "订单明细列表")

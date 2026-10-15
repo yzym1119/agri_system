@@ -82,7 +82,7 @@ class CustomerSettlementRefundTest {
         Order o = newOrder(10L, 1L, new BigDecimal("100"), 8, 2);
         CustomerWallet w = newPointsWallet(new BigDecimal("100"));
 
-        when(customerRepository.findById(1L)).thenReturn(Optional.of(c));
+        when(customerRepository.findByIdWithLock(1L)).thenReturn(Optional.of(c));
         when(transactionRepository.findByReference(1L, 3, "ORDER", 10L))
                 .thenReturn(List.of(newTxn(4, new BigDecimal("100"))));
         when(transactionRepository.findByReference(1L, 3, "ORDER_REFUND", 10L))
@@ -112,7 +112,7 @@ class CustomerSettlementRefundTest {
         Order o = newOrder(10L, 1L, new BigDecimal("100"), 9, 2); // 9=部分退款
         CustomerWallet w = newPointsWallet(new BigDecimal("100"));
 
-        when(customerRepository.findById(1L)).thenReturn(Optional.of(c));
+        when(customerRepository.findByIdWithLock(1L)).thenReturn(Optional.of(c));
         when(transactionRepository.findByReference(1L, 3, "ORDER", 10L))
                 .thenReturn(List.of(newTxn(4, new BigDecimal("100"))));
         when(transactionRepository.findByReference(1L, 3, "ORDER_REFUND", 10L))
@@ -138,7 +138,7 @@ class CustomerSettlementRefundTest {
         Order o = newOrder(10L, 1L, new BigDecimal("100"), 8, 2);
         CustomerWallet w = newPointsWallet(new BigDecimal("20")); // 余额仅剩20（其余已兑换消耗）
 
-        when(customerRepository.findById(1L)).thenReturn(Optional.of(c));
+        when(customerRepository.findByIdWithLock(1L)).thenReturn(Optional.of(c));
         when(transactionRepository.findByReference(1L, 3, "ORDER", 10L))
                 .thenReturn(List.of(newTxn(4, new BigDecimal("100"))));
         when(transactionRepository.findByReference(1L, 3, "ORDER_REFUND", 10L))
@@ -160,7 +160,7 @@ class CustomerSettlementRefundTest {
         Customer c = newCustomer(1L, new BigDecimal("100"), 5);
         Order o = newOrder(10L, 1L, new BigDecimal("100"), 8, OrderMainPaymentMethod.CREDIT.getCode());
 
-        when(customerRepository.findById(1L)).thenReturn(Optional.of(c));
+        when(customerRepository.findByIdWithLock(1L)).thenReturn(Optional.of(c));
 
         service.onOrderRefunded(o, new BigDecimal("100"));
 
@@ -179,7 +179,7 @@ class CustomerSettlementRefundTest {
         Order o = newOrder(10L, 1L, new BigDecimal("100"), 9, 2);
         CustomerWallet w = newPointsWallet(new BigDecimal("30"));
 
-        when(customerRepository.findById(1L)).thenReturn(Optional.of(c));
+        when(customerRepository.findByIdWithLock(1L)).thenReturn(Optional.of(c));
         when(transactionRepository.findByReference(1L, 3, "ORDER", 10L))
                 .thenReturn(List.of(newTxn(4, new BigDecimal("100"))));
         // 之前已回退70（流水金额 -70）

@@ -45,6 +45,7 @@ class PackageCommissionListenerTest {
     private final AfterSalesItemRepository afterSalesItems = mock(AfterSalesItemRepository.class);
     private final List<AfterSales> finishedReturns = new ArrayList<>();
     private final List<StaffPerformanceLog> saved = new ArrayList<>();
+    private final Set<String> eventKeys = new HashSet<>();
     private PerformanceEventListener listener;
 
     @BeforeEach
@@ -54,7 +55,6 @@ class PackageCommissionListenerTest {
         listener = new PerformanceEventListener(properties, new PerformanceDomainService(), rules, logs, events,
                 orders, items, products, mock(StaffCustomerRelationRepository.class),
                 mock(ApplicationEventPublisher.class), mock(CustomerSettlementService.class), afterSales, afterSalesItems);
-        Set<String> eventKeys = new HashSet<>();
         when(events.existsByEventKey(anyString())).thenAnswer(call -> eventKeys.contains(call.getArgument(0)));
         when(events.save(any())).thenAnswer(call -> {
             com.agri_system.domain.performance.model.PerformanceEventRecord record = call.getArgument(0);
@@ -194,6 +194,7 @@ class PackageCommissionListenerTest {
 
     @Test
     void pendingReturnQuantityDoesNotCountAsCompletedRefundFact() {
+        eventKeys.add("ORDER_FINISHED:1");
         when(items.findByOrderId(1L)).thenReturn(List.of(line(11L,21L,"3","1","0.10")));
         StaffPerformanceLog positive = new StaffPerformanceLog(); positive.setOrderItemId(11L);
         positive.setAmount(new BigDecimal("0.02")); positive.setStaffId(9L); positive.setStoreId(2L); positive.markImmediate();
@@ -210,6 +211,7 @@ class PackageCommissionListenerTest {
     }
 
     private void assertSplitRefunds(String originalCommission) {
+        eventKeys.add("ORDER_FINISHED:1");
         OrderItem material = line(11L,21L,"3","1","0.10");
         when(items.findByOrderId(1L)).thenReturn(List.of(material));
         StaffPerformanceLog positive = new StaffPerformanceLog();

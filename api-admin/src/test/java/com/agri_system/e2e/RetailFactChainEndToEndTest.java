@@ -11,6 +11,7 @@ import com.agri_system.api.admin.controller.ProductController;
 import com.agri_system.api.admin.controller.ProductPackageController;
 import com.agri_system.api.admin.controller.AfterSalesAdminController;
 import com.agri_system.api.admin.controller.CreditAdminController;
+import com.agri_system.api.admin.controller.ReportDashboardController;
 import com.agri_system.application.after_sales.dto.command.AdminReturnCommand;
 import com.agri_system.application.performance.listener.PerformanceEventListener;
 import com.agri_system.application.performance.event.OrderRefundedEvent;
@@ -446,9 +447,181 @@ class RetailFactChainEndToEndTest {
         assertPackageBusinessChain();
         assertPosCouponPaymentChain();
         assertCreditSettlementBusinessChain();
+        assertManualDeliveryBusinessChain();
+        assertOnlineDeliveryPaymentAndFirstSettlement();
         assertLedgerReconciles();
         assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_balance_feature_status"));
         log("收货、销售、原单退货、提货、调拨、盘点及失败回滚使用同一账本，验收通过");
+    }
+
+    /** POS整单人工配送复用现有单据，真实HTTP派单/退货/签收不增加第二份钱货绩效。 */
+    private void assertManualDeliveryBusinessChain() throws Exception {
+        E2EToken manager=loginToken(1L), secondStore=loginToken(3L);
+        for(int id=630;id<=635;id++) exec("INSERT INTO customer(id,code,name,phone,type,status,credit_limit) VALUES("+id+",'DELIVERY-C"+id+"','配送验收客户"+id+"','13800000"+id+"',1,1,1000)");
+        exec("INSERT INTO commission_rule(id,legacy_rule_type,rule_category,target_id,calc_mode,calc_value,enabled,status,priority) VALUES(630,1,1,130,'FIXED',1,1,1,1)");
+        var invalid=deliverySale(630,"5");
+        for(String missing:List.of("name","phone","address")) {
+            invalid.setReceiverName(missing.equals("name")?"  ":"配送农户");
+            invalid.setReceiverPhone(missing.equals("phone")?"  ":"13800000630");
+            invalid.setReceiverAddress(missing.equals("address")?"  ":"测试村3号");
+            DeliveryFacts before=deliveryFacts();
+            assertPOSRejected(manager,invalid,10001,"收货");
+            assertEquals(before,deliveryFacts(),"缺收货信息必须在任何订单/资金/库存/绩效事实前拒绝");
+        }
+        long initialPending=deliveryDashboard(manager,1).path("pendingDeliveryCount").asLong();
+        long secondPending=deliveryDashboard(manager,2).path("pendingDeliveryCount").asLong();
+        long order=createPOSViaHttp(manager,deliverySale(630,"5"));
+        assertEquals(1L,jdbcLong("SELECT order_type FROM `order` WHERE id="+order));
+        assertEquals(4L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order));
+        assertEquals(2L,jdbcLong("SELECT delivery_status FROM order_delivery WHERE order_id="+order));
+        assertEquals(0L,jdbcLong("SELECT COUNT(*) FROM order_pickup_request p JOIN order_item i ON i.id=p.order_item_id WHERE i.order_id="+order),"人工配送即使勾过库房取货也不产生自提任务");
+        assertDecimal("POS待配送即记成交50", "50",jdbcDecimal("SELECT total_order_amount FROM customer WHERE id=630"));
+        assertDecimal("POS待配送只计5件提成", "5",commissionSum(order,1));
+        assertEquals(initialPending+1,deliveryDashboard(manager,1).path("pendingDeliveryCount").asLong());
+        assertEquals(secondPending,deliveryDashboard(manager,2).path("pendingDeliveryCount").asLong(),"第二店待配送不包含第一店POS单");
+        JsonNode pending=deliveryRow(manager,order,2);
+        assertEquals(1,pending.path("orderType").asInt());assertEquals(2,pending.path("deliveryType").asInt());
+        assertTrue(pending.path("canShip").asBoolean(),pending.toString());
+        assertTrue(!pending.path("canConfirmReceipt").asBoolean(),pending.toString());
+        DeliveryFacts sold=deliveryFacts();
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/ship",Map.of("deliveryStaffId",2)));
+        Timestamp shipped=jdbcTimestamp("SELECT delivery_at FROM order_delivery WHERE order_id="+order);
+        assertNotNull(shipped);assertEquals(sold,deliveryFacts(),"派单不能再扣库、收款、累计客户或提成");
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/ship",Map.of("deliveryStaffId",2)));
+        assertEquals(shipped,jdbcTimestamp("SELECT delivery_at FROM order_delivery WHERE order_id="+order));
+        assertEquals(sold,deliveryFacts(),"重复派单保持原事实");
+        creditReturn(manager,order,creditPreview(manager,order,"2"));
+        assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order));assertOrderReturned(order,"2");
+        assertCreditState(order,"50","0","0","0","20","0");
+        assertDecimal("退2件后客户净成交30", "30",jdbcDecimal("SELECT total_order_amount FROM customer WHERE id=630"));
+        assertDecimal("退2件后只回冲2元", "-2",commissionSum(order,4));
+        JsonNode moving=deliveryRow(manager,order,3);
+        assertTrue(moving.path("canConfirmReceipt").asBoolean(),moving.toString());
+        DeliveryFacts returned=deliveryFacts();
+        for(int repeat=0;repeat<2;repeat++) requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/confirm-receipt",Map.of()));
+        assertEquals(returned,deliveryFacts(),"部分退货后的首次签收及重放均不重复结算");
+        assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order),"签收不能覆盖部分退款状态9");
+        assertEquals(4L,jdbcLong("SELECT delivery_status FROM order_delivery WHERE order_id="+order));
+        JsonNode detail=getDeliveryJson(manager,"/api/admin/orders/"+order,Map.of());
+        assertNotNull(jdbcTimestamp("SELECT received_at FROM order_delivery WHERE order_id="+order));
+        assertTrue(detail.path("delivery").path("receivedAt").isTextual(),detail.toString());
+        assertTrue(!detail.path("canConfirmReceipt").asBoolean(),detail.toString());
+        assertEquals(initialPending,deliveryDashboard(manager,1).path("pendingDeliveryCount").asLong());
+
+        // 部分退货发生在派单前时，待派送筛选仍必须保留状态9的真实剩余物料。
+        long beforeShip=createPOSViaHttp(manager,deliverySale(631,"5"));
+        directDeliveryReturn(manager,beforeShip,creditPreview(manager,beforeShip,"2"));
+        assertTrue(deliveryRow(manager,beforeShip,2).path("canShip").asBoolean());
+        DeliveryFacts beforeDispatch=deliveryFacts();
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+beforeShip+"/ship",Map.of("deliveryStaffId",2)));
+        assertEquals(beforeDispatch,deliveryFacts());assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+beforeShip));
+        // 处理中售后暂停签收；改为拒绝后才能继续交付。
+        exec("INSERT INTO after_sales(after_sales_no,order_id,customer_id,store_id,type,status,refund_amount) VALUES('DELIVERY-PENDING',"+beforeShip+",631,1,2,10,0)");
+        DeliveryFacts paused=deliveryFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/"+beforeShip+"/confirm-receipt",Map.of()));
+        assertEquals(paused,deliveryFacts());assertTrue(!deliveryRow(manager,beforeShip,3).path("canConfirmReceipt").asBoolean());
+        exec("UPDATE after_sales SET status=90 WHERE after_sales_no='DELIVERY-PENDING'");
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+beforeShip+"/confirm-receipt",Map.of()));
+
+        long fullyReturned=createPOSViaHttp(manager,deliverySale(632,"2"));
+        directDeliveryReturn(manager,fullyReturned,creditPreview(manager,fullyReturned,"2"));
+        DeliveryFacts full=deliveryFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/"+fullyReturned+"/ship",Map.of("deliveryStaffId",2)));
+        assertEquals(full,deliveryFacts());assertEquals(8L,jdbcLong("SELECT order_status FROM `order` WHERE id="+fullyReturned));
+        assertEquals(initialPending,deliveryDashboard(manager,1).path("pendingDeliveryCount").asLong(),"全退停止配送并移出待派送统计");
+        // 显式门店过滤必须使用真实关系，同时保留POS来源。
+        var secondCommand=deliverySale(633,"2");secondCommand.setStaffId(3L);secondCommand.setStoreId(2L);
+        long second=createPOSViaHttp(secondStore,secondCommand);
+        assertEquals(initialPending,deliveryDashboard(manager,1).path("pendingDeliveryCount").asLong());
+        assertEquals(secondPending+1,deliveryDashboard(manager,2).path("pendingDeliveryCount").asLong());
+        assertEquals(2,deliveryRow(manager,second,2).path("storeId").asInt());
+        assertDeliveryReturnReceiptRace(manager);
+        log("[配送] POS待派送→人工派单→部分退货→签收/重放，原资金/库存/客户/绩效不重复；全退、处理中售后、门店统计及并发状态保留通过");
+    }
+    private POSOrderCreateCommand deliverySale(long customer,String quantity) {
+        var command=posSale(130L,quantity,"袋","10",true,null,new BigDecimal(quantity).multiply(BigDecimal.TEN).toPlainString());
+        command.setCustomerId(customer);command.setDeliveryType(2);command.setReceiverName("配送农户");
+        command.setReceiverPhone("13800000630");command.setReceiverAddress("测试村3号");return command;
+    }
+    private void directDeliveryReturn(E2EToken token,long order,JsonNode quote) throws Exception {
+        var body=new LinkedHashMap<>(creditReturnBody(order,quote));
+        body.remove("reason");body.put("refundReason","派单前原单退货");
+        requireCreditSuccess(postCreditJson(token,"/api/admin/orders/"+order+"/refund",body));
+    }
+    private JsonNode getDeliveryJson(E2EToken token,String url,Map<String,String> params) throws Exception {
+        var request=get(url).header(token.name(),token.value());params.forEach(request::param);
+        String response=mockMvc.perform(request).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+        JsonNode result=objectMapper.readTree(response);requireCreditSuccess(result);return result;
+    }
+    private JsonNode deliveryDashboard(E2EToken token,long store) throws Exception {
+        return getDeliveryJson(token,"/api/admin/report/dashboard/today",Map.of("storeId",Long.toString(store)));
+    }
+    private JsonNode deliveryRow(E2EToken token,long order,int status) throws Exception {
+        JsonNode result=getDeliveryJson(token,"/api/admin/orders",Map.of("deliveryType","2","deliveryStatus",Integer.toString(status),"pageNum","1","pageSize","200"));
+        JsonNode matched=null;
+        for(JsonNode row:result.path("records")) {
+            assertEquals(status,row.path("deliveryStatus").asInt(),"后端必须真实过滤配送状态："+row);
+            assertEquals(2,row.path("deliveryType").asInt(),"配送方式必须来自真实配送关系："+row);
+            if(row.path("id").asLong()==order) matched=row;
+        }
+        if(matched!=null) return matched;
+        fail("真实配送状态筛选遗漏POS或部分退货订单 "+order+": "+result);return null;
+    }
+    private DeliveryFacts deliveryFacts() {
+        return new DeliveryFacts(creditFacts(),jdbcLong("SELECT COALESCE(SUM(total_order_count),0) FROM customer"),
+                jdbcDecimal("SELECT COALESCE(SUM(total_order_amount),0) FROM customer"),jdbcLong("SELECT COUNT(*) FROM order_pickup_request"));
+    }
+    private record DeliveryFacts(CreditFacts moneyAndStock,long customerOrders,BigDecimal customerAmount,long pickupRequests) {}
+    private void assertDeliveryReturnReceiptRace(E2EToken manager) throws Exception {
+        long order=createPOSViaHttp(manager,deliverySale(634,"5"));
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/ship",Map.of("deliveryStaffId",2)));
+        JsonNode quote=creditPreview(manager,order,"2");Map<String,Object> body=creditReturnBody(order,quote);
+        long payments=jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+order);
+        List<JsonNode> responses=raceCreditHttp(index->index==0
+                ?postCreditJson(manager,"/api/admin/after-sales",body)
+                :postCreditJson(manager,"/api/admin/orders/"+order+"/confirm-receipt",Map.of()));
+        for(JsonNode response:responses) requireCreditSuccess(response);
+        assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order),"退货与签收竞争不能丢掉退款状态");
+        assertEquals(4L,jdbcLong("SELECT delivery_status FROM order_delivery WHERE order_id="+order));
+        assertEquals(payments,jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+order));
+        assertOrderReturned(order,"2");assertCreditState(order,"50","0","0","0","20","0");
+        assertDecimal("竞争后客户净成交只30", "30",jdbcDecimal("SELECT total_order_amount FROM customer WHERE id=634"));
+        DeliveryFacts completed=deliveryFacts();
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/confirm-receipt",Map.of()));
+        assertEquals(completed,deliveryFacts(),"竞争后的签收重放仍不重复原资金、库存、绩效和客户事实");
+    }
+
+    /** 从真实客户创建/钱包付款开始，验证状态生产方和首次签收前退货的净额结算。 */
+    private void assertOnlineDeliveryPaymentAndFirstSettlement() throws Exception {
+        E2EToken manager=loginToken(1L);
+        exec("INSERT INTO customer_wallet(customer_id,wallet_type,balance) VALUES(635,1,100)");
+        var command=new com.agri_system.application.order.dto.command.OrderCreateCommand();
+        command.setStoreId(1L);command.setOrderType(3);command.setDeliveryType(2);command.setReceiverName("线上配送农户");
+        command.setDeliveryAddress("测试村8号");command.setDeliveryPhone("13800000635");
+        var item=new OrderItemDTO();item.setProductId(130L);item.setQuantity(new BigDecimal("5"));item.setUnit("袋");command.setItems(List.of(item));
+        long order=orderApplicationService.createOrder(command,635L);
+        assertEquals(1L,jdbcLong("SELECT delivery_status FROM order_delivery WHERE order_id="+order));
+        var payment=new com.agri_system.application.order.dto.command.OrderPayCommand();payment.setOrderId(order);payment.setUseBalance(true);payment.setUseSpecialFund(false);
+        orderApplicationService.previewOrderPayment(payment,635L);
+        assertEquals(1L,jdbcLong("SELECT delivery_status FROM order_delivery WHERE order_id="+order),"预览不提前派送");
+        assertNull(orderApplicationService.payOrder(payment,635L));
+        assertEquals(4L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order));
+        assertEquals(2L,jdbcLong("SELECT delivery_status FROM order_delivery WHERE order_id="+order));
+        assertTrue(deliveryRow(manager,order,2).path("canShip").asBoolean());
+        assertDecimal("线上未签收不提前累计客户消费", "0",jdbcDecimal("SELECT total_order_amount FROM customer WHERE id=635"));
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/ship",Map.of("deliveryStaffId",2)));
+        creditReturn(manager,order,creditPreview(manager,order,"2"));
+        assertDecimal("首次签收前退货不扣客户其它消费", "0",jdbcDecimal("SELECT total_order_amount FROM customer WHERE id=635"));
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/confirm-receipt",Map.of()));
+        assertDecimal("线上首次签收按剩余成交30累计", "30",jdbcDecimal("SELECT total_order_amount FROM customer WHERE id=635"));
+        assertDecimal("首次签收积分只留30", "30",jdbcDecimal("SELECT balance FROM customer_wallet WHERE customer_id=635 AND wallet_type=3"));
+        assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order));
+        assertEquals(4L,jdbcLong("SELECT delivery_status FROM order_delivery WHERE order_id="+order));
+        assertCreditState(order,"50","0","0","0","20","0");assertOrderReturned(order,"2");
+        DeliveryFacts completed=deliveryFacts();
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/confirm-receipt",Map.of()));
+        assertEquals(completed,deliveryFacts(),"线上首次签收后重放不再记钱、货、积分或提成");
+        log("[配送] 真实客户下单→钱包付款推进待派2→派单→首次签收前部分退货→签收保留9，客户/积分仅结算剩余30");
     }
 
     /** 原销售单的应收、实还、冲欠款、已退来源和实物回库均走真实HTTP/事务。 */
@@ -1800,7 +1973,7 @@ class RetailFactChainEndToEndTest {
     @ComponentScan(basePackages = {"com.agri_system.application", "com.agri_system.infrastructure"},
             excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = SaTokenConfigure.class))
     @Import({InventoryController.class, InventoryWarningController.class, ProductController.class, OrderAdminController.class,
-            ProductPackageController.class, AfterSalesAdminController.class, CreditAdminController.class,
+            ProductPackageController.class, AfterSalesAdminController.class, CreditAdminController.class, ReportDashboardController.class,
             RetailFactChainEndToEndTest.E2ELoginController.class, DomainServiceConfig.class})
     static class E2EConfig {
 
@@ -1831,7 +2004,7 @@ class RetailFactChainEndToEndTest {
                 public void addInterceptors(InterceptorRegistry registry) {
                     registry.addInterceptor(new SaInterceptor())
                             .addPathPatterns("/api/admin/products/**", "/api/admin/orders/**",
-                                    "/api/admin/product-packages/**", "/api/admin/after-sales/**", "/api/admin/credit/**");
+                                    "/api/admin/product-packages/**", "/api/admin/after-sales/**", "/api/admin/credit/**", "/api/admin/report/**");
                     // 测试不加载生产租户工厂；仅还原请求级身份缓存清理，不能跨token复用旧员工。
                     registry.addInterceptor(new org.springframework.web.servlet.HandlerInterceptor() {
                         @Override public boolean preHandle(jakarta.servlet.http.HttpServletRequest request,

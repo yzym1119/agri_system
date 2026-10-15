@@ -16,6 +16,10 @@ export interface POSOrderCreateRequest {
   couponId?: number // 优惠券ID（可选）
   changeAmount?: number // 找零金额（现金支付时可选）
   staffId: number
+  deliveryType?: 1 | 2 // 1-当场交货（默认），2-门店人工配送，针对整单
+  receiverName?: string
+  receiverPhone?: string
+  receiverAddress?: string
   remark?: string
 }
 
@@ -79,7 +83,7 @@ export interface CartItem {
   quoteRequestId?: number
   suggestedUnitPrice?: number
   saleUnits?: { unitName: string }[]
-  warehousePickup?: boolean // 库房取货（后仓拣货，不即时出库）
+  warehousePickup?: boolean // 已出库物料的库房取货核对；人工配送不创建自提任务
 }
 
 /**

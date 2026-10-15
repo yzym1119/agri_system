@@ -219,6 +219,7 @@ public class OrderApplicationService {
      */
     @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public Long createPOSOrder(POSOrderCreateCommand command, Long createdBy) {
+        int deliveryType = validatePosDelivery(command);
         validatePosPayments(command);
         Long operatorStaffId = createdBy != null ? createdBy : command.getStaffId();
         if (operatorStaffId == null) {
@@ -260,7 +261,12 @@ public class OrderApplicationService {
         order.setStoreId(actualStoreId); // 使用操作员所属门店
         order.setCustomerId(command.getCustomerId());
         order.setOrderType(1); // POS订单
-        order.setOrderStatus(6); // 已完成（POS订单支付成功即完成，线下即时交易）
+        order.setOrderStatus(deliveryType == 2 ? 4 : 6);
+        if (deliveryType == 2) {
+            order.setReceiverName(command.getReceiverName().trim());
+            order.setReceiverPhone(command.getReceiverPhone().trim());
+            order.setReceiverAddress(command.getReceiverAddress().trim());
+        }
         order.setDiscountAmount(BigDecimal.ZERO);
         order.setCouponAmount(BigDecimal.ZERO);
         order.setStaffId(operatorStaffId);
@@ -384,6 +390,18 @@ public class OrderApplicationService {
         
         order = orderRepository.save(order);
         
+        if (deliveryType == 2) {
+            OrderDelivery delivery = new OrderDelivery();
+            delivery.setOrderId(order.getId());
+            delivery.setDeliveryType(2);
+            delivery.setDeliveryStatus(2);
+            delivery.setDeliveryAddress(order.getReceiverAddress());
+            delivery.setDeliveryPhone(order.getReceiverPhone());
+            delivery.setCreatedAt(order.getCreatedAt());
+            delivery.setUpdatedAt(order.getUpdatedAt());
+            deliveryRepository.save(delivery);
+        }
+
         // 保存订单明细
         for (OrderItem item : items) {
             item.setOrderId(order.getId());
@@ -607,7 +625,7 @@ public class OrderApplicationService {
             outCommand.setReferenceId(order.getId());
             outCommand.setReferenceLineId(items.get(i).getId());
             inventoryService.outbound(outCommand, createdBy);
-            if (Boolean.TRUE.equals(pricedInputs.get(i).getWarehousePickup())) {
+            if (deliveryType == 1 && Boolean.TRUE.equals(pricedInputs.get(i).getWarehousePickup())) {
                 pickupFulfillmentService.createRequest(order.getId(), items.get(i).getId(), null);
             }
         }
@@ -735,19 +753,12 @@ public class OrderApplicationService {
      */
     public com.mybatisflex.core.paginate.Page<OrderPageVO> queryOrderPage(OrderPageQuery query) {
         // 1. 查询订单分页数据
-        com.mybatisflex.core.paginate.Page<Order> page = orderRepository.findPage(
-                query.getPageNum(),
-                query.getPageSize(),
-                query.getKeyword(),
-                query.getStoreId(),
-                query.getOrderType(),
-                query.getDeliveryType(),
-                query.getOrderStatus() != null ? query.getOrderStatus().toString() : null,
-                query.getStartTime(),
-                query.getEndTime(),
-                query.getCustomerId()
-        );
-        
+        com.mybatisflex.core.paginate.Page<Order> page = query.getDeliveryStatus() == null
+                ? orderRepository.findPage(query.getPageNum(), query.getPageSize(), query.getKeyword(), query.getStoreId(),
+                    query.getOrderType(), query.getDeliveryType(), query.getOrderStatus(), query.getStartTime(), query.getEndTime(), query.getCustomerId())
+                : orderRepository.findPage(query.getPageNum(), query.getPageSize(), query.getKeyword(), query.getStoreId(),
+                    query.getOrderType(), query.getDeliveryType(), query.getOrderStatus(), query.getStartTime(), query.getEndTime(), query.getCustomerId(), query.getDeliveryStatus());
+
         // 2. 转换为VO
         List<OrderPageVO> voList = page.getRecords().stream().map(order -> {
             OrderPageVO vo = new OrderPageVO();
@@ -758,7 +769,12 @@ public class OrderApplicationService {
             vo.setStoreId(order.getStoreId());
             vo.setCustomerId(order.getCustomerId());
             vo.setOrderType(order.getOrderType());
-            vo.setDeliveryType(resolveDeliveryType(order));
+            OrderDelivery delivery = deliveryRepository.findByOrderId(order.getId()).orElse(null);
+            vo.setDeliveryType(delivery != null ? resolveDeliveryType(delivery)
+                    : (java.util.Objects.equals(order.getOrderType(), 2) ? 1 : null));
+            vo.setDeliveryStatus(delivery != null ? delivery.getDeliveryStatus() : null);
+            vo.setCanShip(canDeliver(order, delivery, true));
+            vo.setCanConfirmReceipt(canDeliver(order, delivery, false));
             vo.setOrderStatus(order.getOrderStatus());
             vo.setTotalAmount(order.getTotalAmount());
             vo.setDiscountAmount(order.getDiscountAmount());
@@ -833,33 +849,15 @@ public class OrderApplicationService {
     }
 
     private Integer resolveDeliveryType(Order order) {
-        if (order == null || order.getOrderType() == null) {
-            return null;
-        }
-        if (order.getOrderType() == 2) {
-            return 1;
-        }
-        if (order.getOrderType() != 3) {
-            return null;
-        }
-        return deliveryRepository.findByOrderId(order.getId())
-                .map(this::resolveDeliveryType)
-                .orElse(3);
+        if (order == null) return null;
+        return deliveryRepository.findByOrderId(order.getId()).map(this::resolveDeliveryType)
+                .orElse(java.util.Objects.equals(order.getOrderType(), 2) ? 1 : null);
     }
 
     private Integer resolveDeliveryType(OrderDelivery delivery) {
-        if (delivery == null) {
-            return 3;
-        }
-        if (delivery.getDeliveryType() != null) {
-            return delivery.getDeliveryType();
-        }
-        if (delivery.getDeliveryStaffId() != null) {
-            return 2;
-        }
-        return 3;
+        return delivery == null ? null : delivery.getDeliveryType();
     }
-    
+
     /**
      * 查询订单详情
      * 
@@ -978,6 +976,9 @@ public class OrderApplicationService {
             deliveryVO.setDeliveryType(resolveDeliveryType(delivery));
             deliveryVO.setDeliveryStaffId(delivery.getDeliveryStaffId());
             deliveryVO.setDeliveryAt(delivery.getDeliveryAt());
+            deliveryVO.setReceivedAt(delivery.getReceivedAt());
+            vo.setCanShip(canDeliver(order, delivery, true));
+            vo.setCanConfirmReceipt(canDeliver(order, delivery, false));
             if (delivery.getDeliveryStaffId() != null) {
                 staffRepository.findById(delivery.getDeliveryStaffId())
                         .filter(Staff::isActive)
@@ -1364,6 +1365,15 @@ public class OrderApplicationService {
     }
 
     private void finalizeClientOrderPayment(Order order, Long customerId) {
+        OrderDelivery delivery = null;
+        if (Integer.valueOf(3).equals(order.getOrderType())) {
+            delivery = deliveryRepository.findByOrderId(order.getId())
+                    .orElseThrow(() -> new IllegalArgumentException("配送订单缺少配送记录，请先核对订单"));
+            if ((!Integer.valueOf(2).equals(delivery.getDeliveryType()) && !Integer.valueOf(3).equals(delivery.getDeliveryType()))
+                    || !Integer.valueOf(1).equals(delivery.getDeliveryStatus())) {
+                throw new IllegalArgumentException("配送方式或状态与待付款订单不一致，请先核对订单");
+            }
+        }
         order.markAsPaid();
         if (order.getOrderType() == 2) {
             order.markAsWaitPickup();
@@ -1371,6 +1381,10 @@ public class OrderApplicationService {
             order.markAsWaitShip();
         }
         orderRepository.save(order);
+        if (delivery != null) {
+            delivery.setDeliveryStatus(2);
+            deliveryRepository.save(delivery);
+        }
 
         List<OrderItem> items = itemRepository.findByOrderId(order.getId());
         inventoryService.lockProducts(order.getStoreId(), items.stream().map(OrderItem::getProductId).toList());
@@ -1571,29 +1585,30 @@ public class OrderApplicationService {
      * @param orderId 订单ID
      * @param createdBy 操作人ID
      */
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public void confirmReceipt(Long orderId, Long createdBy) {
-        Order order = orderRepository.findById(orderId)
+        Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
-        
-        // 只有已发货状态的订单可以确认收货
-        if (order.getOrderStatus() == null || order.getOrderStatus() != 5) {
-            throw new IllegalArgumentException(OrderErrorCode.ORDER_STATUS_INVALID + ": 只有已发货状态的订单可以确认收货");
+        OrderDelivery delivery = deliveryRepository.findByOrderId(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("订单没有配送记录"));
+        if (java.util.Objects.equals(delivery.getDeliveryStatus(), 4)) return;
+        validateDeliveryAction(order, delivery, false);
+        if (!java.util.Objects.equals(order.getOrderStatus(), 9)) {
+            order.markAsFinished();
+            orderRepository.save(order);
         }
-        
-        order.markAsFinished();
-        orderRepository.save(order);
-        deliveryRepository.findByOrderId(orderId).ifPresent(delivery -> {
-            delivery.setDeliveryStatus(4);
-            delivery.setReceivedAt(LocalDateTime.now());
-            deliveryRepository.save(delivery);
-        });
-        eventPublisher.publishEvent(new OrderFinishedEvent(order.getId()));
+        delivery.setDeliveryStatus(4);
+        delivery.setReceivedAt(LocalDateTime.now());
+        deliveryRepository.save(delivery);
+        // POS 在开单时已经结算。线上订单仅在首次签收时结算。
+        if (!java.util.Objects.equals(order.getOrderType(), 1)) {
+            eventPublisher.publishEvent(new OrderFinishedEvent(order.getId()));
+        }
     }
 
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public void confirmReceiptForCustomer(Long orderId, Long customerId) {
-        Order order = orderRepository.findById(orderId)
+        Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
         if (order.getCustomerId() == null || !order.getCustomerId().equals(customerId)) {
             throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 无权操作此订单");
@@ -1627,52 +1642,72 @@ public class OrderApplicationService {
      * @param command 发货命令
      * @param createdBy 操作人ID
      */
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public void shipOrder(OrderShipCommand command, Long createdBy) {
-        Order order = orderRepository.findById(command.getOrderId())
+        if (command == null || command.getOrderId() == null) throw new IllegalArgumentException("订单ID不能为空");
+        Order order = orderRepository.findByIdForUpdate(command.getOrderId())
                 .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
-        
-        if (order.getOrderStatus() != 4) {
-            throw new IllegalArgumentException(OrderErrorCode.ORDER_STATUS_INVALID + ": 订单状态不正确");
-        }
-        
-        // 更新订单状态
-        order.markAsShipped();
-        orderRepository.save(order);
-        
-        // 更新配送信息
-        OrderDelivery delivery = deliveryRepository.findByOrderId(command.getOrderId())
-                .orElseGet(() -> {
-                    OrderDelivery newDelivery = new OrderDelivery();
-                    newDelivery.setOrderId(command.getOrderId());
-                    // 默认使用下单时固化在订单上的收货信息
-                    newDelivery.setDeliveryAddress(order.getReceiverAddress());
-                    newDelivery.setDeliveryPhone(order.getReceiverPhone());
-                    return newDelivery;
-                });
-
-        if (command.getDeliveryStaffId() != null) {
-            Staff deliveryStaff = staffRepository.findById(command.getDeliveryStaffId())
+        OrderDelivery delivery = deliveryRepository.findByOrderId(order.getId())
+                .orElseThrow(() -> new IllegalArgumentException("订单没有配送记录"));
+        if (java.util.Objects.equals(delivery.getDeliveryStatus(), 3)
+                || java.util.Objects.equals(delivery.getDeliveryStatus(), 4)) return;
+        validateDeliveryAction(order, delivery, true);
+        if (resolveDeliveryType(delivery) == 2) {
+            if (command.getDeliveryStaffId() == null) throw new IllegalArgumentException("门店配送必须选择配送员");
+            Staff driver = staffRepository.findById(command.getDeliveryStaffId())
                     .orElseThrow(() -> new IllegalArgumentException("配送员不存在"));
-            if (!deliveryStaff.isActive() || deliveryStaff.hasBeenDeleted()) {
-                throw new IllegalArgumentException("配送员不是有效的在职员工");
+            if (!driver.isActive() || driver.hasBeenDeleted() || !java.util.Objects.equals(driver.getStoreId(), order.getStoreId())) {
+                throw new IllegalArgumentException("配送员必须是本店在职员工");
             }
-            delivery.setDeliveryType(2);
-            delivery.setDeliveryStaffId(deliveryStaff.getId());
+            delivery.setDeliveryStaffId(driver.getId());
             delivery.setLogisticsCompany(null);
             delivery.setTrackingNo(null);
         } else {
             if (!StringUtils.hasText(command.getLogisticsCompany()) || !StringUtils.hasText(command.getTrackingNo())) {
                 throw new IllegalArgumentException("快递发货必须填写物流公司和物流单号");
             }
-            delivery.setDeliveryType(3);
             delivery.setDeliveryStaffId(null);
             delivery.setLogisticsCompany(command.getLogisticsCompany().trim());
             delivery.setTrackingNo(command.getTrackingNo().trim());
         }
-        delivery.setDeliveryStatus(3); // 配送中
+        if (!java.util.Objects.equals(order.getOrderStatus(), 9)) {
+            order.markAsShipped();
+            orderRepository.save(order);
+        }
+        delivery.setDeliveryStatus(3);
         delivery.setDeliveryAt(LocalDateTime.now());
         deliveryRepository.save(delivery);
+    }
+
+    private boolean hasProcessingDeliveryAfterSales(Long orderId) {
+        return afterSalesRepository.findByOrderId(orderId).stream()
+                .anyMatch(fact -> java.util.Objects.equals(fact.getStatus(), 10) || java.util.Objects.equals(fact.getStatus(), 40));
+    }
+
+    private boolean canDeliver(Order order, OrderDelivery delivery, boolean shipping) {
+        if (delivery == null || !java.util.Objects.equals(delivery.getDeliveryStatus(), shipping ? 2 : 3)) return false;
+        Integer type = resolveDeliveryType(delivery);
+        if (!Integer.valueOf(2).equals(type) && !Integer.valueOf(3).equals(type)) return false;
+        Integer status = order.getOrderStatus();
+        return (java.util.Objects.equals(status, shipping ? 4 : 5) || java.util.Objects.equals(status, 9))
+                && !hasProcessingDeliveryAfterSales(order.getId())
+                && orderRepository.hasRemainingDeliveryQuantity(order.getId());
+    }
+
+    private void validateDeliveryAction(Order order, OrderDelivery delivery, boolean shipping) {
+        if (!canDeliver(order, delivery, shipping)) {
+            throw new IllegalArgumentException("订单当前不能交付：请核对配送状态、处理中售后及剩余实出库物料");
+        }
+    }
+
+    private int validatePosDelivery(POSOrderCreateCommand command) {
+        int type = command.getDeliveryType() == null ? 1 : command.getDeliveryType();
+        if (type != 1 && type != 2) throw new IllegalArgumentException("POS履约方式只支持当场交货或门店配送");
+        if (type == 2 && (!StringUtils.hasText(command.getReceiverName()) || !StringUtils.hasText(command.getReceiverPhone())
+                || !StringUtils.hasText(command.getReceiverAddress()))) {
+            throw new IllegalArgumentException("门店配送必须填写收货人、收货电话及收货地址");
+        }
+        return type;
     }
 
     private Integer validateAndResolveCreateDeliveryType(OrderCreateCommand command) {
