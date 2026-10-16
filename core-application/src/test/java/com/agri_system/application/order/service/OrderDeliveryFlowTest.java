@@ -133,6 +133,40 @@ class OrderDeliveryFlowTest {
         var staff=new Staff();staff.setId(8L);staff.setStatus(1);staff.setStoreId(3L);
         org.mockito.Mockito.lenient().when(staffRepository.findById(8L)).thenReturn(Optional.of(staff));
     }
+    private com.agri_system.application.order.dto.command.OrderPickupVerifyCommand onlinePickup() {
+        order.setOrderType(2);order.setOrderStatus(3);order.setPickupCode("123456");
+        org.mockito.Mockito.lenient().when(orderRepository.findByPickupCode("123456")).thenReturn(Optional.of(order));
+        var command=new com.agri_system.application.order.dto.command.OrderPickupVerifyCommand();command.setPickupCode("123456");return command;
+    }
+    @Test void onlinePickupPausesPendingAfterSalesBeforeAnyCompletion() {
+        var command=onlinePickup();pendingAfterSales(10);
+        assertThrows(IllegalArgumentException.class,()->orderService.verifyPickup(command,8L));
+        verify(orderRepository,never()).save(any());assertNoSettlement();
+    }
+    @Test void onlinePickupPausesRefundingAfterSalesBeforeAnyCompletion() {
+        var command=onlinePickup();pendingAfterSales(40);
+        assertThrows(IllegalArgumentException.class,()->orderService.verifyPickup(command,8L));
+        verify(orderRepository,never()).save(any());assertNoSettlement();
+    }
+    @Test void onlinePickupRequiresActualRemainingSaleBeforeCompletion() {
+        var command=onlinePickup();remaining.set(false);
+        assertThrows(IllegalArgumentException.class,()->orderService.verifyPickup(command,8L));
+        verify(orderRepository,never()).save(any());assertNoSettlement();
+    }
+    @Test void onlinePickupRechecksParentAfterLocatorInsteadOfOverwritingRefund() {
+        var command=onlinePickup();Order refunded=new Order();refunded.setId(42L);refunded.setOrderType(2);refunded.setOrderStatus(8);refunded.setPickupCode("123456");
+        when(orderRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(refunded));
+        assertThrows(IllegalArgumentException.class,()->orderService.verifyPickup(command,8L));
+        verify(orderRepository,never()).save(any());assertNoSettlement();
+    }
+    @Test void onlinePickupFinishedReplayDoesNotPublishCompletionAgain() {
+        var command=onlinePickup();
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(()->orderService.verifyPickup(command,8L));
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(()->orderService.verifyPickup(command,8L));
+        verify(orderRepository,org.mockito.Mockito.times(2)).findByIdForUpdate(42L);
+        verify(orderRepository,org.mockito.Mockito.times(1)).save(order);
+        verify(eventPublisher,org.mockito.Mockito.times(1)).publishEvent(any(OrderFinishedEvent.class));
+    }
     private com.agri_system.application.order.dto.command.OrderShipCommand shipment() {
         var command=new com.agri_system.application.order.dto.command.OrderShipCommand();command.setOrderId(42L);command.setDeliveryStaffId(8L);return command;
     }

@@ -1622,13 +1622,23 @@ public class OrderApplicationService {
      * @param command 核销命令
      * @param createdBy 操作人ID
      */
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public void verifyPickup(OrderPickupVerifyCommand command, Long createdBy) {
-        Order order = orderRepository.findByPickupCode(command.getPickupCode())
+        // 自提码首读只定位；核销与原单退款争用同一父单，不能保存锁前对象覆盖退款。
+        Order locator = orderRepository.findByPickupCode(command.getPickupCode())
                 .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.PICKUP_CODE_NOT_FOUND + ": 自提码不存在"));
-        
-        if (order.getOrderStatus() != 3) {
+        Order order = orderRepository.findByIdForUpdate(locator.getId())
+                .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
+        if (!java.util.Objects.equals(order.getOrderType(), 2)
+                || !java.util.Objects.equals(order.getPickupCode(), command.getPickupCode())) {
+            throw new IllegalArgumentException(OrderErrorCode.ORDER_STATUS_INVALID + ": 订单不支持自提核销");
+        }
+        if (java.util.Objects.equals(order.getOrderStatus(), 6)) return;
+        if (!java.util.Objects.equals(order.getOrderStatus(), 3)) {
             throw new IllegalArgumentException(OrderErrorCode.ORDER_STATUS_INVALID + ": 订单状态不正确");
+        }
+        if (hasProcessingDeliveryAfterSales(order.getId()) || !orderRepository.hasRemainingDeliveryQuantity(order.getId())) {
+            throw new IllegalArgumentException("订单当前不能自提：请核对处理中售后及剩余实出库物料");
         }
         
         order.markAsFinished();
@@ -2058,6 +2068,15 @@ public class OrderApplicationService {
     /** 前端只提交套餐与套数，物料组成与成交金额由当前后端报价生成。 */
     private List<OrderItemDTO> expandPackageSales(List<OrderItemDTO> commands, Long storeId, Long customerId,
                                                  Long operatorId, Map<OrderItemDTO, PackageLineContext> contexts) {
+        // 锁序与购物车展示顺序分离，防止两笔多套餐销售按A/B、B/A互相等待。
+        Map<OrderItemDTO, com.agri_system.application.productpackage.dto.vo.PackagePriceQuote> packageQuotes = new java.util.IdentityHashMap<>();
+        for (OrderItemDTO command : commands.stream().filter(row -> Integer.valueOf(2).equals(row.getItemType()))
+                .sorted(java.util.Comparator.comparing(OrderItemDTO::getPackageId, java.util.Comparator.nullsFirst(Long::compareTo))).toList()) {
+            if (command.getPackageId() == null || command.getProductId() != null) throw new IllegalArgumentException("套餐行只能指定套餐ID");
+            if (!StringUtils.hasText(command.getPackageQuoteId())) throw new IllegalArgumentException("套餐请先获取有效报价");
+            packageQuotes.put(command, packagePricingService.quoteForSale(command.getPackageId(), customerId, storeId,
+                    command.getQuantity(), command.getUnitPrice()));
+        }
         List<OrderItemDTO> expanded = new ArrayList<>();
         int groupNo = 0;
         for (OrderItemDTO command : commands) {
@@ -2066,10 +2085,7 @@ public class OrderApplicationService {
                 if (command.getPackageId() != null) throw new IllegalArgumentException("套餐必须整套提交，不能上传前端拆分商品");
                 expanded.add(command); continue;
             }
-            if (command.getPackageId() == null || command.getProductId() != null) throw new IllegalArgumentException("套餐行只能指定套餐ID");
-            if (!StringUtils.hasText(command.getPackageQuoteId())) throw new IllegalArgumentException("套餐请先获取有效报价");
-            var quote = packagePricingService.quoteForSale(command.getPackageId(), customerId, storeId,
-                    command.getQuantity(), command.getUnitPrice());
+            var quote = packageQuotes.get(command);
             if (!command.getPackageQuoteId().equals(quote.quoteId())
                     || (command.getQuotedUnitPrice() != null && command.getQuotedUnitPrice().compareTo(quote.suggestedUnitPrice()) != 0)) {
                 throw new IllegalArgumentException("套餐价格或组成已变化，请重新报价后结算");

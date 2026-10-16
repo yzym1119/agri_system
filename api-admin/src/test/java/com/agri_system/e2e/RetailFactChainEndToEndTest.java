@@ -450,6 +450,8 @@ class RetailFactChainEndToEndTest {
         assertManualDeliveryBusinessChain();
         assertOnlineDeliveryPaymentAndFirstSettlement();
         assertPartialReturnPickupBusinessChain();
+        assertOnlinePickupRespectsReturnFacts();
+        assertConcurrentMultiPackageSale();
         assertLedgerReconciles();
         assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_balance_feature_status"));
         log("收货、销售、原单退货、提货、调拨、盘点及失败回滚使用同一账本，验收通过");
@@ -623,6 +625,83 @@ class RetailFactChainEndToEndTest {
         requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/confirm-receipt",Map.of()));
         assertEquals(completed,deliveryFacts(),"线上首次签收后重放不再记钱、货、积分或提成");
         log("[配送] 真实客户下单→钱包付款推进待派2→派单→首次签收前部分退货→签收保留9，客户/积分仅结算剩余30");
+    }
+
+    /** 真实状态3自提核销须先串行原订单，售后处理中暂停；退款后不能覆盖状态。 */
+    private void assertOnlinePickupRespectsReturnFacts() throws Exception {
+        E2EToken manager=loginToken(1L);
+        exec("INSERT INTO customer(id,code,name,phone,type,status) VALUES(636,'PICKUP-C636','线上自提验收','13800000636',1,1)");
+        exec("INSERT INTO customer_wallet(customer_id,wallet_type,balance) VALUES(636,1,200)");
+        long order=createPaidOnlinePickup();
+        String code=jdbcString("SELECT pickup_code FROM `order` WHERE id="+order);
+        long item=creditItem(order);
+        var apply=new com.agri_system.application.after_sales.dto.command.ClientApplyCommand();
+        apply.setOrderId(order);apply.setReason("自提核销前处理中售后暂停");
+        long afterSales=afterSalesApplicationService.applyFromClient(apply,636L);
+        DeliveryFacts waiting=deliveryFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/pickup/verify",Map.of("pickupCode",code)));
+        assertEquals(waiting,deliveryFacts());assertEquals(3L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order));
+        afterSalesApplicationService.cancel(afterSales,636L);
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/pickup/verify",Map.of("pickupCode",code)));
+        assertEquals(6L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order));
+        assertDecimal("正常自提首次结算客户20","20",jdbcDecimal("SELECT total_order_amount FROM customer WHERE id=636"));
+        DeliveryFacts done=deliveryFacts();
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/pickup/verify",Map.of("pickupCode",code)));
+        assertEquals(done,deliveryFacts(),"核销重放不二次记资金库存客户或积分");
+        creditReturn(manager,order,pickupReturnPreview(manager,order,item,"1"));
+        DeliveryFacts refunded=deliveryFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/pickup/verify",Map.of("pickupCode",code)));
+        assertEquals(refunded,deliveryFacts());assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order));
+        long racing=createPaidOnlinePickup();
+        String racingCode=jdbcString("SELECT pickup_code FROM `order` WHERE id="+racing);
+        JsonNode quote=pickupReturnPreview(manager,racing,creditItem(racing),"1");
+        Map<String,Object> body=new LinkedHashMap<>(creditReturnBody(racing,quote));
+        body.remove("reason");body.put("refundReason","自提与原单退款竞争");
+        List<JsonNode> results=raceCreditHttp(index->index==0
+            ?postCreditJson(manager,"/api/admin/orders/"+racing+"/refund",body)
+            :postCreditJson(manager,"/api/admin/orders/pickup/verify",Map.of("pickupCode",racingCode)));
+        // 核销先获锁则退款入口看到已完成状态而拒绝；退款先获锁则核销看到9而拒绝。
+        // 当前各入口的原状态契约不扩张，至少一笔完成；绝不能把退款覆盖成6。
+        assertTrue(results.stream().anyMatch(RetailFactChainEndToEndTest::creditSuccess));
+        for(JsonNode result:results) if(!creditSuccess(result)) assertCreditRejected(result);
+        long finalStatus=jdbcLong("SELECT order_status FROM `order` WHERE id="+racing);
+        assertTrue(finalStatus==6 || finalStatus==9);
+        if(creditSuccess(results.get(0))) {
+            assertEquals(9L,finalStatus);assertOrderReturned(racing,"1");
+            assertDecimal("先退款则核销不能错误首次结算","10",jdbcDecimal("SELECT total_order_amount FROM customer WHERE id=636"));
+        } else assertEquals(6L,finalStatus);
+        log("[自提] 真实钱包付款→处理中售后暂停→核销/重放→退货保留9，以及核销退款竞争无旧状态覆盖");
+    }
+    private void assertConcurrentMultiPackageSale() throws Exception {
+        E2EToken manager=loginToken(1L);
+        JsonNode first=packageQuote(manager,201L,"1",null),second=packageQuote(manager,203L,"1",null);
+        var a=packageSale(201L,"1",first,1L);var b=packageSale(203L,"1",second,1L);
+        var reverse=packageSale(203L,"1",second,1L);
+        a.setItems(List.of(a.getItems().get(0),b.getItems().get(0)));
+        reverse.setItems(List.of(reverse.getItems().get(0),packageSale(201L,"1",first,1L).getItems().get(0)));
+        BigDecimal total=first.path("totalAmount").decimalValue().add(second.path("totalAmount").decimalValue());
+        a.setReceiveAmount(total);reverse.setReceiveAmount(total);
+        long beforeOrders=jdbcLong("SELECT COUNT(*) FROM `order`");BigDecimal crop=packageStock(110L),seed=packageStock(111L);
+        List<JsonNode> results=raceCreditHttp(index->postCreditJson(manager,"/api/admin/orders/pos",index==0?a:reverse));
+        for(JsonNode result:results) assertTrue(result.isIntegralNumber() && result.asLong()>0,"反向套餐购物车均应开单成功："+result);
+        assertEquals(beforeOrders+2,jdbcLong("SELECT COUNT(*) FROM `order`"));
+        assertDecimal("两笔双套餐只扣四套物料",crop.subtract(new BigDecimal("48")).toPlainString(),packageStock(110L));
+        assertDecimal("两笔双套餐只扣四套种子",seed.subtract(new BigDecimal("4")).toPlainString(),packageStock(111L));
+        for(int index=0;index<2;index++) {
+            long order=results.get(index).asLong();
+            assertDecimal("各笔实际收款与成交一致",total.toPlainString(),jdbcDecimal("SELECT SUM(amount) FROM order_payment WHERE order_id="+order));
+            List<Object[]> groups=rows("SELECT package_id FROM order_item WHERE order_id="+order+" GROUP BY package_group_no,package_id ORDER BY package_group_no");
+            assertEquals(index==0?201L:203L,((Number)groups.get(0)[0]).longValue(),"加锁排序不改变购物车套餐组序");
+        }
+        log("[套餐锁] 相反购物车顺序双套餐两笔实库并发都成交且保持原组序与精确钱货");
+    }
+
+    private long createPaidOnlinePickup() {
+        var command=new com.agri_system.application.order.dto.command.OrderCreateCommand();command.setStoreId(1L);command.setOrderType(2);
+        var line=new OrderItemDTO();line.setProductId(130L);line.setQuantity(new BigDecimal("2"));line.setUnit("袋");command.setItems(List.of(line));
+        long order=orderApplicationService.createOrder(command,636L);
+        var pay=new com.agri_system.application.order.dto.command.OrderPayCommand();pay.setOrderId(order);pay.setUseBalance(true);pay.setUseSpecialFund(false);
+        assertNull(orderApplicationService.payOrder(pay,636L));assertEquals(3L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order));return order;
     }
 
     /** 原销售单的应收、实还、冲欠款、已退来源和实物回库均走真实HTTP/事务。 */
