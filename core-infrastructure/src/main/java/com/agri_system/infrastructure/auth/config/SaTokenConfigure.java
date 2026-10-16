@@ -4,6 +4,8 @@ import cn.dev33.satoken.exception.NotLoginException;
 import cn.dev33.satoken.interceptor.SaInterceptor;
 import cn.dev33.satoken.router.SaRouter;
 import cn.dev33.satoken.stp.StpUtil;
+import com.agri_system.domain.store.repository.StaffRepository;
+import lombok.RequiredArgsConstructor;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -18,7 +20,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * @author AI Generated
  */
 @Configuration
+@RequiredArgsConstructor
 public class SaTokenConfigure implements WebMvcConfigurer {
+    private final StaffRepository staffRepository;
     
     /**
      * 注册拦截器
@@ -62,6 +66,20 @@ public class SaTokenConfigure implements WebMvcConfigurer {
                                 if (!loginId.startsWith("STAFF_")) {
                                     throw NotLoginException.newInstance(
                                             "STAFF", NotLoginException.KICK_OUT, "管理端接口需要员工登录", null);
+                                }
+                                try {
+                                    var staff = staffRepository.findIdentityById(Long.parseLong(loginId.substring(6)))
+                                            .orElse(null);
+                                    if (staff == null || !staff.isActive() || staff.hasBeenDeleted()) {
+                                        throw NotLoginException.newInstance("STAFF", NotLoginException.KICK_OUT,
+                                                "员工登录已失效", null);
+                                    }
+                                    if (staff.getStoreId() == null && !StpUtil.hasRole("ADMIN") && !StpUtil.hasRole("SUPER_ADMIN")) {
+                                        throw new IllegalArgumentException("当前员工未分配门店，无法访问门店业务");
+                                    }
+                                } catch (NumberFormatException invalid) {
+                                    throw NotLoginException.newInstance("STAFF", NotLoginException.KICK_OUT,
+                                            "员工登录已失效", null);
                                 }
                             }
                             // 客户端接口：校验CUST_前缀

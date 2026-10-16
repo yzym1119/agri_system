@@ -35,11 +35,17 @@ public class DataScopeConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(@NonNull InterceptorRegistry registry) {
-        registry.addInterceptor(new RequestCacheCleaner()).addPathPatterns("/**");
+        registry.addInterceptor(new RequestCacheCleaner()).order(Integer.MIN_VALUE).addPathPatterns("/**");
     }
 
     /** 每个请求结束后清理 CurrentUser 的 ThreadLocal 缓存，避免线程池复用时数据串位 */
     private static final class RequestCacheCleaner implements HandlerInterceptor {
+        @Override
+        public boolean preHandle(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response,
+                                 @NonNull Object handler) {
+            CurrentUser.clearRequestCache();
+            return true;
+        }
         @Override
         public void afterCompletion(@NonNull HttpServletRequest request,
                                     @NonNull HttpServletResponse response,
@@ -58,7 +64,7 @@ public class DataScopeConfig implements WebMvcConfigurer {
         public Object[] getTenantIds() {
             if (CurrentUser.isAdmin()) return null;
             Long sid = CurrentUser.storeId();
-            return sid == null ? null : new Object[]{sid};
+            return new Object[]{sid};
         }
     }
 }

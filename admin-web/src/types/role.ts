@@ -17,9 +17,7 @@ export interface RoleVO {
  */
 export interface RoleCreateRequest {
   name: string
-  code?: string // 可选，为空时后端自动生成
   status?: number
-  menuIds?: number[]
 }
 
 /**
@@ -27,9 +25,7 @@ export interface RoleCreateRequest {
  */
 export interface RoleUpdateRequest {
   name: string
-  code?: string
   status?: number
-  menuIds?: number[]
 }
 
 /**

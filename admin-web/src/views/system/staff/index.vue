@@ -57,7 +57,7 @@
 
       <!-- 操作栏 -->
       <div class="toolbar">
-        <el-button v-permission="'staff:create'" type="primary" :icon="Plus" @click="handleAdd">新增员工</el-button>
+        <el-button v-if="canCreateStaff" type="primary" :icon="Plus" @click="handleAdd">新增员工</el-button>
       </div>
 
       <!-- 表格 -->
@@ -170,7 +170,7 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="角色" prop="roleId">
+        <el-form-item v-if="canAssignRole" label="角色" prop="roleId">
           <el-select
             v-model="formData.roleId"
             placeholder="请选择角色"
@@ -181,8 +181,12 @@
               :key="role.id"
               :label="role.name"
               :value="role.id"
+              :disabled="role.status !== 1"
             />
           </el-select>
+        </el-form-item>
+        <el-form-item v-else-if="isEdit" label="当前角色">
+          <span>{{ originalRoleNames || '保留原角色' }}</span>
         </el-form-item>
         <el-form-item label="密码" prop="password" v-if="!isEdit">
           <el-input
@@ -263,6 +267,13 @@ import type {
 } from '@/types/staff'
 import type {StoreDetailVO} from '@/types/store'
 import type {RoleVO} from '@/types/role'
+import {usePermissionStore} from '@/store/permission'
+
+const permissionStore = usePermissionStore()
+const canAssignRole = computed(() => permissionStore.permissions.includes('role:assign'))
+const canCreateStaff = computed(() => canAssignRole.value && permissionStore.permissions.includes('staff:create'))
+const originalRoleIds = ref<number[]>([])
+const originalRoleNames = ref('')
 
 // 加载状态
 const loading = ref(false)
@@ -293,6 +304,7 @@ const roleList = ref<RoleVO[]>([])
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const formRef = ref<FormInstance>()
+let formSession = 0
 
 // 表单数据
 const formData = reactive<StaffCreateRequest & { id?: number }>({
@@ -362,7 +374,7 @@ const loadStaffList = async () => {
     staffList.value = response.records || []
     total.value = response.total || 0
   } catch (error) {
-    console.error('加载员工列表失败:', error)
+    console.error('加载员工列表失败:', (error as any)?.response?.status, (error as any)?.code)
     staffList.value = []
     total.value = 0
     ElMessage.error('加载员工列表失败')
@@ -376,7 +388,7 @@ const loadStoreList = async () => {
   try {
     storeList.value = await getAllStores()
   } catch (error) {
-    console.error('加载门店列表失败:', error)
+    console.error('加载门店列表失败:', (error as any)?.response?.status, (error as any)?.code)
     ElMessage.error('加载门店列表失败')
   }
 }
@@ -386,7 +398,7 @@ const loadRoleList = async () => {
   try {
     roleList.value = await getRoleList()
   } catch (error) {
-    console.error('加载角色列表失败:', error)
+    console.error('加载角色列表失败:', (error as any)?.response?.status, (error as any)?.code)
     ElMessage.error('加载角色列表失败')
   }
 }
@@ -409,11 +421,14 @@ const handleReset = () => {
 
 // 新增
 const handleAdd = async () => {
+  if (!canCreateStaff.value) return
   isEdit.value = false
   resetForm()
+  const session = formSession
   await Promise.all([loadStoreList(), loadRoleList()])
   // 使用nextTick确保表单完全重置后再打开对话框
   await nextTick()
+  if (session !== formSession) return
   dialogVisible.value = true
 }
 
@@ -421,19 +436,22 @@ const handleAdd = async () => {
 const handleEdit = async (row: StaffListVO) => {
   isEdit.value = true
   resetForm()
-  await Promise.all([loadStoreList(), loadRoleList()])
+  const session = formSession
+  await Promise.all([loadStoreList(), ...(canAssignRole.value ? [loadRoleList()] : [])])
 
-      try {
-        const profile = await getStaffProfile(row.id)
-        formData.id = profile.id
-        formData.name = profile.name
+  try {
+    const profile = await getStaffProfile(row.id)
+    if (session !== formSession) return
+    formData.id = profile.id
+    formData.name = profile.name
     formData.phone = profile.phone || ''
     formData.storeId = profile.storeId
-        const roleIds = profile.roleIds || []
-        formData.roleId = roleIds.length > 0 ? roleIds[0] : (undefined as any)
+    originalRoleIds.value = [...(profile.roleIds || [])]
+    originalRoleNames.value = row.roles?.map(role => role.name).join('、') || ''
+    formData.roleId = originalRoleIds.value[0] as number
     dialogVisible.value = true
   } catch (error) {
-    console.error('加载员工详情失败:', error)
+    console.error('加载员工详情失败:', (error as any)?.response?.status, (error as any)?.code)
     ElMessage.error('加载员工详情失败')
   }
 }
@@ -456,7 +474,7 @@ const handleDisable = async (row: StaffListVO) => {
     await loadStaffList()
   } catch (error: any) {
     if (error !== 'cancel') {
-      console.error('禁用失败:', error)
+      console.error('禁用失败:', (error as any)?.response?.status, (error as any)?.code)
       ElMessage.error('禁用失败')
     }
   }
@@ -469,7 +487,7 @@ const handleEnable = async (row: StaffListVO) => {
     ElMessage.success('启用成功')
     await loadStaffList()
   } catch (error) {
-    console.error('启用失败:', error)
+    console.error('启用失败:', (error as any)?.response?.status, (error as any)?.code)
     ElMessage.error('启用失败')
   }
 }
@@ -484,43 +502,54 @@ const handleResetPassword = (row: StaffListVO) => {
 
 // 提交表单
 const handleSubmit = async () => {
-  if (!formRef.value) return
-
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-
-    submitLoading.value = true
-    try {
-      if (isEdit.value) {
+  if (!formRef.value || submitLoading.value || !dialogVisible.value) return
+  const session = formSession
+  const editing = isEdit.value
+  const snapshot = {...formData}
+  const roles = [...originalRoleIds.value]
+  const canAssign = canAssignRole.value
+  const fields = JSON.stringify(snapshot)
+  const isCurrent = () => session === formSession && dialogVisible.value && isEdit.value === editing &&
+    formData.id === snapshot.id && JSON.stringify(formData) === fields &&
+    JSON.stringify(originalRoleIds.value) === JSON.stringify(roles) && canAssignRole.value === canAssign
+  submitLoading.value = true
+  try {
+    await formRef.value.validate(async (valid) => {
+      if (!valid || !isCurrent() || (!editing && !canCreateStaff.value)) return
+      const changingRole = canAssign && snapshot.roleId != null && !roles.includes(snapshot.roleId)
+      if ((!editing || changingRole) && !roleList.value.some(role => role.id === snapshot.roleId && role.status === 1)) {
+        ElMessage.warning('请选择启用中的角色')
+        return
+      }
+      if (editing) {
         const updateData: StaffUpdateRequest = {
-          id: formData.id!, // 必须包含ID
-          name: formData.name,
-          phone: formData.phone!,
-          storeId: formData.storeId,
-          roleId: formData.roleId!
+          id: snapshot.id!,
+          name: snapshot.name,
+          phone: snapshot.phone,
+          storeId: snapshot.storeId
         }
-        await updateStaff(formData.id!, updateData)
-        ElMessage.success('更新成功')
+        if (changingRole) updateData.roleId = snapshot.roleId
+        await updateStaff(snapshot.id!, updateData)
       } else {
         const createData: StaffCreateRequest = {
-          name: formData.name,
-          phone: formData.phone!,
-          password: formData.password,
-          storeId: formData.storeId,
-          roleId: formData.roleId!
-          // code 留空，后端自动生成
+          name: snapshot.name,
+          phone: snapshot.phone,
+          password: snapshot.password,
+          storeId: snapshot.storeId,
+          roleId: snapshot.roleId
         }
         await createStaff(createData)
-        ElMessage.success('新增成功')
       }
+      if (!isCurrent()) return
+      ElMessage.success(editing ? '更新成功' : '新增成功')
       dialogVisible.value = false
       await loadStaffList()
-    } catch (error) {
-      console.error('提交失败:', error)
-    } finally {
-      submitLoading.value = false
-    }
-  })
+    })
+  } catch (error) {
+    if (isCurrent()) console.error('提交失败:', (error as any)?.response?.status, (error as any)?.code)
+  } finally {
+    if (session === formSession) submitLoading.value = false
+  }
 }
 
 // 提交重置密码
@@ -540,7 +569,7 @@ const handlePasswordSubmit = async () => {
       ElMessage.success('密码重置成功')
       passwordDialogVisible.value = false
     } catch (error) {
-      console.error('重置密码失败:', error)
+      console.error('重置密码失败:', (error as any)?.response?.status, (error as any)?.code)
     } finally {
       passwordSubmitLoading.value = false
     }
@@ -549,9 +578,13 @@ const handlePasswordSubmit = async () => {
 
 // 重置表单
 const resetForm = () => {
+  formSession++
+  submitLoading.value = false
   // 先重置表单验证状态
   formRef.value?.resetFields()
   // 然后清空所有字段值，确保没有残留数据
+  originalRoleIds.value = []
+  originalRoleNames.value = ''
   formData.id = undefined
   formData.code = ''
   formData.name = ''
@@ -587,7 +620,7 @@ const handleCurrentChange = (page: number) => {
 
 // 初始化
 onMounted(async () => {
-  await Promise.all([loadStoreList(), loadRoleList(), loadStaffList()])
+  await Promise.all([loadStoreList(), loadStaffList(), ...(canAssignRole.value ? [loadRoleList()] : [])])
 })
 </script>
 

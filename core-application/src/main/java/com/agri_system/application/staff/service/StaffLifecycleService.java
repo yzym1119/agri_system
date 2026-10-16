@@ -1,6 +1,5 @@
 package com.agri_system.application.staff.service;
 
-import cn.dev33.satoken.stp.StpUtil;
 import com.agri_system.application.auth.util.BCryptUtils;
 import com.agri_system.application.performance.dto.StaffDashboardVO;
 import com.agri_system.application.performance.service.StaffPerformanceApplicationService;
@@ -37,64 +36,20 @@ public class StaffLifecycleService {
     private final SysRoleRepository roleRepository;
     private final SysStaffRoleRepository staffRoleRepository;
 
-    @Transactional(rollbackFor = Exception.class)
     public Long create(StaffCreateCommand command) {
         return authorityService.createStaff(command);
     }
 
-    @Transactional(rollbackFor = Exception.class)
     public void update(StaffUpdateCommand command) {
         authorityService.updateStaff(command);
     }
 
-    @Transactional(rollbackFor = Exception.class)
     public void disable(Long staffId) {
-        Staff staff = staffRepository.findById(staffId)
-                .orElseThrow(() -> new IllegalArgumentException("员工不存在"));
-        
-        // 检查是否是当前登录用户，禁止停用自己的账号
-        if (staffSessionOperator.isLogin()) {
-            String loginId = staffSessionOperator.getLoginIdAsString();
-            if (loginId.startsWith("STAFF_")) {
-                Long currentStaffId = Long.parseLong(loginId.substring("STAFF_".length()));
-                if (currentStaffId.equals(staffId)) {
-                    throw new IllegalArgumentException("不能停用自己的账号，否则将无法登录系统");
-                }
-            }
-        }
-        
-        // 检查是否是管理员，如果是最后一个管理员，禁止停用
-        List<Long> roleIds = staffRoleRepository.findRoleIdsByStaffId(staffId);
-        if (!roleIds.isEmpty()) {
-            List<String> roleCodes = roleRepository.findRoleCodesByStaffId(staffId);
-            if (roleCodes.contains("ADMIN") || roleCodes.contains("SUPER_ADMIN")) {
-                // 检查是否还有其他启用的管理员（通过分页查询所有在职员工）
-                Page<Staff> allStaffPage = staffRepository.findPage(null, null, null, 1, 1, Integer.MAX_VALUE);
-                long otherAdminCount = allStaffPage.getRecords().stream()
-                        .filter(s -> !s.getId().equals(staffId))
-                        .filter(s -> s.getStatus() != null && s.getStatus() == 1)
-                        .filter(s -> {
-                            List<String> codes = roleRepository.findRoleCodesByStaffId(s.getId());
-                            return codes.contains("ADMIN") || codes.contains("SUPER_ADMIN");
-                        })
-                        .count();
-                if (otherAdminCount == 0) {
-                    throw new IllegalArgumentException("不能停用最后一个管理员账号，否则系统将无法管理");
-                }
-            }
-        }
-        
-        staff.setStatus(2);
-        staffRepository.save(staff);
-        staffSessionOperator.kickout("STAFF_" + staffId);
+        authorityService.changeStaffStatus(staffId, 2);
     }
 
-    @Transactional(rollbackFor = Exception.class)
     public void enable(Long staffId) {
-        Staff staff = staffRepository.findById(staffId)
-                .orElseThrow(() -> new IllegalArgumentException("员工不存在"));
-        staff.setStatus(1);
-        staffRepository.save(staff);
+        authorityService.changeStaffStatus(staffId, 1);
     }
 
     @Transactional(rollbackFor = Exception.class)

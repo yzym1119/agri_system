@@ -99,13 +99,6 @@ public class AuthService {
         StpUtil.login(loginId);
         String tokenValue = StpUtil.getTokenValue();
 
-        // 5.1 把 storeId / roleCodes 写入 Sa-Token Session，供后续请求复用（避免每次查询 staff 表）
-        try {
-            cn.dev33.satoken.session.SaSession session = StpUtil.getSession(true);
-            session.set("storeId", staff.getStoreId());
-            session.set("roleCodes", roleRepository.findRoleCodesByStaffId(staff.getId()));
-        } catch (Exception ignored) { }
-
         // 6. 构建返回结果
         LoginResultVO result = new LoginResultVO();
         result.setTokenName(StpUtil.getTokenName());

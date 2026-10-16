@@ -33,6 +33,22 @@ public class StaffRepositoryImpl implements StaffRepository {
     }
     
     @Override
+    public Optional<Staff> findIdentityById(Long id) {
+        return Optional.ofNullable(staffMapper.selectIdentityById(id));
+    }
+
+    @Override
+    public Optional<Staff> findByIdForUpdate(Long id) {
+        return Optional.ofNullable(staffMapper.selectOneByQuery(QueryWrapper.create()
+                .where("id = ?", id).and("deleted = 0").forUpdate()));
+    }
+
+    @Override
+    public void transferStore(Long staffId, Long storeId) {
+        if (staffMapper.transferStore(staffId, storeId) != 1) throw new IllegalStateException("员工调店失败");
+    }
+
+    @Override
     public Optional<Staff> findByCodeOrPhone(String codeOrPhone) {
         Staff staff = staffMapper.selectOneByQuery(
                 QueryWrapper.create()

@@ -109,12 +109,12 @@ const roleList = ref<RoleVO[]>([])
 const dialogVisible = ref(false)
 const isEdit = ref(false)
 const formRef = ref<FormInstance>()
+let formSession = 0
 
 // 表单数据
 const formData = reactive<RoleCreateRequest & { id?: number }>({
   name: '',
-  status: 1,
-  menuIds: []
+  status: 1
 })
 
 // 表单验证规则
@@ -141,7 +141,7 @@ const loadRoleList = async () => {
   try {
     roleList.value = await getRoleList()
   } catch (error) {
-    console.error('加载角色列表失败:', error)
+    console.error('加载角色列表失败:', (error as any)?.response?.status, (error as any)?.code)
     ElMessage.error('加载角色列表失败')
   } finally {
     loading.value = false
@@ -180,7 +180,7 @@ const handleDelete = async (row: RoleVO) => {
     await loadRoleList()
   } catch (error: any) {
     if (error !== 'cancel') {
-      console.error('删除失败:', error)
+      console.error('删除失败:', (error as any)?.response?.status, (error as any)?.code)
       ElMessage.error('删除失败')
     }
   }
@@ -206,47 +206,37 @@ const handleAssignMenus = async (row: RoleVO) => {
       menuTreeRef.value.setCheckedKeys(checkedMenuIds.value, false)
     }
   } catch (error) {
-    console.error('加载菜单树失败:', error)
+    console.error('加载菜单树失败:', (error as any)?.response?.status, (error as any)?.code)
     ElMessage.error('加载菜单树失败')
   }
 }
 
 // 提交表单
 const handleSubmit = async () => {
-  if (!formRef.value) return
-
-  await formRef.value.validate(async (valid) => {
-    if (!valid) return
-
-    submitLoading.value = true
-    try {
-      if (isEdit.value) {
-        const updateData: RoleUpdateRequest = {
-          name: formData.name,
-          code: undefined, // 编辑时不修改编码
-          status: formData.status,
-          menuIds: formData.menuIds
-        }
-        await updateRole(formData.id!, updateData)
-        ElMessage.success('更新成功')
-      } else {
-        const createData: RoleCreateRequest = {
-          name: formData.name,
-          status: formData.status,
-          menuIds: formData.menuIds
-          // code 留空，后端自动生成
-        }
-        await createRole(createData)
-        ElMessage.success('新增成功')
-      }
+  if (!formRef.value || submitLoading.value || !dialogVisible.value) return
+  const session = formSession
+  const editing = isEdit.value
+  const snapshot = {...formData}
+  const fields = JSON.stringify(snapshot)
+  const isCurrent = () => session === formSession && dialogVisible.value && isEdit.value === editing &&
+    formData.id === snapshot.id && JSON.stringify(formData) === fields
+  submitLoading.value = true
+  try {
+    await formRef.value.validate(async (valid) => {
+      if (!valid || !isCurrent()) return
+      const data: RoleCreateRequest | RoleUpdateRequest = {name: snapshot.name, status: snapshot.status}
+      if (editing) await updateRole(snapshot.id!, data)
+      else await createRole(data)
+      if (!isCurrent()) return
+      ElMessage.success(editing ? '更新成功' : '新增成功')
       dialogVisible.value = false
       await loadRoleList()
-    } catch (error) {
-      console.error('提交失败:', error)
-    } finally {
-      submitLoading.value = false
-    }
-  })
+    })
+  } catch (error) {
+    if (isCurrent()) console.error('提交失败:', (error as any)?.response?.status, (error as any)?.code)
+  } finally {
+    if (session === formSession) submitLoading.value = false
+  }
 }
 
 // 提交权限分配
@@ -263,7 +253,7 @@ const handleMenuSubmit = async () => {
     ElMessage.success('权限分配成功')
     menuDialogVisible.value = false
   } catch (error) {
-    console.error('分配权限失败:', error)
+    console.error('分配权限失败:', (error as any)?.response?.status, (error as any)?.code)
     ElMessage.error('分配权限失败')
   } finally {
     menuSubmitLoading.value = false
@@ -272,10 +262,11 @@ const handleMenuSubmit = async () => {
 
 // 重置表单
 const resetForm = () => {
+  formSession++
+  submitLoading.value = false
   formData.id = undefined
   formData.name = ''
   formData.status = 1
-  formData.menuIds = []
   formRef.value?.resetFields()
 }
 

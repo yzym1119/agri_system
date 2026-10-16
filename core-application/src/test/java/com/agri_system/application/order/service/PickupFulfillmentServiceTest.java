@@ -160,12 +160,41 @@ class PickupFulfillmentServiceTest {
         fulfillmentService = new PickupFulfillmentService(
                 allocationRepository, pickupRequestRepository, locationRepository, receiptBatchRepository,
                 orderRepository, itemRepository, productRepository, afterSalesRepository, jdbc);
+        org.mockito.Mockito.lenient().when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
+        org.mockito.Mockito.lenient().when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(Object[].class))).thenAnswer(invocation -> saleMovementRows());
         orderService = new OrderApplicationService(
                 orderRepository, itemRepository, paymentRepository, paymentIntentRepository, deliveryRepository,
                 orderDomainService, paymentService, inventoryService, walletService, creditService,
                 productRepository, productPricingService, org.mockito.Mockito.mock(com.agri_system.application.productpackage.service.PackagePricingService.class), staffRepository, storeRepository, customerRepository,
                 afterSalesRepository, afterSalesItemRepository, eventPublisher, walletAuthCodeRepository,
                 fulfillmentService, manualPriceAuditService);
+    }
+
+    @Test
+    void partReturnedTwoBatchOrderHandsOverOnlyRemainingBatchAndKeepsOriginalQuantities() {
+        Long requestId = prepareMultiBatchRequest();
+        List<OrderItemBatchAllocation> allocations = allocationRepository.findByOrderItemId(ITEM_ID);
+        allocations.forEach(a -> a.setAllocatedBaseQuantity(BigDecimal.ONE));
+        pickupRequestRepository.findById(requestId).orElseThrow().setRequestedBaseQuantity(new BigDecimal("2"));
+        Order partial = order(); partial.setOrderStatus(9);
+        when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(partial));
+        com.agri_system.domain.after_sales.model.AfterSales finished = new com.agri_system.domain.after_sales.model.AfterSales();
+        finished.setStatus(50);
+        org.mockito.Mockito.lenient().when(afterSalesRepository.findByOrderId(ORDER_ID)).thenReturn(List.of(finished));
+        org.mockito.Mockito.lenient().when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(Object[].class))).thenReturn(List.of(
+                saleMovement(allocations.get(0)), saleMovement(allocations.get(1)),
+                returnMovement(allocations.get(0), BigDecimal.ONE)));
+        List<OrderItemBatchAllocation> result = fulfillmentService.fulfill(requestId,
+                confirmedAllocations(List.of(allocations.get(1).getId())), STAFF_ID);
+        assertThat(result).extracting(OrderItemBatchAllocation::getId).containsExactly(allocations.get(1).getId());
+        assertThat(allocations.get(0).getEvidenceLevel()).isEqualTo("RULE_ALLOCATED");
+        assertThat(allocations.get(1).getEvidenceLevel()).isEqualTo("FULFILLMENT_CONFIRMED");
+        assertThat(allocations).allMatch(a -> a.getAllocatedBaseQuantity().compareTo(BigDecimal.ONE) == 0);
+        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getRequestedBaseQuantity()).isEqualByComparingTo("2");
+        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getStatus()).isEqualTo("FULFILLED");
+        verifyNoInteractions(batchBalanceService, inventoryService, paymentService, eventPublisher);
     }
 
     @Test
@@ -266,17 +295,18 @@ class PickupFulfillmentServiceTest {
     }
 
     @Test
-    void completedRequestCannotBeConfirmedAgain() {
+    void completedRequestReplayReturnsOriginalConfirmation() {
         Long requestId = prepareSoldRequest();
         fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID);
-        assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID))
-                .isInstanceOf(IllegalStateException.class).hasMessage("取货请求已完成");
+        java.time.LocalDateTime at = pickupRequestRepository.findById(requestId).orElseThrow().getFulfilledAt();
+        assertThat(fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID)).hasSize(1);
+        assertThat(pickupRequestRepository.findById(requestId).orElseThrow().getFulfilledAt()).isEqualTo(at);
         verifyNoInteractions(batchBalanceService);
     }
 
     @Test
     void createRequestRequiresActualSaleAllocation() {
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
         when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
         assertThatThrownBy(() -> fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("尚未实际出库");
@@ -286,7 +316,7 @@ class PickupFulfillmentServiceTest {
     @Test
     void createRequestRejectsDuplicatePendingRequest() {
         seedPendingRequest(BACKROOM_LOCATION_ID);
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
         when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
         assertThatThrownBy(() -> fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID))
                 .isInstanceOf(IllegalStateException.class).hasMessageContaining("已有未完成");
@@ -295,7 +325,7 @@ class PickupFulfillmentServiceTest {
 
     @Test
     void createRequestKeepsOriginalSoldQuantityWithoutCurrentUnitConversion() {
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
         when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
         when(locationRepository.findById(BACKROOM_LOCATION_ID)).thenReturn(Optional.of(location(BACKROOM_LOCATION_ID, "STORE_BACKROOM")));
         seedSoldAllocation();
@@ -310,7 +340,7 @@ class PickupFulfillmentServiceTest {
 
     @Test
     void createRequestRejectsAllocationWithoutActualMovement() {
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
         when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
         seedAllocation("RULE_ALLOCATED");
         assertThatThrownBy(() -> fulfillmentService.createRequest(ORDER_ID, ITEM_ID, BACKROOM_LOCATION_ID))
@@ -321,7 +351,7 @@ class PickupFulfillmentServiceTest {
 
     @Test
     void createRequestSumsAllActualSaleAllocations() {
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
         when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
         when(locationRepository.findById(BACKROOM_LOCATION_ID)).thenReturn(Optional.of(location(BACKROOM_LOCATION_ID, "STORE_BACKROOM")));
         seedSoldAllocation();
@@ -370,11 +400,11 @@ class PickupFulfillmentServiceTest {
     }
 
     @Test
-    void cancelledRefundedAndPartRefundedOrdersCannotBeHandedOver() {
+    void cancelledAndFullyRefundedOrdersCannotBeHandedOver() {
         Long requestId = prepareSoldRequest();
-        for (int status : List.of(7, 8, 9)) {
+        for (int status : List.of(7, 8)) {
             Order blocked = order(); blocked.setOrderStatus(status);
-            when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(blocked));
+            when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(blocked));
             assertThatThrownBy(() -> fulfillmentService.fulfill(requestId, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID))
                     .isInstanceOf(IllegalStateException.class).hasMessageContaining("取消或退款");
             assertPending(requestId);
@@ -427,7 +457,7 @@ class PickupFulfillmentServiceTest {
 
     @Test
     void createRequestLinksEverySoldAllocationAndListShowsTheirActualLocations() {
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
         when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
         when(locationRepository.findById(BACKROOM_LOCATION_ID)).thenReturn(Optional.of(location(BACKROOM_LOCATION_ID, "STORE_BACKROOM")));
         seedSoldAllocation();
@@ -443,6 +473,29 @@ class PickupFulfillmentServiceTest {
         assertThat(vo.getAllocations().get(0).getInternalReceiptBatchNo()).isEqualTo("B-actual-uuid");
         assertThat(vo.getAllocations().get(0).getLocationName()).isEqualTo("后仓实际货位");
         assertThat(vo.getAllocations().get(0).getAllocatedBaseQuantity()).isEqualByComparingTo("5");
+    }
+
+    @Test
+    void listShowsOriginalAndRemainingQuantityWithoutNPlusOneAfterSalesReads() {
+        Long request = prepareMultiBatchRequest();
+        List<OrderItemBatchAllocation> assigned = allocationRepository.findByOrderItemId(ITEM_ID);
+        // 准备数据时的锁入口不属于本次只读列表。
+        org.mockito.Mockito.lenient().when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        org.mockito.Mockito.lenient().when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
+        when(orderRepository.findByIds(Collections.singleton(ORDER_ID))).thenReturn(List.of(order()));
+        when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(Object[].class)))
+                .thenReturn(List.of(saleMovement(assigned.get(0)), saleMovement(assigned.get(1)),
+                        returnMovement(assigned.get(0), new BigDecimal("5"))));
+        PickupWorkItemVO item = fulfillmentService.listPickupRequests(STORE_ID,"PENDING").get(0);
+        assertThat(item.isCanFulfill()).isTrue();
+        assertThat(item.getRequestedBaseQuantity()).isEqualByComparingTo("12");
+        assertThat(item.getRemainingBaseQuantity()).isEqualByComparingTo("7");
+        assertThat(item.getAllocations()).extracting(a -> a.getRemainingBaseQuantity().signum()).containsExactly(0,1);
+        verifyNoInteractions(afterSalesRepository);
+        pickupRequestRepository.findById(request).orElseThrow().setStatus("FULFILLED");
+        PickupWorkItemVO history=fulfillmentService.listPickupRequests(STORE_ID,"FULFILLED").get(0);
+        assertThat(history.getRemainingBaseQuantity()).isNull();assertThat(history.isCanFulfill()).isFalse();
+        assertThat(history.getAllocations()).allMatch(a -> a.getRemainingBaseQuantity() == null);
     }
 
     private PickupFulfillmentCommand confirmedAllocations(List<Long> ids) {
@@ -465,16 +518,34 @@ class PickupFulfillmentServiceTest {
     @Test
     void returnedSaleCannotBeHandedOverEvenWhenOrderAndAfterSalesReadShowOldState() {
         Long request = prepareSoldRequest();
-        when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.eq(Long.class),
-                org.mockito.ArgumentMatchers.<Object[]>any())).thenReturn(List.of(123L));
+        OrderItemBatchAllocation a = allocationRepository.findByOrderItemId(ITEM_ID).get(0);
+        when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(Object[].class)))
+                .thenReturn(List.of(saleMovement(a), returnMovement(a, a.getAllocatedBaseQuantity())));
         assertThrows(IllegalStateException.class, () -> fulfillmentService.fulfill(request, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID));
         assertPending(request);
     }
 
+    private List<Map<String, Object>> saleMovementRows() {
+        return allocationRepository.findByOrderItemId(ITEM_ID).stream().filter(a -> a.getSourceMovementId() != null)
+                .map(this::saleMovement).toList();
+    }
+
+    private Map<String, Object> saleMovement(OrderItemBatchAllocation a) {
+        return Map.of("id", a.getSourceMovementId(), "store_id", a.getStoreId(), "product_id", a.getProductId(),
+                "batch_id", a.getBatchId(), "from_location_id", a.getLocationId(), "base_quantity", a.getAllocatedBaseQuantity(),
+                "movement_type", "SALE", "reference_type", "ORDER", "reference_id", ORDER_ID);
+    }
+
+    private Map<String, Object> returnMovement(OrderItemBatchAllocation a, BigDecimal quantity) {
+        return Map.of("id", 88888L, "store_id", a.getStoreId(), "product_id", a.getProductId(),
+                "batch_id", a.getBatchId(), "base_quantity", quantity,
+                "movement_type", "RETURN", "reference_type", "SALE_ALLOCATION", "reference_id", a.getId());
+    }
+
     private Long prepareSoldRequest() {
         Long id = seedPendingRequest(BACKROOM_LOCATION_ID);
-        when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
-        when(orderRepository.findById(ORDER_ID)).thenReturn(Optional.of(order()));
+        org.mockito.Mockito.lenient().when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
+        org.mockito.Mockito.lenient().when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
         seedSoldAllocation();
         allocationRepository.findByOrderItemId(ITEM_ID).get(0).setPickupRequestId(id);
         return id;

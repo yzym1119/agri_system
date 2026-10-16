@@ -44,6 +44,16 @@ public class SysRoleRepositoryImpl implements SysRoleRepository {
     }
 
     @Override
+    public void lockAdministratorRoles() {
+        roleMapper.lockAdministratorRoles();
+    }
+
+    @Override
+    public List<Long> findActiveAdministratorStaffIdsForUpdate() {
+        return roleMapper.selectActiveAdministratorStaffIdsForUpdate();
+    }
+
+    @Override
     public List<String> findRoleCodesByStaffId(Long staffId) {
         if (staffId == null) {
             return Collections.emptyList();
@@ -52,7 +62,7 @@ public class SysRoleRepositoryImpl implements SysRoleRepository {
                 .select("r.*")
                 .from("sys_role").as("r")
                 .innerJoin("sys_staff_role").as("sr").on("r.id = sr.role_id")
-                .where("sr.staff_id = ?", staffId);
+                .where("sr.staff_id = ?", staffId).and("r.status = 1");
         List<SysRole> roles = roleMapper.selectListByQuery(query);
         return roles.stream().map(SysRole::getCode).collect(Collectors.toList());
     }

@@ -61,8 +61,7 @@ export interface StaffUpdateRequest {
   name: string
   phone: string // 必填
   storeId: number
-  roleId: number // 单选
-  status?: number
+  roleId?: number // 仅真正更换角色时提交，缺省保留全部原关联
 }
 
 /**

@@ -28,7 +28,7 @@ public class StaffCreateCommand {
     @Schema(description = "角色ID（单选）")
     private Long roleId;
 
-    @Schema(description = "状态：1-在职 0-禁用")
+    @Schema(description = "状态：1-在职 2-离职")
     private Integer status = 1;
 }
 

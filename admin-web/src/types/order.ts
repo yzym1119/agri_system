@@ -172,6 +172,10 @@ export interface PickupWorkItemVO {
   productName?: string | null
   /** 请求拣货数量（基准单位） */
   requestedBaseQuantity?: number | null
+  /** 当前尚未退回数量；已完成请求不作为历史交付数量展示 */
+  remainingBaseQuantity?: number | null
+  canFulfill?: boolean
+  fulfillmentBlockReason?: string | null
   sourceLocationId?: number | null
   sourceLocationName?: string | null
   /** PENDING/FULFILLED */
@@ -187,6 +191,7 @@ export interface PickupAllocationVO {
   locationId: number
   locationName?: string | null
   allocatedBaseQuantity: number
+  remainingBaseQuantity?: number | null
 }
 
 /**

@@ -83,16 +83,14 @@ class StaffAuthorityServiceRoleUpdateTest {
     }
 
     @Test
-    void updateRoleIgnoresNonEmptyMenuIds() {
-        when(roleRepository.findById(5L)).thenReturn(Optional.of(existingRole()));
+    void updateRoleRejectsNonEmptyMenuIds() {
         RoleSaveCommand command = new RoleSaveCommand();
         command.setName("门店店长");
         command.setStatus(1);
         command.setMenuIds(List.of(100L, 200L));
 
-        service.updateRole(5L, command);
-
-        verify(roleRepository).save(any());
+        assertThrows(IllegalArgumentException.class, () -> service.updateRole(5L, command));
+        verify(roleRepository, never()).save(any());
         verifyNoInteractions(roleMenuRepository);
     }
 

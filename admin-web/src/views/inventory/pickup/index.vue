@@ -4,7 +4,7 @@
       <div>
         <h1>取货</h1>
         <p class="page-desc">
-          库房取货待办：核对销售时已出库的批次、货位和数量后确认交货。商品编码不能证明批次。
+          库房取货待办：核对尚未退回物料的批次、货位和本次交付数量后确认交货。商品编码不能证明批次。
         </p>
       </div>
     </section>
@@ -30,7 +30,7 @@
             v-model="statusFilter"
             placeholder="状态"
             style="width: 150px"
-            @change="loadWorkItems"
+            @change="handleStoreChange"
           >
             <el-option label="待取货" value="PENDING" />
             <el-option label="已取货" value="FULFILLED" />
@@ -63,7 +63,10 @@
           </el-table-column>
           <el-table-column prop="productCode" label="商品编码" width="140" />
           <el-table-column prop="productName" label="商品名称" min-width="180" />
-          <el-table-column prop="requestedBaseQuantity" label="请求数量(基准)" width="150" align="right" />
+          <el-table-column prop="requestedBaseQuantity" label="原请求数量(基准)" width="150" align="right" />
+          <el-table-column label="本次可交(基准)" width="150" align="right">
+            <template #default="{ row }">{{ row.status === 'PENDING' ? (row.remainingBaseQuantity ?? '待核对') : '-' }}</template>
+          </el-table-column>
           <el-table-column prop="sourceLocationName" label="来源货位" min-width="140">
             <template #default="{ row }">
               {{ row.sourceLocationName || '-' }}
@@ -74,7 +77,8 @@
               <div v-for="allocation in row.allocations" :key="allocation.id">
                 {{ allocation.internalReceiptBatchNo || '批次#' + allocation.batchId }} ·
                 {{ allocation.locationName || '货位#' + allocation.locationId }} ·
-                {{ allocation.allocatedBaseQuantity }}（基准）
+                原出库 {{ allocation.allocatedBaseQuantity }}（基准）
+                <span v-if="row.status === 'PENDING'"> · 本次可交 {{ allocation.remainingBaseQuantity ?? '待核对' }}</span>
               </div>
             </template>
           </el-table-column>
@@ -89,14 +93,14 @@
           <el-table-column label="操作" width="120" fixed="right">
             <template #default="{ row }">
               <el-button
-                v-if="row.status === 'PENDING'"
+                v-if="row.status === 'PENDING' && row.canFulfill === true"
                 type="primary"
                 link
                 @click="openFulfillDialog(row)"
               >
                 确认取货
               </el-button>
-              <span v-else class="muted-text">已完成</span>
+              <span v-else class="muted-text">{{ row.status === 'FULFILLED' ? '已完成' : row.fulfillmentBlockReason || '暂不可取货' }}</span>
             </template>
           </el-table-column>
         </el-table>
@@ -117,22 +121,23 @@
         <el-descriptions-item label="商品">
           {{ currentItem.productName }}（{{ currentItem.productCode }}）
         </el-descriptions-item>
-        <el-descriptions-item label="请求数量(基准)">
+        <el-descriptions-item label="原请求数量(基准)">
           {{ currentItem.requestedBaseQuantity }}
         </el-descriptions-item>
+        <el-descriptions-item label="本次交付数量(基准)">{{ currentItem.remainingBaseQuantity }}</el-descriptions-item>
       </el-descriptions>
 
-      <el-alert title="请逐项核对实物批次、货位与基准数量，全部勾选后一次确认交货。" type="info" :closable="false" />
+      <el-alert title="请按本次交付数量逐项核对，已全退批次无需交货；剩余批次全部勾选后一次确认。" type="info" :closable="false" />
       <el-checkbox-group v-model="confirmedAllocationIds" class="pickup-form">
-        <div v-for="allocation in currentItem?.allocations || []" :key="allocation.id">
+        <div v-for="allocation in remainingAllocations" :key="allocation.id">
           <el-checkbox :label="allocation.id">
             {{ allocation.internalReceiptBatchNo || '批次#' + allocation.batchId }} ·
             {{ allocation.locationName || '货位#' + allocation.locationId }} ·
-            {{ allocation.allocatedBaseQuantity }}（基准）
+            本次交付 {{ allocation.remainingBaseQuantity }}（基准）
           </el-checkbox>
         </div>
       </el-checkbox-group>
-      <el-form v-if="(currentItem?.allocations?.length || 0) === 1" label-width="90px" class="pickup-form">
+      <el-form v-if="remainingAllocations.length === 1" label-width="90px" class="pickup-form">
         <el-form-item label="单批扫码">
           <el-input v-model="scanCode" placeholder="扫描真实内部批次标签" clearable />
           <div class="scan-hint">批次标签由服务端核验；商品条码和货位码不能证明批次。</div>
@@ -213,60 +218,117 @@ const createVisible = ref(false)
 const creating = ref(false)
 const createForm = ref<{ orderId?: number; orderItemId?: number; sourceLocationId?: number }>({})
 
+const remainingAllocations = computed(() => (currentItem.value?.allocations || [])
+  .filter(allocation => Number(allocation.remainingBaseQuantity) > 0))
 const canSubmit = computed(() => {
-  const allocations = currentItem.value?.allocations || []
-  return allocations.length > 0 && (confirmedAllocationIds.value.length === allocations.length ||
+  if (!fulfillVisible.value || !fulfillmentContext || !contextMatches(fulfillmentContext)) return false
+  if (currentItem.value?.canFulfill !== true || currentItem.value.status !== 'PENDING') return false
+  const allocations = remainingAllocations.value
+  const expectedIds = new Set(allocations.map(allocation => allocation.id))
+  const confirmedIds = new Set(confirmedAllocationIds.value)
+  return allocations.length > 0 && ((confirmedIds.size === allocations.length &&
+    confirmedIds.size === confirmedAllocationIds.value.length && [...confirmedIds].every(id => expectedIds.has(id))) ||
     (allocations.length === 1 && !!scanCode.value.trim()))
 })
 
-const canCreate = computed(() => !!createForm.value.orderId && !!createForm.value.orderItemId)
+// 查询与两个写入弹窗各自保留身份，旧请求的finally不能结束新会话的loading。
+let pageSession = 0
+let workQuery = 0
+let locationQuery = 0
+let fulfillmentSession = 0
+let creationSession = 0
+type WorkContext = { store: number; status: string; session: number }
+let fulfillmentContext: WorkContext | null = null
+let creationContext: WorkContext | null = null
+
+function contextMatches(context: WorkContext) {
+  return context.store === storeId.value && context.status === statusFilter.value && context.session === pageSession
+}
+function currentContext(): WorkContext | null {
+  return storeId.value ? { store: storeId.value, status: statusFilter.value, session: pageSession } : null
+}
+function invalidateFulfillment() {
+  fulfillmentSession++
+  fulfillmentContext = null
+  currentItem.value = null
+  fulfillVisible.value = false
+  fulfilling.value = false
+  resetFulfill()
+}
+
+const canCreate = computed(() => createVisible.value && !!creationContext && contextMatches(creationContext) &&
+  !!createForm.value.orderId && !!createForm.value.orderItemId)
 
 async function loadStores() {
   try {
     const res: any = await getStoreList({ pageNum: 1, pageSize: 100 })
     stores.value = res?.list || res?.records || res?.data?.list || res?.data?.records || []
-  } catch (e) {
-    console.warn('加载门店列表失败', e)
+  } catch {
+    console.warn('加载门店列表失败')
   }
 }
 
 async function loadLocations() {
-  if (!storeId.value) {
-    locations.value = []
-    return
-  }
+  const query = ++locationQuery
+  const context = currentContext()
+  locations.value = []
+  if (!context) return
+  const active = () => query === locationQuery && contextMatches(context)
   try {
-    locations.value = await getInventoryLocations(storeId.value)
-  } catch (e) {
-    console.warn('加载货位列表失败', e)
+    const result = await getInventoryLocations(context.store)
+    if (active()) locations.value = result
+  } catch {
+    if (!active()) return
+    console.warn('加载货位列表失败')
     locations.value = []
   }
 }
 
 async function loadWorkItems() {
-  if (!storeId.value) {
-    workItems.value = []
+  const query = ++workQuery
+  const context = currentContext()
+  workItems.value = []
+  if (!context) {
+    loading.value = false
     return
   }
+  const active = () => query === workQuery && contextMatches(context)
   loading.value = true
   try {
-    workItems.value = await getPickupWorkItems(storeId.value, statusFilter.value || undefined)
-  } catch (e) {
-    console.warn('加载取货待办失败', e)
+    const result = await getPickupWorkItems(context.store, context.status || undefined)
+    if (active()) workItems.value = result
+  } catch {
+    if (!active()) return
+    console.warn('加载取货待办失败')
     workItems.value = []
   } finally {
-    loading.value = false
+    if (active()) loading.value = false
   }
 }
 
 function handleStoreChange() {
+  pageSession++
+  invalidateFulfillment()
+  creationSession++
+  creationContext = null
+  createVisible.value = false
+  creating.value = false
+  createForm.value = {}
   loadLocations()
   loadWorkItems()
 }
 
 function openFulfillDialog(row: PickupWorkItemVO) {
-  currentItem.value = row
-  resetFulfill()
+  const context = currentContext()
+  // 只能打开当前查询中的工作项；切店后留存的旧行引用不可重新发起交货。
+  const target = workItems.value.find(item => item.id === row.id)
+  if (!context || context.status !== 'PENDING' || !target || target.status !== 'PENDING' || target.canFulfill !== true) {
+    invalidateFulfillment()
+    return
+  }
+  invalidateFulfillment()
+  fulfillmentContext = context
+  currentItem.value = target
   fulfillVisible.value = true
 }
 
@@ -276,9 +338,13 @@ function resetFulfill() {
 }
 
 async function submitFulfill() {
-  if (!currentItem.value?.id) return
+  if (fulfilling.value || !currentItem.value?.id || !canSubmit.value) return
+  const target = currentItem.value
+  const context = fulfillmentContext!
+  const session = fulfillmentSession
+  const active = () => session === fulfillmentSession && contextMatches(context) && currentItem.value === target
   const payload: PickupFulfillmentDTO = {}
-  const allocations = currentItem.value.allocations || []
+  const allocations = remainingAllocations.value
   if (confirmedAllocationIds.value.length === allocations.length && allocations.length > 0) {
     payload.allocationIds = [...confirmedAllocationIds.value]
   } else if (allocations.length === 1 && scanCode.value.trim()) {
@@ -289,38 +355,54 @@ async function submitFulfill() {
   }
   fulfilling.value = true
   try {
-    await fulfillPickupRequest(currentItem.value.id, payload)
+    await fulfillPickupRequest(target.id, payload)
+    if (!active()) return
     ElMessage.success('取货完成')
     fulfillVisible.value = false
     await loadWorkItems()
-  } catch (e) {
+  } catch {
     // 请求拦截器已提示失败原因（如货位存在多个批次）
-    console.warn('确认取货失败', e)
+    if (!active()) return
+    console.warn('确认取货失败')
+    fulfillVisible.value = false
+    await loadWorkItems()
   } finally {
-    fulfilling.value = false
+    if (active()) fulfilling.value = false
   }
 }
 
 function openCreateDialog() {
+  const context = currentContext()
+  if (!context) return
+  creationSession++
+  creationContext = context
+  creating.value = false
   createForm.value = {}
   createVisible.value = true
 }
 
 async function submitCreate() {
-  if (!createForm.value.orderId || !createForm.value.orderItemId) return
+  if (creating.value || !canCreate.value) return
+  const context = creationContext!
+  const session = creationSession
+  const active = () => session === creationSession && contextMatches(context)
+  const orderId = createForm.value.orderId!
+  const payload = {
+    orderItemId: createForm.value.orderItemId!,
+    sourceLocationId: createForm.value.sourceLocationId
+  }
   creating.value = true
   try {
-    await createPickupRequest(createForm.value.orderId, {
-      orderItemId: createForm.value.orderItemId,
-      sourceLocationId: createForm.value.sourceLocationId
-    })
+    await createPickupRequest(orderId, payload)
+    if (!active()) return
     ElMessage.success('取货请求已登记')
     createVisible.value = false
     await loadWorkItems()
-  } catch (e) {
-    console.warn('登记取货请求失败', e)
+  } catch {
+    if (!active()) return
+    console.warn('登记取货请求失败')
   } finally {
-    creating.value = false
+    if (active()) creating.value = false
   }
 }
 

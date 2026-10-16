@@ -1,6 +1,5 @@
 package com.agri_system.application.auth.util;
 
-import cn.dev33.satoken.session.SaSession;
 import cn.dev33.satoken.stp.StpUtil;
 import com.agri_system.domain.store.model.Staff;
 import com.agri_system.domain.store.repository.StaffRepository;
@@ -15,8 +14,7 @@ import java.util.List;
  * 当前登录用户上下文工具类。
  *
  * <p>所有方法均为静态调用，便于在 Service / Interceptor / TenantFactory 中快速获取当前登录员工的信息。
- * 为避免同一请求内重复查询 DB，使用 ThreadLocal 做请求级缓存；同时在登录时把 storeId / roleCodes
- * 写入 Sa-Token Session，跨请求复用直到重新登录。</p>
+ * 每个请求按登录ID读取当前有效员工与启用角色，仅缓存本请求，不信任旧Session身份。</p>
  *
  * <p>仅供员工（STAFF_）登录态使用，客户（CUST_）登录态下所有方法返回 null / false。</p>
  */
@@ -62,29 +60,10 @@ public final class CurrentUser {
         Long id = staffId();
         if (id == null) return null;
 
-        // 优先 Sa-Token Session 缓存（登录时写入）
-        try {
-            SaSession session = StpUtil.getSession(false);
-            if (session != null) {
-                Object sid = session.get("storeId");
-                if (sid instanceof Number) {
-                    cache.storeId = ((Number) sid).longValue();
-                    return cache.storeId;
-                }
-            }
-        } catch (Exception ignored) { }
-
-        // 回退：查 staff 表并回写 Session
-        if (staffRepository != null) {
-            Staff staff = staffRepository.findById(id).orElse(null);
-            if (staff != null) {
-                cache.storeId = staff.getStoreId();
-                try {
-                    if (cache.storeId != null && StpUtil.isLogin()) {
-                        StpUtil.getSession(true).set("storeId", cache.storeId);
-                    }
-                } catch (Exception ignored) { }
-            }
+        Staff staff = identity();
+        cache.storeId = staff.getStoreId();
+        if (cache.storeId == null) {
+            throw new IllegalStateException("当前员工未分配门店，无法访问门店业务");
         }
         return cache.storeId;
     }
@@ -102,33 +81,23 @@ public final class CurrentUser {
             return true;
         }
 
-        // 优先 Sa-Token Session 缓存
-        try {
-            SaSession session = StpUtil.getSession(false);
-            if (session != null) {
-                Object codes = session.get("roleCodes");
-                if (codes instanceof List<?> list) {
-                    cache.isAdmin = list.stream()
-                            .filter(String.class::isInstance)
-                            .map(String.class::cast)
-                            .anyMatch(c -> "SUPER_ADMIN".equals(c) || "ADMIN".equals(c));
-                    return cache.isAdmin;
-                }
-            }
-        } catch (Exception ignored) { }
-
-        // 回退：查角色表并回写 Session
+        identity();
         List<String> roleCodes = roleRepository != null
-                ? roleRepository.findRoleCodesByStaffId(id)
-                : Collections.emptyList();
-        cache.isAdmin = roleCodes.stream()
-                .anyMatch(c -> "SUPER_ADMIN".equals(c) || "ADMIN".equals(c));
-        try {
-            if (StpUtil.isLogin()) {
-                StpUtil.getSession(true).set("roleCodes", roleCodes);
-            }
-        } catch (Exception ignored) { }
+                ? roleRepository.findRoleCodesByStaffId(id) : Collections.emptyList();
+        cache.isAdmin = roleCodes.stream().anyMatch(c -> "SUPER_ADMIN".equals(c) || "ADMIN".equals(c));
         return cache.isAdmin;
+    }
+
+    private static Staff identity() {
+        RequestCache cache = RequestCache.get();
+        if (cache.identity == null) {
+            cache.identity = staffRepository == null ? null : staffRepository.findIdentityById(staffId()).orElse(null);
+        }
+        if (cache.identity == null || !cache.identity.isActive() || cache.identity.hasBeenDeleted()) {
+            throw cn.dev33.satoken.exception.NotLoginException.newInstance(
+                    "STAFF", cn.dev33.satoken.exception.NotLoginException.KICK_OUT, "员工登录已失效", null);
+        }
+        return cache.identity;
     }
 
     /** 清理请求级缓存（必须在请求结束时调用，例如 Filter / Interceptor 的 afterCompletion） */
@@ -139,6 +108,7 @@ public final class CurrentUser {
     private static final class RequestCache {
         static final ThreadLocal<RequestCache> CACHE = ThreadLocal.withInitial(RequestCache::new);
 
+        Staff identity;
         Long staffId;
         boolean staffIdResolved;
         Long storeId;

@@ -40,6 +40,14 @@ public class PickupWorkItemVO {
     @Schema(description = "请求拣货数量（基准单位）")
     private BigDecimal requestedBaseQuantity;
 
+    @Schema(description = "当前尚未退回基准数量；只对PENDING提供，不代表历史实际交货数量")
+    private BigDecimal remainingBaseQuantity;
+
+    @Schema(description = "后端核对订单、售后与出退库证据后是否允许确认")
+    private boolean canFulfill;
+
+    private String fulfillmentBlockReason;
+
     @Schema(description = "期望源货位ID")
     private Long sourceLocationId;
 
@@ -63,5 +71,6 @@ public class PickupWorkItemVO {
         private Long locationId;
         private String locationName;
         private BigDecimal allocatedBaseQuantity;
+        private BigDecimal remainingBaseQuantity;
     }
 }

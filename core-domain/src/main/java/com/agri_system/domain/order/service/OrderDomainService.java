@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Random;
+import java.util.UUID;
 
 /**
  * 订单领域服务
@@ -21,14 +22,14 @@ public class OrderDomainService {
     
     /**
      * 生成订单号
-     * 格式：YYYYMMDDHHMMSS + 4位随机数
+     * 格式：时间前缀 + 标准UUID；不依赖同秒内仅1万个取值的随机尾号。
+     * 47个字符适配既有order_no字段，多实例与进程重启不共用本机计数器。
      * 
      * @return 订单号
      */
     public String generateOrderNo() {
         String timestamp = LocalDateTime.now().format(ORDER_NO_FORMATTER);
-        int random = RANDOM.nextInt(10000);
-        return timestamp + String.format("%04d", random);
+        return timestamp + "-" + UUID.randomUUID().toString().replace("-", "");
     }
     
     /**

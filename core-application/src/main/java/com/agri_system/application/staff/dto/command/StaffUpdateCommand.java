@@ -21,11 +21,10 @@ public class StaffUpdateCommand {
     @NotNull(message = "所属门店不能为空")
     private Long storeId;
 
-    @NotNull(message = "角色ID不能为空")
     @Schema(description = "角色ID（单选）")
     private Long roleId;
 
-    @Schema(description = "状态：1-在职 0-禁用")
+    @Schema(description = "状态：1-在职 2-离职")
     private Integer status;
 }
 

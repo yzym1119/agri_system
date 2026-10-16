@@ -15,6 +15,15 @@ public interface StaffRepository {
      * 根据ID查找员工
      */
     Optional<Staff> findById(Long id);
+
+    /** 仅供登录身份复核；按登录员工ID读取，不经过门店租户工厂。 */
+    Optional<Staff> findIdentityById(Long id);
+
+    /** 业务变更仍受门店范围约束，并锁定当前员工事实。 */
+    Optional<Staff> findByIdForUpdate(Long id);
+
+    /** 仅供已锁定员工且通过管理员跨店守卫的调动使用，tenant列不参与Flex默认update。 */
+    void transferStore(Long staffId, Long storeId);
     
     /**
      * 根据编码或手机号查找员工（用于登录）

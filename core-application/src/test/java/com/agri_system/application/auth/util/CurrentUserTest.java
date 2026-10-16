@@ -77,8 +77,10 @@ class CurrentUserTest {
         Staff staff = new Staff();
         staff.setId(1L);
         staff.setStoreId(100L);
+        staff.setStatus(1);
+        staff.setDeleted(0);
 
-        when(staffRepository.findById(1L)).thenReturn(Optional.of(staff));
+        when(staffRepository.findIdentityById(1L)).thenReturn(Optional.of(staff));
 
         assertEquals(100L, CurrentUser.storeId());
     }
@@ -91,6 +93,8 @@ class CurrentUserTest {
     @Test
     void isAdmin_shouldReturnTrueForSuperAdmin() {
         StpUtil.login("STAFF_1");
+        Staff current = new Staff(); current.setId(1L); current.setStatus(1); current.setDeleted(0);
+        when(staffRepository.findIdentityById(1L)).thenReturn(Optional.of(current));
         when(roleRepository.findRoleCodesByStaffId(1L))
                 .thenReturn(List.of("SUPER_ADMIN"));
 
@@ -100,6 +104,8 @@ class CurrentUserTest {
     @Test
     void isAdmin_shouldReturnTrueForAdmin() {
         StpUtil.login("STAFF_2");
+        Staff current = new Staff(); current.setId(2L); current.setStatus(1); current.setDeleted(0);
+        when(staffRepository.findIdentityById(2L)).thenReturn(Optional.of(current));
         when(roleRepository.findRoleCodesByStaffId(2L))
                 .thenReturn(List.of("ADMIN"));
 
@@ -109,6 +115,8 @@ class CurrentUserTest {
     @Test
     void isAdmin_shouldReturnFalseForNormalStaff() {
         StpUtil.login("STAFF_3");
+        Staff current = new Staff(); current.setId(3L); current.setStatus(1); current.setDeleted(0);
+        when(staffRepository.findIdentityById(3L)).thenReturn(Optional.of(current));
         when(roleRepository.findRoleCodesByStaffId(3L))
                 .thenReturn(List.of("SALES"));
 
@@ -118,6 +126,8 @@ class CurrentUserTest {
     @Test
     void isAdmin_shouldReturnFalseForEmptyRoles() {
         StpUtil.login("STAFF_4");
+        Staff current = new Staff(); current.setId(4L); current.setStatus(1); current.setDeleted(0);
+        when(staffRepository.findIdentityById(4L)).thenReturn(Optional.of(current));
         when(roleRepository.findRoleCodesByStaffId(4L))
                 .thenReturn(Collections.emptyList());
 
@@ -130,7 +140,9 @@ class CurrentUserTest {
         Staff staff = new Staff();
         staff.setId(1L);
         staff.setStoreId(100L);
-        when(staffRepository.findById(1L)).thenReturn(Optional.of(staff));
+        staff.setStatus(1);
+        staff.setDeleted(0);
+        when(staffRepository.findIdentityById(1L)).thenReturn(Optional.of(staff));
         when(roleRepository.findRoleCodesByStaffId(1L)).thenReturn(List.of("SUPER_ADMIN"));
 
         // 触发缓存

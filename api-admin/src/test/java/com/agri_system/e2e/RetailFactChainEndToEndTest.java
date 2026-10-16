@@ -371,7 +371,7 @@ class RetailFactChainEndToEndTest {
         assertEquals("FULFILLED", jdbcString("SELECT status FROM order_pickup_request WHERE id=" + pickup));
         assertEquals("SCANNED", jdbcString("SELECT evidence_level FROM order_item_batch_allocation WHERE order_item_id=" + item));
         assertEquals(movements, movementCount(), "提货核对不能再次扣账");
-        assertThrows(RuntimeException.class, () -> pickupFulfillmentService.fulfill(pickup, scan, 1L));
+        pickupFulfillmentService.fulfill(pickup, scan, 1L);
         assertEquals(movements, movementCount());
         assertStock(1, "1", "20");
 
@@ -449,6 +449,7 @@ class RetailFactChainEndToEndTest {
         assertCreditSettlementBusinessChain();
         assertManualDeliveryBusinessChain();
         assertOnlineDeliveryPaymentAndFirstSettlement();
+        assertPartialReturnPickupBusinessChain();
         assertLedgerReconciles();
         assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_balance_feature_status"));
         log("收货、销售、原单退货、提货、调拨、盘点及失败回滚使用同一账本，验收通过");
@@ -1710,6 +1711,98 @@ class RetailFactChainEndToEndTest {
         assertEquals("FULFILLED", jdbcString("SELECT status FROM order_pickup_request WHERE id=" + request));
         assertEquals(movements, movementCount());
         assertDecimal("多批确认不第二次扣货", "1", jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=104"));
+    }
+
+    /** 原销售跨两次采购收货，先退一批后只交剩余批次，原数量和钱货事实不改写。 */
+    private void assertPartialReturnPickupBusinessChain() throws Exception {
+        E2EToken manager=loginToken(1L);
+        exec("INSERT INTO product(id,code,name,main_unit,suggested_retail_price,min_price,avg_cost_price,status) VALUES(140,'PICKUP-P140','退货后剩余提货验收','袋',10,1,2,1)");
+        exec("INSERT INTO product_unit(id,product_id,unit_name,base_quantity_per_unit,is_base_unit,allow_purchase,allow_sale,allow_inventory,allow_transfer,status) VALUES(1401,140,'袋',1,1,1,1,1,1,1)");
+        var purchase=new com.agri_system.application.purchase.dto.command.PurchaseCreateCommand();
+        purchase.setStoreId(1L);purchase.setSupplierId(1L);
+        var material=new com.agri_system.application.purchase.dto.command.PurchaseItemDTO();
+        material.setProductId(140L);material.setQty(new BigDecimal("20"));material.setUnit("袋");material.setPrice(new BigDecimal("2"));
+        purchase.setItems(List.of(material));
+        long purchaseId=purchaseApplicationService.create(purchase,1L);
+        var submit=new com.agri_system.application.purchase.dto.command.PurchaseSubmitCommand();submit.setOrderId(purchaseId);
+        purchaseApplicationService.submit(submit);
+        long purchaseItem=jdbcLong("SELECT id FROM purchase_order_item WHERE purchase_order_id="+purchaseId);
+        for(int i=0;i<2;i++) {
+            var receipt=receiveCmd(purchaseId,purchaseItem,"PICKUP-RETURN-"+i,"袋",i==0?"1":"19","2",null,LocalDate.now().plusYears(i+1));
+            receipt.getLines().get(0).setProductId(140L);receipt.setRequestKey("PICKUP-RETURN-RECEIPT-"+i);
+            purchaseApplicationService.receive(receipt,1L);
+        }
+        assertEquals(2L,jdbcLong("SELECT COUNT(*) FROM inventory_receipt_batch WHERE product_id=140"));
+        long order=createPOSViaHttp(manager,posSale(140L,"2","袋","10",true,null,"20"));
+        long item=jdbcLong("SELECT id FROM order_item WHERE order_id="+order);
+        long request=jdbcLong("SELECT id FROM order_pickup_request WHERE order_item_id="+item);
+        List<Object[]> allocations=rows("SELECT a.id,a.batch_id FROM order_item_batch_allocation a JOIN inventory_receipt_batch b ON b.id=a.batch_id WHERE a.order_item_id="+item+" ORDER BY b.expiry_date,a.id");
+        assertEquals(2,allocations.size());
+        long first=((Number)allocations.get(0)[0]).longValue(),last=((Number)allocations.get(1)[0]).longValue();
+        JsonNode quote=pickupReturnPreview(manager,order,item,"1");assertPreview(quote,"10","0","10");
+        pickupReturn(manager,order,quote);
+        assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order));
+        assertDecimal("原申请量不被部分退货改写","2",jdbcDecimal("SELECT requested_base_quantity FROM order_pickup_request WHERE id="+request));
+        assertDecimal("原销售分配保留2袋","2",jdbcDecimal("SELECT SUM(allocated_base_quantity) FROM order_item_batch_allocation WHERE order_item_id="+item));
+        assertDecimal("先退第一批1袋","1",jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_movement WHERE movement_type='RETURN' AND reference_type='SALE_ALLOCATION' AND reference_id="+first));
+        var pending=pickupFulfillmentService.listPickupRequests(1L,"PENDING").stream().filter(r->r.getId().equals(request)).findFirst().orElseThrow();
+        assertTrue(pending.isCanFulfill());assertDecimal("本次只剩1袋可交","1",pending.getRemainingBaseQuantity());
+        assertDecimal("已退批次不要求再交","0",pending.getAllocations().stream().filter(a->a.getId().equals(first)).findFirst().orElseThrow().getRemainingBaseQuantity());
+        DeliveryFacts returned=deliveryFacts();
+        var remaining=Map.of("allocationIds",List.of(last));
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/pickup/requests/"+request+"/fulfill",remaining));
+        assertEquals("FULFILLED",jdbcString("SELECT status FROM order_pickup_request WHERE id="+request));
+        assertEquals("FULFILLMENT_CONFIRMED",jdbcString("SELECT evidence_level FROM order_item_batch_allocation WHERE id="+last));
+        assertTrue(!"FULFILLMENT_CONFIRMED".equals(jdbcString("SELECT evidence_level FROM order_item_batch_allocation WHERE id="+first)),"已退物料不可冒记本次交货证据");
+        assertEquals(returned,deliveryFacts(),"提货不能再次扣库、收款或结算客户和提成");
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/pickup/requests/"+request+"/fulfill",remaining));
+        assertEquals(returned,deliveryFacts(),"完成请求原样重放没有副作用");
+        // 完成后的退货不能倒改过去交货事实，已完成查询不伪造历史交货量。
+        pickupReturn(manager,order,pickupReturnPreview(manager,order,item,"1"));
+        var fulfilled=pickupFulfillmentService.listPickupRequests(1L,"FULFILLED").stream().filter(r->r.getId().equals(request)).findFirst().orElseThrow();
+        assertNull(fulfilled.getRemainingBaseQuantity());
+        assertDecimal("已交历史仍保留原申请","2",fulfilled.getRequestedBaseQuantity());
+        DeliveryFacts fullyReturned=deliveryFacts();
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/pickup/requests/"+request+"/fulfill",remaining));
+        assertEquals(fullyReturned,deliveryFacts(),"完成后的退款也不能让重放再交货或记账");
+
+        // 单批次退半袋与提货争用同一父订单，均可完成，只扣原销售1袋。
+        long racing=createPOSViaHttp(manager,posSale(140L,"1","袋","10",true,null,"10"));
+        long racingItem=jdbcLong("SELECT id FROM order_item WHERE order_id="+racing);
+        long racingRequest=jdbcLong("SELECT id FROM order_pickup_request WHERE order_item_id="+racingItem);
+        Map<String,Object> returnBody=new LinkedHashMap<>(creditReturnBody(racing,pickupReturnPreview(manager,racing,racingItem,"0.5")));
+        String batchCode=jdbcString("SELECT b.internal_receipt_batch_no FROM order_item_batch_allocation a JOIN inventory_receipt_batch b ON b.id=a.batch_id WHERE a.order_item_id="+racingItem+" LIMIT 1");
+        long payments=jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+racing);
+        List<JsonNode> responses=raceCreditHttp(index->index==0
+                ?postCreditJson(manager,"/api/admin/after-sales",returnBody)
+                :postCreditJson(manager,"/api/admin/orders/pickup/requests/"+racingRequest+"/fulfill",Map.of("scannedCode",batchCode)));
+        for(JsonNode response:responses) requireCreditSuccess(response);
+        assertEquals("FULFILLED",jdbcString("SELECT status FROM order_pickup_request WHERE id="+racingRequest));
+        assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+racing));
+        assertEquals(payments,jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+racing));
+        assertOrderReturned(racing,"0.5");assertCreditState(racing,"10","0","0","0","5","0");
+        assertDecimal("两单完成后账本剩19.5袋","19.5",jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=140"));
+        long full=createPOSViaHttp(manager,posSale(140L,"1","袋","10",true,null,"10"));
+        long fullItem=jdbcLong("SELECT id FROM order_item WHERE order_id="+full);
+        long fullRequest=jdbcLong("SELECT id FROM order_pickup_request WHERE order_item_id="+fullItem);
+        pickupReturn(manager,full,pickupReturnPreview(manager,full,fullItem,"1"));
+        var blocked=pickupFulfillmentService.listPickupRequests(1L,"PENDING").stream().filter(r->r.getId().equals(fullRequest)).findFirst().orElseThrow();
+        assertTrue(!blocked.isCanFulfill());assertDecimal("待交前全部退货剩余为0","0",blocked.getRemainingBaseQuantity());
+        DeliveryFacts beforeRefusal=deliveryFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/pickup/requests/"+fullRequest+"/fulfill",Map.of("allocationIds",List.of())));
+        assertEquals(beforeRefusal,deliveryFacts());
+        assertEquals("PENDING",jdbcString("SELECT status FROM order_pickup_request WHERE id="+fullRequest),"全退不能伪造已交货");
+        log("[提货] 两次采购收货、先退一批再确认剩余批次及退货确认竞争均不重复钱货事实");
+    }
+
+    private void pickupReturn(E2EToken token,long order,JsonNode quote) throws Exception {
+        JsonNode result=postCreditJson(token,"/api/admin/after-sales",creditReturnBody(order,quote));
+        assertTrue(result.isIntegralNumber() && result.asLong()>0,result.toString());
+    }
+
+    private JsonNode pickupReturnPreview(E2EToken token,long order,long item,String quantity) throws Exception {
+        return requireCreditSuccess(postCreditJson(token,"/api/admin/orders/"+order+"/refund-preview",
+                Map.of("items",List.of(Map.of("orderItemId",item,"quantity",new BigDecimal(quantity))))));
     }
 
     private void assertConcurrentReturnCannotExceedOriginalSale() throws Exception {

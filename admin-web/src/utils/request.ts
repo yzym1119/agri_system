@@ -27,13 +27,13 @@ service.interceptors.request.use(
     
     // 开发环境打印请求日志
     if (import.meta.env.DEV) {
-      console.log('🚀 Request:', config.method?.toUpperCase(), config.url, config.data || config.params)
+      console.log('🚀 Request:', config.method?.toUpperCase(), config.url)
     }
     
     return config
   },
   (error) => {
-    console.error('Request error:', error)
+    console.error('Request error:', error.config?.method, error.config?.url, error.code)
     return Promise.reject(error)
   }
 )
@@ -45,7 +45,7 @@ service.interceptors.response.use(
     
     // 开发环境打印响应日志
     if (import.meta.env.DEV) {
-      console.log('✅ Response:', response.status, response.config.url, res)
+      console.log('✅ Response:', response.status, response.config.url)
     }
     
     // 处理直接返回数据的情况（如 AuthStaffController 直接返回 LoginResultVO）
@@ -67,9 +67,9 @@ service.interceptors.response.use(
         }
 
         // 401 未授权，清除 token 并跳转到登录页
-        if (code === 401 || code === '401' || code === 10003) {
+        if (Number(code) === 401 || Number(code) === 10003) {
           const userStore = useUserStore()
-          userStore.logout()
+          userStore.reset()
           ElMessage.error('登录已过期，请重新登录')
           router.push('/login')
           return Promise.reject(new Error('Unauthorized'))
@@ -88,7 +88,7 @@ service.interceptors.response.use(
     return res
   },
   (error) => {
-    console.error('❌ Response error:', error)
+    console.error('❌ Response error:', error.config?.method, error.config?.url, error.response?.status, error.code)
     
     // 处理 HTTP 错误
     if (error.response) {
@@ -99,14 +99,13 @@ service.interceptors.response.use(
         console.error('Error details:', {
           status,
           url: error.config?.url,
-          method: error.config?.method,
-          data
+          method: error.config?.method
         })
       }
       
       if (status === 401) {
         const userStore = useUserStore()
-        userStore.logout()
+        userStore.reset()
         ElMessage.error('登录已过期，请重新登录')
         router.push('/login')
       } else if (status === 403) {
