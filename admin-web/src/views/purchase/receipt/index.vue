@@ -32,7 +32,7 @@
         </div>
       </template>
 
-      <el-table :data="lineRows" v-loading="detailLoading" stripe border style="width: 100%">
+      <el-table :data="lineRows" row-key="purchaseOrderItemId" v-loading="detailLoading" stripe border style="width: 100%">
         <el-table-column type="expand">
           <template #default="{ row }">
             <div class="batch-block">

@@ -71,11 +71,13 @@
       width="600px"
       @close="handleMenuDialogClose"
     >
+      <p>菜单与操作分别勾选，选择父菜单不会自动授予子操作。</p>
       <el-tree
         ref="menuTreeRef"
         :data="menuTree"
         :props="{ children: 'children', label: 'name' }"
         show-checkbox
+        :check-strictly="true"
         node-key="id"
         :default-expand-all="true"
       />

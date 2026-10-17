@@ -3,20 +3,19 @@ package com.agri_system.infrastructure.system.auth.repository;
 import com.agri_system.domain.system.auth.model.SysRole;
 import com.agri_system.domain.system.auth.repository.SysRoleRepository;
 import com.agri_system.infrastructure.system.auth.mapper.SysRoleMapper;
-import com.mybatisflex.core.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Repository
 @RequiredArgsConstructor
 public class SysRoleRepositoryImpl implements SysRoleRepository {
 
     private final SysRoleMapper roleMapper;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     @Override
     public SysRole save(SysRole role) {
@@ -58,13 +57,9 @@ public class SysRoleRepositoryImpl implements SysRoleRepository {
         if (staffId == null) {
             return Collections.emptyList();
         }
-        QueryWrapper query = QueryWrapper.create()
-                .select("r.*")
-                .from("sys_role").as("r")
-                .innerJoin("sys_staff_role").as("sr").on("r.id = sr.role_id")
-                .where("sr.staff_id = ?", staffId).and("r.status = 1");
-        List<SysRole> roles = roleMapper.selectListByQuery(query);
-        return roles.stream().map(SysRole::getCode).collect(Collectors.toList());
+        // 同身份读取一样可能处于外层Flex DTO投影的租户回调中，不能继承其映射类型。
+        return jdbc.queryForList("SELECT r.code FROM sys_role r JOIN sys_staff_role sr ON r.id=sr.role_id "
+                + "WHERE sr.staff_id=? AND r.status=1",String.class,staffId);
     }
 }
 

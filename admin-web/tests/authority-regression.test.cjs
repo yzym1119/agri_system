@@ -8,6 +8,22 @@ const vue = require('vue')
 const {parse} = require('@vue/compiler-sfc')
 const {compile} = require('@vue/compiler-dom')
 
+for (const granted of [[1, 11], [1]]) test(`权限树回显并原样保存不扩权 ${granted.join(',')}`, async () => {
+  const {default: TreeStore} = await import('../node_modules/element-plus/es/components/tree/src/model/tree-store.mjs')
+  const p = page('role', ['role:assign'])
+  const props = nodes(p, 'el-tree')[0].props
+  const tree = new TreeStore({key:'id', props:{children:'children',label:'name'},
+    checkStrictly: props['check-strictly'] ?? props.checkStrictly ?? false,
+    data:[{id:1,name:'商品',children:[{id:11,name:'查询'},{id:12,name:'新增'}]}]})
+  tree.initialize()
+  tree.setCheckedKeys(granted, false)
+  assert.equal(tree.getNode(12).checked, false, '父菜单回显不能自动勾选未授予的新增操作')
+  p.currentRoleId.value = 8
+  p.menuTreeRef.value = tree
+  await p.handleMenuSubmit()
+  assert.deepEqual(Array.from(p.calls[0].ids).sort((a,b)=>a-b), granted)
+})
+
 // 执行真实页面 setup 和模板；仅网络、组件宿主与提示为边界替身。
 function page(kind, permissions = [], overrides = {}) {
   const filename = path.join(__dirname, '..', `src/views/system/${kind}/index.vue`)

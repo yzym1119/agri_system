@@ -21,6 +21,7 @@ import java.util.Optional;
 public class StaffRepositoryImpl implements StaffRepository {
     
     private final StaffMapper staffMapper;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     
     @Override
     public Optional<Staff> findById(Long id) {
@@ -34,7 +35,14 @@ public class StaffRepositoryImpl implements StaffRepository {
     
     @Override
     public Optional<Staff> findIdentityById(Long id) {
-        return Optional.ofNullable(staffMapper.selectIdentityById(id));
+        // 租户回调可能发生在Flex selectAs内部；身份读取不能继承外层DTO的映射类型。
+        // JdbcTemplate沿用同一Flex数据源和事务连接，不重入租户或修改外层映射上下文。
+        return jdbc.query("SELECT id,store_id,status,deleted FROM staff WHERE id=? AND deleted=0", (rs,row) -> {
+            Staff staff=new Staff();staff.setId(rs.getLong("id"));
+            staff.setStoreId(rs.getObject("store_id",Long.class));
+            staff.setStatus(rs.getObject("status",Integer.class));staff.setDeleted(rs.getInt("deleted"));
+            return staff;
+        },id).stream().findFirst();
     }
 
     @Override

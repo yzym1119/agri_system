@@ -167,6 +167,7 @@ class AuthorityHttpIntegrationTest {
     @RestController
     static class Probe {
         @Autowired StaffRepository staff;
+        @Autowired StaffMapper staffMapper;
         @Autowired StaffAuthorityService authority;
         @Autowired JdbcTemplate jdbc;
         @GetMapping("/auth/__authority__/login")
@@ -188,6 +189,15 @@ class AuthorityHttpIntegrationTest {
         }
         @GetMapping("/api/admin/__authority__/menus")
         Map<String, Object> menus() { return Map.of("code", 0, "menus", authority.getCurrentMenuTree(CurrentUser.staffId())); }
+        @GetMapping("/api/admin/__authority__/inventory-view")
+        @SaCheckPermission("probe:read")
+        Map<String, Object> inventoryView() {
+            // 使用生产库存分页相同的Flex DTO投影，让身份查询发生在租户SQL构建内部。
+            return Map.of("code",0,"rows",staffMapper.selectListByQueryAs(
+                    com.mybatisflex.core.query.QueryWrapper.create().select("id AS product_id","store_id")
+                            .from(com.agri_system.domain.store.model.Staff.class),
+                    com.agri_system.domain.inventory.vo.InventoryPageVO.class));
+        }
     }
 
     @BeforeEach void seed() {
@@ -346,6 +356,11 @@ class AuthorityHttpIntegrationTest {
             out.stream().filter(r->r.path("code").asInt()!=0).forEach(this::reject);
             assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM staff WHERE id IN(1,6) AND status=1",Integer.class));
         }finally{pool.shutdownNow();}
+    }
+    @Test void 普通员工首次DTO库存投影不会污染内部身份类型且仍隔离门店()throws Exception {
+        JsonNode result=call(login(4),"GET","/api/admin/__authority__/inventory-view",null);
+        ok(result);assertTrue(result.path("rows").size()>0,"不能用空结果掩盖映射异常");
+        for(JsonNode row:result.path("rows")) assertEquals(1L,row.path("storeId").asLong(),result.toString());
     }
     @Test void 数据库离职或删除无需踢token也立即拒绝()throws Exception {
         String t=login(4);ok(call(t,"GET","/api/admin/__authority__/read",null));

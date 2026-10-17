@@ -32,6 +32,16 @@ function loadPage(relativePath, exports, overrides = {}) {
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const material = () => ({id:'cart-1',itemType:1,productId:10,name:'肥料',quantity:1,currentUnit:'袋',unitPrice:10,suggestedUnitPrice:10,subtotal:10,quoteId:'商品报价',warehousePickup:true})
 
+test('POS按真实数字订单ID显示自动取货请求提示，不需要补登记',async()=>{
+  const page=loadPage('src/views/pos/index.vue',['cartItems','pickupVisible','pickupOrderId','handleSubmitOrder'],{
+    createPOSOrder:async()=>77
+  })
+  page.cartItems.value=[material()]
+  await page.handleSubmitOrder({deliveryType:1,items:[]})
+  assert.equal(page.pickupVisible.value,true)
+  assert.equal(page.pickupOrderId.value,77)
+})
+
 function checkout(overrides = {}) {
   const props = vue.reactive({modelValue:false,totalAmount:10,discountAmount:0,checkoutData:{paymentType:1},cartItems:[material()],customer:null,submitting:false})
   const emitted = [], requests = []
@@ -117,7 +127,7 @@ test('收银关闭后旧券失败不能清掉重新打开的新券',async()=>{
 test('人工配送开单成功显示待配送，不弹第二组库房提货任务',async()=>{
   const submitted=[]
   const page=loadPage('src/views/pos/index.vue',['cartItems','pickupVisible','checkoutVisible','handleSubmitOrder'],{
-    createPOSOrder:async body=>{submitted.push(body);return {id:77}}
+    createPOSOrder:async body=>{submitted.push(body);return 77}
   })
   page.cartItems.value=[material()];page.checkoutVisible.value=true
   await page.handleSubmitOrder({deliveryType:2,receiverName:'农户',receiverPhone:'13800000000',receiverAddress:'村口',items:[]})

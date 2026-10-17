@@ -18,7 +18,7 @@ import type {
 /**
  * POS 创建订单
  */
-export function createPOSOrder(data: POSOrderCreateRequest): Promise<{ id: number }> {
+export function createPOSOrder(data: POSOrderCreateRequest): Promise<number> {
   return request({
     url: '/api/admin/orders/pos',
     method: 'post',

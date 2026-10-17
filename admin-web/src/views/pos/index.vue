@@ -490,7 +490,7 @@ const handleSubmitOrder = async (orderData: any) => {
       : [{ productId: item.productId as number, name: item.name }])
 
   try {
-    const createdOrder: any = await createPOSOrder({
+    const createdOrderId = await createPOSOrder({
       ...orderData,
       storeId: storeId.value!,
       staffId: staffId.value!
@@ -508,7 +508,6 @@ const handleSubmitOrder = async (orderData: any) => {
     goodsPanelRef.value?.refresh()
 
     // 库房取货提示：后端已随订单自动生成取货请求，此处仅提示并提供补登记入口
-    const createdOrderId = createdOrder?.id ?? createdOrder?.orderId ?? null
     if (orderData.deliveryType !== 2 && pickupFlaggedItems.length > 0 && createdOrderId) {
       pickupOrderId.value = Number(createdOrderId)
       pickupItems.value = pickupFlaggedItems
