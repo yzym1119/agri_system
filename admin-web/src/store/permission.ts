@@ -38,8 +38,9 @@ export const usePermissionStore = defineStore(
       menuTree.value = normalizeMenuTree(menus || [])
     }
 
-    const loadCurrentMenus = async () => {
+    const loadCurrentMenus = async (isCurrent: () => boolean = () => true) => {
       const menus = await getCurrentMenuTree()
+      if (!isCurrent()) return []
       setMenuTree(menus || [])
       return menuTree.value
     }

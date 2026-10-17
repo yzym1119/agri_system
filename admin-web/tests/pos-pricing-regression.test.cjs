@@ -581,11 +581,12 @@ test('现金已退完的状态8订单，可选择剩余零金额物料退货，�
   assert.equal(submissions[0].items[0].refundAmount, 0)
 })
 
-test('状态8订单仅在仍有剩余物料时显示继续退货入口', () => {
+test('状态8退货入口使用整单剩余物料，不从前三条概览或未知数据猜测', () => {
   const page = loadPage('src/views/order/list/index.vue', ['canRefund', 'getRefundActionText'])
-  assert.equal(page.canRefund({ orderStatus: 8, items: [{ quantity: 1, refundableQuantity: 1, refundableAmount: 0 }] }), true)
-  assert.equal(page.canRefund({ orderStatus: 8, items: [{ quantity: 1, refundableQuantity: 0, refundableAmount: 0 }] }), false)
-  assert.equal(page.getRefundActionText({ orderStatus: 8 }), '继续退货')
+  assert.equal(page.canRefund({orderStatus:8,hasReturnableItems:true,items:[{quantity:1,refundableQuantity:0,refundableAmount:0}]}),true)
+  assert.equal(page.canRefund({orderStatus:8,hasReturnableItems:false,items:[{quantity:1}]}),false)
+  assert.equal(page.canRefund({orderStatus:8,items:[{quantity:1}]}),false)
+  assert.equal(page.getRefundActionText({orderStatus:8}), '继续退货')
 })
 
 test('套餐物料3件净可退1分，逐件退货允许零现金并累计只退1分', async () => {

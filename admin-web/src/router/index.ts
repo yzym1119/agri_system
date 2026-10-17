@@ -63,8 +63,11 @@ export function resetDynamicRoutes(routes: RouteRecordRaw[] = []): void {
   })
 }
 
+let navigationRequest = 0
+
 // 路由守卫
 router.beforeEach(async (to, from, next) => {
+  const navigation = ++navigationRequest
   const userStore = useUserStore()
   const permissionStore = usePermissionStore()
 
@@ -81,37 +84,26 @@ router.beforeEach(async (to, from, next) => {
     return
   }
 
-  // 检查用户信息
-  if (!userStore.userInfo) {
-    try {
-      await userStore.fetchUserInfo()
-    } catch (error) {
-      ElMessage.error('获取用户信息失败')
-      next('/login')
-      return
-    }
+  // 登录资料可持久化，但权限视图必须按本次进入页面时的真实身份刷新。
+  const requestToken = userStore.token
+  const isCurrent = () => navigation === navigationRequest && userStore.token === requestToken
+  const previousAuthority = JSON.stringify([permissionStore.permissions, permissionStore.menuTree])
+  try {
+    await userStore.fetchUserInfo()
+    if (!isCurrent()) { next(false); return }
+    await permissionStore.loadCurrentMenus(isCurrent)
+    if (!isCurrent()) { next(false); return }
+  } catch (error) {
+    // 当前查询可能已自行清理失效令牌；只有被新导航或新登录替代时才放弃。
+    if (navigation !== navigationRequest || (userStore.token && userStore.token !== requestToken)) { next(false); return }
+    userStore.reset()
+    ElMessage.error('读取当前权限失败，请重新登录')
+    next('/login')
+    return
   }
-
-  if (permissionStore.permissions.length === 0 && !userStore.userInfo?.permissions) {
-    try {
-      await userStore.fetchUserInfo()
-    } catch (error) {
-      ElMessage.error('获取权限信息失败')
-      next('/login')
-      return
-    }
-  }
-
-  if (permissionStore.permissions.length === 0 && userStore.userInfo?.permissions?.length) {
-    permissionStore.setPermissions(userStore.userInfo.permissions)
-  }
-
-  if (permissionStore.menuTree.length === 0) {
-    try {
-      await permissionStore.loadCurrentMenus()
-    } catch (error) {
-      console.warn('Load current menus failed, fallback to static route menu.', error)
-    }
+  if (previousAuthority !== JSON.stringify([permissionStore.permissions, permissionStore.menuTree])) {
+    resetDynamicRoutes(permissionStore.routes)
+    permissionStore.setRoutesLoaded(false)
   }
 
   const dynamicRoutesLoaded = ensureDynamicRoutes(permissionStore)

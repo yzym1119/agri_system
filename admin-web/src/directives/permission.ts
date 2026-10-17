@@ -1,14 +1,11 @@
 import type { App, DirectiveBinding } from 'vue'
 import { usePermissionStore } from '@/store/permission'
-import { useUserStore } from '@/store/user'
+import { watchEffect } from 'vue'
 import { hasPermission } from '@/utils/permission'
 
 function resolvePermissions(): string[] {
   const permissionStore = usePermissionStore()
-  const userStore = useUserStore()
-  return permissionStore.permissions.length > 0
-    ? permissionStore.permissions
-    : (userStore.userInfo?.permissions || [])
+  return permissionStore.permissions
 }
 
 function applyPermission(el: HTMLElement, binding: DirectiveBinding<string | string[]>) {
@@ -28,13 +25,24 @@ function applyPermission(el: HTMLElement, binding: DirectiveBinding<string | str
   }
 }
 
+const permissionEffects = new WeakMap<HTMLElement, () => void>()
+
+function bindPermission(el: HTMLElement, binding: DirectiveBinding<string | string[]>) {
+  permissionEffects.get(el)?.()
+  permissionEffects.set(el, watchEffect(() => applyPermission(el, binding)))
+}
+
 export function registerPermissionDirective(app: App) {
   app.directive('permission', {
     mounted(el, binding) {
-      applyPermission(el as HTMLElement, binding)
+      bindPermission(el as HTMLElement, binding)
     },
     updated(el, binding) {
-      applyPermission(el as HTMLElement, binding)
+      bindPermission(el as HTMLElement, binding)
+    },
+    unmounted(el) {
+      permissionEffects.get(el as HTMLElement)?.()
+      permissionEffects.delete(el as HTMLElement)
     }
   })
 }

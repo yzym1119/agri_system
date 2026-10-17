@@ -86,7 +86,7 @@
           <!-- 面包屑占位 -->
         </div>
         <div class="top-bar-right">
-          <el-tooltip content="站内信" placement="bottom" :show-after="400">
+          <el-tooltip v-if="canReadNotifications" content="站内信" placement="bottom" :show-after="400">
             <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99" class="notification-badge" @click="goNotification">
               <div class="top-icon-btn">
                 <el-icon :size="18"><Bell /></el-icon>
@@ -208,6 +208,7 @@ import {
 import { useUserStore } from '@/store/user'
 import { usePermissionStore } from '@/store/permission'
 import { useTabsStore } from '@/store/tabs'
+import { hasPermission } from '@/utils/permission'
 import { buildSidebarMenus } from '@/utils/permission'
 import { getUnreadCount } from '@/api/notification'
 
@@ -236,6 +237,7 @@ const tabsStore = useTabsStore()
 
 const isCollapse = ref(false)
 const unreadCount = ref(0)
+const canReadNotifications = computed(() => hasPermission('notification:query', permissionStore.permissions))
 
 const defaultOpeneds = computed(() => {
   return menuRoutes.value
@@ -307,16 +309,21 @@ watch(() => route.path, (path) => {
 }, { immediate: true })
 
 const goNotification = () => {
+  if (!canReadNotifications.value) return
   router.push('/system/notification')
 }
 
 let pollTimer: ReturnType<typeof setInterval> | undefined
 const loadUnreadCount = async () => {
+  if (!canReadNotifications.value) { unreadCount.value = 0; return }
   try {
     const res = await getUnreadCount()
+    if (!canReadNotifications.value) return
     unreadCount.value = (res as any)?.count ?? (typeof res === 'number' ? res : 0)
   } catch { /* 静默 */ }
 }
+
+watch(canReadNotifications, allowed => { if (!allowed) unreadCount.value = 0 })
 
 onMounted(() => {
   loadUnreadCount()

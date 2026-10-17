@@ -50,6 +50,7 @@ export interface OrderBase {
   orderNo: string
   orderType: number
   orderStatus: number
+  hasReturnableItems?: boolean
   totalAmount: number
   discountAmount?: number
   couponAmount?: number

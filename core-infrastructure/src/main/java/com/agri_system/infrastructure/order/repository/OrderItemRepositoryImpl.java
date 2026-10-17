@@ -20,6 +20,7 @@ import java.util.Optional;
 public class OrderItemRepositoryImpl implements OrderItemRepository {
     
     private final OrderItemMapper mapper;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     
     @Override
     public OrderItem save(OrderItem item) {
@@ -47,6 +48,18 @@ public class OrderItemRepositoryImpl implements OrderItemRepository {
         );
     }
     
+    @Override
+    public java.util.Set<Long> findOrderIdsWithReturnableItems(List<Long> orderIds) {
+        if (orderIds == null || orderIds.isEmpty()) return java.util.Set.of();
+        String placeholders=String.join(",",java.util.Collections.nCopies(orderIds.size(),"?"));
+        // 与详情一致：待处理/待退款/已完成售后占用数量，拒绝的不占用；不按金额或三行概览猜物料。
+        String sql="SELECT DISTINCT i.order_id FROM order_item i WHERE i.order_id IN ("+placeholders+") "
+                + "AND i.quantity>COALESCE((SELECT SUM(ai.quantity) FROM after_sales_item ai "
+                + "JOIN after_sales a ON a.id=ai.after_sales_id WHERE ai.order_item_id=i.id "
+                + "AND a.order_id=i.order_id AND a.status<>90),0)";
+        return new java.util.HashSet<>(jdbc.queryForList(sql,Long.class,orderIds.toArray()));
+    }
+
     @Override
     public Optional<OrderItem> findById(Long id) {
         return Optional.ofNullable(mapper.selectOneById(id));

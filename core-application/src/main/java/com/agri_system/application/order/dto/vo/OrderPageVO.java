@@ -49,6 +49,8 @@ public class OrderPageVO {
 
     @Schema(description = "当前是否可以派单，由配送和实出库事实计算")
     private boolean canShip;
+    @Schema(description = "整单是否仍有未被有效售后占用的物料数量，包含零元物料，不受前三条概览限制")
+    private Boolean hasReturnableItems;
     @Schema(description = "当前是否可以签收，由配送和实出库事实计算")
     private boolean canConfirmReceipt;
     

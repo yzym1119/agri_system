@@ -759,6 +759,10 @@ public class OrderApplicationService {
                 : orderRepository.findPage(query.getPageNum(), query.getPageSize(), query.getKeyword(), query.getStoreId(),
                     query.getOrderType(), query.getDeliveryType(), query.getOrderStatus(), query.getStartTime(), query.getEndTime(), query.getCustomerId(), query.getDeliveryStatus());
 
+        List<Long> fullyRefundedIds=page.getRecords().stream().filter(order -> Integer.valueOf(8).equals(order.getOrderStatus()))
+                .map(Order::getId).toList();
+        java.util.Set<Long> returnableIds=fullyRefundedIds.isEmpty()?java.util.Set.of():itemRepository.findOrderIdsWithReturnableItems(fullyRefundedIds);
+
         // 2. 转换为VO
         List<OrderPageVO> voList = page.getRecords().stream().map(order -> {
             OrderPageVO vo = new OrderPageVO();
@@ -776,6 +780,7 @@ public class OrderApplicationService {
             vo.setCanShip(canDeliver(order, delivery, true));
             vo.setCanConfirmReceipt(canDeliver(order, delivery, false));
             vo.setOrderStatus(order.getOrderStatus());
+            if (Integer.valueOf(8).equals(order.getOrderStatus())) vo.setHasReturnableItems(returnableIds.contains(order.getId()));
             vo.setTotalAmount(order.getTotalAmount());
             vo.setDiscountAmount(order.getDiscountAmount());
             vo.setCouponAmount(order.getCouponAmount());

@@ -168,15 +168,27 @@ test('网络和HTTP异常日志不输出Axios原始对象，拒绝仍保留原�
   for(const secret of ['sensitive-password','sensitive-token','sensitive-body']) assert.equal(output.includes(secret),false)
 })
 
+for(const code of [401,10003,'HTTP401']) test(`旧会话${code}晚到不清除新员工登录或跳转登录页`,async()=>{
+  const p=requestHarness()
+  const config=p.request.ok({method:'get',url:'/auth/staff/info',headers:{}})
+  p.store.token='new-session-token'
+  if(code==='HTTP401') await assert.rejects(p.response.fail({response:{status:401},config}))
+  else await assert.rejects(Promise.resolve().then(()=>p.response.ok({status:200,config,data:{code,message:'旧会话失效'}})))
+  assert.equal(p.store.token,'new-session-token');assert.equal(p.store.resetCalls,0)
+  assert.equal(p.routes.length,0);assert.equal(p.messages.length,0)
+})
+
 for(const code of [401,'401',10003,'10003']) test(`fresh身份失效业务码${JSON.stringify(code)}本地清会话，不发递归退出请求`,async()=>{
   const p=requestHarness()
-  await assert.rejects(Promise.resolve().then(()=>p.response.ok({status:200,config:{url:'/api/admin/staff'},data:{code,message:'登录失效'}})))
+  const config=p.request.ok({method:'get',url:'/api/admin/staff',headers:{}})
+  await assert.rejects(Promise.resolve().then(()=>p.response.ok({status:200,config,data:{code,message:'登录失效'}})))
   assert.equal(p.store.resetCalls,1);assert.equal(p.store.logoutCalls,0);assert.deepEqual(p.routes,['/login'])
 })
 
 test('HTTP401本地退出；权限拒绝保留业务码和当前会话，不创建新权限缓存',async()=>{
   const p=requestHarness()
-  await assert.rejects(p.response.fail({response:{status:401},config:{url:'/api/admin/staff'}}))
+  const config=p.request.ok({method:'get',url:'/api/admin/staff',headers:{}})
+  await assert.rejects(p.response.fail({response:{status:401},config}))
   assert.equal(p.store.resetCalls,1);assert.equal(p.store.logoutCalls,0)
   await assert.rejects(Promise.resolve().then(()=>p.response.ok({status:200,config:{url:'/api/admin/staff'},data:{code:10004,message:'无角色授予权限'}})),error=>error.apiBusinessCode===10004)
   assert.equal(p.store.resetCalls,1);assert.ok(p.messages.includes('无角色授予权限'))

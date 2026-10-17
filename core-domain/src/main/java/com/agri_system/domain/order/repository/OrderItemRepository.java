@@ -26,6 +26,9 @@ public interface OrderItemRepository {
      * 根据订单ID查询所有明细
      */
     List<OrderItem> findByOrderId(Long orderId);
+
+    /** 当前分页整单中仍有未被有效售后占用数量的订单；包含零元物料。 */
+    java.util.Set<Long> findOrderIdsWithReturnableItems(List<Long> orderIds);
     
     /**
      * 根据ID查询明细

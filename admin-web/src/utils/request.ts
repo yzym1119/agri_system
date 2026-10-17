@@ -38,6 +38,17 @@ service.interceptors.request.use(
   }
 )
 
+// 只有携带当前令牌的请求失效，才能清理当前会话；旧员工的晚到401不能踢掉新员工。
+function expireCurrentSession(config?: InternalAxiosRequestConfig) {
+  const userStore = useUserStore()
+  const headers = config?.headers
+  const requestToken = typeof headers?.get === 'function' ? headers.get('Authorization') : headers?.Authorization
+  if (String(requestToken || '') !== userStore.token) return
+  userStore.reset()
+  ElMessage.error('登录已过期，请重新登录')
+  router.push('/login')
+}
+
 // 响应拦截器
 service.interceptors.response.use(
   (response: AxiosResponse<ApiResponse | any>) => {
@@ -68,10 +79,7 @@ service.interceptors.response.use(
 
         // 401 未授权，清除 token 并跳转到登录页
         if (Number(code) === 401 || Number(code) === 10003) {
-          const userStore = useUserStore()
-          userStore.reset()
-          ElMessage.error('登录已过期，请重新登录')
-          router.push('/login')
+          expireCurrentSession(response.config)
           return Promise.reject(new Error('Unauthorized'))
         }
 
@@ -104,10 +112,7 @@ service.interceptors.response.use(
       }
       
       if (status === 401) {
-        const userStore = useUserStore()
-        userStore.reset()
-        ElMessage.error('登录已过期，请重新登录')
-        router.push('/login')
+        expireCurrentSession(error.config)
       } else if (status === 403) {
         ElMessage.error('没有权限访问')
       } else if (status === 404) {

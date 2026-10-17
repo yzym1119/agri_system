@@ -18,7 +18,8 @@ function loadPage(relativePath, exports, overrides = {}) {
     onMounted() {}, onUnmounted() {}, nextTick: vue.nextTick,
     defineProps: () => ({}), defineEmits: () => () => {}, defineExpose() {},
     useUserStore: () => ({ userInfo: { id: 8, extra: { storeId: 2 } } }),
-    usePermissionStore: () => ({ permissions: ['*'] }),
+    usePermissionStore: () => ({ permissions: ['staff:list'] }),
+    hasPermission: (required,owned) => !required || (Array.isArray(required)?required:[required]).some(p=>owned.includes(p)),
     getOrderPaymentSummary: () => ({ netReceivable: 100 }), getAllStores: async () => [],
     ElMessage: Object.fromEntries(['error', 'warning', 'success', 'info'].map(level => [level, value => messages.push({level, text: typeof value === 'string' ? value : value?.message})])),
     console: { error() {}, warn() {} }, ...overrides

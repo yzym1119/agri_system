@@ -228,6 +228,30 @@ class OrderDeliveryFlowTest {
         assertThrows(IllegalArgumentException.class,()->orderService.shipOrder(command,8L));
         assertEquals(2,delivery.getDeliveryType());assertEquals(2,delivery.getDeliveryStatus());assertNoDeliveryWrite();
     }
+    @Test void 全退订单分页剩余物料标记来自整单且不受前三条概览限制() throws Exception {
+        order.setOrderStatus(8);
+        when(paymentService.financialSummary(order)).thenReturn(new OrderPaymentService.FinancialSummary(
+                BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO));
+        var page = new com.mybatisflex.core.paginate.Page<Order>();page.setRecords(java.util.List.of(order));
+        when(orderRepository.findPage(any(),any(),any(),any(),any(),any(),any(),any(),any(),any())).thenReturn(page);
+        var items=java.util.stream.LongStream.rangeClosed(1,4).mapToObj(id->{
+            var item=new OrderItem();item.setId(id);item.setOrderId(order.getId());item.setQuantity(BigDecimal.ONE);return item;
+        }).toList();
+        var remaining=new java.util.concurrent.atomic.AtomicBoolean(true);
+        var repository=org.mockito.Mockito.mock(OrderItemRepository.class, invocation -> {
+            if (invocation.getMethod().getName().equals("findByOrderId")) return items;
+            if (invocation.getMethod().getName().equals("findOrderIdsWithReturnableItems")) return remaining.get()?java.util.Set.of(order.getId()):java.util.Set.of();
+            return org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation);
+        });
+        ReflectionTestUtils.setField(orderService,"itemRepository",repository);
+        var query=new com.agri_system.application.order.dto.query.OrderPageQuery();query.setPageNum(1);query.setPageSize(10);
+        var row=orderService.queryOrderPage(query).getRecords().get(0);
+        assertEquals(3,row.getItems().size());
+        var json=new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
+        assertEquals(Boolean.TRUE,json.convertValue(row,java.util.Map.class).get("hasReturnableItems"));
+        remaining.set(false);
+        assertEquals(Boolean.FALSE,json.convertValue(orderService.queryOrderPage(query).getRecords().get(0),java.util.Map.class).get("hasReturnableItems"));
+    }
     @Test void deliveryActionsAreReadOnlyDerivedCapabilitiesInPageAndDetail() {
         when(paymentService.financialSummary(order)).thenReturn(new OrderPaymentService.FinancialSummary(
                 BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO));

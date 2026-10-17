@@ -11,6 +11,7 @@ export const useUserStore = defineStore(
     // 状态
     const token = ref<string>('')
     const userInfo = ref<UserInfo | null>(null)
+    let infoRequest = 0
 
     // 登录
     const login = async (loginForm: LoginRequest) => {
@@ -44,14 +45,19 @@ export const useUserStore = defineStore(
       if (!token.value) {
         throw new Error('No token available')
       }
+      const requestToken = token.value
+      const request = ++infoRequest
+      const isCurrent = () => token.value === requestToken && request === infoRequest
       try {
         const info = await getStaffInfo()
+        if (!isCurrent()) throw new Error('身份查询已失效')
         userInfo.value = info
         permissionStore.setPermissions(info?.permissions || [])
         return info
       } catch (error) {
-        console.error('Fetch user info error:', error)
-        // 如果获取失败，清除 token
+        if (!isCurrent()) throw error
+        console.error('读取当前身份失败')
+        // 当前会话读取失败时才清理，不影响稍后登录的其他员工
         resetDynamicRoutes(permissionStore.routes)
         token.value = ''
         userInfo.value = null

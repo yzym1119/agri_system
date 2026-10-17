@@ -14,7 +14,7 @@
         <el-input v-model="form.trackingNo" placeholder="请输入物流单号" />
       </el-form-item>
       <el-form-item v-if="mode === 'local'" label="配送员" prop="deliveryStaffId">
-        <el-select v-model="form.deliveryStaffId" placeholder="请选择配送员" style="width: 100%">
+        <el-select :disabled="!canReadStaff" v-model="form.deliveryStaffId" placeholder="请选择配送员" style="width: 100%">
           <el-option
             v-for="staff in deliveryStaffOptions"
             :key="staff.id"
@@ -23,6 +23,7 @@
           />
         </el-select>
       </el-form-item>
+      <el-alert v-if="mode === 'local' && !canReadStaff" title="当前没有配送员查询权限，请联系管理员。" type="warning" :closable="false" />
       <el-form-item v-if="order" label="收货地址">
         <div style="color: #606266">
           <div>{{ order.receiverAddress }}</div>
@@ -40,11 +41,13 @@
 </template>
 
 <script setup lang="ts">
-import {computed, onMounted, reactive, ref, watch} from 'vue'
+import {computed, reactive, ref, watch} from 'vue'
 import type {FormInstance, FormRules} from 'element-plus'
 import {ElMessage} from 'element-plus'
 import {shipOrder} from '@/api/order'
 import {getStaffList} from '@/api/staff'
+import {usePermissionStore} from '@/store/permission'
+import {hasPermission} from '@/utils/permission'
 import type {OrderPageItem} from '@/types/order'
 
 interface Props {
@@ -60,6 +63,8 @@ interface Emits {
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+const permissionStore = usePermissionStore()
+const canReadStaff = computed(() => hasPermission('staff:list', permissionStore.permissions))
 
 const dialogVisible = ref(false)
 const formRef = ref<FormInstance>()
@@ -91,12 +96,14 @@ const rules = computed<FormRules>(() => {
 })
 
 watch(
-  () => [props.modelValue, props.order?.id, props.mode] as const,
+  () => [props.modelValue, props.order?.id, props.mode, canReadStaff.value] as const,
   ([val]) => {
     formSession++
     dialogVisible.value = val
+    deliveryStaffOptions.value = []
     if (val) {
       resetForm()
+      if (props.mode === 'local' && canReadStaff.value) void loadDeliveryStaff(formSession)
     }
   }
 )
@@ -115,6 +122,7 @@ const resetForm = () => {
 const handleClose = () => {
   formSession++
   dialogVisible.value = false
+  deliveryStaffOptions.value = []
   resetForm()
 }
 
@@ -151,22 +159,21 @@ const handleSubmit = async () => {
 }
 
 // 加载配送员列表
-const loadDeliveryStaff = async () => {
+const loadDeliveryStaff = async (session: number) => {
   try {
     const response = await getStaffList({
       pageNum: 1,
       pageSize: 1000,
       status: 1 // 仅查询在职员工
     })
+    if (session !== formSession || !props.modelValue || !dialogVisible.value || props.mode !== 'local' || !canReadStaff.value) return
     deliveryStaffOptions.value = response?.records || []
   } catch (error) {
     console.error('加载配送员列表失败:', error)
   }
 }
 
-onMounted(() => {
-  loadDeliveryStaff()
-})
+
 </script>
 
 <style scoped lang="scss">
