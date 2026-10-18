@@ -2,9 +2,9 @@
   <div class="app-page">
     <section class="page-header">
       <div>
-        <h1>取货</h1>
+        <h1>库房交货确认</h1>
         <p class="page-desc">
-          库房取货待办：核对尚未退回物料的批次、货位和本次交付数量后确认交货。商品编码不能证明批次。
+          收银开单选择库房取货后，在这里核对商品、存放位置和批次，再交给顾客。确认只记录交货，不会再次扣库存或收款。
         </p>
       </div>
     </section>
@@ -63,7 +63,7 @@
           </el-table-column>
           <el-table-column prop="productCode" label="商品编码" width="140" />
           <el-table-column prop="productName" label="商品名称" min-width="180" />
-          <el-table-column prop="requestedBaseQuantity" label="原请求数量(基准)" width="150" align="right" />
+          <el-table-column prop="requestedBaseQuantity" label="原申请数量" width="150" align="right" />
           <el-table-column label="本次可交(基准)" width="150" align="right">
             <template #default="{ row }">{{ row.status === 'PENDING' ? (row.remainingBaseQuantity ?? '待核对') : '-' }}</template>
           </el-table-column>
@@ -113,7 +113,8 @@
     </el-card>
 
     <!-- 确认取货：扫描或显式确认批次/货位 -->
-    <el-dialog v-model="fulfillVisible" title="确认取货" width="560px" @closed="resetFulfill">
+    <el-dialog v-model="fulfillVisible" title="确认取货" width="min(880px, 96vw)"
+      class="pickup-confirm-dialog" @closed="resetFulfill">
       <el-descriptions v-if="currentItem" :column="1" border size="small" class="pickup-summary">
         <el-descriptions-item label="订单号">
           {{ currentItem.orderNo || (currentItem.orderId ? '订单#' + currentItem.orderId : '-') }}
@@ -121,26 +122,27 @@
         <el-descriptions-item label="商品">
           {{ currentItem.productName }}（{{ currentItem.productCode }}）
         </el-descriptions-item>
-        <el-descriptions-item label="原请求数量(基准)">
-          {{ currentItem.requestedBaseQuantity }}
+        <el-descriptions-item label="原申请数量">
+          {{ formatQuantity(currentItem.requestedBaseQuantity) }} {{ currentItem.baseUnitName || '（记账单位待核对）' }}
         </el-descriptions-item>
-        <el-descriptions-item label="本次交付数量(基准)">{{ currentItem.remainingBaseQuantity }}</el-descriptions-item>
+        <el-descriptions-item label="本次需交数量">{{ formatQuantity(currentItem.remainingBaseQuantity) }} {{ currentItem.baseUnitName || '（记账单位待核对）' }}</el-descriptions-item>
       </el-descriptions>
 
-      <el-alert title="请按本次交付数量逐项核对，已全退批次无需交货；剩余批次全部勾选后一次确认。" type="info" :closable="false" />
+      <el-alert title="按下方位置和数量拣货，逐批勾选“已核对”。已退回的物料不再交货；单批也可扫描内部批次标签核验。" type="info" :closable="false" />
       <el-checkbox-group v-model="confirmedAllocationIds" class="pickup-form">
-        <div v-for="allocation in remainingAllocations" :key="allocation.id">
-          <el-checkbox :label="allocation.id">
-            {{ allocation.internalReceiptBatchNo || '批次#' + allocation.batchId }} ·
-            {{ allocation.locationName || '货位#' + allocation.locationId }} ·
-            本次交付 {{ allocation.remainingBaseQuantity }}（基准）
-          </el-checkbox>
+        <div v-for="(allocation, index) in remainingAllocations" :key="allocation.id" class="pickup-batch">
+          <el-checkbox :label="allocation.id" :aria-label="`已核对第${index + 1}批商品、位置和数量`">已核对第 {{ index + 1 }} 批</el-checkbox>
+          <div class="batch-facts">
+            <div><span>存放位置</span><strong>{{ allocation.locationName || '位置待核对' }}</strong></div>
+            <div><span>本次交付</span><strong>{{ formatQuantity(allocation.remainingBaseQuantity) }} {{ allocation.baseUnitName || '（记账单位待核对）' }}</strong></div>
+            <div class="batch-code"><span>内部批次码</span><code>{{ allocation.internalReceiptBatchNo || '批次#' + allocation.batchId }}</code></div>
+          </div>
         </div>
       </el-checkbox-group>
       <el-form v-if="remainingAllocations.length === 1" label-width="90px" class="pickup-form">
         <el-form-item label="单批扫码">
           <el-input v-model="scanCode" placeholder="扫描真实内部批次标签" clearable />
-          <div class="scan-hint">批次标签由服务端核验；商品条码和货位码不能证明批次。</div>
+          <div class="scan-hint">请扫描下面显示的内部批次码；商品编码或位置编码不能代替批次核对。</div>
         </el-form-item>
       </el-form>
 
@@ -192,6 +194,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import {formatQuantity} from '@/utils/number'
 import { ElMessage } from 'element-plus'
 import { getStoreList } from '@/api/store'
 import { getInventoryLocations } from '@/api/inventory'
@@ -452,4 +455,18 @@ onMounted(loadStores)
 .create-alert {
   margin-bottom: 16px;
 }
+</style>
+
+<style scoped>
+.pickup-summary { overflow-wrap: anywhere; }
+.pickup-batch { border: 1px solid #dce4e8; border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; }
+.pickup-batch :deep(.el-checkbox) { height: auto; min-height: 32px; }
+.batch-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 8px; font-size: 14px; line-height: 1.6; }
+.batch-facts > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.batch-facts span { color: #626f7e; font-size: 13px; }
+.batch-code { grid-column: 1 / -1; }
+.batch-code code { overflow-wrap: anywhere; white-space: normal; font: inherit; }
+.pickup-form { min-width: 0; }
+.scan-hint { color: #626f7e; line-height: 1.5; }
+@media(max-width: 600px) { .batch-facts { grid-template-columns: 1fr; } }
 </style>

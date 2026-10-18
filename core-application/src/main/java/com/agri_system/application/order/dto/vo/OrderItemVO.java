@@ -42,6 +42,12 @@ public class OrderItemVO {
     
     @Schema(description = "单位", example = "袋")
     private String unit;
+
+    /** 原出库批次对应的持久化基准单位；无证据时为空。 */
+    private String baseUnitName;
+    private Boolean allowFractionalBaseQuantity;
+    /** 原出库总量/原销售数量精确系数；不能用当前档案猜补。 */
+    private BigDecimal originalToBaseRatio;
     
     @Schema(description = "规格", example = "50kg")
     private String specification;

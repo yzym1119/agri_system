@@ -737,6 +737,12 @@ public class ProductApplicationService {
         vo.setUnitModelStatus(productUnitService.getUnitModelStatus(productId));
         vo.setUnits(productUnitService.getUnitVOs(productId));
         if (vo.getUnits() != null) {
+            vo.getUnits().stream().filter(u -> u.getId() != null && Integer.valueOf(1).equals(u.getIsBaseUnit()))
+                    .findFirst().ifPresent(base -> {
+                        vo.setBaseUnitName(base.getUnitName());
+                        vo.setAllowFractionalBaseQuantity(com.agri_system.domain.product.service.QuantityGranularityPolicy
+                                .allowsFractionalBaseQuantity(base.getUnitName()));
+                    });
             vo.setPricingUnit(vo.getUnits().stream().filter(u -> Integer.valueOf(1).equals(u.getIsBaseUnit()))
                     .map(com.agri_system.application.product.dto.vo.ProductUnitVO::getUnitName).findFirst().orElse(null));
         }

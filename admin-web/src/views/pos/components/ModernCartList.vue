@@ -137,6 +137,7 @@
 <script setup lang="ts">
 import { usePermissionStore } from '@/store/permission'
 import {computed, reactive, ref} from 'vue'
+import {isWholeBaseQuantity} from '@/utils/quantity'
 import {ElMessage} from 'element-plus'
 import {Box, Delete, Minus, Plus} from '@element-plus/icons-vue'
 import CustomerBar from './CustomerBar.vue'
@@ -174,6 +175,11 @@ const customerBarRef = ref<InstanceType<typeof CustomerBar> | null>(null)
 // 切换单位后由父组件重新取服务端报价，前端不进行价格换算。
 const handleUnitChange = (item: CartItem, newUnit: string) => {
   if (item.currentUnit === newUnit) return
+  const target = item.saleUnits?.find(unit => unit.unitName === newUnit)
+  if (item.allowFractionalBaseQuantity === false && target?.baseQuantityPerUnit != null && !isWholeBaseQuantity(item.quantity, target.baseQuantityPerUnit)) {
+    ElMessage.warning(`当前数量换算后不是完整${item.baseUnitName || '最小单位'}，请先调整数量再切换单位`)
+    return
+  }
   const oldUnit = item.currentUnit
   item.currentUnit = newUnit
   item.quoteId = null
@@ -199,6 +205,11 @@ const handleQuantityChange = (item: CartItem, input: number | string) => {
     return
   }
   delete quantityDrafts[item.id]
+  const unit = item.saleUnits?.find(unit => unit.unitName === item.currentUnit)
+  if (item.itemType === 1 && item.allowFractionalBaseQuantity === false && unit?.baseQuantityPerUnit != null && !isWholeBaseQuantity(raw, unit.baseQuantityPerUnit)) {
+    ElMessage.warning(`换算后须为完整${item.baseUnitName || '最小单位'}，不能拆零`)
+    return
+  }
   if (newQuantity === item.quantity) return
   item.quantity = newQuantity
   item.subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100

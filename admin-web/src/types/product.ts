@@ -46,6 +46,8 @@ export interface CategoryUpdateRequest {
  * 商品详情VO
  */
 export interface ProductDetailVO {
+  baseUnitName?: string | null
+  allowFractionalBaseQuantity?: boolean | null
   id: number
   code: string
   name: string

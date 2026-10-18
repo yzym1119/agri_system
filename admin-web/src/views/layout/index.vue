@@ -214,7 +214,7 @@ import { getUnreadCount } from '@/api/notification'
 
 // 图标映射表
 const iconMap: Record<string, any> = {
-  Odometer, Money, Goods, Menu, Box,
+  Odometer, Money, Goods, Menu, Box, Van,
   Truck: Van, Histogram, ShoppingCart, Document,
   Ticket, Promotion, Star, Setting, Shop,
   Avatar, UserFilled, List, User, Connection,

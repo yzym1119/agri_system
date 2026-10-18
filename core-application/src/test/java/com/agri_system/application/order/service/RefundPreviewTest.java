@@ -81,26 +81,26 @@ class RefundPreviewTest {
         var command=new com.agri_system.application.after_sales.dto.command.AfterSalesAuditCommand();command.setAfterSalesId(50L);command.setApproved(true);
         assertThrows(IllegalArgumentException.class,()->afterSalesService().audit(command,7L));
         assertEquals(AfterSales.STATUS_APPLIED,applied.getStatus());assertEquals(4,order.getOrderStatus());
-        verify(afterSales,never()).save(any());verifyNoInteractions(inventory);
+        verify(afterSales,never()).save(any());verify(inventory,never()).inbound(any(),any());verify(inventory,never()).lockProducts(any(),any());
     }
     @Test void auditApprovalRejectsGrossChildAmountsOnDiscountedCancellation() {
         cashSources("70",m("0"));var applied=pendingCancellation("70","100");
         var command=new com.agri_system.application.after_sales.dto.command.AfterSalesAuditCommand();command.setAfterSalesId(50L);command.setApproved(true);
         assertThrows(IllegalArgumentException.class,()->afterSalesService().audit(command,7L));
-        assertEquals(AfterSales.STATUS_APPLIED,applied.getStatus());verify(afterSales,never()).save(any());verifyNoInteractions(inventory);
+        assertEquals(AfterSales.STATUS_APPLIED,applied.getStatus());verify(afterSales,never()).save(any());verify(inventory,never()).inbound(any(),any());verify(inventory,never()).lockProducts(any(),any());
     }
 
     @Test void subStoragePrecisionQuantityIsRejectedByPreviewBeforeAnyMutation() {
         var error=assertThrows(IllegalArgumentException.class,()->service.previewRefund(1L,request("0.00001")));
         assertTrue(error.getMessage().contains("4位"));assertEquals(m("100"),account.getRemainingAmount());
-        verifyNoInteractions(inventory);verify(afterSales,never()).save(any());
+        verify(inventory,never()).inbound(any(),any());verify(inventory,never()).lockProducts(any(),any());verify(afterSales,never()).save(any());
     }
     @Test void subStoragePrecisionQuantityIsRejectedByFormalAdminReturnWithoutFacts() {
         cashSources("100",m("0"));order.setOrderStatus(6);
         var command=new com.agri_system.application.after_sales.dto.command.AdminReturnCommand();command.setOrderId(1L);command.setQuoteId("a".repeat(64));command.setRefundAmount(m("0"));
         var row=new com.agri_system.application.after_sales.dto.command.AdminReturnCommand.ReturnItem();row.setOrderItemId(1L);row.setQuantity(new BigDecimal("0.00001"));row.setRefundAmount(m("0"));command.setItems(List.of(row));
         var error=assertThrows(IllegalArgumentException.class,()->afterSalesService().createFromAdmin(command,7L));
-        assertTrue(error.getMessage().contains("4位"));verifyNoInteractions(inventory);verify(afterSales,never()).save(any());verify(payments,never()).save(any());
+        assertTrue(error.getMessage().contains("4位"));verify(inventory,never()).inbound(any(),any());verify(inventory,never()).lockProducts(any(),any());verify(afterSales,never()).save(any());verify(payments,never()).save(any());
     }
     @Test void halfABoxReturnKeepsPhysicalQuantityAndNetRefundTogether() {
         cashSources("100",m("0"));order.setOrderStatus(6);var original=items.findByOrderId(1L).get(0);original.setQuantity(BigDecimal.ONE);original.setUnit("箱");
@@ -164,6 +164,43 @@ class RefundPreviewTest {
         verify(payments,times(1)).save(any());
     }
 
+    @Test void previewRejectsSplitBottleUsingOriginalSaleEvidenceBeforeFundingOrInventoryMutation() {
+        useRealOriginalQuantityValidation();
+        var error = assertThrows(IllegalArgumentException.class, () -> service.previewRefund(1L, request("0.1")));
+        assertTrue(error.getMessage().contains("整数"));
+        verify(accounts, never()).findByOrderIdForUpdate(anyLong());
+        verify(inventory, never()).inbound(any(), anyLong());
+        verify(payments, never()).save(any()); verify(afterSales, never()).save(any());
+    }
+
+    @Test void previewAllowsHalfBoxWhenOriginalRatioConvertsToSixCompleteBottles() {
+        useRealOriginalQuantityValidation();
+        var result = service.previewRefund(1L, request("0.5"));
+        assertEquals(m("5"), result.refundAmount());
+        verify(payments, never()).save(any()); verify(inventory, never()).inbound(any(), anyLong());
+    }
+
+    private void useRealOriginalQuantityValidation() {
+        var allocationRepo = mock(com.agri_system.domain.order.repository.OrderItemBatchAllocationRepository.class);
+        var batchRepo = mock(com.agri_system.domain.inventory.repository.InventoryReceiptBatchRepository.class);
+        var unitRepo = mock(com.agri_system.domain.product.repository.ProductUnitRepository.class);
+        var unitService = new com.agri_system.application.product.service.ProductUnitService(unitRepo,
+                mock(com.agri_system.domain.product.repository.ProductRepository.class));
+        var base = new com.agri_system.domain.product.model.ProductUnit();
+        base.setId(7L); base.setProductId(20L); base.setUnitName("瓶"); base.setIsBaseUnit(1);
+        when(unitRepo.findById(7L)).thenReturn(Optional.of(base));
+        var batch = new com.agri_system.domain.inventory.model.InventoryReceiptBatch();
+        batch.setId(8L); batch.setProductId(20L); batch.setBaseUnitId(7L);
+        when(batchRepo.findById(8L)).thenReturn(Optional.of(batch));
+        var allocation = new OrderItemBatchAllocation(); allocation.setBatchId(8L); allocation.setSourceMovementId(9L);
+        allocation.setAllocatedBaseQuantity(new BigDecimal("120"));
+        when(allocationRepo.findByOrderItemId(1L)).thenReturn(List.of(allocation));
+        var ledger = new com.agri_system.application.inventory.service.InventoryLedgerService(null,null,null,batchRepo,null,
+                unitService,null,allocationRepo,null,null);
+        doAnswer(i -> {ledger.validateReturnQuantity(i.getArgument(0), i.getArgument(1)); return null;})
+                .when(inventory).validateReturnQuantity(any(), any());
+    }
+
     @Test void unpaidCreditPreviewShowsDebtReductionWithoutCashRefund() {
         var result=service.previewRefund(1L,request("3"));
         assertEquals(m("30"),result.refundAmount());assertEquals(m("30"),result.creditReductionAmount());assertEquals(m("0"),result.cashRefundAmount());
@@ -179,7 +216,7 @@ class RefundPreviewTest {
         var c=new OrderRefundCommand();c.setOrderId(1L);c.setRefundAmount(m("30"));c.setRefundReason("退货");c.setQuoteId(first.quoteId());
         var i=new OrderRefundCommand.RefundItem();i.setOrderItemId(1L);i.setQuantity(new BigDecimal("3"));i.setRefundAmount(m("30"));c.setItems(List.of(i));
         assertThrows(IllegalArgumentException.class,()->service.refundOrder(c,7L));
-        assertEquals(m("60"),account.getRemainingAmount());verifyNoInteractions(inventory);
+        assertEquals(m("60"),account.getRemainingAmount());verify(inventory,never()).inbound(any(),any());verify(inventory,never()).lockProducts(any(),any());
     }
     @Test void creditFormalReturnRequiresConfirmationQuote() {
         var c=new OrderRefundCommand();c.setOrderId(1L);c.setRefundReason("退货");

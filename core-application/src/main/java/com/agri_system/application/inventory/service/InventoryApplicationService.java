@@ -110,6 +110,18 @@ public class InventoryApplicationService {
         return location.getId();
     }
 
+    public void validateSaleQuantity(Long productId, String unitName, BigDecimal quantity) {
+        ledger.validateSaleQuantity(productId, unitName, quantity);
+    }
+
+    public void validateReturnQuantity(com.agri_system.domain.order.model.OrderItem item, BigDecimal quantity) {
+        ledger.validateReturnQuantity(item, quantity);
+    }
+
+    public InventoryLedgerService.ReturnQuantityMetadata returnQuantityMetadata(com.agri_system.domain.order.model.OrderItem item) {
+        return ledger.returnQuantityMetadata(item);
+    }
+
     /** 查询门店全部货位（管理端货位作业界面用）。 */
     public List<InventoryLocationVO> listLocations(Long storeId) {
         if (storeId == null) {

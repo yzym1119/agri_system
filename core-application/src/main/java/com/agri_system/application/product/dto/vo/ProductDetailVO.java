@@ -53,6 +53,10 @@ public class ProductDetailVO {
 
     @Schema(description = "零售价、会员价、最低价对应的持久化基准单位")
     private String pricingUnit;
+
+    /** 实际持久化基准单位；旧档案投影不作为数量证据。 */
+    private String baseUnitName;
+    private Boolean allowFractionalBaseQuantity;
     
     @Schema(description = "会员价（元/基准单位，0或空表示使用零售价）", example = "45.00")
     private BigDecimal vipPrice;

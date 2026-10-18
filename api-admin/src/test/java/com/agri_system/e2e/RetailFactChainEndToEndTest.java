@@ -450,6 +450,7 @@ class RetailFactChainEndToEndTest {
         assertManualDeliveryBusinessChain();
         assertOnlineDeliveryPaymentAndFirstSettlement();
         assertPartialReturnPickupBusinessChain();
+        assertDiscreteBaseQuantityBusinessChain();
         assertOnlinePickupRespectsReturnFacts();
         assertConcurrentMultiPackageSale();
         assertLedgerReconciles();
@@ -1795,24 +1796,24 @@ class RetailFactChainEndToEndTest {
     /** 原销售跨两次采购收货，先退一批后只交剩余批次，原数量和钱货事实不改写。 */
     private void assertPartialReturnPickupBusinessChain() throws Exception {
         E2EToken manager=loginToken(1L);
-        exec("INSERT INTO product(id,code,name,main_unit,suggested_retail_price,min_price,avg_cost_price,status) VALUES(140,'PICKUP-P140','退货后剩余提货验收','袋',10,1,2,1)");
-        exec("INSERT INTO product_unit(id,product_id,unit_name,base_quantity_per_unit,is_base_unit,allow_purchase,allow_sale,allow_inventory,allow_transfer,status) VALUES(1401,140,'袋',1,1,1,1,1,1,1)");
+        exec("INSERT INTO product(id,code,name,main_unit,suggested_retail_price,min_price,avg_cost_price,status) VALUES(140,'PICKUP-P140','退货后剩余提货验收','公斤',10,1,2,1)");
+        exec("INSERT INTO product_unit(id,product_id,unit_name,base_quantity_per_unit,is_base_unit,allow_purchase,allow_sale,allow_inventory,allow_transfer,status) VALUES(1401,140,'公斤',1,1,1,1,1,1,1)");
         var purchase=new com.agri_system.application.purchase.dto.command.PurchaseCreateCommand();
         purchase.setStoreId(1L);purchase.setSupplierId(1L);
         var material=new com.agri_system.application.purchase.dto.command.PurchaseItemDTO();
-        material.setProductId(140L);material.setQty(new BigDecimal("20"));material.setUnit("袋");material.setPrice(new BigDecimal("2"));
+        material.setProductId(140L);material.setQty(new BigDecimal("20"));material.setUnit("公斤");material.setPrice(new BigDecimal("2"));
         purchase.setItems(List.of(material));
         long purchaseId=purchaseApplicationService.create(purchase,1L);
         var submit=new com.agri_system.application.purchase.dto.command.PurchaseSubmitCommand();submit.setOrderId(purchaseId);
         purchaseApplicationService.submit(submit);
         long purchaseItem=jdbcLong("SELECT id FROM purchase_order_item WHERE purchase_order_id="+purchaseId);
         for(int i=0;i<2;i++) {
-            var receipt=receiveCmd(purchaseId,purchaseItem,"PICKUP-RETURN-"+i,"袋",i==0?"1":"19","2",null,LocalDate.now().plusYears(i+1));
+            var receipt=receiveCmd(purchaseId,purchaseItem,"PICKUP-RETURN-"+i,"公斤",i==0?"1":"19","2",null,LocalDate.now().plusYears(i+1));
             receipt.getLines().get(0).setProductId(140L);receipt.setRequestKey("PICKUP-RETURN-RECEIPT-"+i);
             purchaseApplicationService.receive(receipt,1L);
         }
         assertEquals(2L,jdbcLong("SELECT COUNT(*) FROM inventory_receipt_batch WHERE product_id=140"));
-        long order=createPOSViaHttp(manager,posSale(140L,"2","袋","10",true,null,"20"));
+        long order=createPOSViaHttp(manager,posSale(140L,"2","公斤","10",true,null,"20"));
         long item=jdbcLong("SELECT id FROM order_item WHERE order_id="+order);
         long request=jdbcLong("SELECT id FROM order_pickup_request WHERE order_item_id="+item);
         List<Object[]> allocations=rows("SELECT a.id,a.batch_id FROM order_item_batch_allocation a JOIN inventory_receipt_batch b ON b.id=a.batch_id WHERE a.order_item_id="+item+" ORDER BY b.expiry_date,a.id");
@@ -1822,10 +1823,10 @@ class RetailFactChainEndToEndTest {
         pickupReturn(manager,order,quote);
         assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order));
         assertDecimal("原申请量不被部分退货改写","2",jdbcDecimal("SELECT requested_base_quantity FROM order_pickup_request WHERE id="+request));
-        assertDecimal("原销售分配保留2袋","2",jdbcDecimal("SELECT SUM(allocated_base_quantity) FROM order_item_batch_allocation WHERE order_item_id="+item));
-        assertDecimal("先退第一批1袋","1",jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_movement WHERE movement_type='RETURN' AND reference_type='SALE_ALLOCATION' AND reference_id="+first));
+        assertDecimal("原销售分配保留2公斤","2",jdbcDecimal("SELECT SUM(allocated_base_quantity) FROM order_item_batch_allocation WHERE order_item_id="+item));
+        assertDecimal("先退第一批1公斤","1",jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_movement WHERE movement_type='RETURN' AND reference_type='SALE_ALLOCATION' AND reference_id="+first));
         var pending=pickupFulfillmentService.listPickupRequests(1L,"PENDING").stream().filter(r->r.getId().equals(request)).findFirst().orElseThrow();
-        assertTrue(pending.isCanFulfill());assertDecimal("本次只剩1袋可交","1",pending.getRemainingBaseQuantity());
+        assertTrue(pending.isCanFulfill());assertDecimal("本次只剩1公斤可交","1",pending.getRemainingBaseQuantity());
         assertDecimal("已退批次不要求再交","0",pending.getAllocations().stream().filter(a->a.getId().equals(first)).findFirst().orElseThrow().getRemainingBaseQuantity());
         DeliveryFacts returned=deliveryFacts();
         var remaining=Map.of("allocationIds",List.of(last));
@@ -1845,8 +1846,8 @@ class RetailFactChainEndToEndTest {
         requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/pickup/requests/"+request+"/fulfill",remaining));
         assertEquals(fullyReturned,deliveryFacts(),"完成后的退款也不能让重放再交货或记账");
 
-        // 单批次退半袋与提货争用同一父订单，均可完成，只扣原销售1袋。
-        long racing=createPOSViaHttp(manager,posSale(140L,"1","袋","10",true,null,"10"));
+        // 单批次退半公斤与提货争用同一父订单，均可完成，只扣原销售1公斤。
+        long racing=createPOSViaHttp(manager,posSale(140L,"1","公斤","10",true,null,"10"));
         long racingItem=jdbcLong("SELECT id FROM order_item WHERE order_id="+racing);
         long racingRequest=jdbcLong("SELECT id FROM order_pickup_request WHERE order_item_id="+racingItem);
         Map<String,Object> returnBody=new LinkedHashMap<>(creditReturnBody(racing,pickupReturnPreview(manager,racing,racingItem,"0.5")));
@@ -1860,8 +1861,8 @@ class RetailFactChainEndToEndTest {
         assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+racing));
         assertEquals(payments,jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+racing));
         assertOrderReturned(racing,"0.5");assertCreditState(racing,"10","0","0","0","5","0");
-        assertDecimal("两单完成后账本剩19.5袋","19.5",jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=140"));
-        long full=createPOSViaHttp(manager,posSale(140L,"1","袋","10",true,null,"10"));
+        assertDecimal("两单完成后账本剩19.5公斤","19.5",jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=140"));
+        long full=createPOSViaHttp(manager,posSale(140L,"1","公斤","10",true,null,"10"));
         long fullItem=jdbcLong("SELECT id FROM order_item WHERE order_id="+full);
         long fullRequest=jdbcLong("SELECT id FROM order_pickup_request WHERE order_item_id="+fullItem);
         pickupReturn(manager,full,pickupReturnPreview(manager,full,fullItem,"1"));
@@ -1872,6 +1873,52 @@ class RetailFactChainEndToEndTest {
         assertEquals(beforeRefusal,deliveryFacts());
         assertEquals("PENDING",jdbcString("SELECT status FROM order_pickup_request WHERE id="+fullRequest),"全退不能伪造已交货");
         log("[提货] 两次采购收货、先退一批再确认剩余批次及退货确认竞争均不重复钱货事实");
+    }
+
+    /** 最小单位为瓶时，半箱必须精确回6瓶，十分之一箱不得产生1.2瓶。 */
+    private void assertDiscreteBaseQuantityBusinessChain() throws Exception {
+        E2EToken manager = loginToken(1L);
+        exec("INSERT INTO product(id,code,name,main_unit,suggested_retail_price,min_price,avg_cost_price,status) VALUES(141,'QUANTITY-P141','整件数量验收','箱',1,0.5,6,1)");
+        exec("INSERT INTO product_unit(product_id,unit_name,base_quantity_per_unit,is_base_unit,allow_purchase,allow_sale,allow_inventory,allow_transfer,status) VALUES(141,'瓶',1,1,1,1,1,1,1),(141,'箱',12,0,1,1,1,1,1)");
+        var purchase = new com.agri_system.application.purchase.dto.command.PurchaseCreateCommand();
+        purchase.setStoreId(1L); purchase.setSupplierId(1L);
+        var material = new com.agri_system.application.purchase.dto.command.PurchaseItemDTO();
+        material.setProductId(141L); material.setQty(BigDecimal.ONE); material.setUnit("箱"); material.setPrice(new BigDecimal("6"));
+        purchase.setItems(List.of(material));
+        long purchaseId = purchaseApplicationService.create(purchase,1L);
+        var submit = new com.agri_system.application.purchase.dto.command.PurchaseSubmitCommand(); submit.setOrderId(purchaseId);
+        purchaseApplicationService.submit(submit);
+        long purchaseItem = jdbcLong("SELECT id FROM purchase_order_item WHERE purchase_order_id="+purchaseId);
+        var receipt = receiveCmd(purchaseId,purchaseItem,"DISCRETE-BOTTLES","箱","1","6",null,LocalDate.now().plusYears(1));
+        receipt.getLines().get(0).setProductId(141L); receipt.setRequestKey("DISCRETE-BOTTLES-RECEIPT");
+        purchaseApplicationService.receive(receipt,1L);
+        assertDecimal("收货1箱精确入12瓶","12",jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=141"));
+        long order = createPOSViaHttp(manager,posSale(141L,"1","箱","12",false,null,"12"));
+        long item = jdbcLong("SELECT id FROM order_item WHERE order_id="+order);
+        long allocation = jdbcLong("SELECT id FROM order_item_batch_allocation WHERE order_item_id="+item);
+        long batch = jdbcLong("SELECT batch_id FROM order_item_batch_allocation WHERE id="+allocation);
+        assertDecimal("销售1箱仅出12瓶","12",jdbcDecimal("SELECT allocated_base_quantity FROM order_item_batch_allocation WHERE id="+allocation));
+        assertDecimal("销售后批次余额为0","0",jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE product_id=141"));
+        DeliveryFacts before = deliveryFacts();
+        JsonNode invalidPreview = postCreditJson(manager,"/api/admin/orders/"+order+"/refund-preview",
+                Map.of("items",List.of(Map.of("orderItemId",item,"quantity",new BigDecimal("0.1")))));
+        assertCreditRejected(invalidPreview); assertTrue(invalidPreview.path("message").asText().contains("整数"),invalidPreview.toString());
+        assertEquals(before,deliveryFacts(),"十分之一箱预览拒绝不产生钱货、售后或统计事实");
+        JsonNode half = pickupReturnPreview(manager,order,item,"0.5"); assertPreview(half,"6","0","6");
+        assertEquals(before,deliveryFacts(),"合法半箱预览同样不写钱货");
+        Map<String,Object> invalidReturn = new LinkedHashMap<>(creditReturnBody(order,half));
+        invalidReturn.put("refundAmount",new BigDecimal("1.20"));
+        invalidReturn.put("items",List.of(Map.of("orderItemId",item,"quantity",new BigDecimal("0.1"),"refundAmount",new BigDecimal("1.20"))));
+        JsonNode rejected = postCreditJson(manager,"/api/admin/after-sales",invalidReturn);
+        assertCreditRejected(rejected); assertTrue(rejected.path("message").asText().contains("整数"),rejected.toString());
+        assertEquals(before,deliveryFacts(),"正式十分之一箱退货拒绝后支付来源、库存、售后和统计完全不变");
+        pickupReturn(manager,order,half);
+        assertDecimal("合法半箱回原分配6瓶","6",jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_movement WHERE movement_type='RETURN' AND reference_type='SALE_ALLOCATION' AND reference_id="+allocation));
+        assertDecimal("合法半箱回原批次余额6瓶","6",jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE batch_id="+batch));
+        assertDecimal("原箱单位数量保留半箱","0.5",jdbcDecimal("SELECT SUM(i.quantity) FROM after_sales_item i JOIN after_sales a ON a.id=i.after_sales_id WHERE a.order_id="+order+" AND a.status=50"));
+        assertEquals(0L,jdbcLong("SELECT COUNT(*) FROM inventory_movement m JOIN order_item_batch_allocation a ON a.id=m.reference_id WHERE m.movement_type='RETURN' AND m.reference_type='SALE_ALLOCATION' AND a.order_item_id="+item+" AND (m.batch_id<>a.batch_id OR m.unit_cost<>a.batch_unit_cost)"),"半箱回库必须沿原分配批次与原成本");
+        assertCreditState(order,"12","0","0","0","6","0");
+        log("[数量] 持久1箱12瓶：十分之一箱预览和正式退款均拒绝且钱货不变，半箱精确退6瓶并原单退款6元");
     }
 
     private void pickupReturn(E2EToken token,long order,JsonNode quote) throws Exception {

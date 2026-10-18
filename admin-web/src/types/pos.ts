@@ -49,6 +49,8 @@ export interface POSPaymentDetail {
  * 购物车商品项
  */
 export interface CartItem {
+  baseUnitName?: string | null
+  allowFractionalBaseQuantity?: boolean | null
   id: string // 唯一ID
   itemType: 1 | 2 // 1-商品，2-独立定价套餐；前端不拆分套餐
   productId?: number
@@ -82,7 +84,7 @@ export interface CartItem {
   pricePending?: boolean
   quoteRequestId?: number
   suggestedUnitPrice?: number
-  saleUnits?: { unitName: string }[]
+  saleUnits?: { unitName: string; baseQuantityPerUnit?: number }[]
   warehousePickup?: boolean // 已出库物料的库房取货核对；人工配送不创建自提任务
 }
 

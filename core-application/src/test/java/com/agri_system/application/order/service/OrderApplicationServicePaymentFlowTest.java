@@ -803,6 +803,64 @@ class OrderApplicationServicePaymentFlowTest {
         verify(eventPublisher).publishEvent(any(OrderFinishedEvent.class));
     }
 
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void posRejectsSplitBottleBeforeSavingOrderOrPayment() {
+        stubCashPosOrderPersistence(); installActualQuantityValidation();
+        var command = cashPosCommand(false); command.getItems().get(0).setQuantity(new BigDecimal("0.1"));
+        var error = assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("整数")); verifyNoBusinessWrites();
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void onlineOrderRejectsSplitBottleBeforeSavingUnpaidOrder() {
+        stubCashPosOrderPersistence(); installActualQuantityValidation();
+        var store = new com.agri_system.domain.store.model.Store(); store.setId(3L); store.setStatus(1); store.setSupportPickup(1);
+        when(storeRepository.findById(3L)).thenReturn(Optional.of(store));
+        when(productPricingService.resolveOrderItemUnitPrice(any(), any(), any(), any())).thenReturn(new BigDecimal("100"));
+        var command = new com.agri_system.application.order.dto.command.OrderCreateCommand();
+        command.setStoreId(3L); command.setOrderType(2);
+        var item = cashPosCommand(false).getItems().get(0); item.setQuantity(new BigDecimal("0.1")); command.setItems(java.util.List.of(item));
+        var error = assertThrows(IllegalArgumentException.class, () -> orderService.createOrder(command, null));
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("整数")); verifyNoBusinessWrites();
+    }
+
+    @Test
+    @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
+    void packageMaterialRejectsSplitBottleBeforeSavingOrder() {
+        stubCashPosOrderPersistence(); installActualQuantityValidation();
+        var command = cashPosCommand(false); var input = command.getItems().get(0);
+        input.setProductId(null); input.setItemType(2); input.setPackageId(7L); input.setQuantity(BigDecimal.ONE);
+        input.setUnit("套"); input.setUnitPrice(null); input.setPackageQuoteId("fractional-package");
+        var material = new com.agri_system.application.productpackage.dto.vo.PackagePriceQuote.Item(
+                99L, "复合肥", new BigDecimal("0.1"), "袋", 11L, BigDecimal.TEN, BigDecimal.ONE, 0, BigDecimal.TEN);
+        var quote = new com.agri_system.application.productpackage.dto.vo.PackagePriceQuote("fractional-package",7L,"套餐",
+                BigDecimal.ONE, BigDecimal.ONE,null,false,BigDecimal.ONE,BigDecimal.ONE,BigDecimal.ZERO,java.util.List.of(material));
+        when(packagePricingService.quoteForSale(any(),any(),any(),any(),any())).thenReturn(quote);
+        var error = assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("整数")); verifyNoBusinessWrites();
+    }
+
+    private void installActualQuantityValidation() {
+        var repository = org.mockito.Mockito.mock(com.agri_system.domain.product.repository.ProductUnitRepository.class);
+        var unitService = new com.agri_system.application.product.service.ProductUnitService(repository, productRepository);
+        var bottle = new com.agri_system.domain.product.model.ProductUnit();
+        bottle.setId(10L); bottle.setProductId(99L); bottle.setUnitName("瓶"); bottle.setIsBaseUnit(1);
+        bottle.setStatus(1); bottle.setAllowSale(1); bottle.setBaseQuantityPerUnit(BigDecimal.ONE);
+        var box = new com.agri_system.domain.product.model.ProductUnit();
+        box.setId(11L); box.setProductId(99L); box.setUnitName("袋"); box.setIsBaseUnit(0);
+        box.setStatus(1); box.setAllowSale(1); box.setBaseQuantityPerUnit(new BigDecimal("12"));
+        when(repository.findEnabledByProductId(99L)).thenReturn(java.util.List.of(bottle,box));
+        var ledger = new com.agri_system.application.inventory.service.InventoryLedgerService(null,null,null,null,null,
+                unitService,null,null,null,null);
+        inventoryService = org.mockito.Mockito.mock(InventoryApplicationService.class, org.mockito.Mockito.CALLS_REAL_METHODS);
+        org.springframework.test.util.ReflectionTestUtils.setField(inventoryService, "ledger", ledger);
+        org.mockito.Mockito.doReturn(java.util.List.of()).when(inventoryService).outbound(any(),any());
+        org.mockito.Mockito.doNothing().when(inventoryService).lockProducts(any(),any());
+        org.springframework.test.util.ReflectionTestUtils.setField(orderService, "inventoryService", inventoryService);
+    }
+
     private void verifyNoBusinessWrites() {
         verify(orderRepository,never()).save(any());verify(paymentRepository,never()).save(any());
         verify(itemRepository,never()).save(any());verify(inventoryService,never()).outbound(any(),any());

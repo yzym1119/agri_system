@@ -169,6 +169,11 @@ public class PickupFulfillmentService {
             line.setId(allocation.getId()); line.setBatchId(allocation.getBatchId());
             InventoryReceiptBatch batch = batchesById.get(allocation.getBatchId());
             line.setInternalReceiptBatchNo(batch == null ? null : batch.getInternalReceiptBatchNo());
+            if (batch != null && batch.getBaseUnitId() != null) {
+                var names = jdbc.queryForList("SELECT unit_name FROM product_unit WHERE id=? AND product_id=? AND is_base_unit=1",
+                        String.class, batch.getBaseUnitId(), batch.getProductId());
+                line.setBaseUnitName(names.size() == 1 ? names.get(0) : null);
+            }
             line.setLocationId(allocation.getLocationId());
             InventoryLocation actualLocation = locationsById.get(allocation.getLocationId());
             line.setLocationName(actualLocation == null ? null : actualLocation.getName());
@@ -178,6 +183,9 @@ public class PickupFulfillmentService {
             }
             return line;
         }).toList());
+        var names = vo.getAllocations().stream().map(PickupWorkItemVO.AllocationVO::getBaseUnitName).toList();
+        if (!names.isEmpty() && names.stream().allMatch(java.util.Objects::nonNull)
+                && names.stream().distinct().count() == 1) vo.setBaseUnitName(names.get(0));
         return vo;
     }
 

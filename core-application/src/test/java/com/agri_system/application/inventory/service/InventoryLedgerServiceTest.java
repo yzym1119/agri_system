@@ -74,6 +74,7 @@ class InventoryLedgerServiceTest {
         when(products.findById(5L)).thenReturn(Optional.of(product));
         bag = unit(20L, "袋", "10", false); piece = unit(21L, "个", "1", true);
         when(units.getUnits(5L)).thenReturn(List.of(bag, piece));
+        when(units.findPersistedUnit(21L)).thenReturn(piece);
         when(units.requireEnabledUnit(eq(5L), eq("袋"), any())).thenReturn(bag);
         when(units.toBaseQuantity(eq(5L), eq("袋"), any())).thenAnswer(inv -> {
             BigDecimal quantity = inv.getArgument(2);
@@ -179,6 +180,47 @@ class InventoryLedgerServiceTest {
         verify(batches, never()).save(any()); verify(units, never()).toBaseQuantity(any(), any(), any());
     }
 
+    @Test void returnMetadataUsesOriginalAllocationRatioAndNeverCurrentMainUnitCoefficient() {
+        stock(2L, 10L, "0", "0", null, "2"); orderItem("2"); soldAllocation("20");
+        bag.setBaseQuantityPerUnit(new BigDecimal("999"));
+        var item = items.findByIdForUpdate(55L).orElseThrow();
+        var metadata = service.returnQuantityMetadata(item);
+        assertEquals("个", metadata.baseUnitName()); assertFalse(metadata.allowFractionalBaseQuantity());
+        assertDecimal("10", metadata.originalToBaseRatio());
+    }
+
+    @Test void missingOriginalBatchBaseUnitNeverFallsBackToCurrentProductUnit() {
+        stock(2L, 10L, "0", "0", null, "2"); orderItem("2"); soldAllocation("20");
+        batchMap.get(2L).setBaseUnitId(null);
+        var item = items.findByIdForUpdate(55L).orElseThrow();
+        assertNull(service.returnQuantityMetadata(item));
+        assertThrows(IllegalStateException.class, () -> service.inbound(refund("0.5", 80L), 9L));
+        verify(balances, never()).move(any()); verifyNoInteractions(receipts, lines);
+    }
+
+    @Test void measuredOriginalBaseAllowsFractionalReturnWithoutUsingChangedMainUnit() {
+        stock(2L, 10L, "0", "0", null, "2"); orderItem("2"); soldAllocation("20");
+        piece.setUnitName("公斤"); bag.setBaseQuantityPerUnit(new BigDecimal("999"));
+        service.inbound(refund("0.15", 80L), 9L);
+        assertDecimal("1.5", stockQuantity(2L));
+    }
+
+    @Test void fractionalReturnThatSplitsSmallestPieceIsRejectedBeforeMovement() {
+        stock(2L, 10L, "0", "0", null, "2"); orderItem("2"); soldAllocation("20");
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> service.inbound(refund("0.15", 80L), 9L));
+        assertTrue(error.getMessage().contains("整数"));
+        verify(balances, never()).move(any()); assertDecimal("0", stockQuantity(2L));
+    }
+
+    @Test void countCannotSplitSmallestPieceEvenWhenDifferenceHasFourDecimals() {
+        stock(2L, 10L, "30", "0", null, "2");
+        InventoryAdjustCommand command = count("fractional-count", "3");
+        command.setQuantityDiff(new BigDecimal("-0.15"));
+        assertThrows(IllegalArgumentException.class, () -> service.adjust(command, 9L));
+        verify(balances, never()).move(any()); assertDecimal("30", stockQuantity(2L));
+    }
+
     @Test void repeatedRefundDocumentIsRejectedWithoutAddingStock() {
         stock(2L, 10L, "0", "0", null, "2"); orderItem("2"); soldAllocation("20");
         service.inbound(refund("1", 80L), 9L);
@@ -251,7 +293,7 @@ class InventoryLedgerServiceTest {
     }
     private void stock(Long id, Long location, String quantity, String reserved, LocalDate expiry, String cost) {
         InventoryReceiptBatch batch = new InventoryReceiptBatch(); batch.setId(id); batch.setStoreId(1L); batch.setProductId(5L);
-        batch.setBaseUnitCost(new BigDecimal(cost)); batch.setExpiryDate(expiry); batchMap.put(id, batch);
+        batch.setBaseUnitId(21L); batch.setBaseUnitCost(new BigDecimal(cost)); batch.setExpiryDate(expiry); batchMap.put(id, batch);
         jdbc.update("INSERT INTO inventory_receipt_batch VALUES(?,?,CURRENT_TIMESTAMP)", id, expiry);
         jdbc.update("INSERT INTO inventory_batch_balance VALUES(?,?,1,5,?,?)", id, location, new BigDecimal(quantity), new BigDecimal(reserved));
     }

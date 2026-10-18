@@ -529,6 +529,8 @@ const handleCardClick = (item: GoodsCard) => {
     }
     const cartItem: CartItem = {
       id: '',
+      baseUnitName: item.product.baseUnitName,
+      allowFractionalBaseQuantity: item.product.allowFractionalBaseQuantity,
       itemType: 1,
       productId: item.product.id,
       name: item.product.name,

@@ -2,7 +2,8 @@
   <el-dialog
     v-model="dialogVisible"
     :title="dialogTitle"
-    width="700px"
+    width="min(1120px, 96vw)"
+    class="refund-dialog"
     :close-on-click-modal="false"
     :close-on-press-escape="!submitting && !validating"
     :show-close="!submitting && !validating"
@@ -18,50 +19,33 @@
     </div>
 
     <el-form v-loading="detailsLoading" ref="formRef" :model="form" :rules="rules" label-width="120px">
-      <!-- 商品列表 -->
-      <el-form-item :label="itemSectionLabel" required>
-        <el-table :data="form.items" border style="width: 100%">
-          <el-table-column type="index" label="#" width="60" />
-          <el-table-column label="商品名称" min-width="150">
-            <template #default="{ row }">
-              <div>{{ row.productName }}</div>
-              <div v-if="row.packageGroupNo" style="font-size: 12px; color: #909399">来自套餐：{{ row.packageName }}</div>
-            </template>
-          </el-table-column>
-          <el-table-column prop="quantity" label="购买数量" width="100" align="right">
-            <template #default="{ row }">
-              {{ row.quantity }} {{ row.unit }}
-            </template>
-          </el-table-column>
-          <el-table-column label="剩余可退" width="120" align="right">
-            <template #default="{ row }">
-              {{ row.refundableQuantity }} {{ row.unit }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="unitPrice" label="单价" width="100" align="right">
-            <template #default="{ row }">¥{{ formatMoney(row.unitPrice) }}</template>
-          </el-table-column>
-          <el-table-column :label="quantityColumnLabel" width="150" align="center">
-            <template #default="{ row, $index }">
-              <el-input-number
-                v-model="form.items[$index].returnQuantity"
-                :min="0"
-                :max="row.refundableQuantity"
-                :disabled="submitting || validating || detailsLoading || !!pendingFormalRequest"
-                :precision="4"
-                :step="0.01"
-                style="width: 100%"
-                @change="calculateRefundAmount"
-              />
-            </template>
-          </el-table-column>
-          <el-table-column :label="amountColumnLabel" width="120" align="right">
-            <template #default="{ row }">
-              <span style="font-weight: 600">¥{{ formatMoney(row.refundAmount) }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-form-item>
+      <section class="refund-items" aria-label="退货商品与数量">
+        <h3>{{ itemSectionLabel }}</h3>
+        <p class="quantity-guidance">数量按原订单单位填写，不能在退货时改单位。整件不可拆分；半箱等数量须按商品实际包装核对。</p>
+        <div v-for="row in form.items" :key="row.orderItemId" class="refund-line">
+          <div class="refund-product">
+            <strong>{{ row.productName }}</strong>
+            <span v-if="row.packageGroupNo" class="line-muted">套餐：{{ row.packageName }}</span>
+            <span v-if="row.baseUnitName && row.allowFractionalBaseQuantity != null" class="line-muted">{{ row.allowFractionalBaseQuantity ? `可按计量数量退回（${row.baseUnitName}）` : `须退完整${row.baseUnitName}，不可拆零` }}</span>
+            <span class="line-muted">原购 {{ formatQuantity(row.quantity) }} {{ row.unit }} · 剩余可退 {{ formatQuantity(row.refundableQuantity) }} {{ row.unit }}</span>
+          </div>
+          <div class="refund-quantity">
+            <label :for="`return-quantity-${row.orderItemId}`">{{ quantityColumnLabel }}（{{ row.unit || '原单位' }}）</label>
+            <el-input :id="`return-quantity-${row.orderItemId}`"
+              :model-value="quantityDrafts[row.orderItemId] ?? String(row.returnQuantity)"
+              :aria-label="`${row.productName}${quantityColumnLabel}，单位${row.unit}`"
+              inputmode="decimal" :disabled="submitting || validating || detailsLoading || !!pendingFormalRequest"
+              @input="(value: string) => quantityDrafts[row.orderItemId] = value"
+              @change="(value: string) => setReturnQuantity(row, value)"
+              @blur="setReturnQuantity(row, quantityDrafts[row.orderItemId] ?? String(row.returnQuantity))">
+              <template #append>{{ row.unit }}</template>
+            </el-input>
+            <el-button link type="primary" :disabled="submitting || validating || detailsLoading || !!pendingFormalRequest" @click="setReturnQuantity(row, String(row.refundableQuantity))">全部退回</el-button>
+          </div>
+          <div class="refund-line-amount"><span>{{ amountColumnLabel }}</span><strong>¥{{ formatMoney(row.refundAmount) }}</strong></div>
+        </div>
+        <el-empty v-if="!detailsLoading && !form.items.length" description="没有剩余可退商品" :image-size="48" />
+      </section>
 
       <el-alert v-if="pendingFormalRequest" title="本次退货结果尚未确认，请按原请求核对。系统不会换新报价再次退货。" type="warning" :closable="false" style="margin-bottom: 16px" />
       <el-table v-if="completedAfterSales.length" :data="completedAfterSales" border size="small" style="margin-bottom: 16px">
@@ -116,6 +100,8 @@ import type {FormInstance, FormRules} from 'element-plus'
 import {ElMessage} from 'element-plus'
 import {createAfterSales} from '@/api/afterSales'
 import {getOrderDetail, getRefundPreview, refundOrder} from '@/api/order'
+import {isWholeBaseQuantity} from '@/utils/quantity'
+import {formatQuantity} from '@/utils/number'
 import {getOrderPaymentSummary} from '@/utils/orderPayment'
 import type {OrderBase, OrderDetail, RefundPreview} from '@/types/order'
 
@@ -167,6 +153,9 @@ const selectionSignature = () => JSON.stringify({orderId: props.order?.id,
 
 interface RefundItem {
   orderItemId: number
+  baseUnitName?: string | null
+  allowFractionalBaseQuantity?: boolean | null
+  originalToBaseRatio?: number | null
   productName: string
   quantity: number
   refundedQuantity: number
@@ -191,6 +180,24 @@ const form = reactive<{
   refundAmount: 0,
   reason: ''
 })
+
+const quantityDrafts = reactive<Record<number, string>>({})
+const setReturnQuantity = async (item: RefundItem, input: string) => {
+  if (submitting.value || validating.value || detailsLoading.value || pendingFormalRequest.value) return
+  const raw = String(input).trim(), quantity = Number(raw)
+  delete quantityDrafts[item.orderItemId]
+  if (!/^\d+(\.\d{1,4})?$/.test(raw) || !Number.isFinite(quantity) || quantity < 0 || quantity > item.refundableQuantity) {
+    ElMessage.warning(`数量须在0至${item.refundableQuantity}${item.unit}之间，最多4位小数`)
+    return
+  }
+  if (item.allowFractionalBaseQuantity === false && item.originalToBaseRatio != null && !isWholeBaseQuantity(raw, item.originalToBaseRatio)) {
+    ElMessage.warning(`换算后必须是完整的${item.baseUnitName || '最小单位'}，不能拆成小数`)
+    return
+  }
+  if (quantity === item.returnQuantity) return
+  item.returnQuantity = quantity
+  await calculateRefundAmount()
+}
 
 const directRefundStatuses = [2, 3, 4]
 const useDirectRefund = computed(() => directRefundStatuses.includes(Number(props.order?.orderStatus || 0)))
@@ -255,6 +262,9 @@ const loadOrderDetail = async () => {
           const quantity = Number(item.quantity)
           return {
             orderItemId: item.id,
+            baseUnitName: item.baseUnitName,
+            allowFractionalBaseQuantity: item.allowFractionalBaseQuantity,
+            originalToBaseRatio: item.originalToBaseRatio,
             productName: item.productName,
             quantity: quantity,
             refundedQuantity: Number(item.refundedQuantity) || 0,
@@ -281,6 +291,7 @@ const loadOrderDetail = async () => {
 }
 
 const resetForm = () => {
+  Object.keys(quantityDrafts).forEach(key => delete quantityDrafts[Number(key)])
   ++previewVersion
   ++detailVersion
   detailsLoading.value = false
@@ -438,4 +449,23 @@ const handleSubmit = async () => {
 
 <style scoped lang="scss">
 .preview-hint { margin-top: 8px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.6; }
+</style>
+
+<style scoped>
+.refund-items { margin: 0 0 20px; min-width: 0; }
+.refund-items h3 { font-size: 15px; margin: 0 0 8px; }
+.quantity-guidance, .line-muted { color: #626f7e; font-size: 13px; line-height: 1.6; }
+.quantity-guidance { margin: 0 0 12px; }
+.refund-line { display: grid; grid-template-columns: minmax(0, 1fr) 200px 120px; gap: 20px; align-items: center; padding: 16px 0; border-bottom: 1px solid #e5e7eb; }
+.refund-product { display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
+.refund-quantity label { display: block; font-size: 13px; color: #4b5563; margin-bottom: 6px; }
+.refund-line-amount { text-align: right; display: flex; flex-direction: column; gap: 8px; }
+.refund-line-amount span { color: #626f7e; font-size: 13px; }
+:deep(.el-descriptions__content) { overflow-wrap: anywhere; }
+@media (max-width: 700px) { .refund-line { grid-template-columns: minmax(0,1fr) 100px; gap: 12px; } .refund-product { grid-column: 1 / -1; } .refund-quantity { min-width: 0; } }
+</style>
+<style>
+.el-dialog.refund-dialog { display: flex; flex-direction: column; overflow: hidden; }
+.el-dialog.refund-dialog > .el-dialog__header, .el-dialog.refund-dialog > .el-dialog__footer { flex-shrink: 0; }
+.el-dialog.refund-dialog > .el-dialog__body { overflow-y: auto; min-height: 0; }
 </style>

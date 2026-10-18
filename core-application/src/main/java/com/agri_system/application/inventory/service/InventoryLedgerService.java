@@ -11,6 +11,7 @@ import com.agri_system.domain.inventory.service.InventoryDomainService;
 import com.agri_system.domain.order.model.*;
 import com.agri_system.domain.order.repository.*;
 import com.agri_system.domain.product.model.ProductUnit;
+import com.agri_system.domain.product.service.QuantityGranularityPolicy;
 import com.agri_system.domain.product.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -44,6 +45,15 @@ public class InventoryLedgerService {
 
     public void lockProducts(Long storeId, List<Long> productIds) {
         productIds.stream().distinct().sorted().forEach(id -> balances.lockStock(storeId, id));
+    }
+
+    /** 开单前只读核对，避免先写订单或收款再由出库拒绝不可拆数量。 */
+    public void validateSaleQuantity(Long productId, String unitName, BigDecimal quantity) {
+        if (quantity == null || quantity.signum() <= 0 || quantity.stripTrailingZeros().scale() > 4) {
+            throw new IllegalArgumentException("销售数量必须大于0且最多4位有效小数");
+        }
+        units.requireEnabledUnit(productId, unitName, ProductUnitService.UnitOperation.SALE);
+        units.toBaseQuantity(productId, unitName, quantity);
     }
 
     public List<BatchDetailVO> outbound(InventoryOutCommand command, Long operatorId) {
@@ -124,13 +134,11 @@ public class InventoryLedgerService {
         if (sold.isEmpty() || sold.stream().anyMatch(a -> a.getBatchId() == null || a.getSourceMovementId() == null)) {
             throw new IllegalStateException("原单缺少实际出库记录，不能自动回库，请核对历史库存");
         }
-        // 使用成交时保存的数量比例，商品后续改名/停用单位不改变原单退货数量。
-        BigDecimal soldBase = sold.stream().map(OrderItemBatchAllocation::getAllocatedBaseQuantity).reduce(BigDecimal.ZERO, BigDecimal::add);
-        String unitName = command.getUnit() == null ? mainUnit(item.getProductId()) : command.getUnit();
-        BigDecimal requested = unitName.equals(item.getUnit())
-                ? command.getQuantity().multiply(soldBase).divide(item.getQuantity(), 8, RoundingMode.HALF_UP)
-                : units.toBaseQuantity(item.getProductId(), unitName, command.getQuantity()).baseQuantity();
-        if (requested.signum() <= 0) throw new IllegalArgumentException("退货数量必须大于0");
+        // 原订单行单位与原出库分配是退货唯一换算来源。
+        if (command.getUnit() != null && !Objects.equals(command.getUnit(), item.getUnit())) {
+            throw new IllegalArgumentException("退货必须使用原销售单位");
+        }
+        BigDecimal requested = validateReturnQuantity(item, command.getQuantity());
         String operation = command.getSourceType() + ":" + command.getSourceId() + ":" + itemId;
         Integer previous = jdbc.queryForObject("SELECT COUNT(*) FROM inventory_movement WHERE LEFT(idempotency_key,?)=?", Integer.class, ("RETURN:" + operation + ":").length(), "RETURN:" + operation + ":");
         if (previous != null && previous > 0) throw new IllegalStateException("该退货单据已经回库，不能重复提交");
@@ -143,7 +151,8 @@ public class InventoryLedgerService {
             if (available.signum() <= 0) continue;
             BigDecimal take = remaining.min(available);
             InventoryReceiptBatch batch = batch(allocation.getBatchId());
-            ProductUnit base = baseUnit(batch.getProductId());
+            ProductUnit base = historicalBaseUnit(batch);
+            QuantityGranularityPolicy.requireBaseQuantity(base.getUnitName(), take);
             move(batch, null, allocation.getLocationId(), RETURN, take, base, "SALE_ALLOCATION", allocation.getId(), operatorId,
                     "原单退货 " + operation, "RETURN:" + operation + ":" + allocation.getId());
             if (first == null) first = batch.getId();
@@ -152,6 +161,56 @@ public class InventoryLedgerService {
         }
         if (remaining.signum() != 0) throw new IllegalArgumentException("累计退货数量超过原单实际出库数量");
         return first;
+    }
+
+    /** 实际出库证据不足时不使用当前商品单位补猜历史。 */
+    public ReturnQuantityMetadata returnQuantityMetadata(OrderItem item) {
+        if (item == null || item.getId() == null || item.getQuantity() == null || item.getQuantity().signum() <= 0) return null;
+        List<OrderItemBatchAllocation> sold = allocations.findByOrderItemId(item.getId());
+        if (sold == null || sold.isEmpty()) return null;
+        String baseName = null;
+        Long baseId = null;
+        BigDecimal soldBase = BigDecimal.ZERO;
+        for (OrderItemBatchAllocation allocation : sold) {
+            if (allocation.getBatchId() == null || allocation.getSourceMovementId() == null
+                    || allocation.getAllocatedBaseQuantity() == null || allocation.getAllocatedBaseQuantity().signum() <= 0) return null;
+            InventoryReceiptBatch batch = batches.findById(allocation.getBatchId()).orElse(null);
+            if (batch == null || !Objects.equals(batch.getProductId(), item.getProductId())) return null;
+            ProductUnit base = units.findPersistedUnit(batch.getBaseUnitId());
+            if (base == null || !base.isBase() || !Objects.equals(base.getProductId(), item.getProductId())
+                    || base.getUnitName() == null || base.getUnitName().isBlank()) return null;
+            if (baseId != null && !baseId.equals(base.getId())) return null;
+            baseId = base.getId(); baseName = base.getUnitName();
+            soldBase = soldBase.add(allocation.getAllocatedBaseQuantity());
+        }
+        BigDecimal ratio = null;
+        try { ratio = soldBase.divide(item.getQuantity(), 8, RoundingMode.UNNECESSARY); }
+        catch (ArithmeticException ignored) { /* 原销售比例无法精确显示，不能生成近似提示。 */ }
+        return new ReturnQuantityMetadata(baseName, QuantityGranularityPolicy.allowsFractionalBaseQuantity(baseName),
+                ratio, soldBase, item.getQuantity());
+    }
+
+    public BigDecimal validateReturnQuantity(OrderItem item, BigDecimal quantity) {
+        if (quantity == null || quantity.signum() <= 0 || quantity.stripTrailingZeros().scale() > 4) {
+            throw new IllegalArgumentException("退货数量必须大于0且最多4位有效小数");
+        }
+        ReturnQuantityMetadata metadata = returnQuantityMetadata(item);
+        if (metadata == null) throw new IllegalStateException("原单缺少实际出库基准单位证据，不能自动退货，请核对历史库存");
+        BigDecimal requested;
+        try { requested = quantity.multiply(metadata.soldBaseQuantity()).divide(metadata.soldQuantity(), 8, RoundingMode.UNNECESSARY); }
+        catch (ArithmeticException error) { throw new IllegalArgumentException("退货换算数量超出基准精度，不能舍入", error); }
+        return QuantityGranularityPolicy.requireBaseQuantity(metadata.baseUnitName(), requested);
+    }
+
+    public record ReturnQuantityMetadata(String baseUnitName, boolean allowFractionalBaseQuantity,
+            BigDecimal originalToBaseRatio, BigDecimal soldBaseQuantity, BigDecimal soldQuantity) {}
+
+    private ProductUnit historicalBaseUnit(InventoryReceiptBatch batch) {
+        ProductUnit base = units.findPersistedUnit(batch.getBaseUnitId());
+        if (base == null || !base.isBase() || !Objects.equals(base.getProductId(), batch.getProductId())) {
+            throw new IllegalStateException("原出库批次缺少持久化基准单位");
+        }
+        return base;
     }
 
     public void adjust(InventoryAdjustCommand command, Long operatorId) {
@@ -172,10 +231,14 @@ public class InventoryLedgerService {
             ProductUnit countedUnit = units.requireEnabledUnit(command.getProductId(), command.getUnit() == null ? mainUnit(command.getProductId()) : command.getUnit(), ProductUnitService.UnitOperation.INVENTORY);
             BigDecimal currentBase = jdbc.queryForList("SELECT base_quantity FROM inventory_batch_balance WHERE store_id=? AND product_id=? FOR UPDATE", BigDecimal.class, command.getStoreId(), command.getProductId())
                     .stream().reduce(BigDecimal.ZERO, BigDecimal::add);
-            difference = command.getActualQuantity().multiply(countedUnit.getBaseQuantityPerUnit()).setScale(8, RoundingMode.HALF_UP).subtract(currentBase);
+            BigDecimal actualBase = QuantityGranularityPolicy.requireBaseQuantity(
+                    baseUnit(command.getProductId()).getUnitName(), command.getActualQuantity().multiply(countedUnit.getBaseQuantityPerUnit()));
+            difference = actualBase.subtract(currentBase);
             if (difference.signum() == 0) throw new IllegalArgumentException("实盘数量与库存一致，无需调整");
             if ((command.getType() == 1) != (difference.signum() > 0)) throw new IllegalArgumentException("实盘数量与盘点方向不一致");
         }
+        ProductUnit base = baseUnit(command.getProductId());
+        QuantityGranularityPolicy.requireBaseQuantity(base.getUnitName(), difference.abs());
         BigDecimal quantity = difference.abs();
         Integer previous = jdbc.queryForObject("SELECT COUNT(*) FROM inventory_movement WHERE idempotency_key=? OR LEFT(idempotency_key,?)=?", Integer.class, "COUNT:" + operation, ("COUNT:" + operation + ":").length(), "COUNT:" + operation + ":");
         if (previous != null && previous > 0) throw new IllegalStateException("该盘点请求已经处理，不能重复提交");

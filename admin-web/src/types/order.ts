@@ -11,6 +11,9 @@ export interface OrderPaymentRecord {
 }
 
 export interface OrderItemSummary {
+  baseUnitName?: string | null
+  allowFractionalBaseQuantity?: boolean | null
+  originalToBaseRatio?: number | null
   id: number
   productId?: number | null
   packageId?: number | null
@@ -162,6 +165,7 @@ export interface OrderPageResponse {
  * 取货待办工作项VO（零售事实链 Task9：库房取货待办）
  */
 export interface PickupWorkItemVO {
+  baseUnitName?: string | null
   /** 取货请求ID */
   id: number
   orderId?: number | null
@@ -186,6 +190,7 @@ export interface PickupWorkItemVO {
 }
 
 export interface PickupAllocationVO {
+  baseUnitName?: string | null
   id: number
   batchId: number
   internalReceiptBatchNo?: string | null

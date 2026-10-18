@@ -147,7 +147,8 @@ public class ProductUnitService {
         if (originalQuantity == null || originalQuantity.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("数量必须大于0");
         }
-        ProductUnit unit = getUnits(productId).stream()
+        List<ProductUnit> units = getUnits(productId);
+        ProductUnit unit = units.stream()
                 .filter(candidate -> unitName != null && unitName.trim().equals(candidate.getUnitName()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("单位不存在或未启用: " + unitName));
@@ -158,8 +159,16 @@ public class ProductUnitService {
         if (coefficient == null || coefficient.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("单位基准数量系数必须大于0");
         }
-        BigDecimal baseQuantity = originalQuantity.multiply(coefficient).setScale(8, RoundingMode.HALF_UP);
+        String baseName = units.stream().filter(ProductUnit::isBase).map(ProductUnit::getUnitName).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("商品缺少持久化基准单位"));
+        BigDecimal baseQuantity = com.agri_system.domain.product.service.QuantityGranularityPolicy
+                .requireBaseQuantity(baseName, originalQuantity.multiply(coefficient));
         return new UnitConversionSnapshot(unit.getUnitName(), originalQuantity, coefficient, baseQuantity);
+    }
+
+    /** 历史批次引用只读取原ID，即使单位已停用也不改用当前主单位。 */
+    public ProductUnit findPersistedUnit(Long id) {
+        return id == null ? null : unitRepository.findById(id).orElse(null);
     }
 
     /** 完整替换单位集合。所有校验完成后才执行停用、更新和插入。 */

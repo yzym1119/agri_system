@@ -22,3 +22,9 @@ export function formatStock(value?: number | string | null): string {
 // deprecated duplicate removed; use formatStock above
 
 
+
+/** 库存/退货数量只去显示尾零；未知保持待核对，不参与钱货计算。 */
+export function formatQuantity(value?: number | string | null): string {
+  if (value == null || value === '' || !Number.isFinite(Number(value))) return '待核对'
+  return Number(value).toFixed(8).replace(/\.?0+$/, '')
+}

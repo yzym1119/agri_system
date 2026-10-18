@@ -2,9 +2,9 @@
   <div class="app-page">
     <section class="page-header">
       <div>
-        <h1>收货</h1>
+        <h1>采购收货</h1>
         <p class="page-subtitle">
-          按批次登记实际收货事实：每个收货行可包含多个批次，各自记录单位、数量与成本；生产/有效日期未知时必须显式勾选“日期未知”。
+          供应商送货后，在这里核对实际到货并入库。先选择采购单；同一商品有不同批号或日期时再拆成多批。
         </p>
       </div>
     </section>
@@ -14,7 +14,7 @@
         <div class="toolbar">
           <el-select
             v-model="purchaseOrderId"
-            placeholder="选择待入库采购单"
+            placeholder="选择供应商送货对应的采购单"
             filterable
             clearable
             style="width: 320px"
@@ -32,7 +32,7 @@
         </div>
       </template>
 
-      <el-table :data="lineRows" row-key="purchaseOrderItemId" v-loading="detailLoading" stripe border style="width: 100%">
+      <el-table v-if="detailLoading || lineRows.length" :data="lineRows" row-key="purchaseOrderItemId" v-loading="detailLoading" stripe border style="width: 100%">
         <el-table-column type="expand">
           <template #default="{ row }">
             <div class="batch-block">
@@ -127,7 +127,7 @@
         </el-table-column>
       </el-table>
 
-      <el-empty v-if="!detailLoading && lineRows.length === 0" description="请选择待入库采购单" />
+      <el-empty v-if="!detailLoading && lineRows.length === 0" description="请先选择采购单；没有待收货单时，请先在采购管理新建并提交采购单" />
     </el-card>
 
     <el-card v-if="lineRows.length > 0" shadow="never" class="submit-card">
@@ -408,11 +408,11 @@ watch(() => route.query.purchaseOrderId, async value => {
 <style scoped>
 .page-subtitle {
   margin: 6px 0 0;
-  color: #909399;
+  color: #626f7e;
   font-size: 13px;
 }
 .unit-text {
-  color: #909399;
+  color: #626f7e;
   font-size: 12px;
 }
 .batch-block {

@@ -513,6 +513,7 @@ public class AfterSalesApplicationService {
         }
         BigDecimal maximum = RefundAmountPolicy.maximumForReturn(orderItem, existingQuantity,
                 existingRefundAmount, requestedQuantity, netLineTotal);
+        inventoryApplicationService.validateReturnQuantity(orderItem, requestedQuantity);
         if (requestedRefundAmount.compareTo(maximum) > 0) {
             throw new IllegalArgumentException("套餐明细退款金额不能超过累计退货数量对应的成交金额");
         }

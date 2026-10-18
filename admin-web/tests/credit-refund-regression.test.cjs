@@ -26,6 +26,7 @@ function loadPage(relativePath, exports, overrides = {}) {
     ElMessage: Object.fromEntries(['error', 'warning', 'success', 'info'].map(level => [level, value => messages.push({level, text: typeof value === 'string' ? value : value?.message})])),
     console: { error() {}, warn() {} },
     getOrderPaymentSummary: () => ({netReceivable: 100}),
+    formatQuantity: value => value == null ? '待核对' : String(value),
     getAllStores: async () => [],
     ...overrides
   }
@@ -388,23 +389,23 @@ test('还款被明确拒绝后刷新真实欠额并可用新操作改小金额�
   assert.equal(requests[1].amount,20);assert.notEqual(requests[1].requestKey,requests[0].requestKey)
 })
 
-test('一箱可按半箱退货，实际输入组件保留四位数量精度并提交0.5',async()=>{
+test('一箱可按半箱退货，实际原始输入不补尾零并提交0.5',async()=>{
   const page=refundPage();page.form.items=[line({quantity:1,refundableQuantity:1,unit:'箱',returnQuantity:0.5})]
   const source=fs.readFileSync(page.filename,'utf8');const compiled=compileTemplate(parseVue(source).descriptor.template.content,{mode:'function'})
-  const render=new Function('Vue',compiled.code)({...vue,resolveComponent:name=>({name}),resolveDirective:()=>({})})
-  const view=vue.proxyRefs({...page.props,...page.bindings})
+  const render=new Function('Vue',ts.transpileModule(compiled.code,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)({...vue,resolveComponent:name=>({name}),resolveDirective:()=>({})})
+  const view=vue.proxyRefs({...page.props,...page.bindings,formatQuantity:value=>value==null?'待核对':String(value)})
   const oldWarn=console.warn;console.warn=()=>{}
-  let precision
+  let quantityControl
   try {
     const walk=node=>{
       if(!node) return;if(Array.isArray(node)){node.forEach(walk);return}
-      if(node.type?.name==='el-input-number') precision=node.props.precision
+      if(node.type?.name==='el-input' && String(node.props?.id).startsWith('return-quantity-')) quantityControl=node.props
       if(Array.isArray(node.children)) node.children.forEach(walk)
       else if(node.children&&typeof node.children==='object') for(const slot of Object.values(node.children)) if(typeof slot==='function') walk(slot({row:page.form.items[0],$index:0}))
     }
     walk(render(view,[]))
   } finally {console.warn=oldWarn}
-  assert.equal(precision,4,'实际数量输入精度不能由剩余量是整数决定为0')
+  assert.equal((quantityControl?.modelValue ?? quantityControl?.['model-value']),'0.5','实际输入不得强制显示四个尾零');assert.equal(quantityControl?.inputmode,'decimal')
   const quote=page.calculateRefundAmount();assert.equal(page.requests[0].body.items[0].quantity,0.5)
   page.requests[0].resolve(preview({items:[{orderItemId:11,quantity:0.5,refundAmount:30}]}));await quote
 })

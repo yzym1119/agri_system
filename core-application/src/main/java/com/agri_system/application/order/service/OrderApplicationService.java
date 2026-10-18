@@ -146,6 +146,7 @@ public class OrderApplicationService {
                     .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 商品不存在"));
             
             String itemUnit = StringUtils.hasText(itemDTO.getUnit()) ? itemDTO.getUnit() : product.getMainUnit();
+            inventoryService.validateSaleQuantity(product.getId(), itemUnit, itemDTO.getQuantity());
             // 客户端下单不信任前端传入单价，统一由后端价格体系计算
             BigDecimal unitPrice = productPricingService.resolveOrderItemUnitPrice(
                     product,
@@ -305,6 +306,7 @@ public class OrderApplicationService {
                     .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 商品不存在"));
             
             String itemUnit = StringUtils.hasText(itemDTO.getUnit()) ? itemDTO.getUnit() : product.getMainUnit();
+            inventoryService.validateSaleQuantity(product.getId(), itemUnit, itemDTO.getQuantity());
             PriceQuote quote;
             BigDecimal unitPrice;
             BigDecimal itemTotal;
@@ -914,6 +916,7 @@ public class OrderApplicationService {
             itemVO.setProductName(item.getProductName());
             itemVO.setQuantity(item.getQuantity());
             itemVO.setUnit(item.getUnit());
+            enrichQuantityMetadata(itemVO, item);
             itemVO.setUnitPrice(item.getUnitPrice());
             itemVO.setTotalPrice(item.getTotalPrice());
             RefundAggregate refundAggregate = refundAggregates.get(item.getId());
@@ -1454,6 +1457,14 @@ public class OrderApplicationService {
         return "REFUND-" + orderNo + "-" + item.getId();
     }
 
+    private void enrichQuantityMetadata(OrderItemVO vo, OrderItem item) {
+        var metadata = inventoryService.returnQuantityMetadata(item);
+        if (metadata == null) return;
+        vo.setBaseUnitName(metadata.baseUnitName());
+        vo.setAllowFractionalBaseQuantity(metadata.allowFractionalBaseQuantity());
+        vo.setOriginalToBaseRatio(metadata.originalToBaseRatio());
+    }
+
     private RefundPlan buildRefundPlan(Order order, List<OrderItem> orderItems, OrderRefundCommand command) {
         return buildRefundPlan(order,orderItems,command,null);
     }
@@ -1486,6 +1497,7 @@ public class OrderApplicationService {
                 BigDecimal alreadyAmount = history == null ? BigDecimal.ZERO : history.amount;
                 BigDecimal remainingQty = safeSubtract(item.getQuantity(), alreadyQty);
                 if (remainingQty.signum() <= 0) continue;
+                inventoryService.validateReturnQuantity(item, remainingQty);
                 BigDecimal amount = RefundAmountPolicy.maximumForReturn(item, alreadyQty, alreadyAmount, remainingQty,
                         refundBases.getOrDefault(item.getId(), item.getTotalPrice()));
                 refundItems.add(new RefundOrderItem(item, remainingQty, amount));
@@ -1520,6 +1532,7 @@ public class OrderApplicationService {
             BigDecimal refundableQuantity = safeSubtract(orderItem.getQuantity(), refundedQuantity);
             BigDecimal refundableAmount = RefundAmountPolicy.maximumForReturn(orderItem, refundedQuantity, refundedAmount, commandItem.getQuantity(),
                     refundBases.getOrDefault(orderItem.getId(), orderItem.getTotalPrice()));
+            inventoryService.validateReturnQuantity(orderItem, commandItem.getQuantity());
 
             BigDecimal requestedAmount=commandItem.getRefundAmount()==null?refundableAmount:commandItem.getRefundAmount();
             if(requestedAmount.signum()<0 || requestedAmount.stripTrailingZeros().scale()>2) throw new IllegalArgumentException("明细成交冲销金额必须为非负分金额");

@@ -61,6 +61,24 @@ class ProductUnitServiceTest {
     }
 
     @Test
+    void rejectsFractionalWholeBaseItemsAfterExactConversion() {
+        when(unitRepository.findEnabledByProductId(10L)).thenReturn(List.of(base("瓶"), unit("箱", "12", true, true)));
+        assertThat(service.toBaseQuantity(10L, "箱", new BigDecimal("0.5")).baseQuantity()).isEqualByComparingTo("6");
+        assertThatThrownBy(() -> service.toBaseQuantity(10L, "箱", new BigDecimal("0.1")))
+                .hasMessageContaining("整数");
+        assertThatThrownBy(() -> service.toBaseQuantity(10L, "瓶", new BigDecimal("1.000000001")))
+                .hasMessageContaining("整数");
+    }
+
+    @Test
+    void allowsMeasuredBaseFractionsButNeverRoundsAwayStoragePrecision() {
+        when(unitRepository.findEnabledByProductId(10L)).thenReturn(List.of(base("公斤")));
+        assertThat(service.toBaseQuantity(10L, "公斤", new BigDecimal("0.125")).baseQuantity()).isEqualByComparingTo("0.125");
+        assertThatThrownBy(() -> service.toBaseQuantity(10L, "公斤", new BigDecimal("0.000000001")))
+                .hasMessageContaining("精度");
+    }
+
+    @Test
     void rejectsAUnitDisabledForSaleButDoesNotAssumeWhichUnitIsBase() {
         when(unitRepository.findEnabledByProductId(10L)).thenReturn(List.of(
                 base("瓶"), unit("件", "288", true, false)));

@@ -40,6 +40,8 @@ public class PickupWorkItemVO {
     @Schema(description = "请求拣货数量（基准单位）")
     private BigDecimal requestedBaseQuantity;
 
+    private String baseUnitName;
+
     @Schema(description = "当前尚未退回基准数量；只对PENDING提供，不代表历史实际交货数量")
     private BigDecimal remainingBaseQuantity;
 
@@ -70,6 +72,7 @@ public class PickupWorkItemVO {
         private String internalReceiptBatchNo;
         private Long locationId;
         private String locationName;
+        private String baseUnitName;
         private BigDecimal allocatedBaseQuantity;
         private BigDecimal remainingBaseQuantity;
     }

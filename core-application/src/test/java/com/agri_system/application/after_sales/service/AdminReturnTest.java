@@ -158,7 +158,7 @@ class AdminReturnTest {
     void cashReturnWithoutQuoteCannotEnterFundsOrInventory() {
         var command=returnCommand("1","60.00");command.setQuoteId(null);
         assertThrows(IllegalArgumentException.class,()->afterSalesService.createFromAdmin(command,8L));
-        verifyNoInteractions(orderPaymentService,inventoryApplicationService);
+        verifyNoStockOrMoneyMutation();
     }
 
     @Test
@@ -303,7 +303,7 @@ class AdminReturnTest {
         IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
                 () -> afterSalesService.createFromAdmin(returnCommand("1", "4.00"), 8L));
         org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("金额"));
-        verifyNoInteractions(orderPaymentService, inventoryApplicationService);
+        verifyNoStockOrMoneyMutation();
     }
 
     @Test
@@ -312,7 +312,7 @@ class AdminReturnTest {
         history("1", "3.33");
         assertThrows(IllegalArgumentException.class,
                 () -> afterSalesService.createFromAdmin(returnCommand("1", "3.35"), 8L));
-        verifyNoInteractions(orderPaymentService, inventoryApplicationService);
+        verifyNoStockOrMoneyMutation();
     }
 
     @Test
@@ -331,7 +331,7 @@ class AdminReturnTest {
         command.setRefundAmount(new BigDecimal("10.00"));
         command.setItems(List.of(command.getItems().get(0), command.getItems().get(0)));
         assertThrows(IllegalArgumentException.class, () -> afterSalesService.createFromAdmin(command, 8L));
-        verifyNoInteractions(orderPaymentService, inventoryApplicationService);
+        verifyNoStockOrMoneyMutation();
     }
 
     @Test
@@ -341,7 +341,7 @@ class AdminReturnTest {
         when(afterSalesItemRepository.findByAfterSalesId(501L)).thenReturn(List.of());
         assertThrows(IllegalArgumentException.class,
                 () -> afterSalesService.createFromAdmin(returnCommand("1", "60.00"), 8L));
-        verifyNoInteractions(orderPaymentService, inventoryApplicationService);
+        verifyNoStockOrMoneyMutation();
     }
 
     @Test
@@ -374,7 +374,7 @@ class AdminReturnTest {
     void ordinaryProductCannotUseUnreturnedQuantityNetShare() {
         orderItem.setTotalPrice(new BigDecimal("120.00"));
         assertThrows(IllegalArgumentException.class,()->afterSalesService.createFromAdmin(returnCommand("1","100.00"),8L));
-        verifyNoInteractions(orderPaymentService,inventoryApplicationService);
+        verifyNoStockOrMoneyMutation();
     }
 
     @Test
@@ -402,7 +402,7 @@ class AdminReturnTest {
         // 两个物料各成交10元，整单实收10元；每行净额5元，退1/3最多1.67元。
         assertThrows(IllegalArgumentException.class,
                 () -> afterSalesService.createFromAdmin(returnCommand("1", "3.33"), 8L));
-        verifyNoInteractions(orderPaymentService, inventoryApplicationService);
+        verifyNoStockOrMoneyMutation();
     }
 
     @Test
@@ -529,4 +529,11 @@ class AdminReturnTest {
         item.setRefundAmount(new BigDecimal("120.00"));
         return item;
     }
+    private void verifyNoStockOrMoneyMutation() {
+        verifyNoInteractions(orderPaymentService);
+        verify(inventoryApplicationService, never()).inbound(any(), any());
+        verify(inventoryApplicationService, never()).outbound(any(), any());
+        verify(inventoryApplicationService, never()).lockProducts(any(), any());
+    }
+
 }

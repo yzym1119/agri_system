@@ -2,8 +2,8 @@
   <div class="app-page">
     <section class="page-header">
       <div>
-        <h1>货位</h1>
-        <p class="page-desc">门店货位清单，货位编码可在取货工作台中直接扫码使用。</p>
+        <h1>存放位置（货位）</h1>
+        <p class="page-desc">货位就是商品实际存放的位置，例如门店后仓。小门店使用默认后仓即可，不需要先建立一套货架编码。此页用于查询位置。</p>
       </div>
     </section>
 
@@ -67,7 +67,7 @@
 
         <el-empty
           v-if="!loading && locations.length === 0"
-          description="该门店暂无货位，可联系管理员在库存基础资料中维护"
+          description="该门店暂无存放位置，请联系管理员核对门店初始化资料"
         />
       </template>
     </el-card>
@@ -136,7 +136,7 @@ onMounted(loadStores)
 <style scoped>
 .page-desc {
   margin: 6px 0 0;
-  color: #909399;
+  color: #626f7e;
   font-size: 13px;
 }
 
