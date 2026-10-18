@@ -3,7 +3,7 @@
     <!-- 侧边栏 -->
     <aside class="sidebar" :class="{ collapsed: isCollapse }">
       <!-- Logo -->
-      <div class="sidebar-logo" @click="router.push('/dashboard')">
+      <button type="button" class="sidebar-logo" aria-label="返回可用首页" @click="router.push(homePath)">
         <div class="logo-icon">
           <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
             <defs>
@@ -20,7 +20,7 @@
         <transition name="fade-text">
           <span v-if="!isCollapse" class="logo-text">AgriSys</span>
         </transition>
-      </div>
+      </button>
 
       <!-- 菜单 -->
       <div class="sidebar-menu-wrap">
@@ -28,7 +28,7 @@
           :default-active="activeMenu"
           :collapse="isCollapse"
           :collapse-transition="true"
-          :unique-opened="false"
+          :unique-opened="true"
           :default-openeds="defaultOpeneds"
           router
           background-color="transparent"
@@ -69,13 +69,13 @@
       </div>
 
       <!-- 折叠按钮（纯图标） -->
-      <div class="sidebar-toggle" @click="toggleCollapse" :title="isCollapse ? '展开菜单' : '收起菜单'">
+      <button type="button" class="sidebar-toggle" :aria-label="isCollapse ? '展开菜单' : '收起菜单'" @click="toggleCollapse" :title="isCollapse ? '展开菜单' : '收起菜单'">
         <svg class="toggle-icon" :class="{ flipped: isCollapse }" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/>
           <line x1="9" y1="4" x2="9" y2="20" stroke="currentColor" stroke-width="1.5"/>
           <path d="M14 10l-2 2 2 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-      </div>
+      </button>
     </aside>
 
     <!-- 右侧主区域 -->
@@ -209,7 +209,7 @@ import { useUserStore } from '@/store/user'
 import { usePermissionStore } from '@/store/permission'
 import { useTabsStore } from '@/store/tabs'
 import { hasPermission } from '@/utils/permission'
-import { buildSidebarMenus } from '@/utils/permission'
+import { buildSidebarMenus, findFirstAccessiblePath } from '@/utils/permission'
 import { getUnreadCount } from '@/api/notification'
 
 // 图标映射表
@@ -241,11 +241,12 @@ const canReadNotifications = computed(() => hasPermission('notification:query', 
 
 const defaultOpeneds = computed(() => {
   return menuRoutes.value
-    .filter(r => r.children && r.children.length > 0)
+    .filter(r => r.children?.some(child => child.path === route.path))
     .map(r => r.key)
 })
 
 const activeMenu = computed(() => route.path)
+const homePath = computed(() => findFirstAccessiblePath(permissionStore.routes, permissionStore.permissions, permissionStore.menuTree))
 
 const menuRoutes = computed(() => {
   if (permissionStore.routes.length > 0) {
@@ -751,4 +752,13 @@ $transition: 0.25s cubic-bezier(0.4,0,0.2,1);
 .fade-text-leave-to {
   opacity: 0;
 }
+</style>
+
+<style scoped>
+.sidebar-logo, .sidebar-toggle { border: 0; width: 100%; font: inherit; background: transparent; color: inherit; cursor: pointer; }
+.sidebar-logo:focus-visible, .sidebar-toggle:focus-visible { outline: 2px solid #9bc08b; outline-offset: -3px; }
+</style>
+
+<style scoped>
+.sidebar-toggle { color: rgba(255,255,255,.7); }
 </style>

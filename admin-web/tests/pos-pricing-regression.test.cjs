@@ -23,6 +23,7 @@ function loadPage(relativePath, exports, overrides = {}) {
     .map(statement => statement.getFullText(source)).join('\n')
   const messages = []
   const context = {
+    useRoute: () => ({query: {}}),
     ref: vue.ref,
     reactive: vue.reactive,
     computed: vue.computed,
@@ -633,4 +634,9 @@ test('套餐物料3件净可退1分，逐件退货允许零现金并累计只退
   assert.equal(refundedAmount, 0.01)
   await page.loadOrderDetail()
   assert.equal(page.form.items.length, 0)
+})
+test('手工四位数量后连续扫码，同商品合并仍为准确四位数量',async()=>{
+  const pos=createPOS();pos.cartItems.value=[cartLine({quantity:1.0001,subtotal:10})]
+  const pending=pos.handleAddToCart(cartLine({id:''}));finishQuote(pos.requests.shift());await pending
+  assert.equal(pos.cartItems.value.length,1);assert.equal(pos.cartItems.value[0].quantity,2.0001)
 })

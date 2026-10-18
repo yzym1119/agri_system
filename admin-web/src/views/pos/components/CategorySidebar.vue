@@ -4,13 +4,16 @@
       <span v-if="!isCollapsed" class="category-title">商品分类</span>
       <el-button
         :icon="isCollapsed ? Expand : Fold"
+        :aria-label="isCollapsed ? '展开商品分类' : '收起商品分类'"
+        :aria-expanded="!isCollapsed"
         text
         @click="isCollapsed = !isCollapsed"
         class="collapse-btn"
       />
     </div>
-    
+
     <div v-if="!isCollapsed" class="category-list">
+      <button type="button" class="category-item all-category" :class="{ active: selectedCategoryId === null }" @click="handleCategorySelect(null)">全部商品</button>
       <!-- 树形分类 -->
       <div
         v-for="category in categories"
@@ -18,15 +21,18 @@
         class="category-tree"
       >
         <!-- 父分类 -->
-        <div
+        <button
+          type="button"
           class="category-item parent"
-          :class="{ 
+          :aria-pressed="selectedCategoryId === category.id"
+          :aria-expanded="category.children?.length ? expandedCategories.includes(category.id) : undefined"
+          :class="{
             active: selectedCategoryId === category.id,
             expanded: expandedCategories.includes(category.id)
           }"
           @click="handleParentClick(category)"
         >
-          <el-icon 
+          <el-icon
             v-if="category.children && category.children.length > 0"
             class="expand-icon"
             :class="{ rotated: expandedCategories.includes(category.id) }"
@@ -35,8 +41,8 @@
           </el-icon>
           <span v-else class="expand-placeholder"></span>
           <span class="category-name">{{ category.name }}</span>
-        </div>
-        
+        </button>
+
         <!-- 递归显示子分类 -->
         <div
           v-if="expandedCategories.includes(category.id) && category.children && category.children.length > 0"
@@ -140,13 +146,14 @@ defineExpose({
 
 <style scoped lang="scss">
 .category-sidebar {
-  width: 200px;
+  width: 160px;
+  flex-shrink: 0;
   background: #fff;
   border-right: 1px solid #e5e7eb;
   display: flex;
   flex-direction: column;
-  transition: width 0.3s ease;
-  
+
+
   &.collapsed {
     width: 64px;
   }
@@ -159,15 +166,17 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid #e5e7eb;
-  
+
   .category-title {
     font-size: 14px;
     font-weight: 600;
     color: #1f2937;
   }
-  
+
   .collapse-btn {
-    padding: 4px;
+    padding: 8px;
+    min-width: 36px;
+    min-height: 36px;
   }
 }
 
@@ -186,19 +195,19 @@ defineExpose({
   cursor: pointer;
   transition: all 0.2s;
   color: #6b7280;
-  
+
   &:hover {
     background: #f3f4f6;
-    color: #2563eb;
+    color: var(--el-color-primary);
   }
-  
+
   &.active {
-    background: #eff6ff;
-    color: #2563eb;
-    border-right: 3px solid #2563eb;
+    background: #edf5f7;
+    color: var(--el-color-primary);
+    border-right: 3px solid var(--el-color-primary);
     font-weight: 500;
   }
-  
+
   .category-name {
     flex: 1;
     font-size: 14px;
@@ -214,31 +223,31 @@ defineExpose({
       font-weight: 500;
       color: #1f2937;
     }
-    
+
     &.child {
       padding-left: 40px;
       font-size: 13px;
       color: #6b7280;
     }
-    
+
     .expand-icon {
       font-size: 14px;
       transition: transform 0.2s;
       flex-shrink: 0;
-      color: #9ca3af;
+      color: #626f7e;
       width: 14px;
-      
+
       &.rotated {
         transform: rotate(90deg);
       }
     }
-    
+
     .expand-placeholder {
       width: 14px;
       flex-shrink: 0;
     }
   }
-  
+
   .category-children {
     background: #f9fafb;
   }
@@ -248,7 +257,7 @@ defineExpose({
   .category-name {
     display: none;
   }
-  
+
   .category-item {
     justify-content: center;
     padding: 0;
@@ -256,3 +265,9 @@ defineExpose({
 }
 </style>
 
+
+<style scoped>
+.category-item { width: 100%; border: 0; background: transparent; font: inherit; text-align: left; }
+.category-item:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: -2px; }
+.all-category { padding-left: 20px; }
+</style>

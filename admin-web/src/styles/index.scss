@@ -279,16 +279,16 @@ html, body {
   background: $bg-page;
 }
 
-// ── 页面头（渐变横幅）──
+// ── 页面头 ──
 .page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: $spacing-xl $spacing-2xl;
   border-radius: $border-radius-xl;
-  color: #fff;
-  background: linear-gradient(135deg, #17324c 0%, $brand-primary 60%, $brand-accent 100%);
-  box-shadow: 0 8px 24px rgba(29, 93, 115, 0.18);
+  color: $text-primary;
+  background: $bg-card;
+  border: 1px solid $border-color;
 
   h1 {
     margin: 0;
@@ -300,7 +300,7 @@ html, body {
   .page-subtitle {
     margin-top: 4px;
     font-size: $font-size;
-    color: rgba(255, 255, 255, 0.72);
+    color: $text-regular;
   }
 
   .header-controls {
@@ -309,15 +309,7 @@ html, body {
     align-items: center;
   }
 
-  .el-button {
-    border: none !important;
-    color: #17324c !important;
-    background: rgba(255, 255, 255, 0.92) !important;
 
-    &:hover {
-      background: #fff !important;
-    }
-  }
 }
 
 // ── 搜索栏卡片 ──
@@ -443,15 +435,8 @@ html, body {
 }
 
 // ── 指标卡色调 ──
-.tone-blue   { background: linear-gradient(135deg, #eff6ff, #dbeafe); }
-.tone-green  { background: linear-gradient(135deg, #f0fdf4, #dcfce7); }
-.tone-orange { background: linear-gradient(135deg, #fffbeb, #fef3c7); }
-.tone-red    { background: linear-gradient(135deg, #fef2f2, #fecaca); }
-.tone-sand   { background: linear-gradient(135deg, #fffbeb, #fde68a33); }
-.tone-ink    { background: linear-gradient(135deg, #f8fafc, #e2e8f0); }
-.tone-wine   { background: linear-gradient(135deg, #fff1f2, #fecdd3); }
-.tone-violet { background: linear-gradient(135deg, #faf5ff, #e9d5ff); }
-.tone-slate  { background: linear-gradient(135deg, #f8fafc, #e2e8f0); }
+.tone-blue, .tone-green, .tone-orange, .tone-red, .tone-sand,
+.tone-ink, .tone-wine, .tone-violet, .tone-slate { background: $bg-card; }
 
 // ── 图表行（两列）──
 .chart-row {
@@ -672,3 +657,31 @@ html, body {
   .metric-grid { grid-template-columns: 1fr; }
   .page-header { flex-direction: column; align-items: flex-start; gap: $spacing-md; }
 }
+
+// 以共用令牌统一常规控件；紧凑表格保留 small 规格。
+:root {
+  --el-color-primary: #{$brand-primary};
+  --el-color-primary-light-3: #568b9a;
+  --el-color-primary-light-5: #89adb8;
+  --el-color-primary-light-7: #bed2d9;
+  --el-color-primary-light-8: #d3e2e7;
+  --el-color-primary-light-9: #edf5f7;
+  --el-color-primary-dark-2: #{$brand-primary-dark};
+  --el-font-size-base: #{$font-size};
+  --el-text-color-secondary: #{$text-secondary};
+  --el-component-size: 36px;
+}
+.el-button:not(.el-button--small):not(.is-link):not(.is-text) { min-height: 36px; }
+.el-table .cell { line-height: 1.55; }
+.el-table .el-button.is-link { min-height: 30px; }
+.el-drawer__header { margin-bottom: 0; padding: 20px 24px; border-bottom: 1px solid $border-color; color: $text-primary; font-weight: 600; }
+.el-drawer__body { padding: 20px 24px; }
+.el-dialog { max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); overflow: auto; --el-dialog-margin-top: 16px; }
+.el-empty__description p { color: $text-secondary; }
+:focus-visible { outline-color: $brand-primary; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+// Element卡片自带body内边距，避免与页面工具类叠加成双层空白。
+.el-card.search-card, .el-card.table-card { padding: 0 !important; }
+.el-overlay-dialog .el-dialog:not(.is-fullscreen):not(.is-align-center) { margin: 16px auto; }

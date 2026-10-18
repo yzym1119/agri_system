@@ -64,28 +64,18 @@
       <!-- 订单表格 -->
       <el-table :data="tableData" v-loading="loading" border style="width: 100%; margin-top: 16px">
         
-        <el-table-column prop="orderNo" label="订单号" width="180">
+        <el-table-column prop="orderNo" label="订单 / 时间" width="180">
           <template #default="{ row }">
-            <el-button link type="primary" @click="handleCopyOrderNo(row.orderNo)">
-              {{ row.orderNo }}
-            </el-button>
+            <el-tooltip :content="row.orderNo" placement="top">
+              <el-button class="order-number" link type="primary" :aria-label="`复制完整订单号 ${row.orderNo}`" @click="handleCopyOrderNo(row.orderNo)">
+                {{ formatOrderNo(row.orderNo) }}
+              </el-button>
+            </el-tooltip>
+            <div class="cell-secondary">{{ row.createdAt || '时间待核对' }}</div>
+            <div class="cell-secondary">{{ getOrderTypeText(row.orderType) }} · {{ row.deliveryType === 1 ? (row.orderType === 1 ? '当场交货' : '门店自提') : row.deliveryType === 2 ? '同城配送' : row.deliveryType === 3 ? '快递配送' : '配送方式待核对' }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="来源/类型" width="140">
-          <template #default="{ row }">
-            <div style="display: flex; align-items: center; gap: 8px">
-              <span v-if="row.orderType === 1">🖥️</span>
-              <span v-else>📱</span>
-              <span>{{ getOrderTypeText(row.orderType) }}</span>
-            </div>
-            <div v-if="row.deliveryType" style="margin-top: 4px">
-              <el-tag v-if="row.deliveryType === 1" size="small" type="info">[自提]</el-tag>
-              <el-tag v-else-if="row.deliveryType === 2" size="small" type="warning">[同城]</el-tag>
-              <el-tag v-else-if="row.deliveryType === 3" size="small" type="success">[快递]</el-tag>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="商品概览" min-width="200" show-overflow-tooltip>
+        <el-table-column label="商品概览" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
             <div v-if="row.items && row.items.length > 0">
               <span>{{ row.items[0].productName }}</span>
@@ -96,7 +86,7 @@
             <span v-else style="color: #909399">暂无商品</span>
           </template>
         </el-table-column>
-        <el-table-column label="客户信息" width="150">
+        <el-table-column label="客户信息" width="130">
           <template #default="{ row }">
             <div v-if="row.customerName">
               <div>{{ row.customerName }}</div>
@@ -105,7 +95,7 @@
             <span v-else style="color: #909399">散客</span>
           </template>
         </el-table-column>
-        <el-table-column label="金额" width="220" align="right">
+        <el-table-column label="金额" width="190" align="right">
           <template #default="{ row }">
             <div>
               <div>订单总额：¥{{ formatMoney(row.totalAmount) }}</div>
@@ -131,7 +121,7 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="orderStatus" label="状态" width="120" align="center">
+        <el-table-column prop="orderStatus" label="订单状态" width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="getStatusTagType(row.orderStatus)">
               {{ getStatusText(row.orderStatus) }}
@@ -139,65 +129,29 @@
             <div v-if="row.deliveryStatus" style="margin-top: 4px; font-size: 12px">{{ getDeliveryStatusText(row.deliveryStatus) }}</div>
           </template>
         </el-table-column>
-        <el-table-column prop="createdAt" label="下单时间" width="170" />
-        <el-table-column label="操作" width="380" fixed="right">
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="handleViewDetail(row)">详情</el-button>
-            <!-- 待发货/待自提状态的操作 -->
-            <template v-if="canVerifyPickup(row) || canShipByExpress(row) || canShipByLocal(row)">
+            <div class="row-actions">
+              <el-button link type="primary" @click="handleViewDetail(row)">详情</el-button>
               <el-button
-                v-if="canVerifyPickup(row)"
-                v-permission="'order:pickup:verify'"
+                v-if="getRowActions(row)[0]"
+                v-permission="getRowActions(row)[0].permission"
                 link
-                type="success"
+                :type="getRowActions(row)[0].key === 'refund' ? 'danger' : 'primary'"
                 :loading="actionLoading[row.id]"
-                @click="handleVerify(row)"
-              >
-                核销
-              </el-button>
-              <el-button
-                v-if="canShipByExpress(row)"
-                v-permission="'order:ship'"
-                link
-                type="warning"
-                :loading="actionLoading[row.id]"
-                @click="handleShip(row, 'express')"
-              >
-                快递发货
-              </el-button>
-              <el-button
-                v-if="canShipByLocal(row)"
-                v-permission="'order:ship'"
-                link
-                type="primary"
-                :loading="actionLoading[row.id]"
-                @click="handleShip(row, 'local')"
-              >
-                同城派单
-              </el-button>
-            </template>
-            <!-- 配送中状态 -->
-            <el-button
-              v-if="canConfirmDelivery(row)"
-              v-permission="'order:ship'"
-              link
-              type="success"
-              :loading="actionLoading[row.id]"
-              @click="handleConfirmReceipt(row)"
-            >
-              确认签收
-            </el-button>
-            <!-- 退款按钮 -->
-            <el-button
-              v-if="canRefund(row)"
-              v-permission="'order:refund'"
-              link
-              type="danger"
-              :loading="actionLoading[row.id]"
-              @click="handleRefund(row)"
-            >
-              {{ getRefundActionText(row) }}
-            </el-button>
+                @click="handleRowAction(getRowActions(row)[0].key, row)"
+              >{{ getRowActions(row)[0].label }}</el-button>
+              <el-dropdown v-if="getRowActions(row).length > 1" trigger="click" @command="(command: string) => handleRowAction(command, row)">
+                <el-button link :aria-label="`订单 ${formatOrderNo(row.orderNo)} 的更多操作`">更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-for="action in getRowActions(row).slice(1)" :key="action.key" v-permission="action.permission" :command="action.key" :disabled="actionLoading[row.id]">
+                      {{ action.label }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -235,7 +189,10 @@
 </template>
 
 <script setup lang="ts">
-import {onMounted, reactive, ref} from 'vue'
+import {onMounted, reactive, ref, watch} from 'vue'
+import {useRoute} from 'vue-router'
+import {usePermissionStore} from '@/store/permission'
+import {hasPermission} from '@/utils/permission'
 import {ElMessage, ElMessageBox} from 'element-plus'
 import {Refresh, Search} from '@element-plus/icons-vue'
 import {confirmReceipt, getOrderList} from '@/api/order'
@@ -247,6 +204,9 @@ import RefundDialog from '../components/RefundDialog.vue'
 import OrderDetail from '../components/OrderDetail.vue'
 import type {OrderListQuery, OrderPageItem, OrderPageResponse} from '@/types/order'
 import type {StoreDetailVO} from '@/types/store'
+
+const route = useRoute()
+const permissionStore = usePermissionStore()
 
 // 响应式数据
 const loading = ref(false)
@@ -320,6 +280,27 @@ const getRefundActionText = (row: OrderPageItem) => {
   }
   return '退货退款'
 }
+
+type RowAction = {key: string; label: string; permission: string}
+const getRowActions = (row: OrderPageItem): RowAction[] => {
+  const actions: RowAction[] = []
+  if (canVerifyPickup(row)) actions.push({key: 'verify', label: '核销', permission: 'order:pickup:verify'})
+  if (canShipByExpress(row)) actions.push({key: 'express', label: '快递发货', permission: 'order:ship'})
+  if (canShipByLocal(row)) actions.push({key: 'local', label: '同城派单', permission: 'order:ship'})
+  if (canConfirmDelivery(row)) actions.push({key: 'receipt', label: '确认签收', permission: 'order:ship'})
+  if (canRefund(row)) actions.push({key: 'refund', label: getRefundActionText(row), permission: 'order:refund'})
+  return actions.filter(action => hasPermission(action.permission, permissionStore.permissions))
+}
+const handleRowAction = (command: string, row: OrderPageItem) => {
+  if (actionLoading.value[row.id] || !getRowActions(row).some(action => action.key === command)) return
+  if (command === 'verify') handleVerify(row)
+  else if (command === 'express' || command === 'local') handleShip(row, command)
+  else if (command === 'receipt') handleConfirmReceipt(row)
+  else if (command === 'refund') handleRefund(row)
+}
+
+// 只缩短列表显示；复制、查询与详情始终使用后端原号。
+const formatOrderNo = (orderNo: string) => orderNo.length > 24 ? `${orderNo.slice(0, 12)}…${orderNo.slice(-6)}` : orderNo
 
 // 方法
 const formatMoney = (amount: number | string | null | undefined) => {
@@ -439,7 +420,8 @@ const handleReset = () => {
   loadData()
 }
 
-const handleTabChange = (tabName: string) => {
+const applyTab = (tabName: string) => {
+  activeTab.value = tabName
   queryParams.deliveryStatus = null
   if (tabName === 'all') {
     queryParams.orderStatus = null
@@ -453,7 +435,20 @@ const handleTabChange = (tabName: string) => {
     queryParams.orderStatus = tabName
   }
   queryParams.pageNum = 1
+}
+
+const handleTabChange = (tabName: string) => {
+  applyTab(tabName)
   loadData()
+}
+
+const applyRouteQuery = (query: Record<string, unknown>) => {
+  const delivery = query.deliveryStatus
+  const status = query.orderStatus
+  const tab = delivery === '2' || delivery === '3' ? `delivery-${delivery}`
+    : status === '8,9' || query.tab === 'refund' ? 'refund'
+    : typeof status === 'string' && ['1', '3', '6'].includes(status) ? status : 'all'
+  applyTab(tab)
 }
 
 const loadData = async () => {
@@ -518,7 +513,7 @@ const handleSizeChange = (size: number) => {
 }
 
 const handleCopyOrderNo = (orderNo: string) => {
-  navigator.clipboard.writeText(orderNo).then(() => {
+  return navigator.clipboard.writeText(orderNo).then(() => {
     ElMessage.success('订单号已复制')
   }).catch(() => {
     ElMessage.error('复制失败，请手动复制')
@@ -584,6 +579,13 @@ const handleConfirmReceipt = async (row: OrderPageItem) => {
   }
 }
 
+// 任务链接在同一页面切换时也生效，且不会保留上次配送筛选。
+applyRouteQuery(route.query)
+watch(() => route.query, query => {
+  applyRouteQuery(query)
+  loadData()
+}, {deep: true})
+
 // 初始化
 onMounted(async () => {
   try {
@@ -596,6 +598,15 @@ onMounted(async () => {
 </script>
 
 <style scoped lang="scss">
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  .el-button + .el-button { margin-left: 0; }
+}
+.order-number { max-width: 100%; font-variant-numeric: tabular-nums; }
+.cell-secondary { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
 .table-card {
   .pagination {
     margin-top: 16px;

@@ -11,13 +11,15 @@
 
       <el-form-item label="还款金额" prop="amount">
         <el-input-number
+          v-if="!debtLoading"
           v-model="form.amount"
           :min="0.01"
-          :max="attemptedPayload ? undefined : currentStoreDebt"
-          :disabled="loading || validating || !!attemptedPayload"
+          :max="attemptedPayload ? undefined : Math.max(0.01, currentStoreDebt)"
+          :disabled="loading || validating || debtLoading || !!debtError || currentStoreDebt <= 0 || !!attemptedPayload"
           :precision="2"
           style="width: 100%"
         />
+        <span v-else role="status">正在核对本店欠款…</span>
       </el-form-item>
 
       <el-form-item label="还款方式" prop="paymentMethod">
@@ -40,7 +42,7 @@
       </el-form-item>
 
       <el-form-item label="备注" prop="remark">
-        <el-input v-model="form.remark" :disabled="loading || validating || !!attemptedPayload" type="textarea" rows="2" placeholder="选填" />
+        <el-input v-model="form.remark" :disabled="loading || validating || !!attemptedPayload" type="textarea" :rows="2" placeholder="选填" />
       </el-form-item>
     </el-form>
 

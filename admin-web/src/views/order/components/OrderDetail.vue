@@ -1,5 +1,5 @@
 <template>
-  <el-drawer v-model="drawerVisible" title="订单详情" size="60%" @close="handleClose">
+  <el-drawer v-model="drawerVisible" title="订单详情" size="min(1180px, 96vw)" @close="handleClose">
     <div v-if="loading" style="text-align: center; padding: 40px">
       <el-icon class="is-loading"><Loading /></el-icon>
       <div style="margin-top: 12px">加载中...</div>
@@ -37,7 +37,7 @@
           <el-button size="small" type="primary" @click="handlePrintReceipt">立即打印</el-button>
         </div>
         <el-descriptions :column="2" border>
-          <el-descriptions-item label="订单号">{{ orderDetail.orderNo }}</el-descriptions-item>
+          <el-descriptions-item label="订单号"><span class="detail-order-number">{{ orderDetail.orderNo }}</span></el-descriptions-item>
           <el-descriptions-item label="订单状态">
             <el-tag :type="getStatusTagType(orderDetail.orderStatus)">
               {{ getStatusText(orderDetail.orderStatus) }}
@@ -135,23 +135,19 @@
 
                 <div>
                   <div style="font-weight: 500">{{ row.productName }}</div>
-                  <div v-if="row.packageGroupNo" style="font-size: 12px; color: #909399">来自套餐：{{ row.packageName }}</div>
+                  <div v-if="row.packageGroupNo" class="detail-secondary">来自套餐：{{ row.packageName }}</div>
+                  <div class="detail-secondary">{{ row.specification || row.spec || row.skuSpec || '未填规格' }}</div>
+                  <div v-if="row.manufacturer || row.brand || row.supplierName || row.supplier" class="detail-secondary">{{ row.manufacturer || row.brand || row.supplierName || row.supplier }}</div>
                 </div>
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="specification" label="规格" width="120" align="center">
-            <template #default="{ row }">{{ row.specification || row.spec || row.skuSpec || '-' }}</template>
-          </el-table-column>
-          <el-table-column prop="manufacturer" label="厂家" width="140" align="center">
-            <template #default="{ row }">{{ row.manufacturer || row.brand || row.supplierName || row.supplier || '-' }}</template>
-          </el-table-column>
-          <el-table-column prop="quantity" label="数量" width="120" align="right">
+          <el-table-column prop="quantity" label="数量" width="110" align="right">
             <template #default="{ row }">
               {{ formatStock(row.quantity) }} {{ row.unit || '' }}
             </template>
           </el-table-column>
-          <el-table-column label="已退/可退" width="150" align="right">
+          <el-table-column label="已退/可退" width="120" align="right">
             <template #default="{ row }">
               <div>{{ formatStock(row.refundedQuantity || 0) }} / {{ formatStock(row.refundableQuantity ?? row.quantity) }}</div>
               <div style="color: #909399; font-size: 12px">{{ row.unit || '' }}</div>
@@ -605,6 +601,9 @@ const handlePrintReceipt = async () => {
 </script>
 
 <style scoped lang="scss">
+.detail-secondary { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
+.detail-order-number { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
 .order-detail {
   padding: 0;
 }

@@ -139,3 +139,17 @@ test('当前身份读取失败已清令牌时跳转登录，而不是停留旧�
   const next=[];await guard({path:'/order',matched:[{}],meta:{}},{},v=>next.push(v))
   assert.equal(user.token,'');assert.deepEqual(next,['/login'])
 })
+test('默认落点在可访问菜单中优先工作台/收银/提货，不扩大权限',()=>{
+  const p=load('src/utils/permission.ts').exports
+  const routes=[{path:'/customer',component:{},meta:{permissions:['customer:query']}},{path:'/pos',component:{},meta:{permissions:['pos:order:create']}},{path:'/dashboard',component:{},meta:{permissions:['report:dashboard']}}]
+  assert.equal(p.findFirstAccessiblePath(routes,['customer:query','pos:order:create']),'/pos')
+  assert.equal(p.findFirstAccessiblePath(routes,['customer:query']),'/customer')
+  assert.equal(p.findFirstAccessiblePath(routes,['report:dashboard','pos:order:create']),'/dashboard')
+})
+test('主导航默认只展开当前页面所属分组',()=>{
+  const p=load('src/views/layout/index.vue',{
+    usePermissionStore:()=>({permissions:[],routes:[{}],menuTree:[]}),useUserStore:()=>({userInfo:{name:'员工'}}),useTabsStore:()=>({tabs:[],addTab(){}}),useRoute:()=>({path:'/order'}),useRouter:()=>({}),hasPermission,
+    buildSidebarMenus:()=>[{key:'/sales',children:[{path:'/order'}]},{key:'/stock',children:[{path:'/inventory'}]}]
+  })
+  assert.deepEqual(Array.from(p.defaultOpeneds.value),['/sales'])
+})

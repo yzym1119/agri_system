@@ -1,7 +1,10 @@
 <template>
   <div class="category-tree-item">
     <!-- 当前分类项 -->
-    <div
+    <button
+      type="button"
+      :aria-pressed="selectedCategoryId === category.id"
+      :aria-expanded="category.children?.length ? expandedCategories.includes(category.id) : undefined"
       class="category-item"
       :class="{
         'child': level > 0,
@@ -19,7 +22,7 @@
       </el-icon>
       <span v-else class="expand-placeholder"></span>
       <span class="category-name">{{ category.name }}</span>
-    </div>
+    </button>
     
     <!-- 递归显示子分类 -->
     <div
@@ -81,13 +84,13 @@ const handleClick = () => {
     
     &:hover {
       background: #f3f4f6;
-      color: #2563eb;
+      color: var(--el-color-primary);
     }
     
     &.active {
-      background: #eff6ff;
-      color: #2563eb;
-      border-right: 3px solid #2563eb;
+      background: #edf5f7;
+      color: var(--el-color-primary);
+      border-right: 3px solid var(--el-color-primary);
       font-weight: 500;
     }
     
@@ -99,7 +102,7 @@ const handleClick = () => {
       font-size: 14px;
       transition: transform 0.2s;
       flex-shrink: 0;
-      color: #9ca3af;
+      color: #626f7e;
       width: 14px;
       
       &.rotated {
@@ -135,3 +138,9 @@ const handleClick = () => {
 
 
 
+
+<style scoped>
+.category-item { width: 100%; border: 0; background: transparent; font: inherit; text-align: left; }
+.category-item:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: -2px; }
+.all-category { padding-left: 20px; }
+</style>

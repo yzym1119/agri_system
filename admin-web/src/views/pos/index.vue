@@ -193,11 +193,6 @@ const handleKeydown = (e: KeyboardEvent) => {
     e.preventDefault()
     goodsPanelRef.value?.focusSearch()
   }
-  // Space: 加入购物车（在商品选择区时）
-  if (e.key === ' ' && !typingTarget) {
-    e.preventDefault()
-    // 由 GoodsPanel 内部处理
-  }
   // Ctrl+Enter: 结算
   if (e.key === 'Enter' && e.ctrlKey && !typingTarget) {
     e.preventDefault()
@@ -337,7 +332,7 @@ const handleAddToCart = async (item: CartItem) => {
   if (existingIndex >= 0) {
     // 已存在，增加数量
     const existing = cartItems.value[existingIndex]
-    existing.quantity += item.quantity
+    existing.quantity = (Math.round(existing.quantity * 10000) + Math.round(item.quantity * 10000)) / 10000
     if (existing.itemType === 2) await resolveCartItemUnitPrice(existing, true)
     else existing.subtotal = Math.round(existing.quantity * existing.unitPrice * 100) / 100
   } else {
@@ -580,7 +575,8 @@ const handleRegisterPickup = async (item: { productId: number; name: string }) =
 }
 
 .pos-cart-panel {
-  width: 320px;
+  width: 368px;
+  flex-shrink: 0;
   background: #f8fafc;
   border-left: 1px solid #e5e7eb;
   display: flex;

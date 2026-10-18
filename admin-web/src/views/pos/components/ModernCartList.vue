@@ -68,6 +68,7 @@
           <el-input
             v-model="item.priceChangeReason"
             size="small"
+            aria-label="议价原因"
             placeholder="议价原因（必填，最多255字）"
             :maxlength="255"
             @change="emit('update', [...props.cartItems])"
@@ -86,6 +87,7 @@
               :model-value="item.currentUnit"
               size="small"
               class="unit-select"
+              :aria-label="`${item.name}销售单位`"
               @change="(newUnit: string) => handleUnitChange(item, newUnit)"
             >
               <el-option v-for="unit in item.saleUnits" :key="unit.unitName" :label="unit.unitName" :value="unit.unitName" />
@@ -96,21 +98,31 @@
           <div class="item-quantity-control">
             <el-button
               :icon="Minus"
+              :aria-label="`减少${item.name}数量`"
+              :disabled="item.quantity <= 1"
               size="small"
               circle
-              @click="handleQuantityChange(item, item.quantity - 1)"
+              @click="adjustQuantity(item, -1)"
             />
-            <span class="quantity-value">{{ item.quantity }}</span>
+            <el-input
+              :model-value="quantityDrafts[item.id] ?? String(item.quantity)"
+              :aria-label="`${item.name}数量`" inputmode="decimal" class="quantity-input"
+              @input="(value: string) => quantityDrafts[item.id] = value"
+              @change="(value: string) => handleQuantityChange(item, value)"
+              @blur="handleQuantityChange(item, quantityDrafts[item.id] ?? String(item.quantity))"
+            />
             <el-button
               :icon="Plus"
+              :aria-label="`增加${item.name}数量`"
               size="small"
               circle
-              @click="handleQuantityChange(item, item.quantity + 1)"
+              @click="adjustQuantity(item, 1)"
             />
           </div>
           
           <el-button
             :icon="Delete"
+            :aria-label="`移除${item.name}`"
             type="danger"
             text
             size="small"
@@ -124,7 +136,8 @@
 
 <script setup lang="ts">
 import { usePermissionStore } from '@/store/permission'
-import {computed, ref} from 'vue'
+import {computed, reactive, ref} from 'vue'
+import {ElMessage} from 'element-plus'
 import {Box, Delete, Minus, Plus} from '@element-plus/icons-vue'
 import CustomerBar from './CustomerBar.vue'
 import type {CartItem, POSCustomerInfo} from '@/types/pos'
@@ -176,8 +189,17 @@ const handlePickupChange = (item: CartItem, checked: boolean) => {
 }
 
 // 数量变化
-const handleQuantityChange = (item: CartItem, newQuantity: number) => {
-  if (newQuantity < 1 || (item.itemType === 2 && !Number.isInteger(newQuantity))) return
+const quantityDrafts = reactive<Record<string, string>>({})
+const handleQuantityChange = (item: CartItem, input: number | string) => {
+  const raw = String(input).trim()
+  const newQuantity = Number(raw)
+  if (!/^\d+(\.\d{1,4})?$/.test(raw) || !Number.isFinite(newQuantity) || newQuantity <= 0 || (item.itemType === 2 && !Number.isInteger(newQuantity))) {
+    delete quantityDrafts[item.id]
+    ElMessage.warning(item.itemType === 2 ? '套餐数量须为正整数套' : '数量须大于0，最多4位小数')
+    return
+  }
+  delete quantityDrafts[item.id]
+  if (newQuantity === item.quantity) return
   item.quantity = newQuantity
   item.subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
   if (item.itemType === 2) {
@@ -186,6 +208,8 @@ const handleQuantityChange = (item: CartItem, newQuantity: number) => {
   }
   emit('update', [...props.cartItems])
 }
+
+const adjustQuantity = (item: CartItem, delta: number) => handleQuantityChange(item, (Math.round(item.quantity * 10000) + delta * 10000) / 10000)
 
 // 删除
 const handleDelete = (index: number) => {
@@ -219,7 +243,7 @@ defineExpose({
   padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
 .cart-empty {
@@ -232,7 +256,7 @@ defineExpose({
 .cart-item-card {
   background: #fff;
   border-radius: 12px;
-  padding: 16px;
+  padding: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   transition: all 0.2s;
   position: relative;
@@ -299,7 +323,7 @@ defineExpose({
   }
   
   .item-manufacturer {
-    color: #9ca3af;
+    color: #626f7e;
   }
 }
 
@@ -319,7 +343,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
 .item-price-unit {
@@ -338,7 +362,7 @@ defineExpose({
   
   .unit-text {
     font-size: 12px;
-    color: #9ca3af;
+    color: #626f7e;
   }
 }
 
@@ -355,4 +379,11 @@ defineExpose({
     color: #1f2937;
   }
 }
+</style>
+
+<style scoped>
+.cart-item-footer { flex-wrap: wrap; }
+.quantity-input { width: 76px; }
+.quantity-input :deep(input) { text-align: center; }
+.item-quantity-control { margin-left: auto; gap: 4px; }
 </style>

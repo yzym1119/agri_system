@@ -7,7 +7,8 @@
         <el-input
           ref="searchInputRef"
           v-model="searchKeyword"
-          placeholder="扫描/搜索商品编码（SKU），F1聚焦"
+          aria-label="扫描编码或搜索商品，F1聚焦"
+          placeholder="扫码回车加购，名称搜索后选货 · F1"
           clearable
           size="large"
           @keyup.enter="handleSearch"
@@ -27,8 +28,10 @@
       </div>
 
       <div class="goods-tabs">
-        <div
+        <button
           v-for="tab in tabs"
+          type="button"
+          :aria-pressed="activeTab === tab.value"
           :key="tab.value"
           class="tab-item"
           :class="{ active: activeTab === tab.value }"
@@ -36,7 +39,7 @@
         >
           <span class="tab-label">{{ tab.label }}</span>
           <span class="tab-count">({{ getTabCount(tab.value) }})</span>
-        </div>
+        </button>
       </div>
     </div>
 
@@ -46,6 +49,12 @@
         v-for="item in filteredGoods"
         :key="`${item.type}_${item.id}`"
         class="goods-card"
+        role="button"
+        tabindex="0"
+        :aria-label="`${item.name}，${(item.stock || 0) > 0 ? '加入购物车' : '缺货'}`"
+        :aria-disabled="(item.stock || 0) <= 0"
+        @keydown.enter.prevent="handleCardClick(item)"
+        @keydown.space.prevent="handleCardClick(item)"
         :class="{
           'out-of-stock': (item.type === 'product' || item.type === 'package') && (item.stock || 0) <= 0,
           'is-package': item.type === 'package'
@@ -62,8 +71,8 @@
             @error="handleImageError"
           />
           <div v-else class="card-image-placeholder">
-            <el-icon v-if="item.type === 'package'" :size="48"><Box /></el-icon>
-            <el-icon v-else :size="48"><Picture /></el-icon>
+            <el-icon v-if="item.type === 'package'" :size="30"><Box /></el-icon>
+            <el-icon v-else :size="30"><Picture /></el-icon>
           </div>
           <div v-if="item.type === 'package'" class="package-badge">套餐</div>
           <!-- 缺货蒙层 -->
@@ -441,6 +450,19 @@ const handleSearch = () => {
     return
   }
 
+  // 扫码按完整编码识别，不受当前分类/页签和名称模糊结果影响。
+  const exact = allGoods.value.filter(item => String(item.type === 'product' ? item.product?.code : item.package?.code).toLowerCase() === code.toLowerCase())
+  if (exact.length === 1) {
+    const item = exact[0]
+    handleCardClick(item)
+    scanResult.value = { type: 'SKU', typeText: '商品编码（SKU）', text: (item.stock || 0) > 0 ? `已发送加购：${item.name}，成交价以后台报价为准` : `${item.name} 缺货，未加入购物车` }
+    searchKeyword.value = ''
+    return
+  }
+  if (exact.length > 1) {
+    ElMessage.warning('存在重复编码，请核对商品档案后选货')
+    return
+  }
   const matched = filteredGoods.value
   if (matched.length === 1) {
     scanResult.value = {
@@ -628,6 +650,9 @@ defineExpose({
     gap: 8px;
     
     .tab-item {
+      border: 0;
+      background: transparent;
+      font-family: inherit;
       padding: 8px 16px;
       border-radius: 8px;
       cursor: pointer;
@@ -637,12 +662,12 @@ defineExpose({
       
       &:hover {
         background: #f3f4f6;
-        color: #2563eb;
+        color: var(--el-color-primary);
       }
       
       &.active {
-        background: #eff6ff;
-        color: #2563eb;
+        background: #edf5f7;
+        color: var(--el-color-primary);
         font-weight: 500;
       }
       
@@ -659,8 +684,8 @@ defineExpose({
   overflow-y: auto;
   padding: 16px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
   align-content: start;
 }
 
@@ -672,11 +697,12 @@ defineExpose({
   transition: all 0.2s;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   display: flex;
-  flex-direction: column;
-  min-height: 320px; // 增加最小高度，确保有足够空间显示价格
+  flex-direction: row;
+  border: 1px solid #e5e7eb;
+  min-height: 160px; // 增加最小高度，确保有足够空间显示价格
   
   &:hover {
-    transform: translateY(-2px);
+    border-color: var(--el-color-primary);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   }
   
@@ -690,14 +716,18 @@ defineExpose({
   }
   
   &.is-package {
-    border: 2px solid #f59e0b;
+    border: 1px solid #d5ac5f;
   }
 }
 
 .card-image-wrapper {
   position: relative;
-  width: 100%;
-  padding-top: 75%; // 4:3 比例
+  width: 76px;
+  flex-shrink: 0;
+  margin: 12px 0 12px 12px;
+  border-radius: 6px;
+  align-self: flex-start;
+  height: 88px;
   background: #f3f4f6;
   overflow: hidden;
   
@@ -719,7 +749,7 @@ defineExpose({
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #9ca3af;
+    color: #626f7e;
   }
   
   .package-badge {
@@ -790,7 +820,7 @@ defineExpose({
     }
     
     .card-label {
-      color: #9ca3af;
+      color: #626f7e;
       flex-shrink: 0;
     }
     
@@ -823,7 +853,7 @@ defineExpose({
     }
     
     .package-more {
-      color: #9ca3af;
+      color: #626f7e;
       margin-top: 4px;
     }
   }
@@ -840,12 +870,12 @@ defineExpose({
     .card-price {
       font-size: 16px;
       font-weight: 600;
-      color: #2563eb;
+      color: var(--el-color-primary);
       white-space: nowrap; // 防止价格换行
       
       &.no-price {
         font-size: 13px;
-        color: #9ca3af;
+        color: #626f7e;
         font-weight: 400;
       }
     }
@@ -859,4 +889,9 @@ defineExpose({
   justify-content: center;
   min-height: 300px;
 }
+</style>
+
+<style scoped>
+.goods-card:focus-visible, .tab-item:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 2px; }
+.card-name { overflow-wrap: anywhere; }
 </style>

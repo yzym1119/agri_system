@@ -14,6 +14,7 @@ function loadPage(relativePath, exports, overrides = {}) {
   const code = source.statements.filter(s => !ts.isImportDeclaration(s)).map(s => s.getFullText(source)).join('\n')
   const messages = []
   const context = {
+    useRoute: () => ({query: {}}),
     ref: vue.ref, reactive: vue.reactive, computed: vue.computed, watch: vue.watch,
     onMounted() {}, onUnmounted() {}, nextTick: vue.nextTick,
     defineProps: () => ({}), defineEmits: () => () => {}, defineExpose() {},

@@ -1,11 +1,13 @@
 <template>
   <div class="customer-bar">
+    <div class="customer-field-label">客户 <span v-if="!selectedCustomer">未选择时按散客结算 · F2搜索</span></div>
     <el-autocomplete
       ref="autocompleteRef"
       v-if="!selectedCustomer"
       v-model="searchText"
       :fetch-suggestions="searchCustomers"
-      placeholder="搜索客户（手机号/姓名）"
+      aria-label="按手机号或姓名搜索客户"
+      placeholder="手机号 / 姓名"
       clearable
       @select="handleSelect"
       @clear="handleClear"
@@ -47,9 +49,9 @@
           </span>
         </div>
       </div>
-      <div class="customer-action" @click="handleClear">
+      <button type="button" class="customer-action" aria-label="移除已选客户" @click="handleClear">
         <el-icon :size="18"><Close /></el-icon>
-      </div>
+      </button>
     </div>
   </div>
 </template>
@@ -291,4 +293,10 @@ defineExpose({
     }
   }
 }
+</style>
+
+<style scoped>
+.customer-field-label { margin-bottom: 8px; font-weight: 600; font-size: 14px; color: #1f2937; }
+.customer-field-label span { margin-left: 6px; font-weight: 400; font-size: 12px; color: #526171; }
+.customer-action { background: transparent; border: 0; min-width: 36px; min-height: 36px; }
 </style>

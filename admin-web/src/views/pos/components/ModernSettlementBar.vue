@@ -11,6 +11,7 @@
           <span class="summary-label">优惠</span>
           <el-input-number
             v-model="discountAmount"
+            aria-label="整单优惠金额"
             :disabled="!canChangePrice"
             :precision="2"
             :min="0"
@@ -85,6 +86,8 @@
       <el-button
         type="primary"
         class="checkout-btn"
+        :disabled="checkoutDisabled"
+        title="Ctrl+Enter 确认收款"
         @click="handleCheckout"
       >
         确认收款
@@ -229,7 +232,9 @@ const handleClear = () => {
 }
 
 // 结算
+const checkoutDisabled = computed(() => !props.cartItems.length || props.cartItems.some(item => item.pricePending || item.priceFallback || !item.quoteId))
 const handleCheckout = () => {
+  if (checkoutDisabled.value) return
   const checkoutData = {
     paymentType: 1,
     discountAmount: discountAmount.value,
@@ -315,7 +320,7 @@ defineExpose({
   display: flex;
   align-items: center;
   
-  gap: 90px;
+  justify-content: space-between;
   padding: 1px 0;
   border-bottom: 1px solid #e5e7eb;
   
@@ -355,15 +360,17 @@ defineExpose({
   }
   
   .checkout-btn {
-    padding: 12px 55px;
+    padding: 12px 20px;
+    flex: 1;
+    min-height: 40px;
     font-size: 16px;
     font-weight: 600;
-    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    background: var(--el-color-primary);
     border: none;
     flex-shrink: 0; // 防止按钮被压缩
     
     &:hover {
-      background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+      background: var(--el-color-primary-dark-2);
     }
   }
 }
@@ -438,3 +445,7 @@ defineExpose({
 }
 </style>
 
+
+<style scoped>
+.checkout-btn.is-disabled { opacity: .55; }
+</style>

@@ -36,7 +36,7 @@
           <template #default="{ row }">
             <div>
               <div style="font-weight: 500">{{ row.name }}</div>
-              <div style="font-size: 12px; color: #909399">{{ row.phone || '-' }}</div>
+              <div style="font-size: 12px; color: #626f7e">{{ row.phone || '-' }}</div>
             </div>
           </template>
         </el-table-column>
@@ -48,25 +48,11 @@
             <el-tag v-else>普通</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="三钱包资产" min-width="200">
+        <el-table-column label="本金余额" width="140" align="right">
           <template #default="{ row }">
-            <div style="line-height: 1.8">
-              <div>
-                <span style="color: #606266">本金：</span>
-                <span style="font-weight: 500">¥{{ (row.balance || 0).toFixed(2) }}</span>
-              </div>
-              <div>
-                <span style="color: #606266">专用金：</span>
-                <span style="font-weight: 500">¥{{ (row.specialFundBalance || 0).toFixed(2) }}</span>
-                <span v-if="row.frozenSpecialFund && row.frozenSpecialFund > 0" style="color: #f56c6c; font-size: 12px; margin-left: 4px">
-                  (冻结: ¥{{ row.frozenSpecialFund.toFixed(2) }})
-                </span>
-              </div>
-              <div>
-                <span style="color: #606266">积分：</span>
-                <span style="font-weight: 500">{{ row.points || 0 }}</span>
-              </div>
-            </div>
+            <el-tooltip :content="`专用金 ¥${(row.specialFundBalance || 0).toFixed(2)} · 冻结专用金 ¥${(row.frozenSpecialFund || 0).toFixed(2)} · 积分 ${row.points || 0}`">
+              <span tabindex="0" :aria-label="`本金余额${row.balance || 0}元，专用金${row.specialFundBalance || 0}元，冻结专用金${row.frozenSpecialFund || 0}元，积分${row.points || 0}`">¥{{ (row.balance || 0).toFixed(2) }}</span>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="VIP有效期" width="120" align="center">
@@ -75,17 +61,22 @@
               {{ formatDate(row.vipEndDate) }}
               <span v-if="isVipExpiringSoon(row.vipEndDate)" style="font-size: 12px; display: block; margin-top: 2px">即将过期</span>
             </span>
-            <span v-else style="color: #909399">-</span>
+            <span v-else style="color: #626f7e">-</span>
           </template>
         </el-table-column>
         <el-table-column prop="bindStaffName" label="归属员工" width="120" />
-        <el-table-column label="操作" width="320" fixed="right">
+        <el-table-column label="操作" width="190" fixed="right">
           <template #default="{ row }">
-            <el-button v-permission="'customer:recharge'" link type="success" @click="handleRecharge(row)">充值</el-button>
-            <el-button v-permission="'customer:coupon:grant'" link type="warning" @click="handleGrantCoupon(row)">发券</el-button>
-            <el-button link type="primary" @click="handleViewDetail(row)">详情</el-button>
-            <el-button v-permission="'customer:update'" link type="primary" @click="handleEdit(row)">编辑</el-button>
-            <el-button link type="danger" v-permission="'customer:delete'" @click="handleDelete(row)">删除</el-button>
+            <el-button link type="primary" @click="handleViewDetail(row)">账款 / 订单</el-button>
+            <el-dropdown v-if="hasAnyOwnedPermission(['customer:update', 'customer:delete', 'customer:recharge', 'customer:coupon:grant'])" trigger="click">
+              <el-button link type="primary" :aria-label="`${row.name}更多操作`">更多</el-button>
+              <template #dropdown><el-dropdown-menu>
+                <el-dropdown-item v-permission="'customer:update'" @click="handleEdit(row)">编辑客户</el-dropdown-item>
+                <el-dropdown-item v-permission="'customer:recharge'" @click="handleRecharge(row)">账户充值</el-dropdown-item>
+                <el-dropdown-item v-permission="'customer:coupon:grant'" @click="handleGrantCoupon(row)">发放优惠券</el-dropdown-item>
+                <el-dropdown-item v-permission="'customer:delete'" divided @click="handleDelete(row)">删除客户</el-dropdown-item>
+              </el-dropdown-menu></template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -197,52 +188,38 @@
     />
 
     <!-- 详情抽屉：360° 客户全景 -->
-    <el-drawer v-model="detailVisible" :title="`客户详情${customerDetail?.code ? ' - ' + customerDetail.code : ''}`" size="60%">
+    <el-drawer v-model="detailVisible" :title="customerDetail?.name ? `${customerDetail.name} · 客户账款与订单` : '加载客户详情'" size="min(1100px, 94vw)">
       <div v-if="customerDetail">
         <!-- 核心指标卡片 -->
         <el-row :gutter="12" class="metrics-row">
-          <el-col :span="6">
-            <el-card shadow="hover" class="metric-card metric-card-blue">
-              <div class="metric-header">
-                <el-icon class="metric-icon"><Wallet /></el-icon>
-                <div class="metric-title">钱包余额</div>
-              </div>
-              <div class="metric-value">
-                {{ formatAmount((customerDetail.balance || 0) + (customerDetail.specialFundBalance || 0)) }}
-              </div>
-              <div class="metric-sub">
-                专用金：{{ formatAmount(customerDetail.specialFundBalance || 0) }}
-              </div>
-            </el-card>
-          </el-col>
           <el-col :span="6">
             <el-card shadow="hover" class="metric-card metric-card-red">
               <div class="metric-header">
                 <el-icon class="metric-icon"><Warning /></el-icon>
                 <div class="metric-title">
-                  当前欠款
-                  
+                  客户欠款
+
                 </div>
-               
+
               </div>
-              <div class="metric-value" :style="{ color: (customerDetail.totalDebt || 0) > 0 ? '#f56c6c' : '#303133' }">
+              <div class="metric-value" :style="{ color: (customerDetail.totalDebt || 0) > 0 ? '#b42318' : '#303133' }">
                 {{ formatAmount(customerDetail.totalDebt || 0) }}
               </div>
               <div class="metric-sub">
                 赊销额度：{{ formatAmount(customerDetail.creditLimit || 0) }}
                 <!-- 使用 flex 容器包裹两个按钮，align-items: center 实现垂直居中，gap 控制间距 -->
 <div style="display: flex; align-items: center; gap: 8px; display: inline-flex;">
-  
+
   <!-- 按钮 1：调额 -->
-  <el-button 
-    link 
-    type="primary" 
-    size="small" 
+  <el-button
+    link
+    type="primary"
+    size="small"
     v-permission="'credit:limit:update'"
     @click="handleEditLimit"
     style="padding: 0"
   >
-    [调额]
+    调整额度
   </el-button>
 
   <!-- 按钮 2：还款 (直接把 v-if 加在 button 上，去掉外层 div) -->
@@ -255,12 +232,26 @@
     style="padding: 0"
     @click="handleRepayClick"
   >
-    [还款]
+    办理还款
   </el-button>
-  
+
 </div>
               </div>
-              
+
+            </el-card>
+          </el-col>
+          <el-col :span="6">
+            <el-card shadow="hover" class="metric-card metric-card-blue">
+              <div class="metric-header">
+                <el-icon class="metric-icon"><Wallet /></el-icon>
+                <div class="metric-title">钱包余额</div>
+              </div>
+              <div class="metric-value">
+                {{ formatAmount((customerDetail.balance || 0) + (customerDetail.specialFundBalance || 0)) }}
+              </div>
+              <div class="metric-sub">
+                专用金：{{ formatAmount(customerDetail.specialFundBalance || 0) }}
+              </div>
             </el-card>
           </el-col>
           <el-col :span="6">
@@ -288,141 +279,8 @@
           </el-col>
         </el-row>
 
-        <!-- 详细档案信息 -->
-        <el-descriptions :column="2" border style="margin-top: 20px">
-          <el-descriptions-item label="客户姓名">{{ customerDetail.name || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="手机号">{{ customerDetail.phone || '-' }}</el-descriptions-item>
-
-          <el-descriptions-item label="客户类型">
-            <el-tag v-if="customerDetail.type === 2" type="warning">VIP{{ customerDetail.vipLevel || 1 }}</el-tag>
-            <el-tag v-else>普通</el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="VIP到期日">
-            <span :style="{ color: isVipExpiringSoon(customerDetail.vipEndDate) ? '#f56c6c' : '#303133' }">
-              {{ customerDetail.vipEndDate ? formatDate(customerDetail.vipEndDate) : '-' }}
-            </span>
-          </el-descriptions-item>
-
-          <el-descriptions-item label="归属员工">{{ customerDetail.bindStaffName || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="联系地址">{{ customerDetail.address || '-' }}</el-descriptions-item>
-
-          <el-descriptions-item label="身份证号">{{ customerDetail.idCard || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="最近消费时间">{{ customerDetail.lastOrderTime || '-' }}</el-descriptions-item>
-
-          <el-descriptions-item label="备注" :span="2">{{ customerDetail.remark || '-' }}</el-descriptions-item>
-        </el-descriptions>
-
         <!-- 业务记录 Tabs -->
         <el-tabs v-model="detailActiveTab" class="detail-tabs">
-          <el-tab-pane label="消费订单" name="orders">
-      
-            <el-table :data="ordersList" v-loading="ordersLoading" border>
-              <el-table-column type="index" label="#" width="60" />
-              <el-table-column label="订单号" min-width="160">
-                <template #default="{ row }">
-                  <el-link type="primary" underline @click.prevent="openOrder(row.id)">
-                    {{ row.orderNo }}
-                  </el-link>
-                </template>
-              </el-table-column>
-              <el-table-column label="类型/门店" width="180">
-                <template #default="{ row }">
-                  <span style="color:#909399">[{{ row.orderType === 1 ? 'POS' : row.orderType === 2 ? '自提' : '配送' }}]</span>
-                  <span style="margin-left:6px">{{ row.storeName || row.storeId || '-' }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="金额" width="170" align="right">
-                <template #default="{ row }">
-                  <div>应收：{{ formatAmount(getOrderNetReceivable(row)) }}</div>
-                  <div style="color:#67c23a">开单已收：{{ formatAmount(getOrderReceivedAmount(row)) }}</div>
-                  <div v-if="getOrderCreditAmount(row) > 0" style="color:#f56c6c">原赊销：{{ formatAmount(getOrderCreditAmount(row)) }}</div>
-                  <div v-if="getOrderCreditAmount(row) > 0">累计实还：{{ row.repaidAmount == null ? '待核对' : formatAmount(row.repaidAmount) }}</div>
-                  <div v-if="getOrderCreditAmount(row) > 0">当前欠款：{{ row.remainingCreditAmount == null ? '待核对' : formatAmount(row.remainingCreditAmount) }}</div>
-                </template>
-              </el-table-column>
-              <el-table-column prop="paymentMethod" label="支付方式" width="140">
-                <template #default="{ row }">
-                  <span v-if="row.paymentMethod || (row.payments && row.payments.length)">
-                    {{ getOrderDisplayPaymentMethod(row) }}
-                  </span>
-                  <span v-else style="color:#909399">-</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="orderStatus" label="状态" width="120">
-                <template #default="{ row }">
-                  <el-tag :type="ORDER_STATUS_TAG_MAP[row.orderStatus] || 'info'" size="small">
-                    {{ ORDER_STATUS_MAP[row.orderStatus] || row.orderStatus || '-' }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="createdAt" label="时间" width="170" />
-            </el-table>
-            <div v-if="ordersTotal > 0" class="pagination" style="margin-top:12px">
-              <el-pagination
-                v-model:current-page="ordersQuery.pageNum"
-                v-model:page-size="ordersQuery.pageSize"
-                :page-sizes="[10,20,50]"
-                layout="total, sizes, prev, pager, next, jumper"
-                :total="ordersTotal"
-                @current-change="handleOrdersPageChange"
-                @size-change="handleOrdersSizeChange"
-              />
-            </div>
-          </el-tab-pane>
-
-          <el-tab-pane label="资金流水" name="transactions">
-            <el-table :data="transactionList" v-loading="transactionLoading" border>
-              <el-table-column type="index" label="#" width="60" />
-              <el-table-column prop="createdAt" label="时间" width="170" />
-              <el-table-column prop="walletType" label="钱包类型" width="100" align="center">
-                <template #default="{ row }">
-                  <el-tag size="small">{{ getWalletTypeName(row.walletType) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="transactionType" label="交易类型" width="100" align="center">
-                <template #default="{ row }">
-                  {{ getTransactionTypeName(row.transactionType) }}
-                </template>
-              </el-table-column>
-              <el-table-column prop="paymentMethod" label="支付方式" width="100" align="center">
-                <template #default="{ row }">
-                  <span v-if="row.paymentMethod">
-                    {{ getPaymentMethodName(row.paymentMethod) }}
-                  </span>
-                  <span v-else style="color: #909399">-</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="amount" label="变动金额" width="120" align="right">
-                <template #default="{ row }">
-                  <span :style="{ color: row.amount >= 0 ? '#67c23a' : '#f56c6c' }">
-                    {{ row.amount >= 0 ? '+' : '' }}{{ row.amount.toFixed(2) }}
-                  </span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="balanceAfter" label="余额" width="120" align="right">
-                <template #default="{ row }">{{ row.balanceAfter.toFixed(2) }}</template>
-              </el-table-column>
-              <el-table-column prop="createdByName" label="操作人" width="100" align="center">
-                <template #default="{ row }">
-                  <span v-if="row.createdByName">{{ row.createdByName }}</span>
-                  <span v-else style="color: #909399">系统</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="remark" label="备注" show-overflow-tooltip />
-            </el-table>
-            <div class="pagination" style="margin-top: 12px">
-              <el-pagination
-                v-model:current-page="transactionQuery.pageNum"
-                v-model:page-size="transactionQuery.pageSize"
-                :page-sizes="[10, 20, 50]"
-                layout="total, sizes, prev, pager, next"
-                :total="transactionTotal"
-                @current-change="handleTransactionPageChange"
-                @size-change="handleTransactionSizeChange"
-              />
-            </div>
-          </el-tab-pane>
-
           <el-tab-pane v-if="canViewCreditTab" label="赊销/还款" name="credit">
             <div class="credit-toolbar">
               <div class="credit-summary">
@@ -547,6 +405,116 @@
               </el-table-column>
             </el-table>
           </el-tab-pane>
+          <el-tab-pane label="消费订单" name="orders">
+
+            <el-table :data="ordersList" v-loading="ordersLoading" border>
+              <el-table-column type="index" label="#" width="60" />
+              <el-table-column label="订单号" min-width="160">
+                <template #default="{ row }">
+                  <el-link type="primary" underline :title="row.orderNo" class="customer-order-link" @click.prevent="openOrder(row.id)">
+                    {{ row.orderNo }}
+                  </el-link>
+                </template>
+              </el-table-column>
+              <el-table-column label="类型/门店" width="180">
+                <template #default="{ row }">
+                  <span style="color:#909399">[{{ row.orderType === 1 ? 'POS' : row.orderType === 2 ? '自提' : '配送' }}]</span>
+                  <span style="margin-left:6px">{{ row.storeName || row.storeId || '-' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="金额" width="170" align="right">
+                <template #default="{ row }">
+                  <div>应收：{{ formatAmount(getOrderNetReceivable(row)) }}</div>
+                  <div style="color:#67c23a">开单已收：{{ formatAmount(getOrderReceivedAmount(row)) }}</div>
+                  <div v-if="getOrderCreditAmount(row) > 0" style="color:#f56c6c">原赊销：{{ formatAmount(getOrderCreditAmount(row)) }}</div>
+                  <div v-if="getOrderCreditAmount(row) > 0">累计实还：{{ row.repaidAmount == null ? '待核对' : formatAmount(row.repaidAmount) }}</div>
+                  <div v-if="getOrderCreditAmount(row) > 0">当前欠款：{{ row.remainingCreditAmount == null ? '待核对' : formatAmount(row.remainingCreditAmount) }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="paymentMethod" label="支付方式" width="140">
+                <template #default="{ row }">
+                  <span v-if="row.paymentMethod || (row.payments && row.payments.length)">
+                    {{ getOrderDisplayPaymentMethod(row) }}
+                  </span>
+                  <span v-else style="color:#909399">-</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="orderStatus" label="状态" width="120">
+                <template #default="{ row }">
+                  <el-tag :type="ORDER_STATUS_TAG_MAP[row.orderStatus] || 'info'" size="small">
+                    {{ ORDER_STATUS_MAP[row.orderStatus] || row.orderStatus || '-' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="createdAt" label="时间" width="170" />
+            </el-table>
+            <div v-if="ordersTotal > 0" class="pagination" style="margin-top:12px">
+              <el-pagination
+                v-model:current-page="ordersQuery.pageNum"
+                v-model:page-size="ordersQuery.pageSize"
+                :page-sizes="[10,20,50]"
+                layout="total, sizes, prev, pager, next, jumper"
+                :total="ordersTotal"
+                @current-change="handleOrdersPageChange"
+                @size-change="handleOrdersSizeChange"
+              />
+            </div>
+          </el-tab-pane>
+
+          <el-tab-pane label="资金流水" name="transactions">
+            <el-table :data="transactionList" v-loading="transactionLoading" border>
+              <el-table-column type="index" label="#" width="60" />
+              <el-table-column prop="createdAt" label="时间" width="170" />
+              <el-table-column prop="walletType" label="钱包类型" width="100" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small">{{ getWalletTypeName(row.walletType) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="transactionType" label="交易类型" width="100" align="center">
+                <template #default="{ row }">
+                  {{ getTransactionTypeName(row.transactionType) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="paymentMethod" label="支付方式" width="100" align="center">
+                <template #default="{ row }">
+                  <span v-if="row.paymentMethod">
+                    {{ getPaymentMethodName(row.paymentMethod) }}
+                  </span>
+                  <span v-else style="color: #626f7e">-</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="amount" label="变动金额" width="120" align="right">
+                <template #default="{ row }">
+                  <span :style="{ color: row.amount >= 0 ? '#67c23a' : '#f56c6c' }">
+                    {{ row.amount >= 0 ? '+' : '' }}{{ row.amount.toFixed(2) }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="balanceAfter" label="余额" width="120" align="right">
+                <template #default="{ row }">{{ row.balanceAfter.toFixed(2) }}</template>
+              </el-table-column>
+              <el-table-column prop="createdByName" label="操作人" width="100" align="center">
+                <template #default="{ row }">
+                  <span v-if="row.createdByName">{{ row.createdByName }}</span>
+                  <span v-else style="color: #626f7e">系统</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="remark" label="备注" show-overflow-tooltip />
+            </el-table>
+            <div class="pagination" style="margin-top: 12px">
+              <el-pagination
+                v-model:current-page="transactionQuery.pageNum"
+                v-model:page-size="transactionQuery.pageSize"
+                :page-sizes="[10, 20, 50]"
+                layout="total, sizes, prev, pager, next"
+                :total="transactionTotal"
+                @current-change="handleTransactionPageChange"
+                @size-change="handleTransactionSizeChange"
+              />
+            </div>
+          </el-tab-pane>
+
+
 
           <el-tab-pane label="持有优惠券" name="coupons">
             <el-table :data="couponList" v-loading="couponLoading" border>
@@ -558,13 +526,13 @@
               <el-table-column prop="minOrderAmount" label="门槛" width="120" align="right">
                 <template #default="{ row }">
                   <span v-if="row.minOrderAmount && row.minOrderAmount > 0">{{ formatAmount(row.minOrderAmount) }}</span>
-                  <span v-else style="color: #909399">无门槛</span>
+                  <span v-else style="color: #626f7e">无门槛</span>
                 </template>
               </el-table-column>
               <el-table-column prop="limitCategoryName" label="限制分类" width="120" align="center">
                 <template #default="{ row }">
                   <span v-if="row.limitCategoryName">{{ row.limitCategoryName }}</span>
-                  <span v-else style="color: #909399">不限</span>
+                  <span v-else style="color: #626f7e">不限</span>
                 </template>
               </el-table-column>
               <el-table-column prop="endTime" label="有效期" width="170">
@@ -609,7 +577,7 @@
               <el-table-column prop="createdByName" label="操作人" width="100" align="center">
                 <template #default="{ row }">
                   <span v-if="row.createdByName">{{ row.createdByName }}</span>
-                  <span v-else style="color: #909399">系统</span>
+                  <span v-else style="color: #626f7e">系统</span>
                 </template>
               </el-table-column>
             </el-table>
@@ -626,6 +594,32 @@
             </div>
           </el-tab-pane>
         </el-tabs>
+        <el-collapse class="customer-profile"><el-collapse-item title="客户档案与联系方式" name="profile">
+
+        <el-descriptions :column="2" border style="margin-top: 20px">
+          <el-descriptions-item label="客户姓名">{{ customerDetail.name || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="手机号">{{ customerDetail.phone || '-' }}</el-descriptions-item>
+
+          <el-descriptions-item label="客户类型">
+            <el-tag v-if="customerDetail.type === 2" type="warning">VIP{{ customerDetail.vipLevel || 1 }}</el-tag>
+            <el-tag v-else>普通</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="VIP到期日">
+            <span :style="{ color: isVipExpiringSoon(customerDetail.vipEndDate) ? '#b42318' : '#303133' }">
+              {{ customerDetail.vipEndDate ? formatDate(customerDetail.vipEndDate) : '-' }}
+            </span>
+          </el-descriptions-item>
+
+          <el-descriptions-item label="归属员工">{{ customerDetail.bindStaffName || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="联系地址">{{ customerDetail.address || '-' }}</el-descriptions-item>
+
+          <el-descriptions-item label="身份证号">{{ customerDetail.idCard || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="最近消费时间">{{ customerDetail.lastOrderTime || '-' }}</el-descriptions-item>
+
+          <el-descriptions-item label="备注" :span="2">{{ customerDetail.remark || '-' }}</el-descriptions-item>
+        </el-descriptions>
+
+        </el-collapse-item></el-collapse>
       </div>
     </el-drawer>
 
@@ -876,7 +870,7 @@ const grantCouponFormRules: FormRules = {
 const detailVisible = ref(false)
 let detailRequestVersion = 0
 const customerDetail = ref<CustomerDetailVO>()
-const detailActiveTab = ref('transactions')
+const detailActiveTab = ref('orders')
 const transactionList = ref<WalletTransactionVO[]>([])
 const transactionLoading = ref(false)
 const transactionTotal = ref(0)
@@ -1135,7 +1129,7 @@ const handleRecharge = (row: CustomerListVO) => {
 const handleRechargeSubmit = () => {
   rechargeFormRef.value?.validate(async valid => {
     if (!valid) return
-    
+
     // 二次确认
     try {
       await ElMessageBox.confirm(
@@ -1150,7 +1144,7 @@ const handleRechargeSubmit = () => {
     } catch {
       return // 用户取消
     }
-    
+
     rechargeLoading.value = true
     try {
       const result = await rechargeCustomer({
@@ -1193,7 +1187,7 @@ const handleTemplateChange = () => {
 const handleGrantCouponSubmit = () => {
   grantCouponFormRef.value?.validate(async valid => {
     if (!valid) return
-    
+
     // 二次确认
     try {
       await ElMessageBox.confirm(
@@ -1208,7 +1202,7 @@ const handleGrantCouponSubmit = () => {
     } catch {
       return // 用户取消
     }
-    
+
     grantCouponLoading.value = true
     try {
       await grantCoupon({
@@ -1342,7 +1336,7 @@ const handleEdit = async (row: CustomerListVO) => {
 const handleCustomerSubmit = () => {
   customerFormRef.value?.validate(async valid => {
     if (!valid) return
-    
+
     customerSubmitLoading.value = true
     try {
       if (customerFormData.id) {
@@ -1420,6 +1414,7 @@ const handleViewDetail = async (row: CustomerListVO) => {
   const version = ++detailRequestVersion
   detailVisible.value = true
   customerDetail.value = undefined
+  detailActiveTab.value = 'orders'
   transactionQuery.customerId = customerId
   transactionQuery.pageNum = 1
   transactionList.value = []
@@ -1470,7 +1465,7 @@ const handleDelete = async (row: CustomerListVO) => {
         type: 'warning'
       }
     )
-    
+
     await deleteCustomer(row.id)
     ElMessage.success('删除成功')
     loadTable()
@@ -1492,7 +1487,7 @@ const handleEditLimit = () => {
 const handleLimitSubmit = () => {
   limitFormRef.value?.validate(async valid => {
     if (!valid || !customerDetail.value) return
-    
+
     limitLoading.value = true
     try {
       await updateCreditLimit(customerDetail.value.id, limitFormData.creditLimit)
@@ -1865,19 +1860,19 @@ loadTable()
 }
 
 .metric-card-blue {
-  background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+  background: #fff;
 }
 
 .metric-card-red {
-  background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+  background: #fff;
 }
 
 .metric-card-green {
-  background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+  background: #fff;
 }
 
 .metric-card-orange {
-  background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+  background: #fff;
 }
 
 .metric-header {
@@ -1914,7 +1909,7 @@ loadTable()
 
 .metric-sub {
   font-size: 12px;
-  color: #909399;
+  color: #626f7e;
   line-height: 1.5;
   text-align: center;
   width: 100%;
@@ -1969,4 +1964,16 @@ loadTable()
   box-sizing: border-box;
   width: 100%;
 }
+</style>
+
+<style scoped>
+.metric-card { cursor: default; min-height: 100px; padding: 0; }
+.metric-card :deep(.el-card__body) { width: 100%; box-sizing: border-box; }
+.metric-card:hover { transform: none; }
+.customer-profile { margin-top: 20px; }
+</style>
+
+<style scoped>
+.customer-order-link { max-width: 160px; vertical-align: middle; }
+.customer-order-link :deep(.el-link__inner) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

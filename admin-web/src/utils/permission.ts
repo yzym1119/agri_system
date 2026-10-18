@@ -104,7 +104,15 @@ export function findFirstAccessiblePath(
   menuTree: MenuTreeNode[] = []
 ): string {
   const sidebarMenus = buildSidebarMenus(routes, owned, menuTree)
-  const firstMenuPath = findFirstSidebarPath(sidebarMenus)
+  // 从真实可访问菜单选择高频入口，不依据旧角色名称猜权限。
+  const paths = new Set<string>()
+  const collect = (items: SidebarMenuItem[]) => items.forEach(item => {
+    if (item.path) paths.add(item.path)
+    if (item.children) collect(item.children)
+  })
+  collect(sidebarMenus)
+  const preferredPath = ['/dashboard', '/pos', '/pickup', '/order', '/inventory'].find(path => paths.has(path))
+  const firstMenuPath = preferredPath || findFirstSidebarPath(sidebarMenus)
   if (firstMenuPath) {
     return firstMenuPath
   }

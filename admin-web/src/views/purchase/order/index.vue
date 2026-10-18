@@ -45,10 +45,14 @@
     <!-- 列表 -->
     <el-card class="table-card" shadow="never">
       <el-table :data="tableData" v-loading="loading" border style="width: 100%">
-        <el-table-column type="index" label="#" width="60" />
-        <el-table-column prop="orderNo" label="采购单号" width="180" />
-        <el-table-column prop="storeName" label="门店" width="140" />
-        <el-table-column prop="supplierName" label="供应商" width="160" show-overflow-tooltip />
+        <el-table-column prop="orderNo" label="采购单 / 时间" width="190">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="handleView(row)">{{ row.orderNo }}</el-button>
+            <div class="cell-secondary">{{ row.createdAt || '时间待核对' }}</div>
+            <div class="cell-secondary">{{ row.storeName }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="supplierName" label="供应商" min-width="150" show-overflow-tooltip />
         <el-table-column prop="totalAmount" label="总金额" width="120" align="right">
           <template #default="{ row }">¥{{ (row.totalAmount || 0).toFixed(2) }}</template>
         </el-table-column>
@@ -58,34 +62,29 @@
           </template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" show-overflow-tooltip />
-        <el-table-column prop="createdAt" label="创建时间" width="170" />
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="handleView(row)">详情</el-button>
-            <el-button
-              v-if="row.status === 1"
-              v-permission="'purchase:submit'"
-              link
-              type="success"
-              :loading="actionLoading[row.id]"
-              @click="handleSubmit(row)"
-            >提交</el-button>
-            <el-button
-              v-if="row.status === 2"
-              v-permission="'purchase:inbound'"
-              link
-              type="warning"
-              :loading="actionLoading[row.id]"
-              @click="handleOpenInbound(row)"
-            >入库</el-button>
-            <el-button
-              v-if="row.status === 1 || row.status === 2"
-              v-permission="'purchase:cancel'"
-              link
-              type="danger"
-              :loading="actionLoading[row.id]"
-              @click="handleCancel(row)"
-            >取消</el-button>
+            <div class="row-actions">
+              <el-button link type="primary" @click="handleView(row)">详情</el-button>
+              <el-button
+                v-if="getRowActions(row)[0]"
+                v-permission="getRowActions(row)[0].permission"
+                link
+                :type="getRowActions(row)[0].key === 'cancel' ? 'danger' : 'primary'"
+                :loading="actionLoading[row.id]"
+                @click="handleRowAction(getRowActions(row)[0].key, row)"
+              >{{ getRowActions(row)[0].label }}</el-button>
+              <el-dropdown v-if="getRowActions(row).length > 1" trigger="click" @command="(command: string) => handleRowAction(command, row)">
+                <el-button link :aria-label="`采购单 ${row.orderNo} 的更多操作`">更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-for="action in getRowActions(row).slice(1)" :key="action.key" v-permission="action.permission" :command="action.key" :disabled="actionLoading[row.id]">
+                      {{ action.label }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -209,7 +208,7 @@
     </el-drawer>
 
     <!-- 详情抽屉 -->
-    <el-drawer v-model="detailVisible" title="采购单详情" size="60%">
+    <el-drawer v-model="detailVisible" title="采购单详情" size="min(1120px, 96vw)" class="purchase-detail-drawer">
       <el-descriptions :column="2" border>
         <el-descriptions-item label="采购单号">{{ detail?.orderNo }}</el-descriptions-item>
         <el-descriptions-item label="门店">{{ detail?.storeName }}</el-descriptions-item>
@@ -221,18 +220,21 @@
         <el-descriptions-item label="备注">{{ detail?.remark || '-' }}</el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ detail?.createdAt }}</el-descriptions-item>
       </el-descriptions>
-      <el-table :data="detail?.items || []" border size="small" style="margin-top: 12px">
+      <el-table :data="detail?.items || []" border style="margin-top: 16px">
         <el-table-column type="index" label="#" width="50" />
-        <el-table-column prop="productName" label="商品名称" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="productCode" label="商品编码" width="120" />
-        <el-table-column prop="specification" label="规格" width="100" show-overflow-tooltip />
-        <el-table-column prop="manufacturer" label="厂家" width="120" show-overflow-tooltip />
-        <el-table-column prop="qty" label="数量" width="100" align="right" />
+        <el-table-column prop="productName" label="商品 / 规格" min-width="200">
+          <template #default="{ row }">
+            <div>{{ row.productName }}</div>
+            <div class="cell-secondary">{{ row.specification || '未填规格' }} · {{ row.productCode || '未填编码' }}</div>
+            <div v-if="row.manufacturer" class="cell-secondary">{{ row.manufacturer }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="qty" label="采购数量" width="120" align="right" />
         <el-table-column prop="unit" label="单位" width="80" align="center" />
-        <el-table-column prop="price" label="单价" width="120" align="right">
+        <el-table-column prop="price" label="进货单价" width="140" align="right">
           <template #default="{ row }">¥{{ (row.price || 0).toFixed(2) }}</template>
         </el-table-column>
-        <el-table-column prop="amount" label="金额" width="120" align="right">
+        <el-table-column prop="amount" label="金额" width="150" align="right">
           <template #default="{ row }">¥{{ (row.amount || 0).toFixed(2) }}</template>
         </el-table-column>
       </el-table>
@@ -247,7 +249,9 @@
 </template>
 
 <script setup lang="ts">
-import {computed, reactive, ref} from 'vue'
+import {computed, reactive, ref, watch} from 'vue'
+import {usePermissionStore} from '@/store/permission'
+import {hasPermission} from '@/utils/permission'
 import {Plus, Refresh, Search} from '@element-plus/icons-vue'
 import {
   cancelPurchase,
@@ -272,9 +276,11 @@ import ProductSelector from '@/components/ProductSelector/index.vue'
 import QuickProductForm from '@/components/QuickProductForm/index.vue'
 import type {ProductDetailVO} from '@/types/product'
 import {getProductDetail} from '@/api/product'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 const router = useRouter()
+const route = useRoute()
+const permissionStore = usePermissionStore()
 
 // 状态映射
 const statusOptions = [
@@ -301,6 +307,7 @@ const loading = ref(false)
 const total = ref(0)
 const tableData = ref<PurchasePageVO[]>([])
 const actionLoading = ref<Record<number, boolean>>({})
+let listRequest = 0
 
 const storeOptions = ref<StoreDetailVO[]>([])
 const supplierOptions = ref<SupplierDetailVO[]>([])
@@ -361,6 +368,7 @@ const loadOptions = async () => {
 }
 
 const loadTable = async () => {
+  const requestId = ++listRequest
   loading.value = true
   try {
     const params: PurchasePageQuery = {
@@ -374,15 +382,17 @@ const loadTable = async () => {
       createdEndTime: queryParams.createdRange?.[1]
     }
     const res = await getPurchaseList(params)
+    if (requestId !== listRequest) return
     tableData.value = res.records || []
     total.value = res.total || 0
   } catch (error) {
+    if (requestId !== listRequest) return
     console.error('加载采购单列表失败:', error)
     tableData.value = []
     total.value = 0
     ElMessage.error('加载采购单列表失败')
   } finally {
-    loading.value = false
+    if (requestId === listRequest) loading.value = false
   }
 }
 
@@ -408,6 +418,21 @@ const handleSizeChange = (size: number) => {
   queryParams.pageSize = size
   queryParams.pageNum = 1
   loadTable()
+}
+
+type RowAction = {key: string; label: string; permission: string}
+const getRowActions = (row: PurchasePageVO): RowAction[] => {
+  const actions: RowAction[] = []
+  if (row.status === 1) actions.push({key: 'submit', label: '提交', permission: 'purchase:submit'})
+  if (row.status === 2) actions.push({key: 'inbound', label: '收货', permission: 'purchase:inbound'})
+  if (row.status === 1 || row.status === 2) actions.push({key: 'cancel', label: '取消', permission: 'purchase:cancel'})
+  return actions.filter(action => hasPermission(action.permission, permissionStore.permissions))
+}
+const handleRowAction = (command: string, row: PurchasePageVO) => {
+  if (actionLoading.value[row.id] || !getRowActions(row).some(action => action.key === command)) return
+  if (command === 'submit') handleSubmit(row)
+  else if (command === 'inbound') handleOpenInbound(row)
+  else if (command === 'cancel') handleCancel(row)
 }
 
 const handleOpenCreate = () => {
@@ -619,10 +644,28 @@ const handleCancel = async (row: PurchasePageVO) => {
   }
 }
 
+const applyRouteQuery = (query: Record<string, unknown>) => {
+  const status = typeof query.status === 'string' ? Number(query.status) : NaN
+  queryParams.status = [1, 2, 3, 4].includes(status) ? status : undefined
+  queryParams.pageNum = 1
+}
+applyRouteQuery(route.query)
+watch(() => route.query, query => {
+  applyRouteQuery(query)
+  loadTable()
+}, {deep: true})
 loadOptions().then(loadTable)
 </script>
 
 <style scoped lang="scss">
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  .el-button + .el-button { margin-left: 0; }
+}
+.cell-secondary { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
 .page-container {
   padding: 16px;
 }
