@@ -1,0 +1,1197 @@
+{
+  "baselineCommit": "5dcba013224aea59848a9dca752853659a32c2e4",
+  "verifiedAt": "2026-10-19T13:53:37.602462+08:00",
+  "environment": {
+    "java": "17",
+    "mysql": "9.6.0",
+    "schemaVersion": "132"
+  },
+  "baseline": {
+    "totals": {
+      "tests": 717,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 15
+    },
+    "modules": {
+      "core-domain": {
+        "tests": 31,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "core-infrastructure": {
+        "tests": 87,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 6
+      },
+      "core-application": {
+        "tests": 543,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "api-admin": {
+        "tests": 56,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 9
+      },
+      "api-client": {
+        "tests": 0,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "classes": [
+      {
+        "module": "core-domain",
+        "class": "com.agri_system.domain.order.service.OrderNumberUniquenessTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.478"
+      },
+      {
+        "module": "core-domain",
+        "class": "com.agri_system.domain.inventory.service.InventoryDomainServiceTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.069"
+      },
+      {
+        "module": "core-domain",
+        "class": "com.agri_system.domain.coupon.model.CustomerCouponRestoreTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.006"
+      },
+      {
+        "module": "core-domain",
+        "class": "com.agri_system.domain.performance.model.PerformanceLogStatusTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-domain",
+        "class": "com.agri_system.domain.inventory.service.InventoryDomainServiceV3Test",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.008"
+      },
+      {
+        "module": "core-domain",
+        "class": "com.agri_system.domain.performance.model.StaffPerformanceLogFreezeTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.0"
+      },
+      {
+        "module": "core-domain",
+        "class": "com.agri_system.domain.inventory.service.BatchBalanceServiceTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.037"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.inventory.repository.InventoryBalanceFeatureStatusRepositoryImplTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.025"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.performance.repository.CommissionRuleRepositoryMatchingTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.023"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.performance.repository.StaffPerformanceLogRepositoryFreezeTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.023"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.migration.PackageSnapshotMigrationTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.031"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.product.repository.ProductRepositoryTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.022"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.migration.UnifiedInventoryMigrationTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.669"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.migration.ProductPricingMigrationTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.022"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.migration.MysqlRetailFactChainIntegrationTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 5,
+        "time": "0.0"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.order.repository.OrderDeliveryRepositoryQueryTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.135"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.common.ExceptionTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.common.LogMaskingTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.migration.RetailFactChainMigrationTest",
+        "tests": 16,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.127"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.productpackage.repository.RepositoryTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.044"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.order.repository.OrderReturnableItemsQueryTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.47"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.system.dict.InitDataTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1,
+        "time": "0.0"
+      },
+      {
+        "module": "core-infrastructure",
+        "class": "com.agri_system.infrastructure.migration.CreditSettlementMigrationTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.121"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.customer.service.CustomerSettlementRefundTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.002"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.performance.job.CommissionUnfreezeJobTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.0"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.OrderCostAllocationServiceTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.07"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.RefundNetAmountPolicyTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.002"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.customer.job.VipMonthlyBenefitJobTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.003"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.config.SchedulingConfigTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.089"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.inventory.service.SmartThresholdServiceTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.performance.listener.PackageCommissionListenerTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.008"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.OrderRefundFlowTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.015"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.after_sales.service.AdminReturnTest",
+        "tests": 24,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.014"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.store.service.StoreApplicationServiceTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.003"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.ClientCouponSettlementTest",
+        "tests": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.13"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.performance.PerformanceModuleTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.003"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.report.service.ProfitCalculationTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.002"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.auth.service.StaffLoginTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.422"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.purchase.service.PurchaseApplicationServiceTest",
+        "tests": 19,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.013"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.productpackage.service.PackageUpdateTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.004"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.RefundFundingConservationTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.02"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.after_sales.service.CreditBanTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.PickupRemainingEvidenceTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.102"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.performance.service.ConfirmSalaryBillHardeningTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.points.service.StockConcurrencyTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.credit.service.FifoRepaymentTest",
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.008"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.config.JdbcAccessConfigTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.021"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.performance.config.PerformancePropertiesDefaultsTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.0"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.productpackage.service.PackageStockCalculationTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.005"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.inventory.service.InventoryRiskServiceTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.012"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.CouponOneTimeUseTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.002"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.credit.service.CreditStatementPeriodTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.009"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.PackageSaleLockOrderTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.002"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.CreditOrderValidationTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.notification.service.NotificationApplicationServiceTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.003"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.report.service.DashboardFactsSqlTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.284"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.staff.service.StaffAuthorityServiceRoleUpdateTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.007"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.productpackage.service.PackagePricingServiceTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.005"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.ManualPriceAuditServiceTest",
+        "tests": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.021"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.OrderApplicationServicePaymentFlowTest",
+        "tests": 50,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.171"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.staff.service.RbacTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.0"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.inventory.service.InventoryApplicationServiceLocationTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.003"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.auth.service.WechatAutoRegisterTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.018"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.inventory.service.InventoryWarningApplicationServiceTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.inventory.service.InventoryLedgerServiceTest",
+        "tests": 17,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.122"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.points.service.AuditRejectTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.OrderDeliveryFlowTest",
+        "tests": 18,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.046"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.customer.service.CreditStatsTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.0"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.inventory.service.InventoryApplicationServiceCutoverGuardTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.008"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.PickupFulfillmentServiceTest",
+        "tests": 29,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.07"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.credit.service.CreditQueryFactsTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.003"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.product.service.ProductPricingServiceTest",
+        "tests": 12,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.004"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.report.service.CustomerAnalysisTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.14"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.auth.util.CurrentUserTest",
+        "tests": 11,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.004"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.credit.service.CreditAccountSettlementStatusTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.0"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.performance.listener.CommissionFreezeListenerTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.016"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.staff.service.KickoutTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.004"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.credit.service.CreditAccessServiceTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.004"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.customer.service.RechargeStackTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.014"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.after_sales.service.ClientLimitTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.customer.job.PointsClearJobTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.004"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.product.service.ProductUnitServiceTest",
+        "tests": 24,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.007"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.performance.job.PerformanceSettlementFreezeTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.004"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.customer.service.CustomerFollowUpApplicationServiceTest",
+        "tests": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.005"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.customer.job.VipDowngradeJobTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.003"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.job.OrderAutoFinishJobTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.365"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.auth.util.BCryptPasswordGeneratorTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.123"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.customer.service.VipLifecycleServiceTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.009"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.notification.service.CustomerWechatNotifierTest",
+        "tests": 8,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.004"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.points.service.NormalUserExchangeTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.001"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.RefundPreviewTest",
+        "tests": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.013"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.product.service.ProductApplicationServiceTest",
+        "tests": 9,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.007"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.notification.service.WechatSubscribeMessageServiceTest",
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.035"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.productpackage.service.PackageCreateTest",
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.009"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.performance.listener.DeliverySettlementLifecycleTest",
+        "tests": 10,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.011"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.performance.service.StaffCommissionDashboardServiceTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.003"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.order.service.OrderPaymentRefundCouponTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.003"
+      },
+      {
+        "module": "core-application",
+        "class": "com.agri_system.application.performance.service.BillDetailLineItemsFreezeTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.002"
+      },
+      {
+        "module": "api-admin",
+        "class": "com.agri_system.api.admin.controller.AfterSalesPathValidationTest",
+        "tests": 5,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.113"
+      },
+      {
+        "module": "api-admin",
+        "class": "com.agri_system.api.admin.controller.RoleControllerTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "1.308"
+      },
+      {
+        "module": "api-admin",
+        "class": "com.agri_system.authority.AuthorityHttpIntegrationTest",
+        "tests": 35,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1,
+        "time": "1.353"
+      },
+      {
+        "module": "api-admin",
+        "class": "com.agri_system.api.admin.controller.OrderShipPathValidationTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.07"
+      },
+      {
+        "module": "api-admin",
+        "class": "com.agri_system.application.order.service.POSOfflinePayTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1,
+        "time": "0.0"
+      },
+      {
+        "module": "api-admin",
+        "class": "com.agri_system.api.admin.controller.StoreControllerTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.142"
+      },
+      {
+        "module": "api-admin",
+        "class": "com.agri_system.application.order.service.MixPaymentLogicTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1,
+        "time": "0.0"
+      },
+      {
+        "module": "api-admin",
+        "class": "com.agri_system.e2e.RetailFactChainEndToEndTest",
+        "tests": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 2,
+        "time": "0.0"
+      },
+      {
+        "module": "api-admin",
+        "class": "com.agri_system.application.order.service.PickupTest",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1,
+        "time": "0.0"
+      },
+      {
+        "module": "api-admin",
+        "class": "com.agri_system.api.admin.controller.ProductControllerTest",
+        "tests": 4,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "time": "0.152"
+      },
+      {
+        "module": "api-admin",
+        "class": "com.agri_system.application.customer.service.VipLifecycleServiceIntegrationTest",
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 3,
+        "time": "0.0"
+      }
+    ]
+  },
+  "mysql": [
+    {
+      "class": "com.agri_system.infrastructure.migration.MysqlRetailFactChainIntegrationTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "migrationsApplyOnRealMysqlUpToV124WithGeneratedColumnsAndIdempotencyColumn",
+        "idempotencyKeyUniqueRejectsDuplicateAllowsNullsAndRollsBackCleanlyOnRealMysql",
+        "defaultBackroomUniqueConstraintRejectsSecondDefaultLocationPerStoreOnRealMysql",
+        "inventoryMovementEnforcesAppendOnlyTriggersAndCheckConstraintsOnRealMysql",
+        "selectForUpdateAcquiresInnodbRowLockSerializingConcurrentProjection"
+      ]
+    },
+    {
+      "class": "com.agri_system.authority.AuthorityHttpIntegrationTest",
+      "tests": 35,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "角色禁用原token失权且其它角色保留",
+        "无店普通员工不获得全店数据",
+        "角色POST拒客户端管理员编码",
+        "PUT本人离职受保护",
+        "PUT离职不能绕过生命周期权限",
+        "授予目标角色必须有效",
+        "双管理员并发互停只能成功一方",
+        "双管理员并发互停只能成功一方",
+        "双管理员并发互停只能成功一方",
+        "双管理员并发互停只能成功一方",
+        "双管理员并发互停只能成功一方",
+        "创建服务端编码且空菜单不改变既有授权",
+        "角色基础保存不能授权非空菜单",
+        "在职但管理员角色已停用不算最后管理员替代",
+        "离职员工旧token立即拒绝",
+        "普通员工不能创建他店员工管理员可合法调店",
+        "角色停用与员工降权并发共享管理员锁",
+        "角色停用与员工降权并发共享管理员锁",
+        "角色停用与员工降权并发共享管理员锁",
+        "编辑缺失或NULL或已有角色保留全部多角色关联",
+        "创建携角色必须独立授予权限",
+        "空管理员角色或离职管理员不能替代最后管理员",
+        "员工编辑不能越权授管理员角色",
+        "Lifecycle创建等待管理员锁后拒绝刚被停用的目标角色",
+        "删除菜单授权同token下一请求生效",
+        "PUT复职复用独立启用权限",
+        "角色POST不能通过已有ID改授权",
+        "无员工身份不能写角色员工",
+        "管理员降权同token不能继续跨店且不信旧Session",
+        "员工仍持另一管理员角色允许停用其中角色",
+        "非法角色员工状态拒绝且不改库",
+        "数据库离职或删除无需踢token也立即拒绝",
+        "普通员工不能通过更新自身门店跨店",
+        "管理员角色停用同token失去跨店身份",
+        "普通员工首次DTO库存投影不会污染内部身份类型且仍隔离门店"
+      ]
+    },
+    {
+      "class": "com.agri_system.e2e.RetailFactChainEndToEndTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "declaredTransactionIsolationAppliesToSharedConnection",
+        "unifiedInventoryBusinessChain"
+      ]
+    }
+  ],
+  "remainingDisabled": [
+    {
+      "class": "com.agri_system.infrastructure.system.dict.InitDataTest",
+      "count": 1,
+      "reason": "H2 不兼容 MySQL 的多表同名 KEY 语法，由集成测试覆盖"
+    },
+    {
+      "class": "com.agri_system.application.order.service.POSOfflinePayTest",
+      "count": 1,
+      "reason": "集成测试：需独立的 agri_system_test 测试库及种子数据，本地环境未配置"
+    },
+    {
+      "class": "com.agri_system.application.order.service.MixPaymentLogicTest",
+      "count": 1,
+      "reason": "集成测试：需独立的 agri_system_test 测试库及种子数据，本地环境未配置"
+    },
+    {
+      "class": "com.agri_system.application.order.service.PickupTest",
+      "count": 1,
+      "reason": "集成测试：需独立的 agri_system_test 测试库及种子数据，本地环境未配置"
+    },
+    {
+      "class": "com.agri_system.application.customer.service.VipLifecycleServiceIntegrationTest",
+      "count": 3,
+      "reason": "集成测试：需独立的 agri_system_test 测试库及种子数据，本地环境未配置"
+    }
+  ],
+  "frontend": {
+    "tests": 199,
+    "pass": 199,
+    "fail": 0,
+    "skipped": 0
+  },
+  "liveSmoke": [
+    {
+      "path": "/health",
+      "http": 200,
+      "passed": true,
+      "evidence": {
+        "status": "UP",
+        "service": "api-admin"
+      }
+    },
+    {
+      "path": "/api-docs",
+      "http": 200,
+      "passed": true,
+      "evidence": {
+        "openapi": "3.0.1",
+        "pathCount": 152
+      }
+    },
+    {
+      "path": "/api/admin/order/list",
+      "http": 200,
+      "passed": true,
+      "evidence": {
+        "businessCode": 10003
+      }
+    },
+    {
+      "path": "/api/admin/purchase/list",
+      "http": 200,
+      "passed": true,
+      "evidence": {
+        "businessCode": 10003
+      }
+    },
+    {
+      "port": 3090,
+      "passed": true
+    },
+    {
+      "port": 9080,
+      "passed": true
+    },
+    {
+      "port": 6389,
+      "passed": true
+    }
+  ],
+  "isolation": {
+    "own_migration_schema_removed": true,
+    "new_schemas_remaining": [],
+    "preview_unchanged": true
+  },
+  "evidenceHashes": {
+    "backend-full.log": "886a418e468d35f0a3ceee69d6afc8dca57d1dbcf58410f3a26fa8b18282c912",
+    "mysql-integration.log": "e0675bafd91da66e4c7aaddf321678d61d003a3e1d88a9bb36e4c5aa96c7f1a2",
+    "frontend-regression.log": "8a42d82f558a380ded3be2909a96d8ba5cb6e790a1b897161c78a0a4e20c7798",
+    "baseline-results.json": "5dc0ae366bedb343200ad4e5dd523c8832277dbe1febe40d4b46b7474ffe6ec4",
+    "mysql-results.json": "5e1bc42eac64d6e37e2e461c19b3c7b30bf96520e7918a73a7046f58b268b8c3",
+    "live-readonly-smoke.json": "ea22fd9d524d5bc959666ce22a20f5bc5c6a6a00e89bc628b47788fb78ab7f83"
+  }
+}
