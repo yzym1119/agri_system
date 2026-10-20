@@ -1,0 +1,197 @@
+{
+  "baseline": "9cce1f7; business 5dcba01",
+  "environment": "isolated local browser acceptance 3091/9081/6390",
+  "check_count": 27,
+  "passed": 27,
+  "checks": [
+    {
+      "name": "迁移完整",
+      "sql": "SELECT COUNT(*),SUM(success=0),MAX(version+0) FROM flyway_schema_history;",
+      "expected": "88\t0\t132",
+      "actual": "88\t0\t132",
+      "passed": true
+    },
+    {
+      "name": "采购及实际收货成本",
+      "sql": "SELECT p.status,p.total_amount,\n (SELECT CAST(SUM(r.base_quantity*r.base_unit_cost) AS DECIMAL(14,2)) FROM inventory_receipt_batch r JOIN inventory_receipt_line l ON l.id=r.receipt_line_id JOIN inventory_receipt h ON h.id=l.receipt_id WHERE h.purchase_order_id=1)\n FROM purchase_order p WHERE p.id=1;",
+      "expected": "3\t360.00\t380.00",
+      "actual": "3\t360.00\t380.00",
+      "passed": true
+    },
+    {
+      "name": "跨门店逐商品库存",
+      "sql": "SELECT store_id,product_id,CAST(SUM(base_quantity) AS DECIMAL(14,2))\n FROM inventory_batch_balance GROUP BY store_id,product_id ORDER BY store_id,product_id;",
+      "expected": "1\t1\t14.00\n1\t2\t24.00\n1\t3\t10.00\n2\t1\t2.00",
+      "actual": "1\t1\t14.00\n1\t2\t24.00\n1\t3\t10.00\n2\t1\t2.00",
+      "passed": true
+    },
+    {
+      "name": "无负库存及非法预留",
+      "sql": "SELECT COUNT(*) FROM inventory_batch_balance\n WHERE base_quantity<0 OR reserved_base_quantity<0 OR reserved_base_quantity>base_quantity;",
+      "expected": "0",
+      "actual": "0",
+      "passed": true
+    },
+    {
+      "name": "移动流水重算逐批逐位置余额",
+      "sql": "SELECT COUNT(*) FROM inventory_batch_balance b WHERE b.base_quantity <>\n COALESCE((SELECT SUM(CASE WHEN m.to_location_id=b.location_id THEN m.base_quantity ELSE 0 END\n - CASE WHEN m.from_location_id=b.location_id THEN m.base_quantity ELSE 0 END)\n FROM inventory_movement m WHERE m.batch_id=b.batch_id AND m.store_id=b.store_id),0);",
+      "expected": "0",
+      "actual": "0",
+      "passed": true
+    },
+    {
+      "name": "不存在无余额归属的流水位置",
+      "sql": "SELECT COUNT(*) FROM inventory_movement m WHERE\n (m.to_location_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM inventory_batch_balance b WHERE b.batch_id=m.batch_id AND b.store_id=m.store_id AND b.location_id=m.to_location_id))\n OR (m.from_location_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM inventory_batch_balance b WHERE b.batch_id=m.batch_id AND b.store_id=m.store_id AND b.location_id=m.from_location_id));",
+      "expected": "0",
+      "actual": "0",
+      "passed": true
+    },
+    {
+      "name": "库存总成本含盘亏",
+      "sql": "SELECT CAST(SUM(b.base_quantity*r.base_unit_cost) AS DECIMAL(14,2))\n FROM inventory_batch_balance b JOIN inventory_receipt_batch r ON r.id=b.batch_id;",
+      "expected": "340.00",
+      "actual": "340.00",
+      "passed": true
+    },
+    {
+      "name": "钱货移动数量16",
+      "sql": "SELECT COUNT(*) FROM inventory_movement;",
+      "expected": "16",
+      "actual": "16",
+      "passed": true
+    },
+    {
+      "name": "未知生产日期没有补造",
+      "sql": "SELECT date_status,production_date,expiry_date FROM inventory_receipt_batch WHERE id=3;",
+      "expected": "PARTIAL\tNULL\t2027-10-19",
+      "actual": "PARTIAL\tNULL\t2027-10-19",
+      "passed": true
+    },
+    {
+      "name": "调拨成本有效期继承",
+      "sql": "SELECT r.base_unit_cost,r.expiry_date,b.base_quantity FROM inventory_receipt_batch r JOIN inventory_batch_balance b ON b.batch_id=r.id WHERE r.id=5;",
+      "expected": "10.00000000\t2027-10-19\t2.00000000",
+      "actual": "10.00000000\t2027-10-19\t2.00000000",
+      "passed": true
+    },
+    {
+      "name": "套餐独立价分钱快照",
+      "sql": "SELECT product_id,total_price,package_quantity,package_unit_price FROM order_item WHERE order_id=1 AND package_id IS NOT NULL ORDER BY id;",
+      "expected": "2\t8.33\t1.0000\t25.00\n1\t16.67\t1.0000\t25.00",
+      "actual": "2\t8.33\t1.0000\t25.00\n1\t16.67\t1.0000\t25.00",
+      "passed": true
+    },
+    {
+      "name": "半箱成交按六瓶入账",
+      "sql": "SELECT quantity,unit,base_quantity,total_price FROM order_item WHERE order_id=3;",
+      "expected": "0.5000\t箱\t6.00000000\t60.00",
+      "actual": "0.5000\t箱\t6.00000000\t60.00",
+      "passed": true
+    },
+    {
+      "name": "原应收220退货160净销60",
+      "sql": "SELECT SUM(pay_amount),(SELECT SUM(refund_amount) FROM after_sales WHERE status=50),SUM(pay_amount)-(SELECT SUM(refund_amount) FROM after_sales WHERE status=50) FROM `order`;",
+      "expected": "220.00\t160.00\t60.00",
+      "actual": "220.00\t160.00\t60.00",
+      "passed": true
+    },
+    {
+      "name": "实际资金来源净留60",
+      "sql": "SELECT (SELECT SUM(amount-refunded_amount) FROM order_payment WHERE payment_type NOT IN(5,6))+(SELECT SUM(amount-refunded_amount) FROM credit_repayment_log);",
+      "expected": "60.00",
+      "actual": "60.00",
+      "passed": true
+    },
+    {
+      "name": "原挂账及实还不被退款改写",
+      "sql": "SELECT credit_amount,paid_amount,remaining_amount,status FROM credit_account;",
+      "expected": "100.00\t40.00\t0.00\t2",
+      "actual": "100.00\t40.00\t0.00\t2",
+      "passed": true
+    },
+    {
+      "name": "原银行还款40已退20",
+      "sql": "SELECT amount,payment_method,refunded_amount FROM credit_repayment_log;",
+      "expected": "40.00\t4\t20.00",
+      "actual": "40.00\t4\t20.00",
+      "passed": true
+    },
+    {
+      "name": "赊销退货先冲欠再退钱",
+      "sql": "SELECT refund_amount,credit_reduction_amount,cash_refund_amount FROM after_sales WHERE order_id=2;",
+      "expected": "80.00\t60.00\t20.00",
+      "actual": "80.00\t60.00\t20.00",
+      "passed": true
+    },
+    {
+      "name": "已收款退回不超原来源",
+      "sql": "SELECT COUNT(*) FROM order_payment WHERE refunded_amount<0 OR refunded_amount>amount;",
+      "expected": "0",
+      "actual": "0",
+      "passed": true
+    },
+    {
+      "name": "取货仅普通两袋完成",
+      "sql": "SELECT order_item_id,requested_base_quantity,status FROM order_pickup_request ORDER BY id;",
+      "expected": "1\t2.00000000\tFULFILLED\n3\t1.00000000\tPENDING\n2\t1.00000000\tPENDING",
+      "actual": "1\t2.00000000\tFULFILLED\n3\t1.00000000\tPENDING\n2\t1.00000000\tPENDING",
+      "passed": true
+    },
+    {
+      "name": "配送签收不改部分退款状态",
+      "sql": "SELECT o.order_status,d.delivery_status FROM `order` o JOIN order_delivery d ON d.order_id=o.id WHERE o.id=2;",
+      "expected": "9\t4",
+      "actual": "9\t4",
+      "passed": true
+    },
+    {
+      "name": "全退原单及优惠券恢复",
+      "sql": "SELECT o.order_status,c.status FROM `order` o JOIN customer_coupon c ON c.id=1 WHERE o.id=3;",
+      "expected": "8\t1",
+      "actual": "8\t1",
+      "passed": true
+    },
+    {
+      "name": "充值奖励钱包分开记账",
+      "sql": "SELECT wallet_type,balance FROM customer_wallet ORDER BY wallet_type;",
+      "expected": "1\t100.00\n2\t10.00\n3\t0.00",
+      "actual": "1\t100.00\n2\t10.00\n3\t0.00",
+      "passed": true
+    },
+    {
+      "name": "充值只有两条资金钱包流水",
+      "sql": "SELECT COUNT(*) FROM wallet_transaction WHERE wallet_type IN(1,2);",
+      "expected": "2",
+      "actual": "2",
+      "passed": true
+    },
+    {
+      "name": "全退积分原赠55回扣55",
+      "sql": "SELECT wallet_type,transaction_type,amount,balance_after FROM wallet_transaction WHERE wallet_type=3 ORDER BY id;",
+      "expected": "3\t4\t55.00\t55.00\n3\t5\t-55.00\t0.00",
+      "actual": "3\t4\t55.00\t55.00\n3\t5\t-55.00\t0.00",
+      "passed": true
+    },
+    {
+      "name": "绩效目标正确保存",
+      "sql": "SELECT staff_id,month,target_sales_amount,target_new_customer,target_commission FROM staff_monthly_goal;",
+      "expected": "2\t2026-10\t1000.00\t2\t50.00",
+      "actual": "2\t2026-10\t1000.00\t2\t50.00",
+      "passed": true
+    },
+    {
+      "name": "礼品建档数量正确",
+      "sql": "SELECT points,stock FROM points_goods;",
+      "expected": "10\t2",
+      "actual": "10\t2",
+      "passed": true
+    },
+    {
+      "name": "两个角色最小授权落库",
+      "sql": "SELECT role_id,COUNT(*) FROM sys_role_menu WHERE role_id IN(2,3) GROUP BY role_id ORDER BY role_id;",
+      "expected": "2\t7\n3\t4",
+      "actual": "2\t7\n3\t4",
+      "passed": true
+    }
+  ]
+}
