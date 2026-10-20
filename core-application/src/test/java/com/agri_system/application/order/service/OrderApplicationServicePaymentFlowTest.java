@@ -642,9 +642,11 @@ class OrderApplicationServicePaymentFlowTest {
         assertEquals(new BigDecimal("200.00"),facts.wallet().get());
         InOrder locks=org.mockito.Mockito.inOrder(customerRepository,itemRepository,creditService,inventoryService);
         locks.verify(customerRepository).findByIdWithLock(12L);
+        // 新单应收尚未发布：先防止订单行FK共享锁升级环，客户锁仍隔离本客户旧账户竞争。
+        locks.verify(inventoryService).lockProducts(eq(3L),any());
         locks.verify(itemRepository).save(any());
         locks.verify(creditService).addDebt(12L,500L,expected);
-        locks.verify(inventoryService).lockProducts(eq(3L),any());
+        locks.verify(inventoryService).outbound(any(),eq(8L));
 
     }
 

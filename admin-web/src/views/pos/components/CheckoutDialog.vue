@@ -325,7 +325,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  submit: [data: any]
+  submit: [data: any, netAmount: number]
 }>()
 
 const visible = computed({
@@ -838,7 +838,7 @@ const handleConfirm = () => {
     orderData.useSpecialFund = mixedDetails.balance > 0 && hasSpecialFundProducts.value
   }
 
-  emit('submit', orderData)
+  emit('submit', orderData, actualAmount.value)
 }
 
 const handleClose = () => {

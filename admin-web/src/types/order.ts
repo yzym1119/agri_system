@@ -135,6 +135,7 @@ export interface OrderDetail extends OrderBase {
   storeAddress?: string | null
   pickupCode?: string | null
   operatorName?: string | null
+  operatorStaffId?: number | null
   remark?: string | null
   delivery?: OrderDeliveryInfo | null
   afterSalesList?: OrderAfterSalesRecord[]

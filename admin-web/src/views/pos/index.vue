@@ -1,6 +1,28 @@
 <template>
   <div class="pos-page">
-    <div class="pos-container">
+    <section v-if="pendingSale || saleStorageError" class="sale-pending" aria-live="polite">
+      <el-alert type="warning" :closable="false" show-icon title="本单正在提交或结果待核对，请勿再次收款" />
+      <template v-if="pendingSale">
+        <p>提交时间：{{ new Date(pendingSale.submittedAt).toLocaleString() }} · 门店 {{ pendingSale.storeId }} · 员工 {{ pendingSale.staffId }}</p>
+        <p>商品金额 ¥{{ pendingSale.totalAmount.toFixed(2) }} · 净应结算 ¥{{ pendingSale.netAmount.toFixed(2) }} · {{ pendingSale.lines.length }} 条物料</p>
+        <p>客户：{{ pendingSale.customerId == null ? '散客' : `客户 ${pendingSale.customerId}` }}</p>
+        <ul><li v-for="(line, index) in pendingSale.lines" :key="index">商品 {{ line.productId }}{{ line.packageId ? `（套餐 ${line.packageId}）` : '' }}：{{ line.quantity }} {{ line.unit }}，¥{{ line.totalPrice.toFixed(2) }}</li></ul>
+        <p>连接中断不能证明未成交。请先到订单中心核对；未找到也不能直接重收。</p>
+        <el-button @click="router.push({ name: 'OrderList' })">去订单中心核对</el-button>
+        <template v-if="!submittingOrder">
+          <p>找到原单后，粘贴订单中心可复制的完整订单号，只读核对原单事实。</p>
+          <el-input v-model="recoveryOrderId" placeholder="已找到的完整订单号" aria-label="已找到的原订单号" @input="recoveryCandidate = null; recoveryConfirmed = false" />
+          <el-button :loading="recoveryLoading" @click="verifyRecoveredSale">读取并核对原单</el-button>
+          <template v-if="recoveryCandidate">
+            <p>已核对订单 {{ recoveryCandidate.orderNo }}，门店、员工、客户、金额及物料一致。相同内容的另一笔订单仍不能代替本次成交单。</p>
+            <el-checkbox v-model="recoveryConfirmed">我已人工确认这是本次收款产生的原订单</el-checkbox>
+            <el-button type="primary" :disabled="!recoveryConfirmed" :loading="recoveryLoading" @click="confirmRecoveredSale">确认已成交，结束本单</el-button>
+          </template>
+        </template>
+      </template>
+      <p v-else>无法读取本机待核对记录，已阻止新收款。请保留当前页面并联系管理员核对，不要清除浏览器记录。</p>
+    </section>
+    <div v-else class="pos-container">
       <!-- 分类栏 -->
       <CategorySidebar
         ref="categorySidebarRef"
@@ -98,10 +120,11 @@
 </template>
 
 <script setup lang="ts">
-import {computed, onMounted, onUnmounted, ref} from 'vue'
+import {computed, onMounted, onUnmounted, ref, watch} from 'vue'
+import {useRouter} from 'vue-router'
 import {ElMessage} from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
-import { createPickupRequest, createPOSOrder, getOrderDetail } from '@/api/order'
+import { createPickupRequest, createPOSOrder, getOrderDetail, getOrderList } from '@/api/order'
 import {useUserStore} from '@/store/user'
 import CategorySidebar from './components/CategorySidebar.vue'
 import ModernGoodsPanel from './components/ModernGoodsPanel.vue'
@@ -113,6 +136,7 @@ import { fetchServerPriceQuote, fetchServerPackageQuote } from '@/utils/posPrici
 import type { ServerPriceQuote, ServerPackageQuote } from '@/utils/posPricing'
 
 const userStore = useUserStore()
+const router = useRouter()
 
 // 基础数据 - 立即从用户信息中获取
 const getUserStoreId = () => {
@@ -145,6 +169,160 @@ const categoryTree = ref<any[]>([])
 // 结算弹窗
 const checkoutVisible = ref(false)
 const submittingOrder = ref(false)
+type SaleLine = { productId: number; packageId: number | null; unit: string; quantity: number; totalPrice: number }
+type PendingSale = { version: 1; storeId: number; staffId: number; customerId: number | null;
+  submittedAt: number; totalAmount: number; netAmount: number; discountAmount: number; paymentType: number;
+  payments: { paymentType: number; amount: number }[]; lines: SaleLine[] }
+const pendingSale = ref<PendingSale | null>(null)
+const saleStorageError = ref(false)
+const recoveryOrderId = ref('')
+const recoveryCandidate = ref<any>(null)
+const recoveryConfirmed = ref(false)
+const recoveryLoading = ref(false)
+const actorKey = () => `pos_pending_sale_v1_${userStore.userInfo?.id || 0}_${getUserStoreId() || 0}`
+const actorSession = () => `${userStore.token || ''}|${actorKey()}`
+const saleLocked = () => !!pendingSale.value || saleStorageError.value || submittingOrder.value
+const loadPendingSale = () => {
+  pendingSale.value = null
+  saleStorageError.value = false
+  try {
+    const raw = sessionStorage.getItem(actorKey())
+    if (raw) {
+      const saved = JSON.parse(raw)
+      if (saved.version !== 1 || saved.staffId !== staffId.value || saved.storeId !== storeId.value
+        || !Array.isArray(saved.lines) || !saved.lines.length || saved.lines.length > 500
+        || ![saved.netAmount, saved.totalAmount, saved.discountAmount, saved.submittedAt].every(Number.isFinite)
+        || saved.lines.some((line: SaleLine) => !Number.isFinite(line.totalPrice))) throw new Error('待核对记录不完整')
+      pendingSale.value = saved
+    }
+  } catch { saleStorageError.value = true }
+}
+loadPendingSale()
+watch(() => actorSession(), () => {
+  cartGeneration++
+  storeId.value = getUserStoreId()
+  staffId.value = userStore.userInfo?.id || null
+  cartItems.value = []
+  selectedCustomer.value = null
+  submittingOrder.value = false
+  checkoutVisible.value = false
+  pickupVisible.value = false
+  recoveryCandidate.value = null
+  recoveryConfirmed.value = false
+  recoveryOrderId.value = ''
+  recoveryLoading.value = false
+  loadPendingSale()
+}, { flush: 'sync' })
+
+const definitelyRejectedSale = (error: any) => {
+  const status = Number(error?.response?.status)
+  if (status >= 500 || status === 408) return false
+  const code = Number(error?.apiBusinessCode)
+  return [400, 401, 403, 404, 409, 422].includes(status)
+    || (Number.isFinite(code) && code > 0 && ![10002, 10003].includes(code))
+}
+// 保存有限、无验证码/地址/客户姓名的核对摘要，不保存可重发的支付请求。
+const saleLines = (items: CartItem[]): SaleLine[] => items.flatMap(item => item.itemType === 2
+  ? (item.packageItems || []).map(material => ({ productId: material.productId, packageId: item.packageId || null,
+    unit: material.unit || '', quantity: Number(material.quantity), totalPrice: Number(material.totalPrice) }))
+  : [{ productId: item.productId!, packageId: null, unit: item.currentUnit,
+    quantity: item.quantity, totalPrice: item.subtotal }])
+const removePendingRecord = (key: string, saved: string) => {
+  if (sessionStorage.getItem(key) === saved) sessionStorage.removeItem(key)
+}
+const groupedSaleLines = (lines: SaleLine[]) => {
+  const groups: Record<string, { quantity: number; cents: number }> = {}
+  for (const line of lines) {
+    if (!line.productId || !Number.isFinite(line.quantity) || line.quantity <= 0 || !Number.isFinite(line.totalPrice)) return null
+    const key = JSON.stringify([line.productId, line.packageId || null, line.unit || ''])
+    const group = groups[key] ||= { quantity: 0, cents: 0 }
+    group.quantity += Math.round(line.quantity * 10000)
+    group.cents += Math.round(line.totalPrice * 100)
+  }
+  return JSON.stringify(Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)))
+}
+const matchesPendingSale = (detail: any, snapshot: PendingSale) => {
+  const sameMoney = (a: any, b: number) => a != null && Number.isFinite(Number(a)) && Math.round(Number(a) * 100) === Math.round(b * 100)
+  const expectedLines = groupedSaleLines(snapshot.lines)
+  const createdAt = typeof detail?.createdAt === 'string' ? Date.parse(detail.createdAt) : NaN
+  const groupedPayments = (payments: any[]) => {
+    const grouped: Record<string, number> = {}
+    for (const payment of payments) {
+      const type = Number(payment.paymentType), amount = Number(payment.amount)
+      if (![1, 2, 3, 4, 5, 6, 8].includes(type) || !Number.isFinite(amount) || amount < 0) return null
+      if (type === 5 || amount === 0) continue // 券额已由原总额、优惠和净额共同核对。
+      const key = String(type === 8 ? 4 : type) // 钱包实际拆为本金/专用金，合计须等于本次钱包支付。
+      grouped[key] = (grouped[key] || 0) + Math.round(amount * 100)
+    }
+    return JSON.stringify(Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)))
+  }
+  const expectedPayments = groupedPayments(snapshot.payments)
+  const requestedTypes = [...new Set(snapshot.payments.filter(payment => payment.amount > 0).map(payment => payment.paymentType))]
+  const expectedMethod = snapshot.paymentType === 10 && requestedTypes.length === 1 ? requestedTypes[0] : snapshot.paymentType
+  return detail?.orderType === 1 && [2, 3, 4, 5, 6, 8, 9, 10].includes(detail.orderStatus)
+    && Number.isFinite(createdAt) && createdAt >= snapshot.submittedAt - 5000 && createdAt <= Date.now()
+    && detail.paymentMethod === expectedMethod
+    && expectedPayments !== null && Array.isArray(detail.payments) && expectedPayments === groupedPayments(detail.payments)
+    && Number(detail.storeId) === snapshot.storeId && Number(detail.operatorStaffId) === snapshot.staffId
+    && (detail.customerId ?? null) === snapshot.customerId
+    && sameMoney(detail.totalAmount, snapshot.totalAmount) && sameMoney(detail.payAmount, snapshot.netAmount)
+    && sameMoney(detail.discountAmount ?? 0, snapshot.discountAmount)
+    && expectedLines !== null && expectedLines === groupedSaleLines((detail.items || []).map((item: any) => ({
+      productId: item.productId, packageId: item.packageId ?? null, unit: item.unit || '', quantity: Number(item.quantity), totalPrice: Number(item.totalPrice)
+    })))
+}
+const verifyRecoveredSale = async () => {
+  recoveryCandidate.value = null
+  recoveryConfirmed.value = false
+  if (submittingOrder.value || recoveryLoading.value || !pendingSale.value) return
+  if (!recoveryOrderId.value.trim() || recoveryOrderId.value.trim().length > 50) {
+    ElMessage.warning('请粘贴订单中心已找到的完整订单号')
+    return
+  }
+  const session = actorSession(), snapshot = pendingSale.value, id = recoveryOrderId.value
+  recoveryLoading.value = true
+  try {
+    const page = await getOrderList({ keyword: id.trim(), pageNum: 1, pageSize: 20 })
+    if (session !== actorSession() || snapshot !== pendingSale.value || id !== recoveryOrderId.value) return
+    const matches = page.records.filter(row => row.orderNo === id.trim())
+    if (matches.length !== 1) {
+      ElMessage.warning('未找到唯一的完整订单号，保留待核对状态；请继续人工核对')
+      return
+    }
+    const detail = await getOrderDetail(matches[0].id)
+    if (session !== actorSession() || snapshot !== pendingSale.value || id !== recoveryOrderId.value) return
+    if (detail.id !== matches[0].id || detail.orderNo !== id.trim() || !matchesPendingSale(detail, snapshot)) {
+      ElMessage.warning('原单门店、员工、客户、金额或物料不一致，不能解除待核对状态')
+      return
+    }
+    recoveryCandidate.value = detail
+  } catch {
+    if (session === actorSession()) ElMessage.warning('未能确认原订单；未找到不代表未成交，请继续人工核对')
+  } finally { if (session === actorSession()) recoveryLoading.value = false }
+}
+const confirmRecoveredSale = async () => {
+  if (!recoveryConfirmed.value || !recoveryCandidate.value || !pendingSale.value || recoveryLoading.value) return
+  const snapshot = pendingSale.value, session = actorSession(), key = actorKey()
+  const candidateId = recoveryCandidate.value.id
+  recoveryLoading.value = true
+  try {
+    const detail = await getOrderDetail(candidateId)
+    if (session !== actorSession() || snapshot !== pendingSale.value) return
+    if (detail.id !== candidateId || detail.orderNo !== recoveryOrderId.value.trim() || !matchesPendingSale(detail, snapshot)) {
+      recoveryCandidate.value = null
+      recoveryConfirmed.value = false
+      ElMessage.warning('原单核验已变化，请保留待核对状态')
+      return
+    }
+    removePendingRecord(key, JSON.stringify(snapshot))
+    pendingSale.value = null
+    handleClearCart()
+    recoveryCandidate.value = null
+    recoveryConfirmed.value = false
+    ElMessage.success('已确认原单成交，本单已结束；未再次收款')
+  } catch { if (session === actorSession()) ElMessage.warning('核验未完成，保留待核对状态') }
+  finally { if (session === actorSession()) recoveryLoading.value = false }
+}
 
 // 库房取货（后仓拣货）待确认状态
 const pickupVisible = ref(false)
@@ -186,6 +364,7 @@ const isTypingTarget = (target: EventTarget | null) => {
 }
 
 const handleKeydown = (e: KeyboardEvent) => {
+  if (saleLocked()) return
   const typingTarget = isTypingTarget(e.target)
 
   // F1: 聚焦搜索
@@ -239,6 +418,7 @@ const markPriceFallback = (item: CartItem) => {
  * 商品与套餐均取服务端报价；套餐的物料、金额和专用金额度不在前端拆算。
  */
 const resolveCartItemUnitPrice = async (item: CartItem, preserveNegotiation = false): Promise<number | null> => {
+  if (saleLocked()) return null
   if ((item.itemType === 1 && item.productId) || (item.itemType === 2 && item.packageId)) {
     const isPackage = item.itemType === 2
     const previousSuggested = item.suggestedUnitPrice
@@ -254,7 +434,7 @@ const resolveCartItemUnitPrice = async (item: CartItem, preserveNegotiation = fa
     const customerId = selectedCustomer.value?.id
     const saleUnit = item.currentUnit
     const quantity = item.quantity
-    const requestIsCurrent = () => item.quoteRequestId === requestId
+    const requestIsCurrent = () => !saleLocked() && item.quoteRequestId === requestId
       && selectedCustomer.value?.id === customerId && item.currentUnit === saleUnit
       && (!isPackage || item.quantity === quantity)
     try {
@@ -305,9 +485,10 @@ const resolveCartItemUnitPrice = async (item: CartItem, preserveNegotiation = fa
 
 // 添加商品到购物车
 const handleAddToCart = async (item: CartItem) => {
+  if (saleLocked()) return
   const generation = cartGeneration
   const resolvedPrice = await resolveCartItemUnitPrice(item)
-  if (generation !== cartGeneration) return
+  if (generation !== cartGeneration || saleLocked()) return
   if (resolvedPrice !== null) {
     item.unitPrice = resolvedPrice
     if (item.itemType === 1) item.subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
@@ -346,6 +527,7 @@ const handleAddToCart = async (item: CartItem) => {
 
 // 重新计算购物车中所有商品的价格
 const recalculateCartPrices = async (preserveNegotiation = false) => {
+  if (saleLocked()) return
   if (!cartItems.value || cartItems.value.length === 0) return
   
   const updatedItems = [...cartItems.value]
@@ -364,6 +546,7 @@ const recalculateCartPrices = async (preserveNegotiation = false) => {
 
 // 客户变更
 const handleCustomerChange = async (customer: POSCustomerInfo | null) => {
+  if (saleLocked()) return
   selectedCustomer.value = customer
   // 重新计算购物车中所有商品的价格
   await recalculateCartPrices()
@@ -371,11 +554,13 @@ const handleCustomerChange = async (customer: POSCustomerInfo | null) => {
 
 // 购物车更新：数量/删除/库房取货等本地变更，仅同步数组引用
 const handleCartUpdate = (items: CartItem[]) => {
+  if (saleLocked()) return
   cartItems.value = items
 }
 
 // 单位切换：按新的销售单位重新取服务端报价，并刷新行内标记（低于参考下限/报价失败）
 const handleUnitChange = async (payload: { id: string; oldUnit: string; newUnit: string }) => {
+  if (saleLocked()) return
   const item = cartItems.value.find((cartItem) => cartItem.id === payload.id)
   if (item && item.itemType === 1 && item.productId) {
     const newPrice = await resolveCartItemUnitPrice(item)
@@ -390,6 +575,7 @@ const handleUnitChange = async (payload: { id: string; oldUnit: string; newUnit:
 
 // 套餐数量或成交单价改变后重新取权威物料金额和专用金额度。
 const handlePackageQuoteChange = async ({ id }: { id: string }) => {
+  if (saleLocked()) return
   const item = cartItems.value.find(line => line.id === id && line.itemType === 2)
   if (item) await resolveCartItemUnitPrice(item, true)
   cartItems.value = [...cartItems.value]
@@ -423,6 +609,7 @@ const handleCategorySelect = (categoryId: number | null) => {
 
 // 恢复挂单
 const handleRestoreCart = async (payload: { cartItems: CartItem[]; customer: POSCustomerInfo | null; discountAmount: number }) => {
+  if (saleLocked()) return
   cartGeneration++
   cartItems.value = payload.cartItems
   selectedCustomer.value = payload.customer
@@ -433,6 +620,7 @@ const handleRestoreCart = async (payload: { cartItems: CartItem[]; customer: POS
 
 // 清空购物车（挂单后）
 const handleClearCart = () => {
+  if (saleLocked()) return
   cartGeneration++
   cartItems.value = []
   selectedCustomer.value = null
@@ -445,6 +633,7 @@ const handleCheckout = (data: {
   walletAuthCode?: string
   useSpecialFund?: boolean
 }) => {
+  if (saleLocked()) return
   if (cartItems.value.length === 0) {
     ElMessage.warning('购物车为空')
     return
@@ -466,15 +655,36 @@ const handleCheckout = (data: {
 }
 
 // 提交订单
-const handleSubmitOrder = async (orderData: any) => {
-  if (submittingOrder.value) {
-    return // 防止重复提交
+const handleSubmitOrder = async (orderData: any, submittedNetAmount?: number) => {
+  if (saleLocked()) {
+    ElMessage.warning('本单正在提交或结果待核对，请勿再次收款')
+    return
   }
 
   if (hasPriceFallback.value) {
     ElMessage.error('商品报价未完成，暂不能提交订单')
     return
   }
+  if (!storeId.value || !staffId.value || !cartItems.value.length) return
+  const session = actorSession(), key = actorKey()
+  // 支付请求固定为提交瞬间副本；摘要不保留验证码、客户联系方式或可重发数据。
+  const request = JSON.parse(JSON.stringify({ ...orderData, storeId: storeId.value, staffId: staffId.value }))
+  const snapshot: PendingSale = { version: 1, storeId: storeId.value, staffId: staffId.value,
+    customerId: orderData.customerId ?? null, submittedAt: Date.now(), totalAmount: totalAmount.value,
+    netAmount: submittedNetAmount ?? (orderData.couponId ? NaN : totalAmount.value - Number(orderData.discountAmount || 0)),
+    discountAmount: Number(orderData.discountAmount || 0), paymentType: orderData.paymentType,
+    payments: orderData.paymentType === 10 ? (orderData.payments || []).map((payment: any) => ({ paymentType: payment.paymentType, amount: payment.amount }))
+      : [{ paymentType: orderData.paymentType, amount: submittedNetAmount ?? totalAmount.value - Number(orderData.discountAmount || 0) }],
+    lines: saleLines(cartItems.value) }
+  if (![snapshot.netAmount, snapshot.totalAmount, snapshot.discountAmount].every(Number.isFinite)
+    || !snapshot.lines.length || snapshot.lines.length > 500 || !groupedSaleLines(snapshot.lines)) {
+    ElMessage.error('未取得完整结算快照，请重新核对商品报价后收款')
+    return
+  }
+  const saved = JSON.stringify(snapshot)
+  try { sessionStorage.setItem(key, saved) }
+  catch { ElMessage.error('无法保存本次收款核对记录，暂不能收款'); return }
+  pendingSale.value = snapshot
   submittingOrder.value = true
 
   // 提交前收集库房取货商品（订单创建后购物车会被清空）
@@ -485,11 +695,12 @@ const handleSubmitOrder = async (orderData: any) => {
       : [{ productId: item.productId as number, name: item.name }])
 
   try {
-    const createdOrderId = await createPOSOrder({
-      ...orderData,
-      storeId: storeId.value!,
-      staffId: staffId.value!
-    })
+    const createdOrderId = await createPOSOrder(request)
+    if (!Number.isSafeInteger(Number(createdOrderId)) || Number(createdOrderId) <= 0) throw new Error('未收到有效订单号，结果待核对')
+    removePendingRecord(key, saved)
+    if (session !== actorSession()) return
+    pendingSale.value = null
+    submittingOrder.value = false
 
     ElMessage.success(orderData.deliveryType === 2 ? '订单创建成功，待配送' : '订单创建成功')
     
@@ -509,6 +720,22 @@ const handleSubmitOrder = async (orderData: any) => {
       pickupVisible.value = true
     }
   } catch (error: any) {
+    if (session !== actorSession()) {
+      // 只清理明确拒绝的原记录，不触碰另一员工的界面或核对草稿。
+      if (definitelyRejectedSale(error)) {
+        try { removePendingRecord(key, saved) } catch { /* 保留原记录，待原员工核对 */ }
+      }
+      return
+    }
+    if (!definitelyRejectedSale(error)) {
+      checkoutVisible.value = false
+      ElMessage.warning('本次收款结果未知，已冻结原单。请先去订单中心核对，勿再次收款；未找到也不能直接重收。')
+      return
+    }
+    try { removePendingRecord(key, saved) }
+    catch { saleStorageError.value = true; return }
+    pendingSale.value = null
+    submittingOrder.value = false
     console.error('订单创建失败:', error)
     const errorMessage = error?.response?.data?.message || error?.message || '未知错误'
     ElMessage.error('订单创建失败：' + errorMessage)
@@ -518,8 +745,7 @@ const handleSubmitOrder = async (orderData: any) => {
     }
     // 其他收款/库存错误保留弹窗，报价变化则返回购物车核对新价格与组成。
   } finally {
-    // 确保状态重置，即使出错也要重置
-    submittingOrder.value = false
+    if (session === actorSession()) submittingOrder.value = false
   }
 }
 
@@ -563,6 +789,16 @@ const handleRegisterPickup = async (item: { productId: number; name: string }) =
   height: 100%;
   display: flex;
   overflow: hidden;
+}
+
+.sale-pending {
+  overflow: auto;
+  padding: 20px;
+  background: var(--el-bg-color);
+  font-size: 14px;
+
+  .el-input { max-width: 300px; margin-right: 8px; }
+  p { line-height: 1.7; }
 }
 
 

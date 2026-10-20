@@ -35,6 +35,8 @@ function loadPage(relativePath, exports, overrides = {}) {
     defineEmits: () => () => {},
     defineExpose: () => {},
     useUserStore: () => ({ userInfo: { id: 1, extra: { storeId: 1 } } }),
+    useRouter: () => ({push() {}}),
+    sessionStorage: {getItem:()=>null,setItem(){},removeItem(){}},
     usePermissionStore: () => ({ permissions: ['*'] }),
     ElMessage: Object.fromEntries(['error', 'warning', 'success', 'info'].map(level => [
       level, message => messages.push({ level, text: typeof message === 'string' ? message : message?.message || '' })
@@ -498,8 +500,8 @@ test('套餐结算只提交一行套餐和报价版本，不提交物料拆分�
 })
 
 test('结算发现套餐价格或组成已变时，返回购物车并刷新报价供重新确认', async () => {
-  const pos = createPOS({ createPOSOrder: async () => { throw new Error('套餐价格或组成已变化，请重新报价后结算') } })
-  pos.cartItems.value = [packageLine()]
+  const pos = createPOS({ createPOSOrder: async () => { throw Object.assign(new Error('套餐价格或组成已变化，请重新报价后结算'), {apiBusinessCode:10001}) } })
+  pos.cartItems.value = [packageLine({packageItems:[{productId:1,quantity:2,unit:'袋',totalPrice:80}]})]
   pos.checkoutVisible.value = true
   const pending = pos.handleSubmitOrder({ items: [{ itemType: 2, packageId: 10, quantity: 1 }] })
   await new Promise(resolve => setImmediate(resolve))

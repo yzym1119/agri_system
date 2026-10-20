@@ -144,6 +144,7 @@ class RetailFactChainEndToEndTest {
     @Autowired private com.agri_system.domain.credit.repository.CreditRepaymentLogRepository repaymentRepository;
     @Autowired private com.agri_system.domain.after_sales.repository.AfterSalesRepository afterSalesRepository;
     @Autowired private com.agri_system.application.after_sales.service.AfterSalesApplicationService afterSalesApplicationService;
+    @Autowired private com.agri_system.application.customer.service.VipLifecycleService vipLifecycleService;
 
     // ------------------------------------------------------------------
     // 数据源：建一次性库 + Flyway 编程式迁移 + 自证（行数==迁移文件数、failed==0）
@@ -453,6 +454,11 @@ class RetailFactChainEndToEndTest {
         assertDiscreteBaseQuantityBusinessChain();
         assertOnlinePickupRespectsReturnFacts();
         assertConcurrentMultiPackageSale();
+        assertConcurrentCompletePosSalesCannotOversell();
+        assertEquals(2L, jdbcLong("SELECT COUNT(DISTINCT label) FROM sys_dict_data WHERE type_code='product_unit' AND label IN ('箱','瓶') AND status=1"),
+                "全量真实迁移必须保留启用的箱、瓶单位字典");
+        VipLifecycleMysqlAssertions.verify(jdbcTemplate, vipLifecycleService);
+        log("[VIP] 隔离首次权益、同月逐事实重放、失败整笔回滚与过期降级通过");
         assertLedgerReconciles();
         assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_balance_feature_status"));
         log("收货、销售、原单退货、提货、调拨、盘点及失败回滚使用同一账本，验收通过");
@@ -1297,6 +1303,9 @@ class RetailFactChainEndToEndTest {
 
         var wechat = couponSale(550L,9003L,2); long wechatOrder = createPOSViaHttp(manager,wechat);
         assertDecimal("微信加券仍收净额90","90",paymentAmount(wechatOrder,2));
+        assertEquals(6L,jdbcLong("SELECT order_status FROM `order` WHERE id="+wechatOrder),"POS人工登记微信收款后完成，不沿用旧测试的待支付状态2");
+        assertEquals(2L,jdbcLong("SELECT payment_method FROM `order` WHERE id="+wechatOrder));
+        assertDecimal("微信POS实出一袋","1",jdbcDecimal("SELECT SUM(a.allocated_base_quantity) FROM order_item_batch_allocation a JOIN order_item i ON i.id=a.order_item_id WHERE i.order_id="+wechatOrder));
         var mixed = couponSale(550L,9004L,10);
         mixed.setPayments(List.of(paymentTender(1,"40"),paymentTender(2,"50")));
         long mixedOrder = createPOSViaHttp(manager,mixed);
@@ -1969,6 +1978,44 @@ class RetailFactChainEndToEndTest {
         assertDecimal("并发销售后快照为0", "0", jdbcDecimal("SELECT quantity FROM inventory WHERE store_id=1 AND product_id=102"));
         assertDecimal("并发销售后批次余额为0", "0", jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE store_id=1 AND product_id=102"));
         log("[并发] 两个 REPEATABLE_READ 旧快照争抢最后2袋只有一笔出库，余额不负");
+    }
+
+    /** 完整POS事务争抢最后一件，不能只用账本出库并发代替订单/收款回滚证明。 */
+    private void assertConcurrentCompletePosSalesCannotOversell() throws Exception {
+        for(long product=890;product<=892;product++) assertLastPosItemRace(product);
+    }
+
+    private void assertLastPosItemRace(long product) throws Exception {
+        exec("INSERT INTO product(id,code,name,main_unit,suggested_retail_price,min_price,status) VALUES("+product+",'LAST-P"+product+"','最后一件完整收银测试','袋',10,1,1)");
+        exec("INSERT INTO product_unit(id,product_id,unit_name,base_quantity_per_unit,is_base_unit,allow_purchase,allow_sale,allow_inventory,allow_transfer,status) VALUES("+(product*10+1)+","+product+",'袋',1,1,1,1,1,1,1)");
+        var stock = new com.agri_system.application.inventory.dto.command.InventoryInCommand();
+        stock.setStoreId(1L);stock.setProductId(product);stock.setUnit("袋");stock.setQuantity(BigDecimal.ONE);
+        stock.setBatchNo("LAST-POS-ONE");stock.setCostPrice(new BigDecimal("3"));
+        inventoryApplicationService.inbound(stock,1L);
+        long beforeOrders=jdbcLong("SELECT COUNT(*) FROM `order`"), beforePayments=jdbcLong("SELECT COUNT(*) FROM order_payment");
+        long beforeMoves=movementCount();
+        var barrier=new java.util.concurrent.CyclicBarrier(2);
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+        List<java.util.concurrent.Future<Long>> attempts=new ArrayList<>();
+        try {
+            for(int i=0;i<2;i++) attempts.add(pool.submit(()->{
+                barrier.await(10,java.util.concurrent.TimeUnit.SECONDS);
+                try {return orderApplicationService.createPOSOrder(posSale(product,"1","袋","10",false,null,"10"),1L);}
+                catch(IllegalArgumentException rejected) {
+                    assertTrue(rejected.getMessage().contains("可用库存不足"),"只能以真实缺货拒绝，不把死锁/价格/权限错误当成功："+rejected.getMessage());
+                    return null;
+                }
+            }));
+            List<Long> winners=new ArrayList<>();
+            for(var attempt:attempts) {Long id=attempt.get(35,java.util.concurrent.TimeUnit.SECONDS);if(id!=null)winners.add(id);}
+            assertEquals(1,winners.size(),"最后一件只有一笔完整收银成功");
+            assertEquals(beforeOrders+1,jdbcLong("SELECT COUNT(*) FROM `order`"),"失败事务不能留订单");
+            assertEquals(beforePayments+1,jdbcLong("SELECT COUNT(*) FROM order_payment"),"失败事务不能留收款");
+            assertEquals(beforeMoves+1,movementCount(),"只追加一次SALE");
+            assertDecimal("最后一件成交金额","10",paymentAmount(winners.get(0),1));
+            assertDecimal("最后一件余额归零","0",jdbcDecimal("SELECT SUM(base_quantity) FROM inventory_batch_balance WHERE store_id=1 AND product_id="+product));
+            log("[完整POS并发] 两单争抢最后一件：1订单/1现金收款/1SALE，失败整单回滚");
+        } finally {pool.shutdownNow();}
     }
 
     private List<Boolean> raceWithOldSnapshot(java.util.function.IntConsumer action, String expectedRejection) throws Exception {

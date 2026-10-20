@@ -15,6 +15,8 @@ function loadPage(relativePath, exports, overrides = {}) {
   const messages = []
   const context = {
     useRoute: () => ({query: {}}),
+    useRouter: () => ({push() {}}),
+    sessionStorage: {getItem:()=>null,setItem(){},removeItem(){}},
     ref: vue.ref, reactive: vue.reactive, computed: vue.computed, watch: vue.watch,
     onMounted() {}, onUnmounted() {}, nextTick: vue.nextTick,
     defineProps: () => ({}), defineEmits: () => () => {}, defineExpose() {},

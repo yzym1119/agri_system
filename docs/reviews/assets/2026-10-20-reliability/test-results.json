@@ -1,0 +1,72 @@
+{
+  "backend_clean_verify": {
+    "api-admin": {
+      "tests": 55,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3
+    },
+    "api-client": {
+      "tests": 47,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "core-application": {
+      "tests": 573,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "core-domain": {
+      "tests": 34,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "core-infrastructure": {
+      "tests": 91,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 5
+    }
+  },
+  "mysql": [
+    {
+      "suite": "com.agri_system.infrastructure.migration.MysqlRetailFactChainIntegrationTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.agri_system.authority.AuthorityHttpIntegrationTest",
+      "tests": 39,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.agri_system.e2e.RetailFactChainEndToEndTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "frontend": {
+    "tests": 227,
+    "passed": 227,
+    "failures": 0,
+    "build": "类型检查和生产构建成功"
+  },
+  "existing_schema_negative": {
+    "case": "显式指定已存在测试库时拒绝覆盖并保留哨兵数据",
+    "passed": true,
+    "expected_maven_rejection": 1,
+    "sentinel_value": 731
+  },
+  "pos_concurrency_rounds": 3,
+  "preview_readonly_checks": 31,
+  "jar": "4a857c6858dd46a1f40f831f18a88789bc9fb1d8b22a49b4f222a80b0571b411"
+}

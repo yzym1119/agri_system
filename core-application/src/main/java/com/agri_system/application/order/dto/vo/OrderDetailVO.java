@@ -103,6 +103,9 @@ public class OrderDetailVO {
 
     @Schema(description = "操作员姓名")
     private String operatorName;
+
+    @Schema(description = "原POS订单持久化操作员工ID；缺失事实或线上客户创建不推测员工")
+    private Long operatorStaffId;
     
     @Schema(description = "售后记录列表")
     private List<AfterSalesVO> afterSalesList;

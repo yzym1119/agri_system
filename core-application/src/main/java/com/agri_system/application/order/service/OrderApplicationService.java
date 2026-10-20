@@ -383,6 +383,11 @@ public class OrderApplicationService {
         BigDecimal discountAmount = command.getDiscountAmount() != null ? command.getDiscountAmount() : BigDecimal.ZERO;
         BigDecimal couponAmount = BigDecimal.ZERO;
         
+        // FK插入订单明细会持有product父行共享锁；两单先插行再升级库存排他锁会互锁。
+        // 已先锁客户并按ID锁完套餐，此处按商品ID取得库存锁后才允许写明细。
+        // 新单应收尚未发布；同客户的原账户/钱包竞争仍由前置客户锁串行化。
+        inventoryService.lockProducts(actualStoreId, inventoryOutCommands.stream().map(InventoryOutCommand::getProductId).toList());
+
         // 先保存订单和明细（用于优惠券校验）
         order.setTotalAmount(totalAmount);
         order.setDiscountAmount(discountAmount);
@@ -619,7 +624,6 @@ public class OrderApplicationService {
 
         // 11. 扣减库存（POS订单立即扣减，使用操作员所属门店ID）
         // 重要：订单已保存，更新所有库存扣减命令的 referenceId
-        inventoryService.lockProducts(order.getStoreId(), inventoryOutCommands.stream().map(InventoryOutCommand::getProductId).toList());
         List<Integer> stockIndices = java.util.stream.IntStream.range(0, inventoryOutCommands.size()).boxed()
                 .sorted(java.util.Comparator.comparing(i -> inventoryOutCommands.get(i).getProductId())).toList();
         for (int i : stockIndices) {
@@ -1008,6 +1012,8 @@ public class OrderApplicationService {
         } else if (order.getCreatedBy() != null) {
             operatorId = order.getCreatedBy();
         }
+        // 只读核验原POS收银身份；线上createdBy属于客户，不得误映射成员工。
+        vo.setOperatorStaffId(Integer.valueOf(1).equals(order.getOrderType()) ? operatorId : null);
         if (operatorId != null) {
             try {
                 staffRepository.findById(operatorId).ifPresent(staff -> vo.setOperatorName(staff.getName()));

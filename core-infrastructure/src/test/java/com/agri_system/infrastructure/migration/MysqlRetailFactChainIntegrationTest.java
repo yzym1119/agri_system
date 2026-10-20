@@ -18,7 +18,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * imp6: 真实 MySQL/InnoDB 集成测试。
@@ -35,8 +34,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *
  * <p>默认关闭,避免污染常规 {@code mvn test};显式 {@code -Dmysql.it=true} 开启。
  * 使用独立数据库(BeforeAll 建、AfterAll 删),不触碰 dev 库。连接参数可用系统属性覆盖:
- * {@code mysql.it.host/port/user/password/database}(默认 127.0.0.1:3306, root 无密码, agri_retail_it)。
- * MySQL 不可达或无建库权限时通过 {@link org.junit.jupiter.api.Assumptions} 优雅跳过。
+ * {@code mysql.it.host/port/user/password/database}(默认 127.0.0.1:3306, root 无密码, agri_retail_it_ 加随机 UUID)。
+ * 外部库名须使用相同测试前缀且事先不存在；只删除本次成功创建的库。显式开启后环境或初始化错误直接失败。
  */
 @EnabledIfSystemProperty(named = "mysql.it", matches = "true")
 class MysqlRetailFactChainIntegrationTest {
@@ -45,7 +44,9 @@ class MysqlRetailFactChainIntegrationTest {
     private static final String PORT = System.getProperty("mysql.it.port", "3306");
     private static final String USER = System.getProperty("mysql.it.user", "root");
     private static final String PASSWORD = System.getProperty("mysql.it.password", "");
-    private static final String DB = System.getProperty("mysql.it.database", "agri_retail_it");
+    private static final String DB = System.getProperty("mysql.it.database",
+            "agri_retail_it_" + java.util.UUID.randomUUID().toString().replace("-", ""));
+    private static final FreshSchema SCHEMA = new FreshSchema(DB);
 
     private static final String URL_PARAMS =
             "?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&allowMultiQueries=false";
@@ -86,13 +87,10 @@ class MysqlRetailFactChainIntegrationTest {
     }
 
     @BeforeAll
-    static void provisionFreshSchemaAndRunMigrations() {
+    static void provisionFreshSchemaAndRunMigrations() throws SQLException {
         try (Connection server = DriverManager.getConnection(serverUrl(), USER, PASSWORD);
              Statement statement = server.createStatement()) {
-            statement.execute("DROP DATABASE IF EXISTS `" + DB + "`");
-            statement.execute("CREATE DATABASE `" + DB + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-        } catch (SQLException exception) {
-            assumeTrue(false, "真实 MySQL 不可达或无建库权限,跳过 imp6 集成测试: " + exception.getMessage());
+            SCHEMA.create(statement);
         }
         try (Connection connection = open(); Statement statement = connection.createStatement()) {
             for (String ddl : LEGACY_DDL) {
@@ -113,12 +111,39 @@ class MysqlRetailFactChainIntegrationTest {
     }
 
     @AfterAll
-    static void dropSchema() {
+    static void dropSchema() throws SQLException {
+        if (!SCHEMA.isCreated()) return;
         try (Connection server = DriverManager.getConnection(serverUrl(), USER, PASSWORD);
              Statement statement = server.createStatement()) {
-            statement.execute("DROP DATABASE IF EXISTS `" + DB + "`");
-        } catch (SQLException ignored) {
-            // 清理失败不影响测试结论
+            SCHEMA.drop(statement);
+        }
+    }
+
+    /** 测试库的本次创建归属；CREATE 原子拒绝同名库，不能用预删保证空库。 */
+    static final class FreshSchema {
+        private final String name;
+        private boolean created;
+
+        FreshSchema(String name) {
+            if (name == null || name.length() > 64 || !name.matches("agri_retail_it_[a-z0-9_]+")) {
+                throw new IllegalArgumentException("测试库名必须以 agri_retail_it_ 开头，仅含小写字母、数字、下划线且不超过64字符");
+            }
+            this.name = name;
+        }
+
+        void create(Statement statement) throws SQLException {
+            statement.execute("CREATE DATABASE `" + name + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+            created = true;
+        }
+
+        boolean isCreated() {
+            return created;
+        }
+
+        void drop(Statement statement) throws SQLException {
+            if (!created) return;
+            statement.execute("DROP DATABASE `" + name + "`");
+            created = false;
         }
     }
 
