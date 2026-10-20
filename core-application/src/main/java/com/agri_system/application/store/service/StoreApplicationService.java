@@ -37,6 +37,18 @@ public class StoreApplicationService {
     private final com.agri_system.domain.inventory.repository.InventoryLocationRepository locationRepository;
     private final StoreDomainService domainService;
     private final CodeGenerationApplicationService codeGenerationService;
+
+    public List<com.agri_system.application.store.dto.vo.StoreOptionVO> businessOptions() {
+        if (com.agri_system.application.auth.util.CurrentUser.staffId()==null) throw new IllegalArgumentException("仅员工可读取门店选项");
+        if (!com.agri_system.application.auth.util.CurrentUser.isAdmin()) {
+            Long id=com.agri_system.application.auth.util.CurrentUser.storeId();
+            Store store=storeRepository.findById(id).orElseThrow(()->new IllegalArgumentException("员工所属门店不存在"));
+            if (Integer.valueOf(1).equals(store.getDeleted())) throw new IllegalArgumentException("员工所属门店已删除");
+            return List.of(new com.agri_system.application.store.dto.vo.StoreOptionVO(store.getId(),store.getName()));
+        }
+        return storeRepository.findPage(null,null,null,null,1,1000).getRecords().stream()
+                .map(s->new com.agri_system.application.store.dto.vo.StoreOptionVO(s.getId(),s.getName())).toList();
+    }
     
     /**
      * 创建门店

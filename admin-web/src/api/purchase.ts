@@ -15,6 +15,16 @@ import type { PageResponse } from '@/types/store'
  */
 
 // 分页查询采购单
+export function getReceivingPurchaseList(params: PurchasePageQuery): Promise<PageResponse<PurchasePageVO>> {
+  return request({url:'/api/admin/purchase/receiving-orders',method:'get',params}).then((page:any)=>({
+    records:page?.records||[],total:page?.totalRow??page?.total??0,
+    pageNum:page?.pageNumber??1,pageSize:page?.pageSize??params.pageSize??10
+  }))
+}
+export function getReceivingPurchaseDetail(orderId:number):Promise<PurchaseDetailVO> {
+  return request({url:`/api/admin/purchase/receiving-orders/${orderId}`,method:'get'})
+}
+
 export function getPurchaseList(params: PurchasePageQuery): Promise<PageResponse<PurchasePageVO>> {
   return request({
     url: '/api/admin/purchase/list',

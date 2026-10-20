@@ -1,6 +1,7 @@
 package com.agri_system.application.report.service;
 
 import com.agri_system.application.order.dto.vo.OrderMarginVO;
+import com.agri_system.application.order.service.RefundAmountPolicy;
 import com.agri_system.application.report.dto.*;
 import com.agri_system.domain.customer.model.Customer;
 import com.agri_system.domain.inventory.model.InventoryBatch;
@@ -314,7 +315,7 @@ public class ReportAnalysisService {
         // 先查询订单ID列表（用于关联订单明细）
         QueryWrapper orderQw = QueryWrapper.create()
                 .where("created_at between ? and ?", startTime, endTime)
-                .and("order_status in (2,3,4,5,6,9)"); // 已支付及之后状态
+                .and("order_status in (2,3,4,5,6,8,9)"); // 已成交，保留全部退货的原单日期
         if (storeId != null) {
             orderQw.and("store_id = ?", storeId);
         }
@@ -335,6 +336,114 @@ public class ReportAnalysisService {
         }
         List<OrderItem> items = orderItemMapper.selectListByQuery(itemQw);
 
+        // 完成售后按原订单创建日冲减；退款发生日期不改变该趋势的归属。
+        Map<Long, BigDecimal> refundsByOrder = orderMapper.selectListByQueryAs(orderQw.clone().select("""
+                `order`.id AS order_id,
+                (SELECT COALESCE(SUM(af.refund_amount),0) FROM after_sales af
+                 WHERE af.order_id = `order`.id AND af.store_id = `order`.store_id AND af.status = 50) AS order_refund_amount
+                """), SalesTrendReturnFacts.class).stream()
+                .collect(Collectors.toMap(SalesTrendReturnFacts::getOrderId, fact -> defaultZero(fact.getOrderRefundAmount())));
+        Map<Long, SalesTrendReturnFacts> returnsByItem = orderItemMapper.selectListByQueryAs(
+                itemQw.clone().select("""
+                    order_item.id AS item_id,
+                    (SELECT COALESCE(SUM(ai.refund_amount),0) FROM after_sales_item ai
+                     JOIN after_sales af ON af.id = ai.after_sales_id
+                     JOIN `order` o ON o.id = af.order_id AND o.store_id = af.store_id
+                     WHERE ai.order_item_id = order_item.id AND ai.product_id = order_item.product_id
+                       AND af.order_id = order_item.order_id AND af.status = 50) AS refund_amount,
+                    (SELECT COALESCE(SUM(ai.quantity),0) FROM after_sales_item ai
+                     JOIN after_sales af ON af.id = ai.after_sales_id
+                     JOIN `order` o ON o.id = af.order_id AND o.store_id = af.store_id
+                     WHERE ai.order_item_id = order_item.id AND ai.product_id = order_item.product_id
+                       AND af.order_id = order_item.order_id AND af.status = 50) AS returned_quantity,
+                    (SELECT COALESCE(SUM(r.base_quantity),0)
+                     FROM order_item_batch_allocation a
+                     JOIN inventory_movement s ON s.id = a.source_movement_id
+                     JOIN `order` o ON o.id = order_item.order_id AND o.store_id = a.store_id
+                     JOIN inventory_movement r ON r.reference_id = a.id
+                     WHERE a.order_item_id = order_item.id AND a.product_id = order_item.product_id
+                       AND s.movement_type = 'SALE' AND s.reference_type = 'ORDER' AND s.reference_id = o.id
+                       AND s.store_id = a.store_id AND s.product_id = a.product_id AND s.batch_id = a.batch_id
+                       AND s.from_location_id = a.location_id AND s.base_quantity = a.allocated_base_quantity AND s.base_quantity > 0
+                       AND r.movement_type = 'RETURN' AND r.reference_type = 'SALE_ALLOCATION' AND r.base_quantity > 0
+                       AND r.store_id = a.store_id AND r.product_id = a.product_id
+                       AND r.batch_id = a.batch_id AND r.to_location_id = a.location_id) AS returned_base_quantity,
+                    (SELECT COALESCE(SUM(LEAST(a.allocated_cost, ROUND(a.batch_unit_cost * LEAST(a.allocated_base_quantity,
+                        COALESCE((SELECT SUM(r.base_quantity) FROM inventory_movement r
+                            WHERE r.movement_type = 'RETURN' AND r.reference_type = 'SALE_ALLOCATION'
+                              AND r.reference_id = a.id AND r.base_quantity > 0
+                              AND r.store_id = a.store_id AND r.product_id = a.product_id
+                              AND r.batch_id = a.batch_id AND r.to_location_id = a.location_id),0)),8))),0)
+                     FROM order_item_batch_allocation a
+                     JOIN inventory_movement s ON s.id = a.source_movement_id
+                     JOIN `order` o ON o.id = order_item.order_id AND o.store_id = a.store_id
+                     WHERE a.order_item_id = order_item.id AND a.product_id = order_item.product_id
+                       AND s.movement_type = 'SALE' AND s.reference_type = 'ORDER' AND s.reference_id = o.id
+                       AND s.store_id = a.store_id AND s.product_id = a.product_id AND s.batch_id = a.batch_id
+                       AND s.from_location_id = a.location_id AND s.base_quantity = a.allocated_base_quantity
+                       AND s.base_quantity > 0) AS returned_cost
+                    """), SalesTrendReturnFacts.class).stream()
+                .collect(Collectors.toMap(SalesTrendReturnFacts::getItemId, fact -> fact));
+        // 先检查逐笔事实，不能让SUM把负数与正数抵消后伪装成有效累计量。
+        java.util.Set<Long> invalidRefundOrders = orderMapper.selectListByQueryAs(orderQw.clone()
+                .select("`order`.id AS order_id")
+                .and("""
+                    EXISTS (SELECT 1 FROM after_sales af
+                        LEFT JOIN after_sales_item ai ON ai.after_sales_id = af.id
+                        WHERE af.order_id = `order`.id AND af.store_id = `order`.store_id AND af.status = 50
+                          AND (af.refund_amount IS NULL OR af.refund_amount < 0 OR ai.id IS NULL
+                            OR ai.quantity IS NULL OR ai.quantity < 0
+                            OR ai.refund_amount IS NULL OR ai.refund_amount < 0))
+                    """), SalesTrendReturnFacts.class).stream()
+                .map(SalesTrendReturnFacts::getOrderId).collect(Collectors.toSet());
+        Map<Long, BigDecimal> netLineAmounts = new LinkedHashMap<>();
+        Map<Long, BigDecimal> unavailableOrderSales = new LinkedHashMap<>();
+        Map<Long, String> costWarnings = new LinkedHashMap<>();
+        for (Order order : orders) {
+            List<OrderItem> orderItems = items.stream().filter(i -> order.getId().equals(i.getOrderId())).toList();
+            BigDecimal parentRefund = refundsByOrder.getOrDefault(order.getId(), BigDecimal.ZERO);
+            BigDecimal childRefund = orderItems.stream().map(i -> returnsByItem.get(i.getId()))
+                    .filter(java.util.Objects::nonNull).map(SalesTrendReturnFacts::getRefundAmount)
+                    .map(this::defaultZero).reduce(BigDecimal.ZERO, BigDecimal::add);
+            // 旧数据若缺明细或净额不可对账，保留父单权威净销，整单成本标未知，不能猜分摊。
+            Map<Long, BigDecimal> originalNet = Map.of();
+            String warning = null;
+            try {
+                originalNet = RefundAmountPolicy.refundableBaseAmounts(order, orderItems);
+                if (order.getPayAmount() == null || originalNet.values().stream()
+                        .reduce(BigDecimal.ZERO, BigDecimal::add).compareTo(order.getPayAmount()) != 0) {
+                    warning = "原订单净应结算与物料成交金额无法核对";
+                }
+            } catch (IllegalArgumentException missingHistory) {
+                warning = "原订单缺少可核对的物料成交快照";
+            }
+            if (parentRefund.compareTo(childRefund) != 0) warning = "已完成售后金额与物料明细不一致";
+            if (parentRefund.signum() < 0 || order.getPayAmount() != null
+                    && parentRefund.compareTo(order.getPayAmount()) > 0) {
+                warning = "已完成售后累计退款超出原净应结算范围";
+            }
+            if (invalidRefundOrders.contains(order.getId())) warning = "已完成售后存在负数或缺失事实";
+            if (warning == null) {
+                for (OrderItem item : orderItems) {
+                    SalesTrendReturnFacts fact = returnsByItem.get(item.getId());
+                    BigDecimal quantity = fact == null ? BigDecimal.ZERO : defaultZero(fact.getReturnedQuantity());
+                    BigDecimal refund = fact == null ? BigDecimal.ZERO : defaultZero(fact.getRefundAmount());
+                    if (quantity.signum() < 0 || item.getQuantity() == null
+                            || quantity.compareTo(item.getQuantity()) > 0
+                            || refund.signum() < 0 || refund.compareTo(originalNet.get(item.getId())) > 0) {
+                        warning = "已完成售后累计退量或退款超出原物料净成交范围";
+                        break;
+                    }
+                }
+            }
+            if (warning != null) {
+                unavailableOrderSales.put(order.getId(), defaultZero(order.getPayAmount()).subtract(parentRefund));
+                costWarnings.put(order.getId(), "订单" + order.getId() + "：" + warning + "，成本及毛利待核对");
+            } else {
+                netLineAmounts.putAll(originalNet);
+            }
+        }
+
         // 获取订单创建时间映射
         Map<Long, LocalDateTime> orderTimeMap = orders.stream()
                 .collect(Collectors.toMap(Order::getId, Order::getCreatedAt));
@@ -347,50 +456,63 @@ public class ReportAnalysisService {
         }
 
         // 按日期聚合：实际/估算/成本缺失三口径严格隔离，估算绝不并入实际；
-        // legacy 口径不变：costAmount = 实际 + 估算，profit/profitRate 公式不变
+        // costAmount = 实际 + 估算，均冲减已完成退货，缺失成本不猜补
         Map<LocalDate, SalesTrendVO> trendMap = new LinkedHashMap<>();
+        for (Order order : orders) {
+            if (!unavailableOrderSales.containsKey(order.getId())) continue;
+            SalesTrendVO vo = trendMap.computeIfAbsent(order.getCreatedAt().toLocalDate(), this::newSalesTrend);
+            BigDecimal sale = unavailableOrderSales.get(order.getId());
+            vo.setSaleAmount(vo.getSaleAmount().add(sale));
+            vo.setCostUnavailableSaleAmount(vo.getCostUnavailableSaleAmount().add(sale));
+            vo.getCostWarnings().add(costWarnings.get(order.getId()));
+        }
         for (OrderItem item : items) {
             LocalDateTime orderTime = orderTimeMap.get(item.getOrderId());
-            if (orderTime == null) continue;
-            LocalDate date = orderTime.toLocalDate();
+            if (orderTime == null || unavailableOrderSales.containsKey(item.getOrderId())) continue;
+            SalesTrendVO vo = trendMap.computeIfAbsent(orderTime.toLocalDate(), this::newSalesTrend);
 
-            SalesTrendVO vo = trendMap.computeIfAbsent(date, d -> {
-                SalesTrendVO v = new SalesTrendVO();
-                v.setDate(d);
-                v.setSaleAmount(BigDecimal.ZERO);
-                v.setCostAmount(BigDecimal.ZERO);
-                v.setActualSaleAmount(BigDecimal.ZERO);
-                v.setActualCostAmount(BigDecimal.ZERO);
-                v.setActualProfit(BigDecimal.ZERO);
-                v.setEstimatedSaleAmount(BigDecimal.ZERO);
-                v.setEstimatedCostAmount(BigDecimal.ZERO);
-                v.setEstimatedProfit(BigDecimal.ZERO);
-                v.setCostUnavailableSaleAmount(BigDecimal.ZERO);
-                return v;
-            });
-
-            OrderMarginVO margin = OrderMarginVO.from(item, itemAllocations(item, allocationsByOrder));
-            BigDecimal sale = margin.saleAmount();
+            List<OrderItemBatchAllocation> itemFacts = itemAllocations(item, allocationsByOrder);
+            OrderMarginVO margin = OrderMarginVO.from(item, itemFacts);
+            SalesTrendReturnFacts returned = returnsByItem.get(item.getId());
+            BigDecimal refunded = returned == null ? BigDecimal.ZERO : defaultZero(returned.getRefundAmount());
+            BigDecimal returnedQuantity = returned == null ? BigDecimal.ZERO : defaultZero(returned.getReturnedQuantity());
+            BigDecimal sale = netLineAmounts.get(item.getId()).subtract(refunded);
+            BigDecimal returnedCost = returned == null || returnedQuantity.signum() <= 0
+                    ? BigDecimal.ZERO : defaultZero(returned.getReturnedCost());
+            BigDecimal actualCost = margin.actualCost() == null ? null
+                    : margin.actualCost().subtract(returnedCost).max(BigDecimal.ZERO);
+            // 完成售后数量与合法原SALE/RETURN回库证据必须相符；缺链不能假装实际净成本。
+            BigDecimal allocatedBase = itemFacts.stream().map(OrderItemBatchAllocation::getAllocatedBaseQuantity)
+                    .map(this::defaultZero).reduce(BigDecimal.ZERO, BigDecimal::add);
+            if (actualCost != null && returnedQuantity.signum() > 0
+                    && (returned == null || defaultZero(returned.getReturnedBaseQuantity())
+                        .multiply(defaultZero(item.getQuantity())).compareTo(allocatedBase.multiply(returnedQuantity)) != 0)) {
+                actualCost = null;
+            }
+            BigDecimal estimatedCost = margin.estimatedCost() == null ? null
+                    : defaultZero(item.getCostPriceSnapshot()).multiply(defaultZero(item.getQuantity())
+                            .subtract(returnedQuantity).max(BigDecimal.ZERO));
             vo.setSaleAmount(vo.getSaleAmount().add(sale));
-            if (margin.actualCost() != null) {
+            if (actualCost != null) {
                 vo.setActualSaleAmount(vo.getActualSaleAmount().add(sale));
-                vo.setActualCostAmount(vo.getActualCostAmount().add(margin.actualCost()));
-                vo.setCostAmount(vo.getCostAmount().add(margin.actualCost()));
+                vo.setActualCostAmount(vo.getActualCostAmount().add(actualCost));
+                vo.setCostAmount(vo.getCostAmount().add(actualCost));
             } else if (margin.estimatedCost() != null) {
+                vo.setCostStatus("估算");
                 vo.setEstimatedSaleAmount(vo.getEstimatedSaleAmount().add(sale));
-                vo.setEstimatedCostAmount(vo.getEstimatedCostAmount().add(margin.estimatedCost()));
-                vo.setCostAmount(vo.getCostAmount().add(margin.estimatedCost()));
+                vo.setEstimatedCostAmount(vo.getEstimatedCostAmount().add(estimatedCost));
+                vo.setCostAmount(vo.getCostAmount().add(estimatedCost));
             } else {
                 vo.setCostUnavailableSaleAmount(vo.getCostUnavailableSaleAmount().add(sale));
-                // 恢复 legacy 字面表达式：快照缺失时按 0 × 数量 计入，保持聚合 costAmount 的原始精度
-                BigDecimal cost = defaultZero(item.getCostPriceSnapshot()).multiply(defaultZero(item.getQuantity()));
-                vo.setCostAmount(vo.getCostAmount().add(cost));
+                vo.getCostWarnings().add("订单" + item.getOrderId() + "物料" + item.getId() + "：缺少原成本证据，成本及毛利待核对");
+                // 缺证据不使用当前商品成本或旧快照猜补实际净成本。
             }
         }
 
         // 计算毛利和毛利率
         return trendMap.values().stream()
                 .peek(vo -> {
+                    if (!vo.getCostWarnings().isEmpty()) vo.setCostStatus("待核对");
                     vo.setProfit(vo.getSaleAmount().subtract(vo.getCostAmount()));
                     vo.setActualProfit(vo.getActualSaleAmount().subtract(vo.getActualCostAmount()));
                     vo.setEstimatedProfit(vo.getEstimatedSaleAmount().subtract(vo.getEstimatedCostAmount()));
@@ -405,6 +527,22 @@ public class ReportAnalysisService {
                 })
                 .sorted(Comparator.comparing(SalesTrendVO::getDate))
                 .collect(Collectors.toList());
+    }
+
+    private SalesTrendVO newSalesTrend(LocalDate date) {
+        SalesTrendVO v = new SalesTrendVO();
+        v.setDate(date);
+        v.setCostStatus("已核对");
+        v.setSaleAmount(BigDecimal.ZERO);
+        v.setCostAmount(BigDecimal.ZERO);
+        v.setActualSaleAmount(BigDecimal.ZERO);
+        v.setActualCostAmount(BigDecimal.ZERO);
+        v.setActualProfit(BigDecimal.ZERO);
+        v.setEstimatedSaleAmount(BigDecimal.ZERO);
+        v.setEstimatedCostAmount(BigDecimal.ZERO);
+        v.setEstimatedProfit(BigDecimal.ZERO);
+        v.setCostUnavailableSaleAmount(BigDecimal.ZERO);
+        return v;
     }
 
     /**

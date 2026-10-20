@@ -141,7 +141,7 @@
 
         <div class="item-toolbar">
           <div>
-            <el-button type="primary" @click="openProductSelector">添加商品</el-button>
+            <el-button type="primary" :loading="productsLoading" :disabled="submitLoading" @click="openProductSelector">添加商品</el-button>
             <el-button v-permission="'product:create'" type="success" @click="openQuickCreateProduct">+ 新建商品</el-button>
           </div>
           <span class="total-amount">合计：¥{{ totalAmount.toFixed(2) }}</span>
@@ -165,19 +165,20 @@
               />
             </template>
           </el-table-column>
-          <el-table-column prop="unit" label="单位" width="120" align="center">
+          <el-table-column prop="unit" label="采购单位" width="180" align="center">
             <template #default="{ row }">
               <el-select v-model="row.unit" style="width: 100%" @change="handleUnitChange(row)">
-                <el-option v-if="row.productMainUnit" :label="row.productMainUnit" :value="row.productMainUnit" />
-                <el-option v-if="row.productAuxUnit" :label="row.productAuxUnit" :value="row.productAuxUnit" />
+                <el-option v-for="unit in row.unitOptions" :key="unit.id" :label="unit.unitName" :value="unit.unitName" />
               </el-select>
+              <div class="cell-secondary">{{ purchaseUnitHint(row) }}</div>
             </template>
           </el-table-column>
-          <el-table-column prop="price" label="进货单价" width="160" align="center">
+          <el-table-column prop="price" label="实际进价（元/采购单位）" width="190" align="center">
             <template #default="{ row }">
               <el-input-number 
-                v-model="row.price" 
-                :min="0.01" 
+                v-model="row.price"
+                placeholder="填写实际进价"
+                :min="0.01"
                 :precision="2" 
                 :controls="true"
                 :controls-position="'right'"
@@ -202,7 +203,7 @@
       <template #footer>
         <div style="text-align: right; padding: 20px">
           <el-button @click="createVisible = false">取消</el-button>
-          <el-button v-permission="'purchase:create'" type="primary" :loading="submitLoading" @click="handleCreate">提交</el-button>
+          <el-button v-permission="'purchase:create'" type="primary" :loading="submitLoading" :disabled="productsLoading" @click="handleCreate">提交</el-button>
         </div>
       </template>
     </el-drawer>
@@ -274,7 +275,7 @@ import type {FormInstance, FormRules} from 'element-plus'
 import {ElMessage, ElMessageBox} from 'element-plus'
 import ProductSelector from '@/components/ProductSelector/index.vue'
 import QuickProductForm from '@/components/QuickProductForm/index.vue'
-import type {ProductDetailVO} from '@/types/product'
+import type {ProductDetailVO, ProductUnitVO} from '@/types/product'
 import {getProductDetail} from '@/api/product'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -315,7 +316,8 @@ const supplierOptions = ref<SupplierDetailVO[]>([])
 // 创建表单
 const createVisible = ref(false)
 const createFormRef = ref<FormInstance>()
-const createForm = reactive<PurchaseCreateRequest>({
+type PurchaseDraftItem = {productId: number; qty: number; unit?: string; price?: number; productName: string; specification?: string; manufacturer?: string; unitOptions: ProductUnitVO[]; baseUnitName: string}
+const createForm = reactive<Omit<PurchaseCreateRequest, 'items'> & {items: PurchaseDraftItem[]}>({
   storeId: undefined as unknown as number,
   supplierId: undefined,
   supplierName: '',
@@ -336,6 +338,17 @@ const createRules: FormRules = {
   ]
 }
 const submitLoading = ref(false)
+const pendingProductReads = ref(0)
+const productsLoading = computed(() => pendingProductReads.value > 0)
+let createSession = 0
+watch(createVisible, visible => {
+  if (!visible) {
+    createSession++
+    productSelectorVisible.value = false
+    quickProductFormVisible.value = false
+    pendingProductReads.value = 0
+  }
+}, {flush: 'sync'})
 
 // 详情
 const detailVisible = ref(false)
@@ -441,6 +454,8 @@ const handleOpenCreate = () => {
 }
 
 const resetCreateForm = () => {
+  createSession++
+  pendingProductReads.value = 0
   createForm.storeId = undefined as unknown as number
   createForm.supplierId = undefined
   createForm.supplierName = ''
@@ -457,60 +472,47 @@ const openProductSelector = () => {
   productSelectorVisible.value = true
 }
 
-const handleProductSelect = (products: ProductDetailVO[]) => {
-  products.forEach(p => {
-    if (!createForm.items.find(i => i.productId === p.id)) {
-      // 默认使用主单位，单价用加权成本
-      const defaultUnit = p.mainUnit || p.auxUnit
-      const avgCost = p.avgCostPrice || 0
-      let unitPrice = avgCost
-      // 如果默认选了辅单位且有比例，则换算
-      if (defaultUnit === p.auxUnit && p.mainToAuxRatio) {
-        if (p.mainToAuxRatio > 0) {
-          unitPrice = Number((avgCost / p.mainToAuxRatio).toFixed(2))
-        } else {
-          ElMessage.warning(`商品【${p.name}】未设置有效换算比例`)
-          unitPrice = avgCost
-        }
-      }
-      
-      createForm.items.push({
-        productId: p.id,
-        qty: 1,
-        unit: defaultUnit,
-        price: unitPrice,
-        avgCostPrice: avgCost,
-        productName: p.name as any, // for display only
-        specification: p.specification as any,
-        manufacturer: p.manufacturer as any,
-        productMainUnit: p.mainUnit as any,
-        productAuxUnit: p.auxUnit as any,
-        productMainToAuxRatio: p.mainToAuxRatio as any
-      } as any)
-    }
-  })
-  recalcTotal()
+const purchaseUnits = (product: ProductDetailVO) => (product.units || []).filter(unit =>
+  unit.id != null && unit.status === 1 && unit.allowPurchase === 1 &&
+  Number.isFinite(Number(unit.baseQuantityPerUnit)) && Number(unit.baseQuantityPerUnit) > 0
+)
+
+const purchaseUnitHint = (row: PurchaseDraftItem) => {
+  const unit = row.unitOptions.find(unit => unit.unitName === row.unit)
+  return unit ? `1${unit.unitName} = ${unit.baseQuantityPerUnit}${row.baseUnitName}` : '请选择有效采购单位'
 }
 
-const handleUnitChange = (row: any) => {
-  const ratio = row.productMainToAuxRatio
-  const mainUnit = row.productMainUnit
-  const auxUnit = row.productAuxUnit
-  const avgCost = row.avgCostPrice || 0
-
-  if (row.unit === auxUnit) {
-    if (ratio && ratio > 0) {
-      row.price = Number((avgCost / ratio).toFixed(2))
-    } else {
-      ElMessage.warning('该商品未设置换算比例，已切回主单位')
-      row.unit = mainUnit
-      row.price = avgCost
+const handleProductSelect = async (products: ProductDetailVO[]) => {
+  if (!createVisible.value) return
+  const session = createSession
+  pendingProductReads.value++
+  try {
+    const details = await Promise.all(products.map(product => getProductDetail(product.id)))
+    if (!createVisible.value || session !== createSession) return
+    for (const product of details) {
+      if (createForm.items.some(item => item.productId === product.id)) continue
+      const units = purchaseUnits(product)
+      const baseUnit = (product.units || []).find(unit => unit.id != null && unit.isBaseUnit === 1 && Number(unit.baseQuantityPerUnit) === 1)
+      if (!units.length || !baseUnit) {
+        ElMessage.warning(`商品【${product.name}】没有有效采购单位，请先核对商品单位档案`)
+        continue
+      }
+      const defaultUnit = units.find(unit => unit.unitName === product.mainUnit) || units[0]
+      createForm.items.push({productId: product.id, productName: product.name,
+        specification: product.specification, manufacturer: product.manufacturer,
+        qty: 1, unit: defaultUnit.unitName, price: undefined,
+        unitOptions: units, baseUnitName: baseUnit.unitName})
     }
-  } else {
-    // 主单位
-    row.price = avgCost
+  } catch {
+    if (createVisible.value && session === createSession) ElMessage.error('读取采购单位失败，请重新选择商品')
+  } finally {
+    if (session === createSession) pendingProductReads.value--
   }
-  recalcTotal()
+}
+
+const handleUnitChange = (row: PurchaseDraftItem) => {
+  // 不沿用另一采购单位的成本，也不从历史加权成本猜测本次进价。
+  row.price = undefined
 }
 
 const openQuickCreateProduct = () => {
@@ -518,17 +520,7 @@ const openQuickCreateProduct = () => {
 }
 
 const handleQuickProductCreated = async (product: ProductDetailVO) => {
-  // 获取完整的商品信息
-  if (product.id) {
-    try {
-      const fullProduct = await getProductDetail(product.id)
-      // 自动将新创建的商品添加到采购列表
-      handleProductSelect([fullProduct])
-      ElMessage.success('商品已添加到采购列表')
-    } catch (error: any) {
-      ElMessage.error('获取商品详情失败：' + (error.message || '未知错误'))
-    }
-  }
+  await handleProductSelect([product])
 }
 
 const removeItem = (idx: number) => {
@@ -541,62 +533,44 @@ const recalcTotal = () => {
   createForm.items = [...createForm.items]
 }
 
-const handleCreate = () => {
-  createFormRef.value?.validate(async valid => {
-    if (!valid) return
-    
-    // 检查是否有商品的进货单价为 0.01（默认值），提示用户确认
-    const lowPriceItems = createForm.items.filter(item => {
-      const price = item.price || 0
-      return price <= 0.01
+const handleCreate = async () => {
+  if (submitLoading.value || productsLoading.value || !createVisible.value) return
+  const session = createSession
+  submitLoading.value = true
+  try {
+    const valid = await createFormRef.value?.validate().catch(() => false)
+    if (!valid || !createVisible.value || session !== createSession) return
+    const draft = createForm.items.map(item => ({...item, unitOptions: [...item.unitOptions]}))
+    if (!draft.length || draft.some(item => !Number.isFinite(item.qty) || item.qty <= 0 || !Number.isFinite(item.price) || Number(item.price) <= 0)) {
+      ElMessage.warning('请填写每项商品的有效数量和实际进价')
+      return
+    }
+    const payload: PurchaseCreateRequest = {
+      storeId: createForm.storeId, supplierId: createForm.supplierId,
+      supplierName: createForm.supplierName, remark: createForm.remark,
+      items: draft.map(item => ({productId: item.productId, qty: item.qty, unit: item.unit, price: item.price!}))
+    }
+    const currentProducts = await Promise.all(draft.map(item => getProductDetail(item.productId)))
+    if (!createVisible.value || session !== createSession) return
+    const invalid = draft.find((item, index) => {
+      const original = item.unitOptions.find(unit => unit.unitName === item.unit)
+      const current = purchaseUnits(currentProducts[index]).find(unit => unit.unitName === item.unit)
+      return !original || !current || current.id !== original.id || Number(current.baseQuantityPerUnit) !== Number(original.baseQuantityPerUnit)
     })
-    
-    if (lowPriceItems.length > 0) {
-      const itemNames = lowPriceItems.map(item => (item as any).productName || `商品ID:${item.productId}`).join('、')
-      try {
-        await ElMessageBox.confirm(
-          `以下商品的进货单价为 0.01 元或更低，请确认是否已正确填写进货单价：\n${itemNames}\n\n是否继续提交？`,
-          '进货单价提醒',
-          {
-            type: 'warning',
-            confirmButtonText: '继续提交',
-            cancelButtonText: '返回修改',
-            dangerouslyUseHTMLString: false
-          }
-        )
-      } catch {
-        // 用户取消，不提交
-        return
-      }
+    if (invalid) {
+      ElMessage.warning(`商品【${invalid.productName}】采购单位已失效或变化，请删除后重新添加`)
+      return
     }
-    
-    submitLoading.value = true
-    try {
-      // 保证 supplierName 有值
-      if (createForm.supplierId && !createForm.supplierName) {
-        const sup = supplierOptions.value.find(s => s.id === createForm.supplierId)
-        createForm.supplierName = sup?.name
-      }
-      const payload: PurchaseCreateRequest = {
-        storeId: createForm.storeId,
-        supplierId: createForm.supplierId,
-        supplierName: createForm.supplierName,
-        remark: createForm.remark,
-        items: createForm.items.map(i => ({
-          productId: i.productId,
-          qty: i.qty,
-          unit: i.unit,
-          price: i.price
-        }))
-      }
-      await createPurchase(payload)
-      ElMessage.success('创建成功')
-      createVisible.value = false
-      loadTable()
-    } finally {
-      submitLoading.value = false
-    }
-  })
+    await createPurchase(payload)
+    if (!createVisible.value || session !== createSession) return
+    ElMessage.success('创建成功')
+    createVisible.value = false
+    loadTable()
+  } catch {
+    if (createVisible.value && session === createSession) ElMessage.error('创建采购单失败，请核对列表后再操作')
+  } finally {
+    submitLoading.value = false
+  }
 }
 
 const handleSubmit = async (row: PurchasePageVO) => {

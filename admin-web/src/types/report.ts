@@ -39,6 +39,9 @@ export interface SalesTrendItem {
   costAmount?: number
   profit?: number
   profitRate?: number
+  costStatus?: string
+  costWarnings?: string[]
+  costUnavailableSaleAmount?: number
 }
 
 export interface CustomerRankItem {

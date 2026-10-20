@@ -109,6 +109,13 @@ public class ProductRepositoryImpl implements ProductRepository {
     public Page<Product> findPage(String code, String name, Long categoryId, Integer isOnline,
                                    LocalDateTime createdStartTime, LocalDateTime createdEndTime,
                                    int pageNum, int pageSize) {
+        return findPage(code, name, categoryId, isOnline, null, createdStartTime, createdEndTime, pageNum, pageSize);
+    }
+
+    @Override
+    public Page<Product> findPage(String code, String name, Long categoryId, Integer isOnline, Integer status,
+                                 LocalDateTime createdStartTime, LocalDateTime createdEndTime,
+                                 int pageNum, int pageSize) {
         QueryWrapper queryWrapper = QueryWrapper.create();
         
         if (code != null && !code.isEmpty()) {
@@ -122,6 +129,9 @@ public class ProductRepositoryImpl implements ProductRepository {
         }
         if (isOnline != null) {
             queryWrapper.where("is_online = ?", isOnline);
+        }
+        if (status != null) {
+            queryWrapper.where("status = ?", status);
         }
         if (createdStartTime != null) {
             queryWrapper.where("created_at >= ?", createdStartTime);

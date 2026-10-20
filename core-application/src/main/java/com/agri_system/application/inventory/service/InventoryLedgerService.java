@@ -263,6 +263,7 @@ public class InventoryLedgerService {
         BigDecimal baseQuantity = units.toBaseQuantity(product, unit.getUnitName(), quantity).baseQuantity();
         balances.lockStock(Math.min(from, to), product); balances.lockStock(Math.max(from, to), product);
         List<InventoryDomainService.TransferBatchDetail> result = new ArrayList<>();
+        List<InventoryDomainService.BatchDeductionDetail> sourceDetails = new ArrayList<>();
         for (Slice slice : select(from, product, baseQuantity, true)) {
             InventoryReceiptBatch source = batch(slice.batchId());
             InventoryReceiptBatch target = createBatch(to, product, source.getSupplierBatchNo(), slice.quantity(), source.getBaseUnitCost(),
@@ -275,10 +276,17 @@ public class InventoryLedgerService {
             detail.setFromBatchId(source.getId()); detail.setToBatchId(target.getId());
             detail.setQuantity(slice.quantity().divide(unit.getBaseQuantityPerUnit(), 8, RoundingMode.HALF_UP));
             detail.setCostPrice(source.getBaseUnitCost().multiply(unit.getBaseQuantityPerUnit())); result.add(detail);
+            // 与实际货位分配逐项对应，数量与成本均按本次调拨单位返回，不查当前批次余额猜测。
+            InventoryDomainService.BatchDeductionDetail sourceDetail = new InventoryDomainService.BatchDeductionDetail();
+            sourceDetail.setBatchId(source.getId());
+            sourceDetail.setBatchNo(source.getSupplierBatchNo() == null ? source.getInternalReceiptBatchNo() : source.getSupplierBatchNo());
+            sourceDetail.setExpireDate(source.getExpiryDate());
+            sourceDetail.setQuantity(detail.getQuantity()); sourceDetail.setCostPrice(detail.getCostPrice());
+            sourceDetails.add(sourceDetail);
         }
         InventoryDomainService.TransferDetail detail = new InventoryDomainService.TransferDetail();
         detail.setFromStoreId(from); detail.setToStoreId(to); detail.setProductId(product); detail.setQuantity(quantity);
-        detail.setTransferBatchDetails(result); detail.setBatchDetails(List.of()); return detail;
+        detail.setTransferBatchDetails(result); detail.setBatchDetails(sourceDetails); return detail;
     }
 
     /** 先锁所有候选余额，再按到期日期分配；不足时不产生部分出库。 */

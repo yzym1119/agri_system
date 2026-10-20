@@ -70,16 +70,19 @@ class ProfitCalculationTest {
 
         Order order = new Order();
         order.setId(1L);
+        order.setPayAmount(new BigDecimal("250.00"));
         order.setOrderStatus(2); // 已支付
         order.setCreatedAt(LocalDateTime.of(2024, 1, 1, 10, 0));
 
         OrderItem item1 = new OrderItem();
+        item1.setId(11L);
         item1.setOrderId(1L);
         item1.setUnitPrice(new BigDecimal("100.00")); // 售价
         item1.setQuantity(new BigDecimal("2"));
         item1.setCostPriceSnapshot(new BigDecimal("60.00")); // 成本快照
 
         OrderItem item2 = new OrderItem();
+        item2.setId(12L);
         item2.setOrderId(1L);
         item2.setUnitPrice(new BigDecimal("50.00"));
         item2.setQuantity(new BigDecimal("1"));
@@ -116,10 +119,12 @@ class ProfitCalculationTest {
 
         Order order = new Order();
         order.setId(1L);
+        order.setPayAmount(new BigDecimal("100.00"));
         order.setOrderStatus(2);
         order.setCreatedAt(LocalDateTime.of(2024, 1, 1, 10, 0));
 
         OrderItem item = new OrderItem();
+        item.setId(11L);
         item.setOrderId(1L);
         item.setUnitPrice(new BigDecimal("100.00"));
         item.setQuantity(new BigDecimal("1"));

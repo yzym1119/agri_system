@@ -196,7 +196,7 @@
 import { computed, onMounted, ref } from 'vue'
 import {formatQuantity} from '@/utils/number'
 import { ElMessage } from 'element-plus'
-import { getStoreList } from '@/api/store'
+import { getBusinessStorePage as getStoreList } from '@/api/store'
 import { getInventoryLocations } from '@/api/inventory'
 import { createPickupRequest, fulfillPickupRequest, getPickupWorkItems } from '@/api/order'
 import type { InventoryLocationVO } from '@/types/inventory'

@@ -111,6 +111,7 @@
 </template>
 
 <script setup lang="ts">
+import {profitForChart} from '@/utils/reportCost'
 import { computed, onMounted, ref } from 'vue'
 import { Refresh, ShoppingCart, Money, User, Warning, Box, Coin, TrendCharts } from '@element-plus/icons-vue'
 import VChart from 'vue-echarts'
@@ -158,7 +159,7 @@ const metrics = computed(() => {
   return [
     { title: '今日订单', value: `${toNumber(dashboard.value.orderCount)}`, foot: `GMV ${currency(dashboard.value.gmv)}`, icon: ShoppingCart, tone: 'tone-blue' },
     { title: '今日净销额', value: currency(dashboard.value.netSales), foot: `新增赊销 ${currency(dashboard.value.newCreditAmount)}`, icon: Money, tone: 'tone-green' },
-    { title: '新增客户', value: `${toNumber(dashboard.value.newCustomerCount)}`, foot: '', icon: User, tone: 'tone-orange' },
+    { title: '全局新增客户', value: `${toNumber(dashboard.value.newCustomerCount)}`, foot: '今日客户档案新增数，不随门店筛选', icon: User, tone: 'tone-orange' },
     { title: '待处理', value: `${pending}`, foot: `售后 ${toNumber(dashboard.value.pendingAfterSalesCount)} / 配送 ${toNumber(dashboard.value.pendingDeliveryCount)}`, icon: Warning, tone: 'tone-red' },
     { title: '库存预警', value: `${toNumber(dashboard.value.inventoryAlertCount)}`, foot: '库龄 > 180 天', icon: Warning, tone: 'tone-sand' },
     { title: '库存占用', value: currency(inventoryValue.value.totalInventoryValue), foot: `180 天+ ${currency(inventoryValue.value.over180DaysValue)}`, icon: Box, tone: 'tone-ink' },
@@ -177,7 +178,7 @@ const trendOption = computed(() => ({
   yAxis: { type: 'value', axisLabel: { formatter: (v: number) => `¥${Number(v).toFixed(0)}` } },
   series: [
     { name: '销售额', type: 'line', smooth: true, data: salesTrend.value.map(r => r.saleAmount ?? 0), lineStyle: { width: 3, color: C.primary }, itemStyle: { color: C.primary }, areaStyle: { color: 'rgba(29,93,115,0.10)' } },
-    { name: '毛利额', type: 'line', smooth: true, data: salesTrend.value.map(r => r.profit ?? 0), lineStyle: { width: 3, color: C.accent }, itemStyle: { color: C.accent }, areaStyle: { color: 'rgba(126,167,109,0.12)' } }
+    { name: '毛利额', type: 'line', smooth: true, data: salesTrend.value.map(profitForChart), lineStyle: { width: 3, color: C.accent }, itemStyle: { color: C.accent }, areaStyle: { color: 'rgba(126,167,109,0.12)' } }
   ]
 }))
 

@@ -35,6 +35,12 @@ import java.util.Map;
 public class StoreController {
     
     private final StoreApplicationService storeService;
+
+    @GetMapping("/business-options")
+    @SaCheckPermission(value={"store:list","inventory:view","order:query","order:pickup:verify","purchase:inbound"},mode=cn.dev33.satoken.annotation.SaMode.OR)
+    public ResponseEntity<Map<String,Object>> businessOptions() {
+        return ResponseEntity.ok(Map.of("code","200","message","查询成功","data",storeService.businessOptions()));
+    }
     
     // ==================== 门店基本档案 ====================
     

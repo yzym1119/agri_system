@@ -93,6 +93,10 @@ class AuthorityHttpIntegrationTest {
     @Autowired StaffStpInterface stpInterface;
     @MockBean CodeGenerationApplicationService codes;
     @MockBean StaffPerformanceApplicationService performance;
+    @MockBean com.agri_system.application.order.service.PosCatalogApplicationService posCatalog;
+    @MockBean com.agri_system.application.store.service.StoreApplicationService businessStores;
+    @MockBean com.agri_system.application.purchase.service.PurchaseApplicationService receiving;
+    @MockBean com.agri_system.application.product.service.ProductApplicationService productCatalogAdmin;
 
     /** 可选真实 MySQL，同一HTTP套及生产锁代码，仅使用本次成功创建的随机隔离库。 */
     @DynamicPropertySource
@@ -122,7 +126,11 @@ class AuthorityHttpIntegrationTest {
             StaffRepositoryImpl.class, StoreRepositoryImpl.class, SysRoleRepositoryImpl.class,
             SysStaffRoleRepositoryImpl.class, SysRoleMenuRepositoryImpl.class, SysMenuRepositoryImpl.class,
             RoleController.class, StaffAdminController.class, GlobalExceptionHandler.class,
-            JdbcAccessConfig.class, Probe.class})
+            JdbcAccessConfig.class, Probe.class,
+            com.agri_system.api.admin.controller.PosCatalogController.class,
+            com.agri_system.api.admin.controller.StoreController.class,
+            com.agri_system.api.admin.controller.PurchaseController.class,
+            com.agri_system.api.admin.controller.ProductController.class})
     static class Config {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
         @Bean LifecycleIsolationGate lifecycleIsolationGate() { return new LifecycleIsolationGate(); }
@@ -241,6 +249,49 @@ class AuthorityHttpIntegrationTest {
     String update(long id,String fields){return "{\"id\":"+id+",\"name\":\"资料更新\",\"phone\":\"13800000000\",\"storeId\":1"+fields+"}";}
     List<Long> roles(long id){return jdbc.queryForList("SELECT role_id FROM sys_staff_role WHERE staff_id=? ORDER BY role_id",Long.class,id);}
     int state(String table,long id){return jdbc.queryForObject("SELECT status FROM "+table+" WHERE id=?",Integer.class,id);}
+
+    void businessPermission(int menuId,String permission) {
+        jdbc.update("INSERT INTO sys_menu(id,parent_id,name,permission,type,sort_order,visible) VALUES(?,0,?,?,2,0,1)",menuId,permission,permission);
+        jdbc.update("INSERT INTO sys_role_menu(role_id,menu_id) VALUES(4,?)",menuId);
+    }
+
+    @Test void 最小收银可读专用目录但不能读管理商品和门店档案() throws Exception {
+        businessPermission(101,"pos:order:create");
+        when(posCatalog.products(1,1000)).thenReturn(new com.mybatisflex.core.paginate.Page<>());
+        when(posCatalog.categories()).thenReturn(List.of());
+        String token=login(4);
+        assertEquals(200,call(token,"GET","/api/admin/pos/catalog/products",null).path("code").asInt());
+        assertEquals(200,call(token,"GET","/api/admin/pos/catalog/categories",null).path("code").asInt());
+        reject(call(token,"GET","/api/admin/products",null));
+        reject(call(token,"GET","/api/admin/stores",null));
+        reject(call(token,"POST","/api/admin/products","{}"));
+    }
+
+    @Test void 没有收银权限不能访问目录() throws Exception {
+        reject(call(login(4),"GET","/api/admin/pos/catalog/products",null));
+        reject(call(null,"GET","/api/admin/pos/catalog/categories",null));
+    }
+
+    @Test void 库管仅提货权限可读门店选项而非管理档案() throws Exception {
+        businessPermission(102,"order:pickup:verify");
+        when(businessStores.businessOptions()).thenReturn(List.of(new com.agri_system.application.store.dto.vo.StoreOptionVO(1L,"A")));
+        String token=login(4);
+        var result=call(token,"GET","/api/admin/stores/business-options",null);
+        assertEquals(200,result.path("code").asInt());assertEquals(1,result.path("data").size());
+        assertFalse(result.path("data").get(0).has("phone"));
+        reject(call(token,"GET","/api/admin/stores",null));
+    }
+
+    @Test void 库管只凭收货权限可读收货单但不能读取采购管理和创建采购() throws Exception {
+        businessPermission(103,"purchase:inbound");
+        when(receiving.receivingPage(any())).thenReturn(new com.mybatisflex.core.paginate.Page<>());
+        var detail=new com.agri_system.application.purchase.dto.vo.PurchaseDetailVO();detail.setId(8L);detail.setStatus(2);
+        when(receiving.receivingDetail(8L)).thenReturn(detail);String token=login(4);
+        assertEquals(200,call(token,"GET","/api/admin/purchase/receiving-orders",null).path("code").asInt());
+        assertEquals(200,call(token,"GET","/api/admin/purchase/receiving-orders/8",null).path("code").asInt());
+        reject(call(token,"GET","/api/admin/purchase/list",null));
+        reject(call(token,"POST","/api/admin/purchase/create","{}"));
+    }
 
     @Test void 无员工身份不能写角色员工()throws Exception{
         reject(call(null,"POST","/api/admin/roles","{\"name\":\"n\"}"));

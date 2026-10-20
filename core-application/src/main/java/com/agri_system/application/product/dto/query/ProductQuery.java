@@ -25,6 +25,9 @@ public class ProductQuery {
     
     @Schema(description = "上架状态：1-上架，0-下架", example = "1")
     private Integer isOnline;
+
+    @Schema(description = "商品状态：1-正常，2-停用", example = "1")
+    private Integer status;
     
     @Schema(description = "创建时间开始", example = "2024-01-01T00:00:00")
     private LocalDateTime createdStartTime;

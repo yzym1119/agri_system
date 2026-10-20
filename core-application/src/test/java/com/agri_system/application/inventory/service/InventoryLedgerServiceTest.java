@@ -162,6 +162,47 @@ class InventoryLedgerServiceTest {
         verify(balances).increaseFromReceipt(anyLong(), same(batch));
     }
 
+    @Test void transferReturnsActualSourceSlicesAndPreservesTheirCostAndDatesInTargets() {
+        LocalDate expiry = LocalDate.now().plusDays(10);
+        stock(1L, 10L, "4", "0", expiry, "2");
+        jdbc.update("INSERT INTO inventory_location VALUES(12,1)");
+        jdbc.update("INSERT INTO inventory_batch_balance VALUES(1,12,1,5,6,0)");
+        stock(2L, 10L, "30", "0", null, "3");
+        batchMap.get(1L).setSupplierBatchNo("SUPPLIER-1");
+        batchMap.get(1L).setProductionDate(LocalDate.now().minusDays(5));
+        batchMap.get(2L).setInternalReceiptBatchNo("INTERNAL-2");
+        InventoryLocation destination = new InventoryLocation(); destination.setId(20L);
+        when(balances.defaultLocation(2L)).thenReturn(destination);
+
+        var result = service.transfer(1L, 2L, 5L, new BigDecimal("2"), "袋", 9L, 80L);
+
+        assertEquals(3, result.getBatchDetails().size());
+        var sources = result.getBatchDetails();
+        assertEquals(List.of(1L, 1L, 2L), sources.stream().map(d -> d.getBatchId()).toList());
+        assertEquals(List.of("SUPPLIER-1", "SUPPLIER-1", "INTERNAL-2"), sources.stream().map(d -> d.getBatchNo()).toList());
+        assertDecimal("0.4", sources.get(0).getQuantity());
+        assertDecimal("0.6", sources.get(1).getQuantity());
+        assertDecimal("1", sources.get(2).getQuantity());
+        assertDecimal("20", sources.get(0).getCostPrice());
+        assertDecimal("30", sources.get(2).getCostPrice());
+        assertEquals(expiry, sources.get(0).getExpireDate());
+        assertNull(sources.get(2).getExpireDate());
+        assertEquals(3, result.getTransferBatchDetails().size());
+        var targets = result.getTransferBatchDetails();
+        assertEquals(List.of(1L, 1L, 2L), targets.stream().map(d -> d.getFromBatchId()).toList());
+        assertDecimal("4", batchMap.get(targets.get(0).getToBatchId()).getBaseQuantity());
+        assertDecimal("6", batchMap.get(targets.get(1).getToBatchId()).getBaseQuantity());
+        assertDecimal("10", batchMap.get(targets.get(2).getToBatchId()).getBaseQuantity());
+        var firstTarget = batchMap.get(targets.get(0).getToBatchId());
+        assertEquals("SUPPLIER-1", firstTarget.getSupplierBatchNo());
+        assertDecimal("2", firstTarget.getBaseUnitCost());
+        assertEquals(LocalDate.now().minusDays(5), firstTarget.getProductionDate());
+        assertEquals(expiry, firstTarget.getExpiryDate());
+        var unknownDateTarget = batchMap.get(targets.get(2).getToBatchId());
+        assertDecimal("3", unknownDateTarget.getBaseUnitCost());
+        assertNull(unknownDateTarget.getProductionDate()); assertNull(unknownDateTarget.getExpiryDate());
+    }
+
     @Test void refundUsesOriginalSoldRatioBatchCostDatesAndLocationDespiteUnitChange() {
         stock(2L, 10L, "0", "0", LocalDate.now().minusDays(1), "2.5");
         orderItem("2"); soldAllocation("20");

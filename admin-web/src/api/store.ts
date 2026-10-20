@@ -1,6 +1,14 @@
 import request from '@/utils/request'
 import type {PageResponse, StoreCreateRequest, StoreDetailVO, StoreQueryParams, StoreUpdateRequest} from '@/types/store'
 
+export type BusinessStoreOption = Pick<StoreDetailVO,'id'|'name'>
+export function getBusinessStoreOptions(): Promise<BusinessStoreOption[]> {
+  return request({url:'/api/admin/stores/business-options',method:'get'})
+}
+export function getBusinessStorePage(_params?:unknown):Promise<{records:BusinessStoreOption[]}> {
+  return getBusinessStoreOptions().then(records=>({records}))
+}
+
 /**
  * 门店管理API
  */

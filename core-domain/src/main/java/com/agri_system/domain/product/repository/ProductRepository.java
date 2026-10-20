@@ -44,6 +44,11 @@ public interface ProductRepository {
                           java.time.LocalDateTime createdStartTime, java.time.LocalDateTime createdEndTime,
                           int pageNum, int pageSize);
     
+    /** 按商品状态过滤后分页；状态为空时保留原查询范围。 */
+    Page<Product> findPage(String code, String name, Long categoryId, Integer isOnline, Integer status,
+                          java.time.LocalDateTime createdStartTime, java.time.LocalDateTime createdEndTime,
+                          int pageNum, int pageSize);
+
     /**
      * 根据分类ID查询商品数量
      */

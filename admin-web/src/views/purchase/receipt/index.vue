@@ -148,7 +148,7 @@ import { useUserStore } from '@/store/user'
 import { formatQuantity } from '@/utils/number'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getPurchaseDetail, getPurchaseList, receivePurchase } from '@/api/purchase'
+import { getReceivingPurchaseDetail as getPurchaseDetail, getReceivingPurchaseList as getPurchaseList, receivePurchase } from '@/api/purchase'
 import type { PurchaseDetailVO, PurchasePageVO, ReceiptBatchCommand, ReceivePurchaseRequest } from '@/types/purchase'
 
 interface BatchRow extends Omit<ReceiptBatchCommand, 'originalQuantity' | 'originalUnitCost'> {

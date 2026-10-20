@@ -47,7 +47,20 @@ public class ReportSalesController {
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime,
             @RequestParam(required = false) Long storeId,
             HttpServletResponse response) throws IOException {
-        List<SalesTrendVO> data = reportAnalysisService.salesTrend(startTime, endTime, storeId);
+        List<SalesTrendVO> data = reportAnalysisService.salesTrend(startTime, endTime, storeId).stream()
+                .map(row -> {
+                    SalesTrendVO exported = new SalesTrendVO();
+                    org.springframework.beans.BeanUtils.copyProperties(row, exported);
+                    if ("待核对".equals(row.getCostStatus())
+                            || (row.getCostWarnings() != null && !row.getCostWarnings().isEmpty())
+                            || (row.getCostUnavailableSaleAmount() != null && row.getCostUnavailableSaleAmount().signum() != 0)) {
+                        exported.setCostStatus("待核对");
+                        exported.setCostAmount(null);
+                        exported.setProfit(null);
+                        exported.setProfitRate(null);
+                    }
+                    return exported;
+                }).toList();
         response.setContentType("application/vnd.ms-excel");
         response.setCharacterEncoding("utf-8");
         String fileName = "销售趋势_" + startTime.toLocalDate() + "_" + endTime.toLocalDate() + ".xlsx";

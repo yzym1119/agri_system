@@ -169,7 +169,7 @@
 import {reactive, ref} from 'vue'
 import {Refresh, Search} from '@element-plus/icons-vue'
 import {adjustInventory, getInventoryDetail, getInventoryList, transferInventory} from '@/api/inventory'
-import {getAllStores} from '@/api/store'
+import {getBusinessStoreOptions as getAllStores} from '@/api/store'
 import type {
   InventoryAdjustRequest,
   InventoryDetailVO,
@@ -189,7 +189,7 @@ const queryParams = reactive<InventoryQuery>({
 const loading = ref(false)
 const tableData = ref<InventoryPageVO[]>([])
 const total = ref(0)
-const storeOptions = ref<StoreDetailVO[]>([])
+const storeOptions = ref<Pick<StoreDetailVO,'id'|'name'>[]>([])
 
 const batchVisible = ref(false)
 const batchDetail = ref<InventoryDetailVO>()
@@ -385,7 +385,7 @@ const handleAdjustSubmit = () => {
   })
 }
 
-loadOptions().then(loadTable)
+loadOptions().catch(() => ElMessage.error('门店选项加载失败，请刷新重试')).then(loadTable)
 </script>
 
 <style scoped lang="scss">

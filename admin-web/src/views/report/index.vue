@@ -41,7 +41,7 @@
     <el-card shadow="never">
       <template #header>
         <div class="card-head">
-          <h3>销售趋势</h3>
+          <h3>销售净额与毛利趋势</h3>
           <div class="card-actions">
             <el-date-picker v-model="salesDateRange" type="daterange" range-separator="至"
               start-placeholder="开始" end-placeholder="结束" value-format="YYYY-MM-DD"
@@ -51,6 +51,7 @@
           </div>
         </div>
       </template>
+      <p class="text-secondary">按原订单创建日统计净销售额，扣除该订单累计已完成退货；包含赊销，不代表当日现金流。</p>
       <div class="split-view">
         <v-chart class="split-chart" :option="salesChartOption" autoresize v-loading="salesLoading" />
         <div class="split-table">
@@ -60,15 +61,18 @@
               <template #default="{ row }">{{ currency(row.saleAmount) }}</template>
             </el-table-column>
             <el-table-column label="成本额" min-width="100" align="right">
-              <template #default="{ row }">{{ currency(row.costAmount) }}</template>
+              <template #default="{ row }">{{ hasUnverifiedCost(row) ? '待核对' : currency(row.costAmount) }}</template>
             </el-table-column>
             <el-table-column label="毛利额" min-width="100" align="right">
               <template #default="{ row }">
-                <span :class="{ 'text-danger': toNumber(row.profit) < 0 }">{{ currency(row.profit) }}</span>
+                <span :class="{ 'text-danger': !hasUnverifiedCost(row) && toNumber(row.profit) < 0 }">{{ hasUnverifiedCost(row) ? '待核对' : currency(row.profit) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="毛利率" width="80" align="right">
-              <template #default="{ row }">{{ pct(row.profitRate) }}</template>
+              <template #default="{ row }">{{ hasUnverifiedCost(row) ? '待核对' : pct(row.profitRate) }}</template>
+            </el-table-column>
+            <el-table-column label="成本依据" min-width="120">
+              <template #default="{ row }"><span :title="row.costWarnings?.join('；')">{{ row.costStatus || (hasUnverifiedCost(row) ? '待核对' : '已核对') }}</span></template>
             </el-table-column>
           </el-table>
         </div>
@@ -189,6 +193,7 @@ import type {
   ChurnRiskItem, CreditRiskSummary, CustomerRankItem, InventoryValueSummary, SalesTrendItem, SlowMovingInventoryItem
 } from '@/types/report'
 import type { StoreDetailVO } from '@/types/store'
+import {hasUnverifiedCost, profitForChart} from '@/utils/reportCost'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, LegendComponent])
 
@@ -242,7 +247,7 @@ const salesChartOption = computed(() => ({
     formatter: (params: any) => {
       const list = Array.isArray(params) ? params : [params]
       const date = list[0]?.axisValueLabel || ''
-      const rows = list.map((p: any) => `<div>${p.marker} ${p.seriesName}: ¥${Number(p.value).toFixed(2)}</div>`).join('')
+      const rows = list.map((p: any) => `<div>${p.marker} ${p.seriesName}: ${p.value == null ? '待核对' : '¥' + Number(p.value).toFixed(2)}</div>`).join('')
       return `<div style="font-weight:600;margin-bottom:4px">${date}</div>${rows}`
     }
   },
@@ -252,8 +257,8 @@ const salesChartOption = computed(() => ({
   yAxis: { type: 'value', axisLabel: { formatter: (v: number) => `¥${Number(v).toFixed(0)}` } },
   series: [
     { name: '销售额', type: 'line', smooth: true, data: salesTrend.value.map(r => r.saleAmount ?? 0), lineStyle: { width: 2.5, color: C.primary }, itemStyle: { color: C.primary }, areaStyle: { color: 'rgba(29,93,115,0.08)' } },
-    { name: '成本额', type: 'line', smooth: true, data: salesTrend.value.map(r => r.costAmount ?? 0), lineStyle: { width: 2, color: C.muted, type: 'dashed' }, itemStyle: { color: C.muted } },
-    { name: '毛利额', type: 'line', smooth: true, data: salesTrend.value.map(r => r.profit ?? 0), lineStyle: { width: 2.5, color: C.accent }, itemStyle: { color: C.accent }, areaStyle: { color: 'rgba(126,167,109,0.10)' } }
+    { name: '成本额', type: 'line', smooth: true, data: salesTrend.value.map(r => hasUnverifiedCost(r) ? null : r.costAmount ?? 0), lineStyle: { width: 2, color: C.muted, type: 'dashed' }, itemStyle: { color: C.muted } },
+    { name: '毛利额', type: 'line', smooth: true, data: salesTrend.value.map(profitForChart), lineStyle: { width: 2.5, color: C.accent }, itemStyle: { color: C.accent }, areaStyle: { color: 'rgba(126,167,109,0.10)' } }
   ]
 }))
 
@@ -319,7 +324,7 @@ onMounted(async () => {
 
 .cell-sub { margin-top: 4px; font-size: 12px; color: #9ca3af; }
 
-@media (max-width: 1200px) {
+@media (max-width: 1500px) {
   .split-view { grid-template-columns: 1fr; }
 }
 </style>

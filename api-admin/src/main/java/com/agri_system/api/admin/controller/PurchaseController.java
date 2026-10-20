@@ -40,6 +40,18 @@ import java.util.Map;
 public class PurchaseController {
     
     private final PurchaseApplicationService purchaseService;
+
+    @GetMapping("/receiving-orders")
+    @SaCheckPermission("purchase:inbound")
+    public ResponseEntity<Map<String,Object>> receivingOrders(@Valid PurchasePageQuery query) {
+        return ResponseEntity.ok(Map.of("code","200","message","查询成功","data",purchaseService.receivingPage(query)));
+    }
+
+    @GetMapping("/receiving-orders/{orderId}")
+    @SaCheckPermission("purchase:inbound")
+    public ResponseEntity<Map<String,Object>> receivingDetail(@PathVariable Long orderId) {
+        return ResponseEntity.ok(Map.of("code","200","message","查询成功","data",purchaseService.receivingDetail(orderId)));
+    }
     
     // ==================== 分页查询 ====================
 

@@ -134,6 +134,7 @@
 </template>
 
 <script setup lang="ts">
+import {profitForChart} from '@/utils/reportCost'
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { Refresh, ShoppingCart, Money, Document, Box, Coin } from '@element-plus/icons-vue'
@@ -221,7 +222,7 @@ const trendOption = computed(() => ({
     formatter: (params: any) => {
       const list = Array.isArray(params) ? params : [params]
       const date = list[0]?.axisValueLabel || ''
-      const rows = list.map((p: any) => `<div>${p.marker} ${p.seriesName}: ¥${Number(p.value).toFixed(2)}</div>`).join('')
+      const rows = list.map((p: any) => `<div>${p.marker} ${p.seriesName}: ${p.value == null ? '待核对' : '¥' + Number(p.value).toFixed(2)}</div>`).join('')
       return `<div style="font-weight:600;margin-bottom:4px">${date}</div>${rows}`
     }
   },
@@ -231,7 +232,7 @@ const trendOption = computed(() => ({
   yAxis: { type: 'value', axisLabel: { formatter: (v: number) => `¥${Number(v).toFixed(0)}` } },
   series: [
     { name: '销售额', type: 'line', smooth: true, data: salesTrend.value.map(r => r.saleAmount ?? 0), lineStyle: { width: 3, color: C.primary }, itemStyle: { color: C.primary }, areaStyle: { color: 'rgba(29,93,115,0.10)' } },
-    { name: '毛利额', type: 'line', smooth: true, data: salesTrend.value.map(r => r.profit ?? 0), lineStyle: { width: 3, color: C.accent }, itemStyle: { color: C.accent }, areaStyle: { color: 'rgba(126,167,109,0.12)' } }
+    { name: '毛利额', type: 'line', smooth: true, data: salesTrend.value.map(profitForChart), lineStyle: { width: 3, color: C.accent }, itemStyle: { color: C.accent }, areaStyle: { color: 'rgba(126,167,109,0.12)' } }
   ]
 }))
 

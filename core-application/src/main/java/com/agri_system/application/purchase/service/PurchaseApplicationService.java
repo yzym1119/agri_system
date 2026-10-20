@@ -507,6 +507,17 @@ public class PurchaseApplicationService {
     /**
      * 查询采购单详情
      */
+    public Page<PurchasePageVO> receivingPage(PurchasePageQuery query) {
+        query.setStatus(2);
+        return page(query);
+    }
+
+    public PurchaseDetailVO receivingDetail(Long orderId) {
+        var detail=getDetail(orderId);
+        if (!Integer.valueOf(2).equals(detail.getStatus())) throw new IllegalArgumentException("采购单当前不在待收货状态");
+        return detail;
+    }
+
     public PurchaseDetailVO getDetail(Long orderId) {
         // 1. 查询采购单
         PurchaseOrder order = purchaseRepository.findById(orderId)

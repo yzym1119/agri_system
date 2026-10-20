@@ -76,7 +76,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { getStoreList } from '@/api/store'
+import { getBusinessStorePage as getStoreList } from '@/api/store'
 import { getInventoryLocations } from '@/api/inventory'
 import type { InventoryLocationVO } from '@/types/inventory'
 

@@ -67,6 +67,17 @@ class ProductApplicationServiceTest {
     }
 
     @Test
+    void queryProductsUsesStatusBeforeRepositoryPagination() {
+        var query=new com.agri_system.application.product.dto.query.ProductQuery();
+        query.setStatus(1);query.setPageSize(1);
+        var page=new com.mybatisflex.core.paginate.Page<Product>();page.setRecords(java.util.List.of());
+        when(productRepository.findPage(null,null,null,null,1,null,null,1,1)).thenReturn(page);
+        var result=productService.queryProducts(query);
+        org.junit.jupiter.api.Assertions.assertTrue(result.getRecords().isEmpty());
+        verify(productRepository).findPage(null,null,null,null,1,null,null,1,1);
+    }
+
+    @Test
     void testCreateProduct_VerifyAvgCostPriceNotSet() {
         // Given: 商品编码不存在
         when(productRepository.findByCode("P001")).thenReturn(Optional.empty());

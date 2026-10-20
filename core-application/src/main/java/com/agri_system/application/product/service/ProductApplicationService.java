@@ -318,6 +318,7 @@ public class ProductApplicationService {
                 query.getName(),
                 query.getCategoryId(),
                 query.getIsOnline(),
+                query.getStatus(),
                 query.getCreatedStartTime(),
                 query.getCreatedEndTime(),
                 query.getPageNum(),

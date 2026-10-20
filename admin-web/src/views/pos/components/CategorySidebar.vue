@@ -67,7 +67,7 @@
 <script setup lang="ts">
 import {onMounted, ref} from 'vue'
 import {ArrowRight, Expand, Fold} from '@element-plus/icons-vue'
-import {getCategoryTree} from '@/api/product'
+import {getPosCategoryTree as getCategoryTree} from '@/api/pos-catalog'
 import type {CategoryTreeVO} from '@/types/product'
 import CategoryTreeItem from './CategoryTreeItem.vue'
 

@@ -196,7 +196,7 @@ import {hasPermission} from '@/utils/permission'
 import {ElMessage, ElMessageBox} from 'element-plus'
 import {Refresh, Search} from '@element-plus/icons-vue'
 import {confirmReceipt, getOrderList} from '@/api/order'
-import {getAllStores} from '@/api/store'
+import {getBusinessStoreOptions as getAllStores} from '@/api/store'
 import {getOrderPaymentSummary} from '@/utils/orderPayment'
 import ShipDialog from '../components/ShipDialog.vue'
 import VerifyDialog from '../components/VerifyDialog.vue'
@@ -213,7 +213,7 @@ const loading = ref(false)
 const tableData = ref<OrderPageItem[]>([])
 const total = ref(0)
 const activeTab = ref('all')
-const storeOptions = ref<StoreDetailVO[]>([])
+const storeOptions = ref<Pick<StoreDetailVO,'id'|'name'>[]>([])
 const actionLoading = ref<Record<number, boolean>>({})
 let listRequest = 0
 const shipVisible = ref(false)

@@ -1,0 +1,63 @@
+{
+  "backend": {
+    "api-admin": {
+      "tests": 61,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 9
+    },
+    "core-application": {
+      "tests": 569,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "core-domain": {
+      "tests": 34,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "core-infrastructure": {
+      "tests": 88,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 6
+    }
+  },
+  "mysql": [
+    {
+      "suite": "com.agri_system.infrastructure.migration.MysqlRetailFactChainIntegrationTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.agri_system.authority.AuthorityHttpIntegrationTest",
+      "tests": 39,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    {
+      "suite": "com.agri_system.e2e.RetailFactChainEndToEndTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  ],
+  "frontend": {
+    "tests": 212,
+    "passed": 212,
+    "build": "成功，现有大包提示保留"
+  },
+  "live_database_checks": 31,
+  "jar": "f6e121f656993a124d70f1fa4b2b9e0baef3b1cc50bb149933c51f8f53cf8da6",
+  "limitations": [
+    "原3090/9080未升级，后台修复只在隔离3091/9081验证",
+    "测试使用虚构本地数据，未接实支付、打印机、扫码硬件或快递外部服务",
+    "全后端15项条件或历史禁用跳过，MySQL专项另覆盖其中8项，其余7项历史禁用未跑"
+  ]
+}
