@@ -5,7 +5,6 @@ import com.agri_system.application.order.dto.command.OrderShipCommand;
 import com.agri_system.application.order.service.OrderApplicationService;
 import com.agri_system.application.order.service.PickupFulfillmentService;
 import com.agri_system.infrastructure.common.exception.GlobalExceptionHandler;
-import com.agri_system.infrastructure.common.util.RedisDistributedLock;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.MediaType;
@@ -22,7 +21,7 @@ class OrderShipPathValidationTest {
         var service=mock(OrderApplicationService.class);
         var validator=new LocalValidatorFactoryBean();validator.afterPropertiesSet();
         var mvc=MockMvcBuilders.standaloneSetup(new OrderAdminController(service,
-                mock(PickupFulfillmentService.class),mock(RedisDistributedLock.class)))
+                mock(PickupFulfillmentService.class),mock(com.agri_system.application.order.service.PosSaleSubmissionService.class)))
                 .setValidator(validator).setControllerAdvice(new GlobalExceptionHandler()).build();
         try(var auth=mockStatic(StpUtil.class)) {
             auth.when(StpUtil::getLoginIdAsString).thenReturn("STAFF_7");
@@ -37,7 +36,7 @@ class OrderShipPathValidationTest {
     @Test void receiptSupportsLegacyEmptyBodiesAndForwardsExplicitConfirmation() throws Exception {
         var service=mock(OrderApplicationService.class);
         var mvc=MockMvcBuilders.standaloneSetup(new OrderAdminController(service,
-                mock(PickupFulfillmentService.class),mock(RedisDistributedLock.class)))
+                mock(PickupFulfillmentService.class),mock(com.agri_system.application.order.service.PosSaleSubmissionService.class)))
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
         try(var auth=mockStatic(StpUtil.class)) {
             auth.when(StpUtil::getLoginIdAsString).thenReturn("STAFF_7");

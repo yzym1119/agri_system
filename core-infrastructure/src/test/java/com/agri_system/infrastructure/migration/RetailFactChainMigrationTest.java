@@ -282,8 +282,8 @@ class RetailFactChainMigrationTest {
         assertEquals(migrationFiles.size(), versions.size(), "所有 V*.sql 文件都必须被枚举和解析");
         assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
         assertTrue(versions.stream().allMatch(version -> version.compareTo(MigrationVersion.fromVersion("1")) >= 0
-                        && version.compareTo(MigrationVersion.fromVersion("131")) <= 0),
-                "存在超出 V1..V131 范围的迁移版本");
+                        && version.compareTo(MigrationVersion.fromVersion("133")) <= 0),
+                "存在超出 V1..V133 范围的迁移版本");
         assertTrue(versions.containsAll(List.of(MigrationVersion.fromVersion("119"),
                 MigrationVersion.fromVersion("120"), MigrationVersion.fromVersion("121"),
                 MigrationVersion.fromVersion("123"), MigrationVersion.fromVersion("124"),

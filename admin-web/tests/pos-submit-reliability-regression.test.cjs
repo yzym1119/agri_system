@@ -4,7 +4,7 @@ function load(overrides = {}) {
   const file = path.join(__dirname, '../src/views/pos/index.vue'), source = fs.readFileSync(file,'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
   const ast = ts.createSourceFile(file,source,ts.ScriptTarget.Latest,true), names = ast.statements.filter(ts.isVariableStatement).flatMap(s=>[...s.declarationList.declarations].filter(d=>ts.isIdentifier(d.name)).map(d=>d.name.text))
   const user = vue.reactive({token:'session-a',userInfo:{id:8,extra:{storeId:2}}}), messages=[], sent=[], local = overrides.sessionStorage || storage()
-  const context = {...vue,onMounted(){},onUnmounted(){},useUserStore:()=>user,useRouter:()=>({push(){}}),sessionStorage:local,getOrderList:async()=>({records:[{id:77,orderNo:'77'}]}),ElMessage:Object.fromEntries(['error','warning','success','info'].map(k=>[k,m=>messages.push(m)])),createPOSOrder:async data=>{sent.push(data);throw Error('响应丢失')},console:{warn(){},error(){}},...overrides}
+  const context = {crypto:require("node:crypto").webcrypto,cancelPOSSubmission:async key=>({requestKey:key,status:"CANCELLED",orderId:null}),...vue,onMounted(){},onUnmounted(){},useUserStore:()=>user,useRouter:()=>({push(){}}),sessionStorage:local,getOrderList:async()=>({records:[{id:77,orderNo:'77'}]}),ElMessage:Object.fromEntries(['error','warning','success','info'].map(k=>[k,m=>messages.push(m)])),createPOSOrder:async data=>{sent.push(data);throw Error('响应丢失')},console:{warn(){},error(){}},...overrides}
   vm.createContext(context);vm.runInContext(ts.transpileModule(ast.statements.filter(s=>!ts.isImportDeclaration(s)).map(s=>s.getFullText(ast)).join('\n')+`\nglobalThis.page={${names.join(',')}}`,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context)
   const p={...context.page,user,messages,sent,storage:local};p.cartItems.value=[line()];return p
 }
@@ -104,4 +104,43 @@ test('提交冻结不能卸载结算组件，明确业务拒绝后保留原配�
   dialog.deliveryForm.deliveryType=2;dialog.deliveryForm.receiverName='虚构收货人';dialog.deliveryForm.receiverPhone='00000000000';dialog.deliveryForm.receiverAddress='测试地点';dialog.paymentType.value=10;dialog.selectedCouponId.value=38;dialog.mixedDetails.cash=4;dialog.mixedDetails.wechat=6;dialog.confirmForm.value.remark='原配送草稿'
   await p.handleSubmitOrder({...order(),deliveryType:2});await vue.nextTick()
   assert.equal(p.checkoutVisible.value,true);assert.equal(p.pendingSale.value,null);assert.equal(dialog.deliveryForm.deliveryType,2);assert.equal(dialog.deliveryForm.receiverAddress,'测试地点');assert.equal(dialog.paymentType.value,10);assert.equal(dialog.selectedCouponId.value,38);assert.equal(dialog.mixedDetails.cash,4);assert.equal(dialog.mixedDetails.wechat,6);assert.equal(dialog.confirmForm.value.remark,'原配送草稿')
+})
+
+test('新收银在发请求前持久化同一安全请求号，异常后不自动重发',async()=>{
+ let key;const p=load({createPOSOrder:async request=>{key=request.requestKey;assert.match(key,/^[0-9a-f-]{36}$/);assert.ok([...p.storage.values.values()].some(v=>JSON.parse(v).requestKey===key));throw Error('timeout')}});
+ await p.handleSubmitOrder(order());assert.equal(p.pendingSale.value.requestKey,key);await p.handleSubmitOrder(order());assert.equal(p.pendingSale.value.requestKey,key);
+})
+test('查不到原请求不能解冻，后台取消屏障确认后才允许继续',async()=>{
+ const calls=[];const p=load({getPOSSubmission:async key=>({requestKey:key,status:'UNKNOWN',orderId:null}),cancelPOSSubmission:async key=>{calls.push(key);return {requestKey:key,status:'CANCELLED',orderId:null}}});
+ await p.handleSubmitOrder(order());await p.checkPendingSubmission();assert.ok(p.pendingSale.value);assert.equal(p.recoveryResult.value.status,'UNKNOWN');
+ await p.endPendingSubmission();assert.equal(calls.length,0);p.recoveryEndConfirmed.value=true;await p.endPendingSubmission();assert.equal(calls.length,1);assert.equal(p.pendingSale.value,null);assert.equal(p.sent.length,1);
+})
+test('取消竞争中原单已成交不能当未成交解冻，确认成交不再次收款',async()=>{
+ const p=load({cancelPOSSubmission:async key=>({requestKey:key,status:'COMPLETED',orderId:77}),getPOSSubmission:async key=>({requestKey:key,status:'COMPLETED',orderId:77})});
+ await p.handleSubmitOrder(order());p.recoveryEndConfirmed.value=true;await p.endPendingSubmission();assert.ok(p.pendingSale.value);assert.equal(p.recoveryResult.value.orderId,77);
+ p.recoveryConfirmed.value=true;await p.finishCompletedSubmission();assert.equal(p.pendingSale.value,null);assert.equal(p.cartItems.value.length,0);assert.equal(p.sent.length,1);
+})
+test('取消失败或不匹配响应仍冻结；旧员工取消响应不清除新会话',async()=>{
+ for(const response of [null,{requestKey:'other',status:'CANCELLED'},{status:'CANCELLED'},{status:'UNKNOWN'}]) {
+ const p=load({cancelPOSSubmission:async()=>response});await p.handleSubmitOrder(order());p.recoveryEndConfirmed.value=true;await p.endPendingSubmission();assert.ok(p.pendingSale.value);
+ }
+ const wait=deferred(),p=load({cancelPOSSubmission:()=>wait.promise});await p.handleSubmitOrder(order());const key=p.pendingSale.value.requestKey;p.recoveryEndConfirmed.value=true;const ending=p.endPendingSubmission();
+ p.user.token='new';p.user.userInfo={id:9,extra:{storeId:3}};await vue.nextTick();p.cartItems.value=[{...line(),productId:99}];wait.resolve({requestKey:key,status:'CANCELLED'});await ending;assert.equal(p.cartItems.value[0].productId,99);
+})
+
+test('明确业务拒绝也须后台取消确认；原请求若已成交或取消失败不能解冻',async()=>{
+ for(const mode of ['completed','offline']) {
+ const p=load({createPOSOrder:async()=>{throw Object.assign(Error('正在处理中'),{apiBusinessCode:10001})},cancelPOSSubmission:async key=>{if(mode==='offline')throw Error('断网');return {requestKey:key,status:'COMPLETED',orderId:77}}});
+ await p.handleSubmitOrder(order());assert.ok(p.pendingSale.value);assert.equal(p.checkoutVisible.value,false);
+ }
+})
+test('恢复时本机记录读取、删除失败或被替换均保持冻结',async()=>{
+ for(const fault of ['read','remove','replace']) {
+ const local=storage(),p=load({sessionStorage:local,cancelPOSSubmission:async key=>({requestKey:key,status:'CANCELLED',orderId:null})});
+ await p.handleSubmitOrder(order());
+ if(fault==='read')local.getItem=()=>{throw Error('不可读')};
+ if(fault==='remove')local.removeItem=()=>{throw Error('不可删')};
+ if(fault==='replace')for(const key of local.values.keys())local.setItem(key,'other-record');
+ p.recoveryEndConfirmed.value=true;await p.endPendingSubmission();assert.ok(p.pendingSale.value);
+ }
 })

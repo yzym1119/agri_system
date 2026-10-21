@@ -15,14 +15,11 @@ import com.agri_system.application.order.dto.vo.PickupWorkItemVO;
 import com.agri_system.application.order.service.OrderApplicationService;
 import com.agri_system.application.order.service.PickupFulfillmentService;
 import com.agri_system.domain.order.enums.OrderMainPaymentMethod;
-import com.agri_system.infrastructure.common.util.RedisDistributedLock;
 import com.mybatisflex.core.paginate.Page;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
@@ -42,11 +39,9 @@ import java.util.Map;
 @Tag(name = "订单管理（管理端）", description = "订单管理相关接口")
 public class OrderAdminController {
 
-    private static final Logger logger = LoggerFactory.getLogger(OrderAdminController.class);
-
     private final OrderApplicationService orderService;
     private final PickupFulfillmentService pickupFulfillmentService;
-    private final RedisDistributedLock redisLock;
+    private final com.agri_system.application.order.service.PosSaleSubmissionService posSubmissions;
     
     /**
      * 分页查询订单列表
@@ -66,66 +61,8 @@ public class OrderAdminController {
     @Operation(summary = "POS创建订单", description = "POS开单，支持外部支付（记账）和内部支付（余额/专用金）")
     @SaCheckPermission("pos:order:create")
     public ResponseEntity<Long> posCreateOrder(@Valid @RequestBody POSOrderCreateCommand command) {
-        // Redis分布式锁：防止并发请求处理同一个验证码
-        String lockKey = null;
-        String requestId = java.util.UUID.randomUUID().toString();
-
-        // 如果使用钱包验证码，或 mixed payments 中包含余额支付条目，获取分布式锁
-        boolean needLock = false;
-        String authCodeForLock = null;
-        if (StringUtils.hasText(command.getWalletAuthCode())) {
-            needLock = true;
-            authCodeForLock = command.getWalletAuthCode();
-        } else if (command.getPayments() != null && !command.getPayments().isEmpty()) {
-            for (var p : command.getPayments()) {
-                if (p != null
-                        && p.getPaymentType() != null
-                        && p.getPaymentType().equals(OrderMainPaymentMethod.BALANCE.getCode())
-                        && StringUtils.hasText(p.getAuthCode())) {
-                    needLock = true;
-                    authCodeForLock = p.getAuthCode();
-                    break;
-                }
-            }
-        }
-
-        if (needLock && StringUtils.hasText(authCodeForLock)) {
-            lockKey = "lock:pos:auth_code:" + authCodeForLock;
-            boolean lockAcquired = redisLock.tryLock(lockKey, requestId, 60); // 60秒锁过期时间，避免超时
-            if (!lockAcquired) {
-                throw new IllegalArgumentException("正在处理中，请勿重复提交");
-            }
-            logger.info("Acquired distributed lock for auth code: {} with requestId: {}", authCodeForLock, requestId);
-        }
-
-        try {
-            // 从 Sa-Token 获取当前登录员工 ID（loginId 形如 STAFF_123）
-            String loginId = StpUtil.getLoginIdAsString();
-            Long staffId = null;
-            if (loginId != null && loginId.startsWith("STAFF_")) {
-                try {
-                    staffId = Long.parseLong(loginId.substring("STAFF_".length()));
-                } catch (NumberFormatException e) {
-                    // 解析失败时保持 null，由下游根据需要处理
-                }
-            }
-            if (staffId == null) {
-                throw new IllegalArgumentException("未获取到当前登录员工，无法创建POS订单");
-            }
-
-            Long orderId = orderService.createPOSOrder(command, staffId);
-            return ResponseEntity.ok(orderId);
-        } finally {
-            // 释放分布式锁
-            if (lockKey != null) {
-                boolean released = redisLock.releaseLock(lockKey, requestId);
-                if (released) {
-                    logger.info("Released distributed lock for auth code: {} with requestId: {}", command.getWalletAuthCode(), requestId);
-                } else {
-                    logger.warn("Failed to release distributed lock for auth code: {} with requestId: {}", command.getWalletAuthCode(), requestId);
-                }
-            }
-        }
+        // 幂等协调器先锁原请求；钱包验证码由原钱货事务内的条件UPDATE一次性核销。
+        return ResponseEntity.ok(posSubmissions.submit(command.getRequestKey(), command, currentPosStaff()));
     }
     
     /**
@@ -243,6 +180,23 @@ public class OrderAdminController {
     }
 
     public record ReceiptConfirmation(String confirmationKey) {}
+
+    @GetMapping("/pos/submissions/{requestKey}")
+    @SaCheckPermission("pos:order:create")
+    public com.agri_system.application.order.service.PosSaleSubmissionService.Result posSubmission(@PathVariable String requestKey) {
+        return posSubmissions.lookup(requestKey, currentPosStaff());
+    }
+    @PostMapping("/pos/submissions/{requestKey}/cancel")
+    @SaCheckPermission("pos:order:create")
+    public com.agri_system.application.order.service.PosSaleSubmissionService.Result cancelPosSubmission(@PathVariable String requestKey) {
+        return posSubmissions.cancel(requestKey, currentPosStaff());
+    }
+    private Long currentPosStaff() {
+        String id=StpUtil.getLoginIdAsString();
+        if(id==null || !id.matches("STAFF_[0-9]+")) throw new IllegalArgumentException("请使用员工身份核对收银请求");
+        return Long.valueOf(id.substring(6));
+    }
+
 
     /**
      * 查询门店取货工作项（零售事实链 Task9：管理端取货待办页）

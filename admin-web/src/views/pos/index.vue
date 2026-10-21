@@ -7,6 +7,28 @@
         <p>商品金额 ¥{{ pendingSale.totalAmount.toFixed(2) }} · 净应结算 ¥{{ pendingSale.netAmount.toFixed(2) }} · {{ pendingSale.lines.length }} 条物料</p>
         <p>客户：{{ pendingSale.customerId == null ? '散客' : `客户 ${pendingSale.customerId}` }}</p>
         <ul><li v-for="(line, index) in pendingSale.lines" :key="index">商品 {{ line.productId }}{{ line.packageId ? `（套餐 ${line.packageId}）` : '' }}：{{ line.quantity }} {{ line.unit }}，¥{{ line.totalPrice.toFixed(2) }}</li></ul>
+        <template v-if="pendingSale.requestKey">
+          <p class="request-number">收银请求号：{{ pendingSale.requestKey }}</p>
+          <p>连接中断或登录过期不能证明未成交。先核对本次请求，不要再次向客户收款。</p>
+          <el-button :loading="recoveryLoading" :disabled="submittingOrder" @click="checkPendingSubmission">核对本次收银结果</el-button>
+          <div v-if="recoveryResult" class="recovery-result">
+            <template v-if="recoveryResult.status === 'COMPLETED'">
+              <p>本次请求已成交，订单ID {{ recoveryResult.orderId }}。核对后结束本单，不会再次收款或扣库存。</p>
+              <el-button @click="router.push({ name: 'OrderList' })">查看订单中心</el-button>
+              <el-checkbox v-model="recoveryConfirmed" :disabled="recoveryLoading">我已确认本次订单已成交</el-checkbox>
+              <el-button type="primary" :disabled="!recoveryConfirmed || submittingOrder" :loading="recoveryLoading" @click="finishCompletedSubmission">结束已成交单据</el-button>
+            </template>
+            <p v-else-if="recoveryResult.status === 'CANCELLED'">后台已结束本次请求，迟到的原请求不能再成交。确认下方事项后恢复收银。</p>
+            <p v-else>尚未取得已提交的成交结果，原请求可能仍在处理中，当前不能直接重新收款。</p>
+          </div>
+          <template v-if="recoveryResult?.status !== 'COMPLETED' && !submittingOrder">
+            <p>需要重新开单时，先由后台结束本次未成交请求。若原请求已成交，会返回原订单供你核对。</p>
+            <el-checkbox v-model="recoveryEndConfirmed" :disabled="recoveryLoading">我已核对客户实际交款；结束系统请求不等于退回现金或外部支付</el-checkbox>
+            <el-button :disabled="!recoveryEndConfirmed" :loading="recoveryLoading" @click="endPendingSubmission">结束未成交请求并恢复收银</el-button>
+          </template>
+        </template>
+        <template v-else>
+          <p>这是旧版未记录请求号的单据，只能人工核对已成交原单，不能自动判定未成交。</p>
         <p>连接中断不能证明未成交。请先到订单中心核对；未找到也不能直接重收。</p>
         <el-button @click="router.push({ name: 'OrderList' })">去订单中心核对</el-button>
         <template v-if="!submittingOrder">
@@ -18,6 +40,7 @@
             <el-checkbox v-model="recoveryConfirmed">我已人工确认这是本次收款产生的原订单</el-checkbox>
             <el-button type="primary" :disabled="!recoveryConfirmed" :loading="recoveryLoading" @click="confirmRecoveredSale">确认已成交，结束本单</el-button>
           </template>
+        </template>
         </template>
       </template>
       <p v-else>无法读取本机待核对记录，已阻止新收款。请保留当前页面并联系管理员核对，不要清除浏览器记录。</p>
@@ -124,7 +147,7 @@ import {computed, onMounted, onUnmounted, ref, watch} from 'vue'
 import {useRouter} from 'vue-router'
 import {ElMessage} from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
-import { createPickupRequest, createPOSOrder, getOrderDetail, getOrderList } from '@/api/order'
+import { createPickupRequest, createPOSOrder, getOrderDetail, getOrderList, getPOSSubmission, cancelPOSSubmission } from '@/api/order'
 import {useUserStore} from '@/store/user'
 import CategorySidebar from './components/CategorySidebar.vue'
 import ModernGoodsPanel from './components/ModernGoodsPanel.vue'
@@ -170,7 +193,7 @@ const categoryTree = ref<any[]>([])
 const checkoutVisible = ref(false)
 const submittingOrder = ref(false)
 type SaleLine = { productId: number; packageId: number | null; unit: string; quantity: number; totalPrice: number }
-type PendingSale = { version: 1; storeId: number; staffId: number; customerId: number | null;
+type PendingSale = { version: 1; requestKey?: string; storeId: number; staffId: number; customerId: number | null;
   submittedAt: number; totalAmount: number; netAmount: number; discountAmount: number; paymentType: number;
   payments: { paymentType: number; amount: number }[]; lines: SaleLine[] }
 const pendingSale = ref<PendingSale | null>(null)
@@ -179,6 +202,8 @@ const recoveryOrderId = ref('')
 const recoveryCandidate = ref<any>(null)
 const recoveryConfirmed = ref(false)
 const recoveryLoading = ref(false)
+const recoveryResult = ref<{requestKey: string; status: string; orderId: number | null} | null>(null)
+const recoveryEndConfirmed = ref(false)
 const actorKey = () => `pos_pending_sale_v1_${userStore.userInfo?.id || 0}_${getUserStoreId() || 0}`
 const actorSession = () => `${userStore.token || ''}|${actorKey()}`
 const saleLocked = () => !!pendingSale.value || saleStorageError.value || submittingOrder.value
@@ -211,6 +236,8 @@ watch(() => actorSession(), () => {
   recoveryConfirmed.value = false
   recoveryOrderId.value = ''
   recoveryLoading.value = false
+  recoveryResult.value = null
+  recoveryEndConfirmed.value = false
   loadPendingSale()
 }, { flush: 'sync' })
 
@@ -228,7 +255,9 @@ const saleLines = (items: CartItem[]): SaleLine[] => items.flatMap(item => item.
   : [{ productId: item.productId!, packageId: null, unit: item.currentUnit,
     quantity: item.quantity, totalPrice: item.subtotal }])
 const removePendingRecord = (key: string, saved: string) => {
-  if (sessionStorage.getItem(key) === saved) sessionStorage.removeItem(key)
+  if (sessionStorage.getItem(key) !== saved) throw Error('本机收银记录已变化，请保留待核对状态')
+  sessionStorage.removeItem(key)
+  if (sessionStorage.getItem(key) != null) throw Error('本机收银记录未能结束，请重新核对')
 }
 const groupedSaleLines = (lines: SaleLine[]) => {
   const groups: Record<string, { quantity: number; cents: number }> = {}
@@ -323,6 +352,45 @@ const confirmRecoveredSale = async () => {
   } catch { if (session === actorSession()) ElMessage.warning('核验未完成，保留待核对状态') }
   finally { if (session === actorSession()) recoveryLoading.value = false }
 }
+
+// 请求结果由后台同一请求行锁决定；GET未找到从不解除冻结。
+const readSubmissionResult = async (action: 'read' | 'cancel' | 'finish') => {
+  const snapshot = pendingSale.value
+  if (!snapshot?.requestKey || submittingOrder.value || recoveryLoading.value) return
+  if (action === 'cancel' && !recoveryEndConfirmed.value) return
+  if (action === 'finish' && (!recoveryConfirmed.value || recoveryResult.value?.status !== 'COMPLETED')) return
+  const session = actorSession(), key = actorKey(), expectedOrder = recoveryResult.value?.orderId
+  const current = () => session === actorSession() && pendingSale.value === snapshot
+  recoveryLoading.value = true
+  try {
+    const result = action === 'cancel' ? await cancelPOSSubmission(snapshot.requestKey) : await getPOSSubmission(snapshot.requestKey)
+    if (!current()) return
+    if (!result || result.requestKey !== snapshot.requestKey || !['UNKNOWN','PENDING','COMPLETED','CANCELLED'].includes(result.status)
+      || (result.status === 'COMPLETED' && (!Number.isSafeInteger(result.orderId) || Number(result.orderId) <= 0))) throw Error('请求核对结果不完整，请重新核对')
+    recoveryResult.value = result
+    if (action === 'read') { recoveryConfirmed.value = false; return }
+    if (action === 'finish' && (result.status !== 'COMPLETED' || result.orderId !== expectedOrder)) {
+      recoveryConfirmed.value = false; ElMessage.warning('成交结果已变化，请重新核对'); return
+    }
+    if (action === 'cancel' && result.status !== 'CANCELLED') {
+      recoveryConfirmed.value = false; return
+    }
+    removePendingRecord(key, JSON.stringify(snapshot))
+    pendingSale.value = null
+    checkoutVisible.value = false
+    recoveryResult.value = null
+    recoveryConfirmed.value = false
+    recoveryEndConfirmed.value = false
+    if (action === 'finish') handleClearCart()
+    ElMessage.success(action === 'finish' ? '已结束原成交单据，未再次收款' : '原请求已结束，可以继续收银；请先核对实际交款')
+    goodsPanelRef.value?.refresh()
+  } catch (error: any) {
+    if (current()) ElMessage.warning(error?.message || '本次请求尚未核对完成，请保留待核对状态')
+  } finally { if (session === actorSession()) recoveryLoading.value = false }
+}
+const checkPendingSubmission = () => readSubmissionResult('read')
+const endPendingSubmission = () => readSubmissionResult('cancel')
+const finishCompletedSubmission = () => readSubmissionResult('finish')
 
 // 库房取货（后仓拣货）待确认状态
 const pickupVisible = ref(false)
@@ -668,8 +736,11 @@ const handleSubmitOrder = async (orderData: any, submittedNetAmount?: number) =>
   if (!storeId.value || !staffId.value || !cartItems.value.length) return
   const session = actorSession(), key = actorKey()
   // 支付请求固定为提交瞬间副本；摘要不保留验证码、客户联系方式或可重发数据。
-  const request = JSON.parse(JSON.stringify({ ...orderData, storeId: storeId.value, staffId: staffId.value }))
-  const snapshot: PendingSale = { version: 1, storeId: storeId.value, staffId: staffId.value,
+  let requestKey: string
+  try { requestKey = crypto.randomUUID() }
+  catch { ElMessage.error('无法建立安全收银请求号，暂不能收款'); return }
+  const request = JSON.parse(JSON.stringify({ ...orderData, requestKey, storeId: storeId.value, staffId: staffId.value }))
+  const snapshot: PendingSale = { version: 1, requestKey, storeId: storeId.value, staffId: staffId.value,
     customerId: orderData.customerId ?? null, submittedAt: Date.now(), totalAmount: totalAmount.value,
     netAmount: submittedNetAmount ?? (orderData.couponId ? NaN : totalAmount.value - Number(orderData.discountAmount || 0)),
     discountAmount: Number(orderData.discountAmount || 0), paymentType: orderData.paymentType,
@@ -722,7 +793,7 @@ const handleSubmitOrder = async (orderData: any, submittedNetAmount?: number) =>
   } catch (error: any) {
     if (session !== actorSession()) {
       // 只清理明确拒绝的原记录，不触碰另一员工的界面或核对草稿。
-      if (definitelyRejectedSale(error)) {
+      if (!snapshot.requestKey && definitelyRejectedSale(error)) {
         try { removePendingRecord(key, saved) } catch { /* 保留原记录，待原员工核对 */ }
       }
       return
@@ -731,6 +802,22 @@ const handleSubmitOrder = async (orderData: any, submittedNetAmount?: number) =>
       checkoutVisible.value = false
       ElMessage.warning('本次收款结果未知，已冻结原单。请先去订单中心核对，勿再次收款；未找到也不能直接重收。')
       return
+    }
+    // 明确拒绝也先建立后台取消屏障：某个重复请求被拒绝不能证明原请求没成交。
+    if (snapshot.requestKey) {
+      try {
+        const result = await cancelPOSSubmission(snapshot.requestKey)
+        if (session !== actorSession() || pendingSale.value?.requestKey !== snapshot.requestKey) return
+        if (!result || result.requestKey !== snapshot.requestKey || result.status !== 'CANCELLED') {
+          if (result?.requestKey === snapshot.requestKey && result.status === 'COMPLETED' && Number.isSafeInteger(result.orderId) && Number(result.orderId) > 0) recoveryResult.value = result
+          checkoutVisible.value = false
+          ElMessage.warning('原请求仍需核对，不能按本次错误再次收款')
+          return
+        }
+      } catch {
+        if (session === actorSession()) { checkoutVisible.value = false; ElMessage.warning('尚未确认原请求已结束，请核对后再收款') }
+        return
+      }
     }
     try { removePendingRecord(key, saved) }
     catch { saleStorageError.value = true; return }
@@ -870,4 +957,11 @@ const handleRegisterPickup = async (item: { productId: number; name: string }) =
   font-size: 14px;
   color: #303133;
 }
+</style>
+
+<style scoped>
+.request-number { overflow-wrap: anywhere; }
+.recovery-result { margin: 16px 0; padding: 12px 16px; background: var(--el-fill-color-light); border-radius: 6px; }
+.sale-pending .el-checkbox { display: flex; height: auto; white-space: normal; margin: 12px 0; }
+.sale-pending :deep(.el-checkbox__label) { white-space: normal; line-height: 1.6; }
 </style>

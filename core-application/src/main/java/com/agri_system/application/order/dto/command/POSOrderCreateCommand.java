@@ -18,6 +18,9 @@ import io.swagger.v3.oas.annotations.media.Schema;
 @Data
 @Schema(description = "POS订单创建命令")
 public class POSOrderCreateCommand {
+    @NotNull(message="收银请求号不能为空，请刷新收银台")
+    @jakarta.validation.constraints.Pattern(regexp="[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", message="收银请求号格式不正确")
+    private String requestKey;
     
     @NotNull(message = "门店ID不能为空")
     @Schema(description = "门店ID", example = "1")

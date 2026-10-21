@@ -12,11 +12,11 @@ function loadPage(relativePath, exports, overrides = {}) {
   const script = fs.readFileSync(filename, 'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
   const source = ts.createSourceFile(filename + '.ts', script, ts.ScriptTarget.Latest, true)
   const code = source.statements.filter(s => !ts.isImportDeclaration(s)).map(s => s.getFullText(source)).join('\n')
-  const messages = []
-  const context = {
+  const messages = []; const savedRecords = new Map()
+  const context = {crypto:require("node:crypto").webcrypto,cancelPOSSubmission:async key=>({requestKey:key,status:"CANCELLED",orderId:null}),
     useRoute: () => ({query: {}}),
     useRouter: () => ({push() {}}),
-    sessionStorage: {getItem:()=>null,setItem(){},removeItem(){}},
+    sessionStorage: {getItem:k=>savedRecords.get(k)??null,setItem:(k,v)=>savedRecords.set(k,v),removeItem:k=>savedRecords.delete(k)},
     ref: vue.ref, reactive: vue.reactive, computed: vue.computed, watch: vue.watch,
     onMounted() {}, onUnmounted() {}, nextTick: vue.nextTick,
     defineProps: () => ({}), defineEmits: () => () => {}, defineExpose() {},

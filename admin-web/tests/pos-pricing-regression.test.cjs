@@ -21,8 +21,8 @@ function loadPage(relativePath, exports, overrides = {}) {
   const withoutImports = source.statements
     .filter(statement => !ts.isImportDeclaration(statement))
     .map(statement => statement.getFullText(source)).join('\n')
-  const messages = []
-  const context = {
+  const messages = []; const savedRecords = new Map()
+  const context = {crypto:require("node:crypto").webcrypto,cancelPOSSubmission:async key=>({requestKey:key,status:"CANCELLED",orderId:null}),
     useRoute: () => ({query: {}}),
     ref: vue.ref,
     reactive: vue.reactive,
@@ -36,7 +36,7 @@ function loadPage(relativePath, exports, overrides = {}) {
     defineExpose: () => {},
     useUserStore: () => ({ userInfo: { id: 1, extra: { storeId: 1 } } }),
     useRouter: () => ({push() {}}),
-    sessionStorage: {getItem:()=>null,setItem(){},removeItem(){}},
+    sessionStorage: {getItem:k=>savedRecords.get(k)??null,setItem:(k,v)=>savedRecords.set(k,v),removeItem:k=>savedRecords.delete(k)},
     usePermissionStore: () => ({ permissions: ['*'] }),
     ElMessage: Object.fromEntries(['error', 'warning', 'success', 'info'].map(level => [
       level, message => messages.push({ level, text: typeof message === 'string' ? message : message?.message || '' })
@@ -277,7 +277,7 @@ test('整单优惠未填写原因仍可以取消结算返回购物车', () => {
   const file = fs.readFileSync(path.join(webRoot, 'src/views/pos/components/CheckoutDialog.vue'), 'utf8')
   const handler = file.match(/const handleClose = \(\) => \{[\s\S]*?\n\}/)
   assert.ok(handler)
-  const context = {
+  const context = {crypto:require("node:crypto").webcrypto,cancelPOSSubmission:async key=>({requestKey:key,status:"CANCELLED",orderId:null}),
     props: { submitting: false, discountAmount: 9 },
     confirmForm: vue.ref({ remark: '' }), visible: vue.ref(true),
     ElMessage: { warning() {} }

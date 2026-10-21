@@ -166,3 +166,12 @@ export function fulfillPickupRequest(requestId: number, data: PickupFulfillmentD
     data
   })
 }
+
+
+export interface POSSubmissionResult { requestKey: string; status: 'UNKNOWN' | 'PENDING' | 'COMPLETED' | 'CANCELLED'; orderId: number | null }
+export function getPOSSubmission(key: string): Promise<POSSubmissionResult> {
+  return request({url: `/api/admin/orders/pos/submissions/${encodeURIComponent(key)}`, method: 'get'})
+}
+export function cancelPOSSubmission(key: string): Promise<POSSubmissionResult> {
+  return request({url: `/api/admin/orders/pos/submissions/${encodeURIComponent(key)}/cancel`, method: 'post'})
+}

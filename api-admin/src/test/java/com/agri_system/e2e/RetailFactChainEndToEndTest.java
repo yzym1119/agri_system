@@ -455,6 +455,7 @@ class RetailFactChainEndToEndTest {
         assertOnlinePickupRespectsReturnFacts();
         assertConcurrentMultiPackageSale();
         assertConcurrentCompletePosSalesCannotOversell();
+        assertPosSubmissionRecovery();
         assertEquals(2L, jdbcLong("SELECT COUNT(DISTINCT label) FROM sys_dict_data WHERE type_code='product_unit' AND label IN ('箱','瓶') AND status=1"),
                 "全量真实迁移必须保留启用的箱、瓶单位字典");
         VipLifecycleMysqlAssertions.verify(jdbcTemplate, vipLifecycleService);
@@ -1119,7 +1120,7 @@ class RetailFactChainEndToEndTest {
 
     private long creditSale(E2EToken token,long customerId,long staffId,String quantity,String cash,String debt) throws Exception {
         POSOrderCreateCommand command=posSale(130L,quantity,"袋","10",false,null,cash);
-        command.setCustomerId(customerId);command.setStaffId(staffId);
+        command.setCustomerId(customerId);command.setStaffId(staffId);command.setStoreId(jdbcLong("SELECT store_id FROM staff WHERE id="+staffId));
         if(new BigDecimal(debt).signum()>0) {
             if(new BigDecimal(cash).signum()==0) command.setPaymentType(6);
             else { command.setPaymentType(10);command.setPayments(List.of(paymentTender(1,cash),paymentTender(6,debt))); }
@@ -1523,6 +1524,7 @@ class RetailFactChainEndToEndTest {
     }
 
     private long createPOSViaHttp(E2EToken token, POSOrderCreateCommand command) throws Exception {
+        if(command.getRequestKey()==null)command.setRequestKey(java.util.UUID.randomUUID().toString());
         String response = mockMvc.perform(post("/api/admin/orders/pos").header(token.name(), token.value())
                         .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(command)))
                 .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
@@ -1532,6 +1534,7 @@ class RetailFactChainEndToEndTest {
     }
 
     private void assertPOSRejected(E2EToken token, POSOrderCreateCommand command, int code, String reason) throws Exception {
+        if(command.getRequestKey()==null)command.setRequestKey(java.util.UUID.randomUUID().toString());
         JsonNode response = objectMapper.readTree(mockMvc.perform(post("/api/admin/orders/pos")
                         .header(token.name(), token.value()).contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(command)))
@@ -1721,7 +1724,7 @@ class RetailFactChainEndToEndTest {
         OrderItemDTO item=new OrderItemDTO(); item.setItemType(2); item.setPackageId(packageId);
         item.setQuantity(new BigDecimal(quantity)); item.setUnit("套");
         item.setQuotedUnitPrice(quote.path("suggestedUnitPrice").decimalValue()); item.setPackageQuoteId(quote.path("quoteId").asText());
-        POSOrderCreateCommand command=new POSOrderCreateCommand(); command.setStoreId(1L); command.setStaffId(staffId);
+        POSOrderCreateCommand command=new POSOrderCreateCommand();command.setRequestKey(java.util.UUID.randomUUID().toString()); command.setStoreId(1L); command.setStaffId(staffId);
         command.setPaymentType(1); command.setDiscountAmount(BigDecimal.ZERO);
         command.setReceiveAmount(quote.path("totalAmount").decimalValue()); command.setItems(List.of(item)); return command;
     }
@@ -2103,6 +2106,53 @@ class RetailFactChainEndToEndTest {
     // ------------------------------------------------------------------
     // 命令构造
     // ------------------------------------------------------------------
+    private void assertPosSubmissionRecovery() throws Exception {
+        E2EToken owner=loginToken(1L),other=loginToken(2L),foreign=loginToken(3L);
+        var command=posSale(130L,"1","袋","10",false,null,"10");
+        String key=command.getRequestKey();long before=jdbcLong("SELECT COUNT(*) FROM `order`");long moves=movementCount();
+        var duplicate=raceCreditHttp(i->postCreditJson(owner,"/api/admin/orders/pos",command));
+        assertTrue(duplicate.get(0).isIntegralNumber(),duplicate.toString());
+        assertEquals(duplicate.get(0),duplicate.get(1),"同一请求并发重放返回同一订单");
+        assertEquals(before+1,jdbcLong("SELECT COUNT(*) FROM `order`"));assertEquals(moves+1,movementCount());
+        String base="/api/admin/orders/pos/submissions/"+key;
+        JsonNode completed=requireCreditSuccess(postCreditJson(owner,base+"/cancel",Map.of()));
+        assertEquals("COMPLETED",completed.path("status").asText());
+        assertEquals(duplicate.get(0).asLong(),completed.path("orderId").asLong());
+        command.setRemark("重复身份改内容");assertCreditRejected(postCreditJson(owner,"/api/admin/orders/pos",command));
+        for(E2EToken denied:List.of(other,foreign)) assertCreditRejected(postCreditJson(denied,base+"/cancel",Map.of()));
+        for(int attempt=0;attempt<3;attempt++) {
+            var racing=posSale(130L,"1","袋","10",false,null,"10");String path="/api/admin/orders/pos/submissions/"+racing.getRequestKey();
+            long count=jdbcLong("SELECT COUNT(*) FROM `order`");long movements=movementCount();
+            raceCreditHttp(i->i==0?postCreditJson(owner,"/api/admin/orders/pos",racing):postCreditJson(owner,path+"/cancel",Map.of()));
+            JsonNode result=getDeliveryJson(owner,path,Map.of());String state=result.path("status").asText();
+            assertTrue(List.of("COMPLETED","CANCELLED").contains(state),result.toString());
+            long added=state.equals("COMPLETED")?1:0;
+            assertEquals(count+added,jdbcLong("SELECT COUNT(*) FROM `order`"));assertEquals(movements+added,movementCount());
+            JsonNode late=postCreditJson(owner,"/api/admin/orders/pos",racing);
+            if(added==0)assertCreditRejected(late);else assertEquals(result.path("orderId").asLong(),late.asLong());
+            assertEquals(count+added,jdbcLong("SELECT COUNT(*) FROM `order`"));assertEquals(movements+added,movementCount());
+        }
+        // 钱包同请求并发重放只核销一次；不同请求不能复用同一验证码。
+        exec("INSERT INTO wallet_auth_code(customer_id,auth_code,amount,status,expire_at) VALUES(550,'REC010',10,1,DATE_ADD(NOW(),INTERVAL 1 DAY))");
+        var wallet=posSale(130L,"1","袋","10",false,null,"10");wallet.setCustomerId(550L);wallet.setPaymentType(4);wallet.setWalletAuthCode("REC010");
+        var walletBefore=walletBalance(550L,1);long walletMoves=movementCount();long walletCount=jdbcLong("SELECT COUNT(*) FROM `order`");
+        var replay=raceCreditHttp(i->postCreditJson(owner,"/api/admin/orders/pos",wallet));
+        assertTrue(replay.get(0).isIntegralNumber(),replay.toString());assertEquals(replay.get(0),replay.get(1));
+        assertEquals(0,walletBefore.subtract(BigDecimal.TEN).compareTo(walletBalance(550L,1)));
+        assertEquals(walletCount+1,jdbcLong("SELECT COUNT(*) FROM `order`"));assertEquals(walletMoves+1,movementCount());
+        wallet.setRequestKey(java.util.UUID.randomUUID().toString());assertCreditRejected(postCreditJson(owner,"/api/admin/orders/pos",wallet));
+        assertEquals(walletCount+1,jdbcLong("SELECT COUNT(*) FROM `order`"));assertEquals(walletMoves+1,movementCount());
+        assertEquals(0,walletBefore.subtract(BigDecimal.TEN).compareTo(walletBalance(550L,1)));
+        var failed=posSale(130L,"999999","袋","10",false,null,"9999990");String failedKey=failed.getRequestKey();
+        long count=jdbcLong("SELECT COUNT(*) FROM `order`");long movements=movementCount();
+        assertCreditRejected(postCreditJson(owner,"/api/admin/orders/pos",failed));
+        assertEquals(0L,jdbcLong("SELECT COUNT(*) FROM pos_sale_submission WHERE request_key='"+failedKey+"'"));
+        JsonNode ended=requireCreditSuccess(postCreditJson(owner,"/api/admin/orders/pos/submissions/"+failedKey+"/cancel",Map.of()));
+        assertEquals("CANCELLED",ended.path("status").asText());assertCreditRejected(postCreditJson(owner,"/api/admin/orders/pos",failed));
+        assertEquals(count,jdbcLong("SELECT COUNT(*) FROM `order`"));assertEquals(movements,movementCount());
+        log("[POS恢复] 同请求并发重放、取消竞争与迟到提交、失败回滚、改内容及跨员工/门店均通过");
+    }
+
     private POSOrderCreateCommand posSale(Long productId, String quantity, String unit, String unitPrice,
                                           boolean warehousePickup, String priceChangeReason, String receiveAmount) {
         OrderItemDTO item = new OrderItemDTO();
@@ -2113,7 +2163,7 @@ class RetailFactChainEndToEndTest {
         item.setWarehousePickup(warehousePickup);
         item.setPriceChangeReason(priceChangeReason);
 
-        POSOrderCreateCommand command = new POSOrderCreateCommand();
+        POSOrderCreateCommand command = new POSOrderCreateCommand();command.setRequestKey(java.util.UUID.randomUUID().toString());
         command.setStoreId(1L);
         command.setStaffId(1L);
         command.setPaymentType(1); // 现金

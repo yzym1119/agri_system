@@ -5,6 +5,7 @@ import type {ProductPackageDetailVO, ProductPackageItemVO} from './package'
  * POS 订单创建请求
  */
 export interface POSOrderCreateRequest {
+  requestKey?: string
   storeId: number
   customerId?: number
   items: POSOrderItemDTO[]
