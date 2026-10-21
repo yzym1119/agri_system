@@ -72,7 +72,7 @@
               </el-button>
             </el-tooltip>
             <div class="cell-secondary">{{ row.createdAt || '时间待核对' }}</div>
-            <div class="cell-secondary">{{ getOrderTypeText(row.orderType) }} · {{ row.deliveryType === 1 ? (row.orderType === 1 ? '当场交货' : '门店自提') : row.deliveryType === 2 ? '同城配送' : row.deliveryType === 3 ? '快递配送' : '配送方式待核对' }}</div>
+            <div class="cell-secondary">{{ getOrderTypeText(row.orderType) }} · {{ getHandoverText(row) }}</div>
           </template>
         </el-table-column>
         <el-table-column label="商品概览" min-width="150" show-overflow-tooltip>
@@ -185,6 +185,7 @@
 
     <!-- 订单详情抽屉 -->
     <OrderDetail v-model="detailVisible" :order-id="currentOrderId" />
+    <ReceiptConfirmDialog v-model="receiptVisible" :order-id="receiptOrderId" @success="loadData" />
   </div>
 </template>
 
@@ -193,15 +194,16 @@ import {onMounted, reactive, ref, watch} from 'vue'
 import {useRoute} from 'vue-router'
 import {usePermissionStore} from '@/store/permission'
 import {hasPermission} from '@/utils/permission'
-import {ElMessage, ElMessageBox} from 'element-plus'
+import {ElMessage} from 'element-plus'
 import {Refresh, Search} from '@element-plus/icons-vue'
-import {confirmReceipt, getOrderList} from '@/api/order'
+import {getOrderList} from '@/api/order'
 import {getBusinessStoreOptions as getAllStores} from '@/api/store'
 import {getOrderPaymentSummary} from '@/utils/orderPayment'
 import ShipDialog from '../components/ShipDialog.vue'
 import VerifyDialog from '../components/VerifyDialog.vue'
 import RefundDialog from '../components/RefundDialog.vue'
 import OrderDetail from '../components/OrderDetail.vue'
+import ReceiptConfirmDialog from '../components/ReceiptConfirmDialog.vue'
 import type {OrderListQuery, OrderPageItem, OrderPageResponse} from '@/types/order'
 import type {StoreDetailVO} from '@/types/store'
 
@@ -215,11 +217,17 @@ const total = ref(0)
 const activeTab = ref('all')
 const storeOptions = ref<Pick<StoreDetailVO,'id'|'name'>[]>([])
 const actionLoading = ref<Record<number, boolean>>({})
+const getHandoverText = (row: OrderPageItem) => row.deliveryType === 1
+  ? (row.orderType === 1 ? '门店交货' : '门店自提')
+  : row.deliveryType === 2 ? '同城配送' : row.deliveryType === 3 ? '快递配送'
+  : row.orderType === 1 && row.deliveryType == null ? '门店销售' : '交货方式待核对'
 let listRequest = 0
 const shipVisible = ref(false)
 const verifyVisible = ref(false)
 const refundVisible = ref(false)
 const detailVisible = ref(false)
+const receiptVisible = ref(false)
+const receiptOrderId = ref<number | null>(null)
 const currentOrder = ref<OrderPageItem | null>(null)
 const currentOrderId = ref<number | null>(null)
 const shipMode = ref<'express' | 'local'>('express')
@@ -452,6 +460,7 @@ const applyRouteQuery = (query: Record<string, unknown>) => {
 }
 
 const loadData = async () => {
+  receiptVisible.value = false
   const requestId = ++listRequest
   loading.value = true
   try {
@@ -556,27 +565,10 @@ const handleRefundSuccess = () => {
   loadData()
 }
 
-const handleConfirmReceipt = async (row: OrderPageItem) => {
+const handleConfirmReceipt = (row: OrderPageItem) => {
   if (!canConfirmDelivery(row) || actionLoading.value[row.id]) return
-  try {
-    await ElMessageBox.confirm('确认剩余配送商品已交给收货人？', '确认签收', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
-
-    actionLoading.value[row.id] = true
-    await confirmReceipt(row.id)
-    ElMessage.success('确认签收成功')
-    loadData()
-  } catch (error: any) {
-    if (error !== 'cancel') {
-      console.error('确认收货失败:', error)
-      ElMessage.error((error as any)?.message || '确认收货失败')
-    }
-  } finally {
-    actionLoading.value[row.id] = false
-  }
+  receiptOrderId.value = row.id
+  receiptVisible.value = true
 }
 
 // 任务链接在同一页面切换时也生效，且不会保留上次配送筛选。

@@ -104,3 +104,12 @@ test('采购切换查询时旧请求不能覆盖新列表',async()=>{
   assert.equal(p.tableData.value[0].id,52)
   assert.equal(p.loading.value,false)
 })
+
+test('POS无配送事实时使用中性门店销售文案，未知线上方式仍待核对',()=>{
+ const p=page('order/list')
+ assert.equal(p.getHandoverText({orderType:1,deliveryType:null}),'门店销售')
+ assert.equal(p.getHandoverText({orderType:1,deliveryType:2}),'同城配送')
+ assert.equal(p.getHandoverText({orderType:1,deliveryType:99}),'交货方式待核对')
+ assert.equal(p.getHandoverText({orderType:3,deliveryType:null}),'交货方式待核对')
+ assert.equal(p.getHandoverText({orderType:2,deliveryType:1}),'门店自提')
+})

@@ -85,6 +85,8 @@ public interface OrderRepository {
     /** 配送读取真实出库分配减去已回原分配的正数退货数量。 */
     boolean hasRemainingDeliveryQuantity(Long orderId);
 
+    java.util.List<com.agri_system.domain.order.model.DeliveryItemQuantity> findRemainingDeliveryItems(Long orderId);
+
     /** 带真实配送状态的查询入口，旧调用保留兼容。 */
     com.mybatisflex.core.paginate.Page<Order> findPage(Integer pageNum, Integer pageSize, String keyword,
             Long storeId, Integer orderType, Integer deliveryType, String orderStatus, String startTime,

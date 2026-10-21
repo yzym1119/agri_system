@@ -34,4 +34,26 @@ class OrderShipPathValidationTest {
             assertEquals(42L,command.getValue().getOrderId());
         }
     }
+    @Test void receiptSupportsLegacyEmptyBodiesAndForwardsExplicitConfirmation() throws Exception {
+        var service=mock(OrderApplicationService.class);
+        var mvc=MockMvcBuilders.standaloneSetup(new OrderAdminController(service,
+                mock(PickupFulfillmentService.class),mock(RedisDistributedLock.class)))
+                .setControllerAdvice(new GlobalExceptionHandler()).build();
+        try(var auth=mockStatic(StpUtil.class)) {
+            auth.when(StpUtil::getLoginIdAsString).thenReturn("STAFF_7");
+            mvc.perform(post("/api/admin/orders/42/confirm-receipt")).andExpect(status().isOk());
+            mvc.perform(post("/api/admin/orders/42/confirm-receipt")
+                .contentType(MediaType.APPLICATION_JSON).content("{}")) .andExpect(status().isOk());
+            verify(service,times(2)).confirmReceipt(42L,7L);
+            mvc.perform(post("/api/admin/orders/42/confirm-receipt")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"confirmationKey\":\"checked-key\"}"))
+                .andExpect(status().isOk());
+            verify(service).confirmReceipt(42L,7L,"checked-key");
+            mvc.perform(post("/api/admin/orders/42/confirm-receipt")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"confirmationKey\":\" \"}"))
+                .andExpect(jsonPath("$.code").value(com.agri_system.infrastructure.common.error.SystemErrorCode.INVALID_ARGUMENT.getCode()))
+                .andExpect(jsonPath("$.message").value("请先核对配送商品与收货信息"));
+            verifyNoMoreInteractions(service);
+        }
+    }
 }

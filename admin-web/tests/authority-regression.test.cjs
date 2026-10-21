@@ -63,7 +63,7 @@ function nodes(page, type) {
       if(Array.isArray(node)) {node.forEach(walk);return}
       if(node.type?.name === type) found.push(node)
       if(Array.isArray(node.children)) node.children.forEach(walk)
-      else if(node.children && typeof node.children === 'object') for(const slot of Object.values(node.children)) if(typeof slot === 'function') walk(slot({row:{id:1,status:1,roles:[]}}))
+      else if(node.children && typeof node.children === 'object') for(const slot of Object.values(node.children)) if(typeof slot === 'function') walk(slot({row:{id:1,status:1,roles:[]},data:{id:1,name:'测试权限',type:1,visible:1}}))
     }
     walk(render(vue.proxyRefs({Plus:{},Edit:{},Setting:{},Delete:{},Search:{},Refresh:{},Lock:{},Unlock:{},Key:{},...page.bindings}),[]))
   } finally {console.warn=oldWarn}
@@ -266,4 +266,11 @@ test('员工密码重置失败页面catch不输出新密码及认证头',async()
   p.passwordFormRef.value={validate:async callback=>callback(true),resetFields(){}}
   await p.handlePasswordSubmit()
   assert.equal(JSON.stringify(p.logs).includes('sensitive-token'),false);assert.equal(JSON.stringify(p.logs).includes('sensitive-password'),false)
+})
+
+test('同名授权节点明确区分页面入口、操作权限及隐藏分组，节点身份不变',()=>{
+ const p=page('role',['role:assign'])
+ assert.equal(p.menuNodeKind({id:2602,type:1,path:'/standalone/order',visible:1}),'页面入口')
+ assert.equal(p.menuNodeKind({id:1300,type:1,path:'/order',visible:0}),'仅操作权限，不显示菜单')
+ assert.equal(p.menuNodeKind({id:1301,type:2,permission:'order:query'}),'操作')
 })

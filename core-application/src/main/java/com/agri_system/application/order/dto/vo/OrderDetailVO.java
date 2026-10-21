@@ -38,6 +38,10 @@ public class OrderDetailVO {
     private boolean canShip;
     @Schema(description = "当前是否可以签收，由配送和实出库事实计算")
     private boolean canConfirmReceipt;
+
+    /** 剩余实出库清单，使用原批次记账单位；不从原订单数量猜测。 */
+    private List<com.agri_system.domain.order.model.DeliveryItemQuantity> deliveryItems;
+    private String deliveryConfirmationKey;
     
     @Schema(description = "订单总金额", example = "100.00")
     private BigDecimal totalAmount;

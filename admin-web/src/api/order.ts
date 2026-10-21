@@ -116,10 +116,11 @@ export function getRefundPreview(orderId: number, data: RefundPreviewRequest): P
 /**
  * 确认收货（管理员强制确认）
  */
-export function confirmReceipt(orderId: number): Promise<void> {
+export function confirmReceipt(orderId: number, confirmationKey?: string): Promise<void> {
   return request({
     url: `/api/admin/orders/${orderId}/confirm-receipt`,
-    method: 'post'
+    method: 'post',
+    ...(confirmationKey ? { data: { confirmationKey } } : {})
   })
 }
 

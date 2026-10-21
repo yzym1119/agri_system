@@ -130,6 +130,8 @@ export interface OrderDeliveryInfo {
 }
 
 export interface OrderDetail extends OrderBase {
+  deliveryItems?: Array<{ orderItemId: number; productName: string; quantity: number; unit: string | null }>
+  deliveryConfirmationKey?: string | null
   storeId?: number | null
   storeName?: string | null
   storeAddress?: string | null

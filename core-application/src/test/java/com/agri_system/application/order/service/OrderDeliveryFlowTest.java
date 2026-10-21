@@ -185,6 +185,18 @@ class OrderDeliveryFlowTest {
         orderService.confirmReceipt(42L,8L);assertEquals(9,order.getOrderStatus());assertEquals(4,delivery.getDeliveryStatus());
         org.junit.jupiter.api.Assertions.assertNotNull(delivery.getReceivedAt());assertNoSettlement();
     }
+    @Test void receiptConfirmationRejectsChangedDisplayedGoodsUnderOriginalOrderLock() throws Exception {
+        order.setOrderStatus(5);delivery.setDeliveryStatus(3);
+        var row=new com.agri_system.domain.order.model.DeliveryItemQuantity();row.setOrderItemId(1L);row.setProductName("肥料");row.setQuantity(new BigDecimal("3"));row.setUnit("袋");
+        var rows=java.util.List.of(row);when(orderRepository.findRemainingDeliveryItems(42L)).thenReturn(rows);
+        String key=ReflectionTestUtils.invokeMethod(orderService,"deliveryConfirmationKey",order,delivery,rows);
+        var method=orderService.getClass().getMethod("confirmReceipt",Long.class,Long.class,String.class);
+        row.setQuantity(new BigDecimal("2"));
+        var failure=assertThrows(java.lang.reflect.InvocationTargetException.class,()->method.invoke(orderService,42L,8L,key));
+        org.junit.jupiter.api.Assertions.assertInstanceOf(IllegalArgumentException.class,failure.getCause());assertNoDeliveryWrite();
+        row.setQuantity(new BigDecimal("3"));method.invoke(orderService,42L,8L,key);
+        assertEquals(4,delivery.getDeliveryStatus());assertNoSettlement();
+    }
     @Test void posReceiptAndReplayDoNotSettleOrMoveInventoryAgain() {
         order.setOrderStatus(5);delivery.setDeliveryStatus(3);orderService.confirmReceipt(42L,8L);
         assertEquals(6,order.getOrderStatus());assertEquals(4,delivery.getDeliveryStatus());

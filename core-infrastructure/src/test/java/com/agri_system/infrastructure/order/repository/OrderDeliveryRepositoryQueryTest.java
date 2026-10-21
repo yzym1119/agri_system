@@ -23,7 +23,7 @@ class OrderDeliveryRepositoryQueryTest {
         execute("CREATE TABLE `order`(id BIGINT PRIMARY KEY,store_id BIGINT,customer_id BIGINT,order_type INT,order_status INT,created_at TIMESTAMP,updated_at TIMESTAMP)");
         execute("CREATE TABLE store(id BIGINT PRIMARY KEY)");execute("CREATE TABLE customer(id BIGINT PRIMARY KEY)");
         execute("CREATE TABLE order_delivery(id BIGINT PRIMARY KEY,order_id BIGINT,delivery_type INT,delivery_status INT,delivery_at TIMESTAMP)");
-        execute("CREATE TABLE order_item(id BIGINT PRIMARY KEY,order_id BIGINT)");
+        execute("CREATE TABLE order_item(id BIGINT PRIMARY KEY,order_id BIGINT,product_name VARCHAR(100) DEFAULT '测试商品')");
         execute("CREATE TABLE order_item_batch_allocation(id BIGINT PRIMARY KEY,order_item_id BIGINT,store_id BIGINT,product_id BIGINT,batch_id BIGINT,location_id BIGINT,source_movement_id BIGINT,allocated_base_quantity DECIMAL(18,8))");
         execute("CREATE TABLE inventory_movement(id BIGINT PRIMARY KEY,store_id BIGINT,product_id BIGINT,batch_id BIGINT,from_location_id BIGINT,movement_type VARCHAR(30),base_quantity DECIMAL(18,8),reference_type VARCHAR(40),reference_id BIGINT)");
         OrderMapper mapper=mock(OrderMapper.class);
@@ -34,6 +34,18 @@ class OrderDeliveryRepositoryQueryTest {
         when(mapper.paginate(any(Page.class),any(QueryWrapper.class))).thenAnswer(c -> {
             Page<Order> page=c.getArgument(0);page.setRecords(query(c.getArgument(1)));return page;
         });
+        when(mapper.selectListByQueryAs(any(QueryWrapper.class),any(Class.class))).thenAnswer(c -> {
+            List<Object> rows=new ArrayList<>();Class<?> type=c.getArgument(1);
+            try(var connection=source.getConnection();var st=connection.createStatement();var rs=st.executeQuery(c.<QueryWrapper>getArgument(0).toSQL())) {
+                while(rs.next()) {var row=type.getConstructor().newInstance();
+                    type.getMethod("setOrderItemId",Long.class).invoke(row,rs.getLong("order_item_id"));
+                    type.getMethod("setProductName",String.class).invoke(row,rs.getString("product_name"));
+                    type.getMethod("setQuantity",java.math.BigDecimal.class).invoke(row,rs.getBigDecimal("quantity"));
+                    type.getMethod("setUnit",String.class).invoke(row,rs.getString("unit"));rows.add(row);}
+            }return rows;
+        });
+        execute("CREATE TABLE inventory_receipt_batch(id BIGINT PRIMARY KEY,product_id BIGINT,store_id BIGINT,base_unit_id BIGINT)");
+        execute("CREATE TABLE product_unit(id BIGINT PRIMARY KEY,product_id BIGINT,unit_name VARCHAR(30))");
         repository=new OrderRepositoryImpl(mapper);
     }
     @Test void localFilterIncludesPosAndNeedsRealDeliveryRelation() throws Exception {
@@ -48,7 +60,7 @@ class OrderDeliveryRepositoryQueryTest {
         assertEquals(List.of(2L),repository.findShippedOrdersBefore(LocalDateTime.now().minusDays(10)).stream().map(Order::getId).toList());
     }
     @Test void remainingGoodsRequireActualSaleAndOnlyPositiveAllocationReturnsReduceQuantity() throws Exception {
-        order(1,1,4);execute("INSERT INTO order_item VALUES(11,1)");
+        order(1,1,4);execute("INSERT INTO order_item(id,order_id) VALUES(11,1)");
         execute("INSERT INTO order_item_batch_allocation VALUES(20,11,3,5,7,8,30,10)");
         assertFalse(remaining());
         execute("INSERT INTO inventory_movement VALUES(30,3,5,7,8,'SALE',10,'ORDER',1)");assertTrue(remaining());
@@ -64,10 +76,24 @@ class OrderDeliveryRepositoryQueryTest {
         assertEquals(List.of(1L),result.getRecords().stream().map(Order::getId).toList());
     }
     @Test void mismatchedReturnReferenceDoesNotConsumeRemainingGoods() throws Exception {
-        order(1,1,4);execute("INSERT INTO order_item VALUES(11,1)");
+        order(1,1,4);execute("INSERT INTO order_item(id,order_id) VALUES(11,1)");
         execute("INSERT INTO order_item_batch_allocation VALUES(20,11,3,5,7,8,30,10)");
         execute("INSERT INTO inventory_movement VALUES(30,3,5,7,8,'SALE',10,'ORDER',1),(31,4,5,7,NULL,'RETURN',10,'SALE_ALLOCATION',20)");
         assertTrue(remaining());
+    }
+    @Test void deliveryPreviewReadsActualRemainingAllocationsAndPersistedUnits() throws Exception {
+        order(1,1,9);execute("INSERT INTO order_item(id,order_id) VALUES(11,1)");
+        execute("INSERT INTO order_item_batch_allocation VALUES(20,11,3,5,7,8,30,6),(21,11,3,5,9,8,31,4)");
+        execute("INSERT INTO inventory_movement VALUES(30,3,5,7,8,'SALE',6,'ORDER',1),(31,3,5,9,8,'SALE',4,'ORDER',1),(32,3,5,7,NULL,'RETURN',1,'SALE_ALLOCATION',20),(33,3,5,9,NULL,'RETURN',4,'SALE_ALLOCATION',21),(34,4,5,7,NULL,'RETURN',100,'SALE_ALLOCATION',20),(35,3,5,7,NULL,'RETURN',-50,'SALE_ALLOCATION',20)");
+        execute("INSERT INTO product_unit VALUES(100,5,'袋')");execute("INSERT INTO inventory_receipt_batch VALUES(7,5,3,100),(9,5,3,100)");
+        var method=repository.getClass().getMethod("findRemainingDeliveryItems",Long.class);
+        var rows=(List<?>)method.invoke(repository,1L);assertEquals(1,rows.size());var row=rows.get(0);
+        assertEquals(0,new java.math.BigDecimal("5").compareTo((java.math.BigDecimal)row.getClass().getMethod("getQuantity").invoke(row)));
+        assertEquals("袋",row.getClass().getMethod("getUnit").invoke(row));
+        execute("DELETE FROM product_unit");rows=(List<?>)method.invoke(repository,1L);
+        assertNull(rows.get(0).getClass().getMethod("getUnit").invoke(rows.get(0)),"未知原单位不得猜当前商品单位");
+        execute("UPDATE inventory_movement SET base_quantity=3 WHERE id=30");
+        assertTrue(((List<?>)method.invoke(repository,1L)).isEmpty(),"非法原出库不能列为可签收商品");
     }
     private boolean remaining() throws Exception {
         try {return (boolean)repository.getClass().getMethod("hasRemainingDeliveryQuantity",Long.class).invoke(repository,1L);}

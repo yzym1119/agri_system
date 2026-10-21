@@ -163,7 +163,21 @@ public class OrderRepositoryImpl implements OrderRepository {
 
     @Override
     public boolean hasRemainingDeliveryQuantity(Long orderId) {
-        QueryWrapper query = QueryWrapper.create().select("COUNT(*)")
+        return mapper.selectCountByQuery(remainingDeliveryQuery(orderId).select("COUNT(*)")) > 0;
+    }
+
+    @Override
+    public java.util.List<com.agri_system.domain.order.model.DeliveryItemQuantity> findRemainingDeliveryItems(Long orderId) {
+        QueryWrapper query = remainingDeliveryQuery(orderId)
+                .leftJoin("inventory_receipt_batch").as("b").on("b.id = a.batch_id AND b.product_id = a.product_id AND b.store_id = a.store_id")
+                .leftJoin("product_unit").as("u").on("u.id = b.base_unit_id AND u.product_id = a.product_id")
+                .select("i.id AS order_item_id", "i.product_name", "SUM(" + remainingDeliverySql() + ") AS quantity", "u.unit_name AS unit")
+                .groupBy("i.id", "i.product_name", "u.unit_name").orderBy("i.id", "u.unit_name");
+        return mapper.selectListByQueryAs(query, com.agri_system.domain.order.model.DeliveryItemQuantity.class);
+    }
+
+    private QueryWrapper remainingDeliveryQuery(Long orderId) {
+        return QueryWrapper.create()
                 .from("order_item_batch_allocation").as("a")
                 .innerJoin("order_item").as("i").on("i.id = a.order_item_id")
                 .innerJoin(Order.class).as("o").on("o.id = i.order_id AND o.store_id = a.store_id")
@@ -172,15 +186,18 @@ public class OrderRepositoryImpl implements OrderRepository {
                 .and("s.movement_type = 'SALE' AND s.base_quantity > 0 AND s.base_quantity = a.allocated_base_quantity")
                 .and("s.store_id = a.store_id AND s.product_id = a.product_id AND s.batch_id = a.batch_id AND s.from_location_id = a.location_id")
                 .and("s.reference_type = 'ORDER' AND s.reference_id = o.id")
-                .and("""
-                        a.allocated_base_quantity > COALESCE((
+                .and(remainingDeliverySql() + " > 0");
+    }
+
+    private String remainingDeliverySql() {
+        return """
+                        a.allocated_base_quantity - COALESCE((
                             SELECT SUM(r.base_quantity) FROM inventory_movement r
                             WHERE r.movement_type = 'RETURN' AND r.reference_type = 'SALE_ALLOCATION'
                               AND r.reference_id = a.id AND r.base_quantity > 0
                               AND r.store_id = a.store_id AND r.product_id = a.product_id AND r.batch_id = a.batch_id
                         ), 0)
-                        """);
-        return mapper.selectCountByQuery(query) > 0;
+                        """;
     }
 
     @Override

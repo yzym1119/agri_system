@@ -71,7 +71,7 @@
       width="600px"
       @close="handleMenuDialogClose"
     >
-      <p>菜单与操作分别勾选，选择父菜单不会自动授予子操作。</p>
+      <p>先勾选“页面入口”，再按岗位勾选需要的操作。仅操作权限不会显示导航菜单；勾选分组不会自动授予子操作。</p>
       <el-tree
         ref="menuTreeRef"
         :data="menuTree"
@@ -80,7 +80,14 @@
         :check-strictly="true"
         node-key="id"
         :default-expand-all="true"
-      />
+      >
+        <template #default="{ data }">
+          <span class="permission-node">
+            <span>{{ data.name }}</span>
+            <span class="permission-node-kind">{{ menuNodeKind(data) }}</span>
+          </span>
+        </template>
+      </el-tree>
       <template #footer>
         <el-button @click="menuDialogVisible = false">取消</el-button>
         <el-button v-permission="'role:assign'" type="primary" :loading="menuSubmitLoading" @click="handleMenuSubmit">
@@ -134,6 +141,9 @@ const dialogTitle = computed(() => {
 const menuDialogVisible = ref(false)
 const menuTreeRef = ref<InstanceType<typeof ElTree>>()
 const menuTree = ref<MenuTreeNode[]>([])
+const menuNodeKind = (node: MenuTreeNode) => node.type === 2 ? '操作'
+  : node.visible === 0 ? '仅操作权限，不显示菜单'
+  : node.path ? '页面入口' : '权限分组'
 const checkedMenuIds = ref<number[]>([])
 const currentRoleId = ref<number>()
 
@@ -290,6 +300,8 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
+.permission-node { display: flex; align-items: baseline; gap: 12px; }
+.permission-node-kind { color: var(--el-text-color-regular); font-size: 12px; }
 .role-container {
   padding: 20px;
 }

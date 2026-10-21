@@ -219,7 +219,8 @@ public class OrderAdminController {
     @PostMapping("/{orderId}/confirm-receipt")
     @Operation(summary = "确认收货", description = "管理员强制确认订单收货，将已发货订单标记为已完成")
     @SaCheckPermission("order:ship")
-    public ResponseEntity<Void> confirmReceipt(@PathVariable Long orderId) {
+    public ResponseEntity<Void> confirmReceipt(@PathVariable Long orderId,
+            @RequestBody(required = false) ReceiptConfirmation request) {
         // 从 Sa-Token 获取当前登录员工 ID
         String loginId = StpUtil.getLoginIdAsString();
         Long staffId = null;
@@ -230,9 +231,18 @@ public class OrderAdminController {
                 // 解析失败时保持 null
             }
         }
-        orderService.confirmReceipt(orderId, staffId);
+        // 保留旧客户端无请求体及空对象调用；新版页面总是提交核对摘要。
+        if (request == null || request.confirmationKey() == null) orderService.confirmReceipt(orderId, staffId);
+        else {
+            if (request.confirmationKey().isBlank()) {
+                throw new IllegalArgumentException("请先核对配送商品与收货信息");
+            }
+            orderService.confirmReceipt(orderId, staffId, request.confirmationKey());
+        }
         return ResponseEntity.ok().build();
     }
+
+    public record ReceiptConfirmation(String confirmationKey) {}
 
     /**
      * 查询门店取货工作项（零售事实链 Task9：管理端取货待办页）

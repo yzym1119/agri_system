@@ -991,6 +991,11 @@ public class OrderApplicationService {
             deliveryVO.setReceivedAt(delivery.getReceivedAt());
             vo.setCanShip(canDeliver(order, delivery, true));
             vo.setCanConfirmReceipt(canDeliver(order, delivery, false));
+            if (vo.isCanConfirmReceipt()) {
+                var deliveryItems = orderRepository.findRemainingDeliveryItems(orderId);
+                vo.setDeliveryItems(deliveryItems);
+                vo.setDeliveryConfirmationKey(deliveryConfirmationKey(order, delivery, deliveryItems));
+            }
             if (delivery.getDeliveryStaffId() != null) {
                 staffRepository.findById(delivery.getDeliveryStaffId())
                         .filter(Staff::isActive)
@@ -1611,12 +1616,21 @@ public class OrderApplicationService {
      */
     @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public void confirmReceipt(Long orderId, Long createdBy) {
+        confirmReceipt(orderId, createdBy, null);
+    }
+
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public void confirmReceipt(Long orderId, Long createdBy, String confirmationKey) {
         Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
         OrderDelivery delivery = deliveryRepository.findByOrderId(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("订单没有配送记录"));
         if (java.util.Objects.equals(delivery.getDeliveryStatus(), 4)) return;
         validateDeliveryAction(order, delivery, false);
+        if (confirmationKey != null && !confirmationKey.equals(deliveryConfirmationKey(order, delivery,
+                orderRepository.findRemainingDeliveryItems(orderId)))) {
+            throw new IllegalArgumentException("配送商品或收货信息已变化，请重新核对后签收");
+        }
         if (!java.util.Objects.equals(order.getOrderStatus(), 9)) {
             order.markAsFinished();
             orderRepository.save(order);
@@ -1716,6 +1730,27 @@ public class OrderApplicationService {
     private boolean hasProcessingDeliveryAfterSales(Long orderId) {
         return afterSalesRepository.findByOrderId(orderId).stream()
                 .anyMatch(fact -> java.util.Objects.equals(fact.getStatus(), 10) || java.util.Objects.equals(fact.getStatus(), 40));
+    }
+
+    private String deliveryConfirmationKey(Order order, OrderDelivery delivery,
+            List<com.agri_system.domain.order.model.DeliveryItemQuantity> items) {
+        if (items == null || items.isEmpty() || items.stream().anyMatch(item -> item.getOrderItemId() == null
+                || item.getQuantity() == null || item.getQuantity().signum() <= 0 || !StringUtils.hasText(item.getUnit()))) return null;
+        // 仅绑定本次所见内容，不是新业务身份或存储来源；签收时在原订单锁内重算。
+        var parts = new ArrayList<String>();
+        parts.add(String.valueOf(order.getId())); parts.add(String.valueOf(order.getOrderStatus()));
+        parts.add(String.valueOf(delivery.getDeliveryType())); parts.add(String.valueOf(delivery.getDeliveryStatus()));
+        parts.add(String.valueOf(delivery.getDeliveryStaffId()));
+        parts.add(String.valueOf(order.getReceiverName())); parts.add(String.valueOf(order.getReceiverPhone()));
+        parts.add(String.valueOf(order.getReceiverAddress()));
+        items.stream().sorted(java.util.Comparator.comparing(com.agri_system.domain.order.model.DeliveryItemQuantity::getOrderItemId)
+                .thenComparing(com.agri_system.domain.order.model.DeliveryItemQuantity::getUnit)).forEach(item -> {
+            parts.add(String.valueOf(item.getOrderItemId())); parts.add(item.getProductName());
+            parts.add(item.getQuantity().stripTrailingZeros().toPlainString()); parts.add(item.getUnit());
+        });
+        // 长度前缀防止商品名或地址里的分隔符造成相同摘要。
+        return refundHash(parts.stream().map(value -> value == null ? "-1:" : value.length() + ":" + value)
+                .collect(Collectors.joining()));
     }
 
     private boolean canDeliver(Order order, OrderDelivery delivery, boolean shipping) {
