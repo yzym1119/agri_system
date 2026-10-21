@@ -152,7 +152,7 @@ const loading = computed(() =>
 
 const toNumber = (v?: number | null) => Number(v || 0)
 const currency = (v?: number | null) => `¥${toNumber(v).toFixed(2)}`
-const percent = (v?: number | null) => `${toNumber(v).toFixed(2)}%`
+const percent = (v?: number | null) => v == null ? '—' : `${toNumber(v).toFixed(2)}%`
 
 const metrics = computed(() => {
   const pending = toNumber(dashboard.value.pendingAfterSalesCount) + toNumber(dashboard.value.pendingDeliveryCount)
@@ -164,7 +164,7 @@ const metrics = computed(() => {
     { title: '库存预警', value: `${toNumber(dashboard.value.inventoryAlertCount)}`, foot: '库龄 > 180 天', icon: Warning, tone: 'tone-sand' },
     { title: '库存占用', value: currency(inventoryValue.value.totalInventoryValue), foot: `180 天+ ${currency(inventoryValue.value.over180DaysValue)}`, icon: Box, tone: 'tone-ink' },
     { title: '总欠款', value: currency(creditRisk.value.totalDebt), foot: `逾期 ${currency(creditRisk.value.overdueDebt)}`, icon: Coin, tone: 'tone-wine' },
-    { title: '回款率', value: percent(creditRisk.value.repaymentRate), foot: `本月回款 ${currency(creditRisk.value.monthlyRepayment)}`, icon: TrendCharts, tone: 'tone-violet' }
+    { title: '本月赊销回款率', value: percent(creditRisk.value.repaymentRate), foot: `本月回款 ${currency(creditRisk.value.monthlyRepayment)}`, icon: TrendCharts, tone: 'tone-violet' }
   ]
 })
 
@@ -183,18 +183,19 @@ const trendOption = computed(() => ({
 }))
 
 const riskOption = computed(() => {
+  const known = creditRisk.value.repaymentRate != null
   const rate = toNumber(creditRisk.value.repaymentRate)
   const un = Math.max(0, 100 - rate)
   return {
-    tooltip: { trigger: 'item', formatter: '{b}: {c}%' },
+    tooltip: { trigger: 'item', formatter: known ? '{b}: {c}%' : '本月无有效赊销或还款来源待核对' },
     series: [{
       type: 'pie', radius: ['62%', '85%'], center: ['50%', '50%'], avoidLabelOverlap: false,
-      label: { show: true, position: 'center', formatter: () => `{r|${rate.toFixed(1)}%}\n{s|回款率}`, rich: { r: { fontSize: 24, fontWeight: 700, color: '#1f2937', lineHeight: 32 }, s: { fontSize: 12, color: '#9ca3af', lineHeight: 20 } } },
+      label: { show: true, position: 'center', formatter: () => `{r|${known ? rate.toFixed(1) + '%' : '—'}}\n{s|本月赊销回款}`, rich: { r: { fontSize: 24, fontWeight: 700, color: '#1f2937', lineHeight: 32 }, s: { fontSize: 12, color: '#9ca3af', lineHeight: 20 } } },
       labelLine: { show: false },
-      data: [
+      data: known ? [
         { value: rate, name: '已回款', itemStyle: { color: C.accent } },
         { value: un || 0, name: '未回款', itemStyle: { color: '#fde68a' } }
-      ]
+      ] : [{ value: 1, name: '暂无可核对的本月赊销', itemStyle: { color: '#e5e7eb' } }]
     }]
   }
 })

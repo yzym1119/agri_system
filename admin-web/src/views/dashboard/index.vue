@@ -237,18 +237,19 @@ const trendOption = computed(() => ({
 }))
 
 const riskOption = computed(() => {
+  const known = creditRisk.value.repaymentRate != null
   const rate = toNumber(creditRisk.value.repaymentRate)
   const un = Math.max(0, 100 - rate)
   return {
-    tooltip: { trigger: 'item', formatter: '{b}: {c}%' },
+    tooltip: { trigger: 'item', formatter: known ? '{b}: {c}%' : '本月无有效赊销或还款来源待核对' },
     series: [{
       type: 'pie', radius: ['62%', '85%'], center: ['50%', '50%'], avoidLabelOverlap: false,
-      label: { show: true, position: 'center', formatter: () => `{r|${rate.toFixed(1)}%}\n{s|回款率}`, rich: { r: { fontSize: 26, fontWeight: 700, color: '#1f2937', lineHeight: 34 }, s: { fontSize: 12, color: '#596579', lineHeight: 22 } } },
+      label: { show: true, position: 'center', formatter: () => `{r|${known ? rate.toFixed(1) + '%' : '—'}}\n{s|本月赊销回款}`, rich: { r: { fontSize: 26, fontWeight: 700, color: '#1f2937', lineHeight: 34 }, s: { fontSize: 12, color: '#596579', lineHeight: 22 } } },
       labelLine: { show: false },
-      data: [
+      data: known ? [
         { value: rate, name: '已回款', itemStyle: { color: C.accent } },
         { value: un || 0, name: '未回款', itemStyle: { color: '#fde68a' } }
-      ]
+      ] : [{ value: 1, name: '暂无可核对的本月赊销', itemStyle: { color: '#e5e7eb' } }]
     }]
   }
 })

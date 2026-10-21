@@ -12,7 +12,7 @@ export interface DashboardSummary {
 export interface CreditRiskSummary {
   totalDebt?: number
   overdueDebt?: number
-  repaymentRate?: number
+  repaymentRate?: number | null
   monthlyNewCredit?: number
   monthlyRepayment?: number
 }

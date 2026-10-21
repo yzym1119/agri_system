@@ -27,6 +27,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /** 工作台在真实 Flex Mapper / H2 SQL 上核对成交、欠款和可派物料事实。 */
 class DashboardFactsSqlTest {
@@ -44,8 +45,8 @@ class DashboardFactsSqlTest {
         dataSource.setURL("jdbc:h2:mem:dashboard_" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1");
         jdbc = new JdbcTemplate(dataSource);
         jdbc.execute("CREATE TABLE `order` (id BIGINT PRIMARY KEY, store_id BIGINT, order_type INT, order_status INT, payment_method INT DEFAULT 6, delivery_status INT DEFAULT 0, total_amount DECIMAL(18,2), pay_amount DECIMAL(18,2), created_at TIMESTAMP, deleted INT DEFAULT 0)");
-        jdbc.execute("CREATE TABLE credit_account (id BIGINT PRIMARY KEY, store_id BIGINT, credit_amount DECIMAL(18,2), remaining_amount DECIMAL(18,2), due_date DATE, status INT, created_at TIMESTAMP)");
-        jdbc.execute("CREATE TABLE credit_repayment_log (id BIGINT PRIMARY KEY, store_id BIGINT, amount DECIMAL(18,2), created_at TIMESTAMP)");
+        jdbc.execute("CREATE TABLE credit_account (id BIGINT PRIMARY KEY, store_id BIGINT, credit_amount DECIMAL(18,2), remaining_amount DECIMAL(18,2), due_date DATE, status INT, created_at TIMESTAMP, paid_amount DECIMAL(18,2) DEFAULT 0)");
+        jdbc.execute("CREATE TABLE credit_repayment_log (id BIGINT PRIMARY KEY, store_id BIGINT, amount DECIMAL(18,2), created_at TIMESTAMP, credit_account_id BIGINT, refunded_amount DECIMAL(18,2))");
         jdbc.execute("CREATE TABLE customer (id BIGINT PRIMARY KEY, created_at TIMESTAMP, deleted INT DEFAULT 0)");
         jdbc.execute("CREATE TABLE after_sales (id BIGINT PRIMARY KEY, order_id BIGINT, store_id BIGINT, status INT, refund_amount DECIMAL(18,2))");
         jdbc.execute("CREATE TABLE order_delivery (id BIGINT PRIMARY KEY, order_id BIGINT, delivery_status INT, delivery_type INT)");
@@ -93,7 +94,7 @@ class DashboardFactsSqlTest {
         account(3, 1, 20, 0, 3, LocalDate.now().minusDays(1));
         account(4, 2, 900, 900, 3, LocalDate.now().minusDays(1));
         account(5, 1, 10, 10, 3, null); // 历史到期日未知，明确逾期状态仍保留
-        jdbc.update("INSERT INTO credit_repayment_log VALUES (1,1,30,?),(2,2,400,?)", today, today);
+        jdbc.update("INSERT INTO credit_repayment_log (id,store_id,amount,created_at) VALUES (1,1,30,?),(2,2,400,?)", today, today);
         var risk = service.creditRisk(1L);
         money("120", risk.getTotalDebt());
         money("80", risk.getOverdueDebt());
@@ -189,8 +190,65 @@ class DashboardFactsSqlTest {
         money("0", service.creditRisk(2L).getMonthlyNewCredit());
     }
 
+    @Test
+    void monthlyCreditRateUsesSameAccountsAndDoesNotCountWriteOffAsCash() {
+        account(1, 1, 290, 140, 1, LocalDate.now().plusDays(1));
+        paid(1, 1, 1, 100, "0", today);
+        // 原赊290：实还100、退货冲欠50、剩余140，净实还占比应为100/240。
+        money("41.67", service.creditRisk(1L).getRepaymentRate());
+        jdbc.update("UPDATE credit_account SET remaining_amount=0,status=2 WHERE id=1");
+        paid(2, 1, 1, 140, "0", today);
+        money("100", service.creditRisk(1L).getRepaymentRate());
+        money("290", service.creditRisk(1L).getMonthlyNewCredit());
+        money("240", service.creditRisk(1L).getMonthlyRepayment());
+    }
+
+    @Test
+    void monthlyCreditRateExcludesOldDebtsAndOtherStoresButKeepsMonthlyReceipts() {
+        account(1, 1, 200, 100, 1, null);
+        paid(1, 1, 1, 100, "0", today);
+        account(2, 1, 900, 0, 2, null);
+        jdbc.update("UPDATE credit_account SET created_at=? WHERE id=2", LocalDate.now().withDayOfMonth(1).minusDays(1).atStartOfDay());
+        paid(2, 1, 2, 900, "0", today);
+        account(3, 2, 800, 0, 2, null);
+        paid(3, 2, 3, 800, "0", today);
+        money("50", service.creditRisk(1L).getRepaymentRate());
+        money("1000", service.creditRisk(1L).getMonthlyRepayment());
+        TenantManager.setTenantFactory(() -> new Object[]{1L});
+        money("50", service.creditRisk(null).getRepaymentRate());
+        assertNull(service.creditRisk(2L).getRepaymentRate());
+    }
+
+    @Test
+    void monthlyCreditRateSubtractsRefundedRepaymentAndDoesNotGuessUnknownHistory() {
+        account(1, 1, 200, 100, 1, null);
+        paid(1, 1, 1, 100, "40", today);
+        money("37.50", service.creditRisk(1L).getRepaymentRate());
+        // 其他门店伪关联不能冲掉本店资金。
+        jdbc.update("INSERT INTO credit_repayment_log VALUES (2,2,900,?,1,NULL)", today);
+        money("37.50", service.creditRisk(1L).getRepaymentRate());
+        jdbc.update("UPDATE credit_repayment_log SET refunded_amount=NULL WHERE id=1");
+        assertNull(service.creditRisk(1L).getRepaymentRate());
+        jdbc.update("UPDATE credit_repayment_log SET refunded_amount=0,credit_account_id=NULL WHERE id=1");
+        assertNull(service.creditRisk(1L).getRepaymentRate());
+    }
+
+    @Test
+    void noMonthlyCreditOrFullyWrittenOffCreditHasNoCashRecoveryRate() {
+        assertNull(service.creditRisk(1L).getRepaymentRate());
+        account(1, 1, 100, 100, 1, null);
+        money("0", service.creditRisk(1L).getRepaymentRate());
+        jdbc.update("UPDATE credit_account SET remaining_amount=0,status=2 WHERE id=1");
+        assertNull(service.creditRisk(1L).getRepaymentRate());
+    }
+
+    private void paid(long id, long store, long account, int amount, String refunded, LocalDateTime date) {
+        jdbc.update("INSERT INTO credit_repayment_log VALUES (?,?,?,?,?,?)", id, store, amount, date, account, new BigDecimal(refunded));
+        jdbc.update("UPDATE credit_account SET paid_amount=paid_amount+? WHERE id=?", amount, account);
+    }
+
     private void account(long id, long store, int original, int remaining, int status, LocalDate due) {
-        jdbc.update("INSERT INTO credit_account VALUES (?,?,?,?,?,?,?)", id, store, original, remaining, due, status, today);
+        jdbc.update("INSERT INTO credit_account (id,store_id,credit_amount,remaining_amount,due_date,status,created_at) VALUES (?,?,?,?,?,?,?)", id, store, original, remaining, due, status, today);
     }
 
     private void order(long id, long store, int status, int amount, LocalDateTime created) {

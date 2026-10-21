@@ -21,7 +21,7 @@
         <div class="metric-foot">逾期 {{ currency(creditRisk.overdueDebt) }}</div>
       </article>
       <article class="metric-card tone-orange" style="cursor:default">
-        <div class="metric-label"><span>月度回款率</span></div>
+        <div class="metric-label"><span title="本月新建赊销的净实还 ÷（净实还＋剩余欠款）；冲欠不算实还，旧债本月还款不计入此比例。无有效应收或来源待核对时显示—。">本月赊销回款率</span></div>
         <div class="metric-value">{{ pct(creditRisk.repaymentRate) }}</div>
         <div class="metric-foot">本月回款 {{ currency(creditRisk.monthlyRepayment) }}</div>
       </article>
@@ -228,7 +228,7 @@ const exporting = reactive({ sales: false, top: false, churn: false, slow: false
 
 const toNumber = (v?: number | null) => Number(v || 0)
 const currency = (v?: number | null) => `¥${toNumber(v).toFixed(2)}`
-const pct = (v?: number | null) => `${toNumber(v).toFixed(2)}%`
+const pct = (v?: number | null) => v == null ? '—' : `${toNumber(v).toFixed(2)}%`
 const storeName = computed(() => !storeId.value ? '全部门店' : storeOptions.value.find(s => s.id === storeId.value)?.name || `门店#${storeId.value}`)
 const formatDateOnly = (v?: string) => v ? String(v).slice(0, 10) : '-'
 const formatDateTime = (value?: string) => {

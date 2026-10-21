@@ -629,10 +629,10 @@ public class ReportAnalysisService {
         LocalDateTime monthEndTime = monthEnd.atTime(LocalTime.MAX);
         
         QueryWrapper monthlyCreditQ = QueryWrapper.create()
-                .select("COALESCE(SUM(credit_amount),0) AS total")
                 .where("created_at between ? and ?", monthStartTime, monthEndTime);
         if (storeId != null) monthlyCreditQ.and("store_id = ?", storeId);
-        BigDecimal monthlyNewCredit = creditAccountMapper.selectOneByQueryAs(monthlyCreditQ, BigDecimal.class);
+        BigDecimal monthlyNewCredit = creditAccountMapper.selectOneByQueryAs(
+                monthlyCreditQ.clone().select("COALESCE(SUM(credit_amount),0) AS total"), BigDecimal.class);
         monthlyNewCredit = defaultZero(monthlyNewCredit);
         
         // 本月实收还款额（credit_repayment_log.created_at在本月）
@@ -646,15 +646,28 @@ public class ReportAnalysisService {
                 repaymentQ, BigDecimal.class);
         monthlyRepayment = defaultZero(monthlyRepayment);
         
-        // 回款率 = 本月实收 / (本月实收 + 本月新增) * 100
-        BigDecimal denominator = monthlyRepayment.add(monthlyNewCredit);
-        BigDecimal repaymentRate;
-        if (denominator.compareTo(BigDecimal.ZERO) > 0) {
-            repaymentRate = monthlyRepayment
-                    .divide(denominator, 4, java.math.RoundingMode.HALF_UP)
-                    .multiply(BigDecimal.valueOf(100));
-        } else {
-            repaymentRate = BigDecimal.valueOf(100); // 分母为0，返回100%
+        // 同一批本月新建应收：净实还 / (净实还 + 剩余欠款)。
+        // 本月偿还旧债仍计入上面的本月还款额，但不能混入本月赊销的回款率。
+        // paid_amount 保留原实还事实，必须减去明确归属该账户的已退还款；冲欠不算现金。
+        String sources = " FROM credit_repayment_log rp WHERE rp.credit_account_id = credit_account.id"
+                + " AND rp.store_id = credit_account.store_id";
+        String refunded = "COALESCE((SELECT SUM(rp.refunded_amount)" + sources + "),0)";
+        String sourceAmount = "COALESCE((SELECT SUM(rp.amount)" + sources + "),0)";
+        BigDecimal unknown = creditAccountMapper.selectOneByQueryAs(monthlyCreditQ.clone().select(
+                "COALESCE(SUM(CASE WHEN paid_amount IS NULL OR remaining_amount IS NULL"
+                        + " OR paid_amount < 0 OR remaining_amount < 0 OR paid_amount <> " + sourceAmount
+                        + " OR EXISTS (SELECT 1" + sources + " AND (rp.refunded_amount IS NULL"
+                        + " OR rp.refunded_amount < 0 OR rp.refunded_amount > rp.amount))"
+                        + " THEN 1 ELSE 0 END),0) AS total"), BigDecimal.class);
+        BigDecimal netPaid = creditAccountMapper.selectOneByQueryAs(monthlyCreditQ.clone().select(
+                "COALESCE(SUM(paid_amount - " + refunded + "),0) AS total"), BigDecimal.class);
+        BigDecimal cohortRemaining = creditAccountMapper.selectOneByQueryAs(monthlyCreditQ.clone().select(
+                "COALESCE(SUM(remaining_amount),0) AS total"), BigDecimal.class);
+        BigDecimal denominator = defaultZero(netPaid).add(defaultZero(cohortRemaining));
+        BigDecimal repaymentRate = null;
+        if (defaultZero(unknown).signum() == 0 && denominator.signum() > 0) {
+            repaymentRate = defaultZero(netPaid).multiply(BigDecimal.valueOf(100))
+                    .divide(denominator, 2, java.math.RoundingMode.HALF_UP);
         }
         
         CreditRiskVO vo = new CreditRiskVO();
