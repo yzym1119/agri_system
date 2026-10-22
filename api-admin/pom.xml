@@ -72,6 +72,15 @@
     
     <build>
         <plugins>
+            <!-- Sa-Token、Flex租户及CurrentUser持有进程级静态状态。
+                 各HTTP测试类启动不同Spring配置，必须隔离，不能污染下一套真实MySQL验收。 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <reuseForks>false</reuseForks>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
