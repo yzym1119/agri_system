@@ -2,7 +2,6 @@ package com.agri_system.application.order.dto.command;
 
 import com.agri_system.domain.order.enums.OrderMainPaymentMethod;
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 /**
@@ -14,8 +13,7 @@ import lombok.Data;
 @Schema(description = "订单支付命令")
 public class OrderPayCommand {
     
-    @NotNull(message = "订单ID不能为空")
-    @Schema(description = "订单ID", example = "1")
+    @Schema(description = "由订单URL填入，不要求请求体重复提交", example = "1", accessMode = Schema.AccessMode.READ_ONLY)
     private Long orderId;
     
     @Schema(description = "是否使用本金余额", example = "true")

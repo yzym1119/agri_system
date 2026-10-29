@@ -165,7 +165,7 @@
         </div>
 
         <!-- 混合支付列表 (混合模式时显示) -->
-        <div class="mixed-panel" v-else>
+        <div class="mixed-panel" v-if="paymentType === 10">
           <div class="mixed-desc">请分配支付金额：</div>
           
           <div class="mixed-list">

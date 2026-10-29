@@ -87,6 +87,7 @@ public class OrderClientController {
     public ResponseEntity<Void> confirmExternalPayment(@PathVariable Long orderId,
                                                        @Valid @RequestBody OrderExternalPaymentConfirmCommand command) {
         Long customerId = authService.getCurrentCustomerId();
+        command.setOrderId(orderId);
         orderService.confirmExternalPayment(command, customerId);
         return ResponseEntity.ok().build();
     }

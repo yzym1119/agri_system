@@ -163,10 +163,17 @@ class ClientHttpBoundaryTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"preview", "pay", "intent"})
-    void paymentBodyOrderIdIsCurrentlyValidatedBeforePathOverride(String route) throws Exception {
-        // 当前DTO契约，不表示客户端必须重复提交ID是理想设计；本轮不改生产行为。
-        businessFailure(request(post(paymentPath(route)), login("CUST_101"), "{}"), 10001);
-        verifyNoInteractions(orders);
+    void paymentBodyDoesNotNeedToRepeatThePathOrderId(String route) throws Exception {
+        request(post(paymentPath(route)), login("CUST_101"), "{}").andExpect(status().isOk());
+        var command = ArgumentCaptor.forClass(OrderPayCommand.class);
+        switch (route) {
+            case "preview" -> verify(orders).previewOrderPayment(command.capture(), eq(101L));
+            case "pay" -> verify(orders).payOrder(command.capture(), eq(101L));
+            case "intent" -> verify(orders).createExternalPaymentIntent(command.capture(), eq(101L));
+            default -> fail("未知支付入口");
+        }
+        assertEquals(77L, command.getValue().getOrderId());
+        verifyNoMoreInteractions(orders);
     }
 
     @Test void paymentPreviewReturnsBusinessServicePreviewWithoutConfirmingPayment() throws Exception {
@@ -180,11 +187,11 @@ class ClientHttpBoundaryTest {
     }
 
     @Test void confirmationPassesIntentAndCustomerWithoutCallingPublicCallback() throws Exception {
-        // 仅用一致的订单URL测试传参；不将当前URL未绑定意图的实现承诺为正确业务行为。
         call("confirm", login("CUST_101")).andExpect(status().isOk());
         var command = ArgumentCaptor.forClass(OrderExternalPaymentConfirmCommand.class);
         verify(orders).confirmExternalPayment(command.capture(), eq(101L));
         assertEquals("PI-test", command.getValue().getIntentNo());
+        assertEquals(77L, command.getValue().getOrderId(), "支付确认必须绑定URL中的订单");
         assertEquals("wx-test", command.getValue().getExternalTransactionNo());
         verifyNoMoreInteractions(orders);
     }

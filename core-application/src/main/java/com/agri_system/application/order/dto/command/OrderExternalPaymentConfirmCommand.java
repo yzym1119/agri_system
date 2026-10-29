@@ -14,6 +14,9 @@ import java.time.LocalDateTime;
 @Schema(description = "外部支付确认命令")
 public class OrderExternalPaymentConfirmCommand {
 
+    @Schema(description = "由订单URL填入，不信任请求体", accessMode = Schema.AccessMode.READ_ONLY)
+    private Long orderId;
+
     @NotBlank(message = "支付意图号不能为空")
     @Schema(description = "支付意图号，由 payment-intent 接口返回", example = "PI202604111030001")
     private String intentNo;

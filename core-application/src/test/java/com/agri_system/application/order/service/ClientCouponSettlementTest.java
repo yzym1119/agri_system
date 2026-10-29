@@ -111,7 +111,7 @@ class ClientCouponSettlementTest {
     @Test void couponWalletAndConfirmedExternalAmountShareOneSavedNetAndCallbackReplay() {
         when(wallet.getBalance(10L)).thenReturn(m("20"));var request=command(true,false);request.setExternalPaymentType(3);
         var intent=service.createExternalPaymentIntent(request,10L);assertEquals(m("50"),intent.getExternalAmount());assertEquals(1,coupon.getStatus());
-        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("alipay-original-50");service.confirmExternalPayment(confirm,10L);
+        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("alipay-original-50");service.confirmExternalPayment(confirm,10L);
         assertNet("70","30",10);service.confirmExternalPayment(confirm,10L);assertNet("70","30",10);
         assertEquals(m("50"),sources.stream().filter(p->p.getPaymentType()==3).map(OrderPayment::getAmount).reduce(m("0"),BigDecimal::add));
         verify(wallet,times(1)).deductBalance(any(),eq(m("20")),any(),any(),any(),any());verify(inventory,times(1)).outbound(any(),isNull());
@@ -123,7 +123,7 @@ class ClientCouponSettlementTest {
     }
     @Test void changedCouponRejectsOldExternalIntentBeforeAnyCouponWalletOrOrderWrite() {
         var request=command(false,false);var intent=service.createExternalPaymentIntent(request,10L);coupon.setAmount(m("40"));
-        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("old-wechat-70");
+        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("old-wechat-70");
         assertThrows(IllegalArgumentException.class,()->service.confirmExternalPayment(confirm,10L));
         assertTrue(sources.isEmpty());assertTrue(savedOrders.isEmpty());assertEquals(1,coupon.getStatus());assertEquals(m("100"),order.getPayAmount());verifyNoInteractions(inventory);
     }
@@ -147,7 +147,7 @@ class ClientCouponSettlementTest {
         when(wallet.getBalance(10L)).thenReturn(m("20"));var request=command(true,false);request.setExternalPaymentType(3);
         service.previewOrderPayment(request,10L);var intent=service.createExternalPaymentIntent(request,10L);
         assertEquals(1,delivery.getDeliveryStatus());verify(deliveries,never()).save(any());
-        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("delivery-alipay-50");
+        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("delivery-alipay-50");
         service.confirmExternalPayment(confirm,10L);assertEquals(2,delivery.getDeliveryStatus());
         service.shipOrder(shipment(2),8L);service.confirmExternalPayment(confirm,10L);
         assertEquals(3,delivery.getDeliveryStatus());verify(inventory,times(1)).outbound(any(),isNull());

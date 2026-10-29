@@ -739,6 +739,9 @@ public class OrderApplicationService {
         if (intent.getCustomerId() == null || !intent.getCustomerId().equals(customerId)) {
             throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 无权确认此支付");
         }
+        if (command.getOrderId() == null || !command.getOrderId().equals(intent.getOrderId())) {
+            throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 支付意图与订单不一致");
+        }
         confirmExternalPaymentIntent(intent, command.getExternalTransactionNo(), command.getExternalPaidAt(), customerId);
     }
 

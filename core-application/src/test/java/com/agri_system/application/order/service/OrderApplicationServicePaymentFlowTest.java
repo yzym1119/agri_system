@@ -173,6 +173,7 @@ class OrderApplicationServicePaymentFlowTest {
 
         OrderPayPreviewVO preview = preview(new BigDecimal("50.00"));
         OrderExternalPaymentConfirmCommand command = new OrderExternalPaymentConfirmCommand();
+        command.setOrderId(order.getId());
         command.setIntentNo(intent.getIntentNo());
         command.setExternalTransactionNo("wx202604110001");
         command.setExternalPaidAt(LocalDateTime.of(2026, 4, 11, 10, 30));
@@ -222,6 +223,7 @@ class OrderApplicationServicePaymentFlowTest {
         intent.setExternalAmount(new BigDecimal("39.99"));
         OrderPayPreviewVO preview = preview(new BigDecimal("40.00"));
         OrderExternalPaymentConfirmCommand command = new OrderExternalPaymentConfirmCommand();
+        command.setOrderId(order.getId());
         command.setIntentNo(intent.getIntentNo());
         command.setExternalTransactionNo("wx202604110002");
 
@@ -244,6 +246,7 @@ class OrderApplicationServicePaymentFlowTest {
         intent.setStatus(2);
         intent.setExternalTransactionNo("wx202604110003");
         OrderExternalPaymentConfirmCommand command = new OrderExternalPaymentConfirmCommand();
+        command.setOrderId(order.getId());
         command.setIntentNo(intent.getIntentNo());
         command.setExternalTransactionNo("wx202604110003");
 
@@ -266,6 +269,42 @@ class OrderApplicationServicePaymentFlowTest {
         verify(paymentIntentRepository, never()).findByIntentNo(any());
         verify(paymentService, never()).executePayment(any(), any(), any(), any(), any(), anyBoolean(), any(), any(), any());
         verify(inventoryService, never()).outbound(any(), any());
+    }
+
+    @Test
+    void confirmExternalPaymentRejectsAnotherPathOrderBeforePaymentOrReplay() {
+        ReflectionTestUtils.setField(orderService, "clientPaymentConfirmEnabled", true);
+        Order order = mockPendingClientOrder();
+        OrderPaymentIntent intent = mockPendingIntent(order);
+        intent.setStatus(2);
+        intent.setExternalTransactionNo("already-confirmed");
+        when(paymentIntentRepository.findByIntentNo(intent.getIntentNo())).thenReturn(Optional.of(intent));
+        OrderExternalPaymentConfirmCommand command = new OrderExternalPaymentConfirmCommand();
+        command.setOrderId(order.getId() + 1);
+        command.setIntentNo(intent.getIntentNo());
+        command.setExternalTransactionNo("already-confirmed");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> orderService.confirmExternalPayment(command, order.getCustomerId()));
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("订单"));
+        org.mockito.Mockito.verifyNoInteractions(orderRepository, paymentService, inventoryService);
+    }
+
+    @Test
+    void confirmExternalPaymentRequiresPathOrderEvenForAlreadyConfirmedIntent() {
+        ReflectionTestUtils.setField(orderService, "clientPaymentConfirmEnabled", true);
+        Order order = mockPendingClientOrder();
+        OrderPaymentIntent intent = mockPendingIntent(order);
+        intent.setStatus(2);
+        intent.setExternalTransactionNo("already-confirmed");
+        when(paymentIntentRepository.findByIntentNo(intent.getIntentNo())).thenReturn(Optional.of(intent));
+        OrderExternalPaymentConfirmCommand command = new OrderExternalPaymentConfirmCommand();
+        command.setIntentNo(intent.getIntentNo());
+        command.setExternalTransactionNo("already-confirmed");
+
+        assertThrows(IllegalArgumentException.class,
+                () -> orderService.confirmExternalPayment(command, order.getCustomerId()));
+        org.mockito.Mockito.verifyNoInteractions(orderRepository, paymentService, inventoryService);
     }
 
     @Test
