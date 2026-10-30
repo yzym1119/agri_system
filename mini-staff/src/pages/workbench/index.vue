@@ -3,16 +3,17 @@ import { ref } from 'vue';
 import { onShow, onHide } from '@dcloudio/uni-app';
 import { staffAuth } from '../../services/auth';
 const name = ref(''), store = ref(''), checking = ref(true), error = ref('');
-const canRecover = ref(false),canQueryInventory=ref(false),canReceive=ref(false);
+const canRecover = ref(false),canQueryInventory=ref(false),canReceive=ref(false),canDeliver=ref(false);
 let epoch = 0;
 const openDeviceCheck = () => uni.navigateTo({ url: '/pages/device-check/index' });
 const openRecovery = () => uni.navigateTo({ url:'/pages/recovery/index' });
 const openInventory = () => uni.navigateTo({ url:'/pages/scan/index' });
 const openReceiving = () => uni.navigateTo({url:'/pages/receipt/list/index'});
+const openDelivery = () => uni.navigateTo({url:'/pages/delivery/list/index'});
 onShow(async () => {
   const current = ++epoch;
   checking.value = true; error.value = ''; name.value = ''; store.value = '';
-  canRecover.value = false;canQueryInventory.value=false;canReceive.value=false;
+  canRecover.value = false;canQueryInventory.value=false;canReceive.value=false;canDeliver.value=false;
   try {
     await staffAuth.refresh();
     if (epoch !== current) return;
@@ -22,6 +23,7 @@ onShow(async () => {
     canRecover.value = actor.permissions.includes('*') || actor.permissions.includes('pos:order:create');
     canQueryInventory.value=actor.permissions.includes('*')||actor.permissions.includes('inventory:view');
     canReceive.value=actor.permissions.includes('*')||actor.permissions.includes('purchase:inbound');
+    canDeliver.value=actor.permissions.includes('*')||actor.permissions.includes('order:delivery:assigned');
   } catch {
     if (epoch === current) {
       error.value = '当前身份未能确认，请重新登录。';
@@ -44,6 +46,7 @@ async function logout() {
       <text class="intro">当前门店编号：{{ store }}</text>
       <view class="notice"><text>按实际到货登记收货，可随时查询本店最新批次与货位。</text></view>
       <button v-if="canReceive" class="primary" @click="openReceiving">采购收货 / 原收货核对</button>
+      <button v-if="canDeliver" class="primary" @click="openDelivery">我的配送任务</button>
       <button v-if="canQueryInventory" class="primary" @click="openInventory">扫码 / 搜索查货</button>
       <button class="primary" @click="openDeviceCheck">检查手机设备</button>
       <button v-if="canRecover" @click="openRecovery">核对上次收银</button>

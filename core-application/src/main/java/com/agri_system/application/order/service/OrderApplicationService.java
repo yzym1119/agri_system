@@ -1628,6 +1628,62 @@ public class OrderApplicationService {
                 .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
         OrderDelivery delivery = deliveryRepository.findByOrderId(orderId)
                 .orElseThrow(() -> new IllegalArgumentException("订单没有配送记录"));
+        completeReceiptLocked(order, delivery, confirmationKey);
+    }
+
+    /** 手机本人签收也进入原订单锁；不能复用店长的整店发货权限或锁前授权。 */
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public com.agri_system.application.order.dto.vo.AssignedDeliveryVO.Result confirmAssignedReceipt(Long orderId,String confirmationKey,Long staffId) {
+        if(confirmationKey==null||!confirmationKey.matches("[a-f0-9]{64}")) throw new IllegalArgumentException("请先核对本次配送商品与收货信息");
+        Order order=orderRepository.findByIdForUpdate(orderId).orElseThrow(()->new IllegalArgumentException("配送任务不存在或不属于本人"));
+        OrderDelivery delivery=deliveryRepository.findByOrderId(orderId).orElseThrow(()->new IllegalArgumentException("配送任务不存在或不属于本人"));
+        requireAssignedDelivery(order,delivery,staffId);
+        if(!java.util.Objects.equals(delivery.getDeliveryStatus(),4)) {
+            var preview=assignedPreviewLocked(order,delivery);
+            if(!preview.canConfirm()||!confirmationKey.equals(preview.confirmationKey())) throw new IllegalArgumentException("配送任务或商品已变化，请重新核对");
+            completeReceiptLocked(order,delivery,confirmationKey);
+        }
+        return new com.agri_system.application.order.dto.vo.AssignedDeliveryVO.Result(order.getStoreId().toString(),order.getId().toString(),"COMPLETED",
+                delivery.getReceivedAt()==null?null:delivery.getReceivedAt().toString());
+    }
+
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public com.agri_system.application.order.dto.vo.AssignedDeliveryVO.Preview previewAssignedReceipt(Long orderId,Long staffId) {
+        Order order=orderRepository.findByIdForUpdate(orderId).orElseThrow(()->new IllegalArgumentException("配送任务不存在或不属于本人"));
+        OrderDelivery delivery=deliveryRepository.findByOrderId(orderId).orElseThrow(()->new IllegalArgumentException("配送任务不存在或不属于本人"));
+        requireAssignedDelivery(order,delivery,staffId);
+        return assignedPreviewLocked(order,delivery);
+    }
+
+    private void requireAssignedDelivery(Order order,OrderDelivery delivery,Long staffId) {
+        Staff actor=staffId==null?null:staffRepository.findIdentityById(staffId).orElse(null);
+        if(actor==null||!actor.isActive()||actor.hasBeenDeleted()||!java.util.Objects.equals(actor.getStoreId(),order.getStoreId())
+                ||!java.util.Objects.equals(staffId,delivery.getDeliveryStaffId())||!java.util.Objects.equals(order.getId(),delivery.getOrderId())
+                ||!java.util.Objects.equals(delivery.getDeliveryType(),2)) throw new IllegalArgumentException("配送任务不存在或不属于本人");
+    }
+
+    private com.agri_system.application.order.dto.vo.AssignedDeliveryVO.Preview assignedPreviewLocked(Order order,OrderDelivery delivery) {
+        boolean done=java.util.Objects.equals(delivery.getDeliveryStatus(),4);
+        String blocked=null,key=null;
+        List<com.agri_system.domain.order.model.DeliveryItemQuantity> items=List.of();
+        if(!done) {
+            if(!canDeliver(order,delivery,false)) blocked="当前任务暂停交付，请联系店长核对售后、订单状态及剩余物料";
+            else if(!StringUtils.hasText(order.getReceiverName())||!StringUtils.hasText(order.getReceiverPhone())||!StringUtils.hasText(order.getReceiverAddress()))
+                blocked="收货信息不完整，请联系店长核对";
+            else {
+                items=orderRepository.findRemainingDeliveryItems(order.getId());key=deliveryConfirmationKey(order,delivery,items);
+                if(key==null) {blocked="缺少有效剩余物料，请联系店长核对";items=List.of();}
+            }
+        }
+        boolean canConfirm=!done&&blocked==null;
+        return new com.agri_system.application.order.dto.vo.AssignedDeliveryVO.Preview(order.getStoreId().toString(),order.getId().toString(),order.getOrderNo(),done?"COMPLETED":"PENDING",
+                canConfirm,blocked,canConfirm?order.getReceiverName():null,canConfirm?order.getReceiverPhone():null,canConfirm?order.getReceiverAddress():null,key,
+                items.stream().map(item->new com.agri_system.application.order.dto.vo.AssignedDeliveryVO.Item(item.getOrderItemId().toString(),item.getProductName(),item.getQuantity().stripTrailingZeros().toPlainString(),item.getUnit())).toList(),
+                done&&delivery.getReceivedAt()!=null?delivery.getReceivedAt().toString():null);
+    }
+
+    private void completeReceiptLocked(Order order,OrderDelivery delivery,String confirmationKey) {
+        Long orderId=order.getId();
         if (java.util.Objects.equals(delivery.getDeliveryStatus(), 4)) return;
         validateDeliveryAction(order, delivery, false);
         if (confirmationKey != null && !confirmationKey.equals(deliveryConfirmationKey(order, delivery,

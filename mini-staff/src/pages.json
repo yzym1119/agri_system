@@ -6,6 +6,8 @@
     { "path": "pages/inventory/detail/index", "style": { "navigationBarTitleText": "库存详情" } },
     { "path": "pages/receipt/list/index", "style": { "navigationBarTitleText": "待收采购单" } },
     { "path": "pages/receipt/detail/index", "style": { "navigationBarTitleText": "登记本次到货" } },
+    { "path": "pages/delivery/list/index", "style": { "navigationBarTitleText": "我的配送任务" } },
+    { "path": "pages/delivery/detail/index", "style": { "navigationBarTitleText": "核对配送交付" } },
     { "path": "pages/recovery/index", "style": { "navigationBarTitleText": "核对上次收银" } },
     {
       "path": "pages/device-check/index",

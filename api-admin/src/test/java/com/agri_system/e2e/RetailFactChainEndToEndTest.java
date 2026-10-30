@@ -556,6 +556,16 @@ class RetailFactChainEndToEndTest {
         requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/ship",Map.of("deliveryStaffId",2)));
         assertEquals(shipped,jdbcTimestamp("SELECT delivery_at FROM order_delivery WHERE order_id="+order));
         assertEquals(sold,deliveryFacts(),"重复派单保持原事实");
+        E2EToken driver=loginToken(2L);
+        String mobileTask="/api/admin/mobile/delivery/tasks/"+order;
+        JsonNode originalTask=getDeliveryJson(driver,mobileTask,Map.of());
+        assertEquals("5",originalTask.path("items").get(0).path("quantity").asText(),originalTask.toString());
+        assertEquals("袋",originalTask.path("items").get(0).path("unit").asText());
+        assertTrue(originalTask.path("canConfirm").asBoolean());
+        for(E2EToken other:List.of(manager,secondStore)) {
+            var response=mockMvc.perform(get(mobileTask).header(other.name(),other.value())).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+            assertCreditRejected(objectMapper.readTree(response));assertTrue(!response.contains("receiverAddress"));
+        }
         creditReturn(manager,order,creditPreview(manager,order,"2"));
         assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order));assertOrderReturned(order,"2");
         assertCreditState(order,"50","0","0","0","20","0");
@@ -564,6 +574,16 @@ class RetailFactChainEndToEndTest {
         JsonNode moving=deliveryRow(manager,order,3);
         assertTrue(moving.path("canConfirmReceipt").asBoolean(),moving.toString());
         DeliveryFacts returned=deliveryFacts();
+        assertCreditRejected(postCreditJson(driver,mobileTask+"/confirm",Map.of("confirmationKey",originalTask.path("confirmationKey").asText())));
+        assertEquals(returned,deliveryFacts(),"手机旧清单不能签收退货后的物料");
+        // 夹具模拟后台指派发生变化，旧员工读写均拒绝；不冒称已实现配送中改派页面。
+        exec("UPDATE order_delivery SET delivery_staff_id=1 WHERE order_id="+order);
+        assertCreditRejected(postCreditJson(driver,mobileTask+"/confirm",Map.of("confirmationKey",originalTask.path("confirmationKey").asText())));
+        exec("UPDATE order_delivery SET delivery_staff_id=2 WHERE order_id="+order);
+        JsonNode latestTask=getDeliveryJson(driver,mobileTask,Map.of());assertEquals("3",latestTask.path("items").get(0).path("quantity").asText());
+        for(int repeat=0;repeat<2;repeat++) assertEquals("COMPLETED",postCreditJson(driver,mobileTask+"/confirm",Map.of("confirmationKey",latestTask.path("confirmationKey").asText())).path("status").asText());
+        var completedTask=getDeliveryJson(driver,mobileTask,Map.of());assertTrue(completedTask.path("items").isEmpty());assertTrue(completedTask.path("receiverPhone").isNull());
+        assertEquals(returned,deliveryFacts(),"本人签收及原确认重放不得再次记钱货/提成");
         for(int repeat=0;repeat<2;repeat++) requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/confirm-receipt",Map.of()));
         assertEquals(returned,deliveryFacts(),"部分退货后的首次签收及重放均不重复结算");
         assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order),"签收不能覆盖部分退款状态9");
@@ -643,10 +663,16 @@ class RetailFactChainEndToEndTest {
         requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/ship",Map.of("deliveryStaffId",2)));
         JsonNode quote=creditPreview(manager,order,"2");Map<String,Object> body=creditReturnBody(order,quote);
         long payments=jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+order);
+        E2EToken driver=loginToken(2L);String mobileTask="/api/admin/mobile/delivery/tasks/"+order;
+        String beforeKey=getDeliveryJson(driver,mobileTask,Map.of()).path("confirmationKey").asText();
         List<JsonNode> responses=raceCreditHttp(index->index==0
                 ?postCreditJson(manager,"/api/admin/after-sales",body)
-                :postCreditJson(manager,"/api/admin/orders/"+order+"/confirm-receipt",Map.of()));
-        for(JsonNode response:responses) requireCreditSuccess(response);
+                :postCreditJson(driver,mobileTask+"/confirm",Map.of("confirmationKey",beforeKey)));
+        requireCreditSuccess(responses.get(0));
+        if(responses.get(1).path("code").asInt()==10001) {
+            JsonNode fresh=getDeliveryJson(driver,mobileTask,Map.of());assertEquals("3",fresh.path("items").get(0).path("quantity").asText());
+            assertEquals("COMPLETED",postCreditJson(driver,mobileTask+"/confirm",Map.of("confirmationKey",fresh.path("confirmationKey").asText())).path("status").asText());
+        } else assertEquals("COMPLETED",responses.get(1).path("status").asText(),responses.toString());
         assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+order),"退货与签收竞争不能丢掉退款状态");
         assertEquals(4L,jdbcLong("SELECT delivery_status FROM order_delivery WHERE order_id="+order));
         assertEquals(payments,jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+order));
@@ -2345,6 +2371,7 @@ class RetailFactChainEndToEndTest {
             excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = SaTokenConfigure.class))
     @Import({InventoryController.class, InventoryWarningController.class, ProductController.class, OrderAdminController.class,
             com.agri_system.api.admin.controller.MobileScanController.class,com.agri_system.api.admin.controller.PurchaseController.class,
+            com.agri_system.api.admin.controller.MobileDeliveryController.class,
             ProductPackageController.class, AfterSalesAdminController.class, CreditAdminController.class, ReportDashboardController.class,
             RetailFactChainEndToEndTest.E2ELoginController.class, DomainServiceConfig.class})
     static class E2EConfig {
@@ -2357,6 +2384,7 @@ class RetailFactChainEndToEndTest {
                 public List<String> getPermissionList(Object loginId, String loginType) {
                     if ("STAFF_2".equals(String.valueOf(loginId))) {
                         return List.of("pos:order:create", "product:query", "credit:repay",
+                                "order:delivery:assigned",
                                 "credit:account:view", "credit:repayment:view", "credit:statistics:view");
                     }
                     return List.of("*");

@@ -98,6 +98,10 @@ class AuthorityHttpIntegrationTest {
     @MockBean com.agri_system.application.purchase.service.PurchaseApplicationService receiving;
     @MockBean com.agri_system.application.product.service.ProductApplicationService productCatalogAdmin;
     @MockBean com.agri_system.application.inventory.service.MobileScanQueryService mobileInventory;
+    @MockBean com.agri_system.application.order.service.DeliveryTaskService assignedTasks;
+    @MockBean com.agri_system.application.order.service.OrderApplicationService assignedOrders;
+    @MockBean com.agri_system.application.order.service.PickupFulfillmentService pickupFulfillment;
+    @MockBean com.agri_system.application.order.service.PosSaleSubmissionService posSubmissions;
 
     /** 可选真实 MySQL，同一HTTP套及生产锁代码，仅使用本次成功创建的随机隔离库。 */
     @DynamicPropertySource
@@ -132,6 +136,8 @@ class AuthorityHttpIntegrationTest {
             com.agri_system.api.admin.controller.StoreController.class,
             com.agri_system.api.admin.controller.PurchaseController.class,
             com.agri_system.api.admin.controller.MobileScanController.class,
+            com.agri_system.api.admin.controller.MobileDeliveryController.class,
+            com.agri_system.api.admin.controller.OrderAdminController.class,
             com.agri_system.api.admin.controller.ProductController.class})
     static class Config {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
@@ -273,6 +279,21 @@ class AuthorityHttpIntegrationTest {
         reject(call(token,"GET","/api/admin/mobile/inventory/1",null));
         reject(call(token,"GET","/api/admin/mobile/inventory/products?keyword=x",null));
         reject(call(token,"GET","/api/admin/mobile/locations/1/products",null));
+    }
+
+    @Test void 本人配送不授整店订单和发货权限且撤权立即生效() throws Exception {
+        String token=login(4),base="/api/admin/mobile/delivery/tasks";
+        reject(call(null,"GET",base,null));reject(call(loginId("CUST_1"),"GET",base,null));reject(call(token,"GET",base,null));
+        businessPermission(114,"order:delivery:assigned");
+        when(assignedTasks.listAssignedTasks(4L,"PENDING",null)).thenReturn(new com.agri_system.application.order.dto.vo.AssignedDeliveryVO.Tasks("1","PENDING",List.of(),null));
+        assertEquals("1",call(token,"GET",base+"?staffId=99&storeId=2",null).path("storeId").asText());
+        org.mockito.Mockito.verify(assignedTasks).listAssignedTasks(4L,"PENDING",null);
+        reject(call(token,"GET","/api/admin/orders/42",null));reject(call(token,"GET","/api/admin/staff",null));
+        reject(call(token,"POST","/api/admin/orders/42/ship","{\"deliveryStaffId\":4}"));
+        when(assignedOrders.confirmAssignedReceipt(42L,"a".repeat(64),4L)).thenReturn(new com.agri_system.application.order.dto.vo.AssignedDeliveryVO.Result("1","42","COMPLETED",null));
+        assertEquals("COMPLETED",call(token,"POST",base+"/42/confirm","{\"confirmationKey\":\""+"a".repeat(64)+"\",\"staffId\":99}").path("status").asText());
+        jdbc.update("DELETE FROM sys_role_menu WHERE role_id=4 AND menu_id=114");reject(call(token,"GET",base,null));
+        reject(call(token,"GET",base+"/42",null));reject(call(token,"POST",base+"/42/confirm","{\"confirmationKey\":\""+"a".repeat(64)+"\"}"));
     }
 
     @Test void 手机收货查询只需原收货权限且撤权立即生效() throws Exception {
