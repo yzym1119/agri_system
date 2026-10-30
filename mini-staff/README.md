@@ -1,15 +1,24 @@
 # 员工小程序
 
-当前仅E0设备验证工程，非已交付员工业务端。AppID留空；由实际账号持有人配置，绝不填写AppSecret。
+当前为E0设备验证及E1登录/当前身份基础，非完整员工业务端。用户明确尚未申请AppID，先完成工程和自动测试；真机验收后续单列。AppID由实际账号持有人配置，绝不填写AppSecret。
 
 ```bash
 npm --prefix packages/mobile-contracts ci --ignore-scripts
 npm --prefix packages/mobile-contracts test
 npm --prefix mini-staff ci --ignore-scripts
+npm --prefix mini-staff test
 npm --prefix mini-staff run type-check
 npm --prefix mini-staff run build:mp-weixin
 ```
 
-将dist/build/mp-weixin导入微信开发者工具，使用自己的员工AppID。源码AppID为空时，DCloud会在生成的project.config.json自动填写touristappid；它仅为游客构建占位，不是实际申请账号。不能把AppSecret放到前端。真机扫码、录音、导航、前后台和弱网门槛仍按员工实施计划E0逐项验证；当前页面只实现扫码/存储/安全随机源检查，录音、导航及设备实测继续补齐。无后台连接、登录或交易提交；不能据页面成功提示宣称业务闭环通过。
+将dist/build/mp-weixin导入微信开发者工具，使用自己的员工AppID。源码AppID为空时，DCloud自动生成touristappid游客占位，不是实际申请账号。
+
+服务地址在本目录.env.local设置VITE_API_BASE_URL，参考.env.example；不要提交本地配置。生产构建只接受HTTPS源站，dev构建额外接受本机/私有网段HTTP。地址为空时禁用登录，仍可进入设备检查，不默认向公共测试站发账号密码。
+
+登录沿现有/auth/staff/login，工作台每次显示前读取/auth/staff/info；只在内存保存令牌，不保存密码。无权限和缺门店不回退旧权限；隐藏中的旧登录/身份读取不能污染新会话。身份页当前仅提供设备检查，不显示虚构收货或配送任务。原请求持久化/恢复尚待E1后续；未开放钱货写入。
+
+设备页提供扫码、存储、安全请求号、录音/试听/清除、网络状态及明确GCJ02目的地导航检查。录音仅手机临时文件，不上传；隐藏时停止并清除页面引用，不能把它当业务资料采集完成。网络类型可读不证明API可达或弱网业务恢复。真机扫码、权限拒绝、录音、导航、前后台和弱网仍按E0实测；目前自动测试不证明这些硬件能力。
+
+mini-staff的页面测试经真实Vue compileScript和TypeScript转译后在隔离VM中执行实际setup脚本及真实认证服务，注入生命周期/网络替身，覆盖隐藏登录、成功跳转、重叠刷新、旧401、断网及无配置。它不是微信模拟器或手机真机验收。
 
 依赖版本来自[DCloud官方Vue3 TS模板](https://github.com/dcloudio/uni-preset-vue/tree/vite-ts)，仅保留微信构建依赖并锁版本；安全随机源接口依据[腾讯官方文档](https://intl.cloud.tencent.com/ind/document/product/1219/57715)，运行时缺失即拒绝生成请求号。此版本组合已编译后才能列为工程验证通过，真实基础库兼容仍待真机。

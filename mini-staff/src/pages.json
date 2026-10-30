@@ -1,5 +1,7 @@
 {
   "pages": [
+    { "path": "pages/login/index", "style": { "navigationBarTitleText": "员工登录" } },
+    { "path": "pages/workbench/index", "style": { "navigationBarTitleText": "门店工作台" } },
     {
       "path": "pages/device-check/index",
       "style": {

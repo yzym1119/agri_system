@@ -6,7 +6,7 @@
     "strict": true,
     "skipLibCheck": true,
     "types": [
-      "@dcloudio/types"
+      "@dcloudio/types", "vite/client"
     ],
     "lib": [
       "ES2020",
