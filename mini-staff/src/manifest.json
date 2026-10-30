@@ -1,0 +1,15 @@
+{
+  "name": "AgriSys员工端",
+  "appid": "",
+  "versionName": "0.1.0",
+  "versionCode": 1,
+  "vueVersion": "3",
+  "uniStatistics": { "enable": false },
+  "mp-weixin": {
+    "appid": "",
+    "setting": {
+      "urlCheck": true
+    },
+    "usingComponents": true
+  }
+}

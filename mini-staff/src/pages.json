@@ -1,0 +1,15 @@
+{
+  "pages": [
+    {
+      "path": "pages/device-check/index",
+      "style": {
+        "navigationBarTitleText": "员工端设备验证"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f5f6f8"
+  }
+}
