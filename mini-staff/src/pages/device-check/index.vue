@@ -1,13 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { onShow, onHide, onUnload } from '@dcloudio/uni-app';
-import { createMobilePlatform, type SecureRandomPort, type Coordinate } from '@agri/mobile-contracts';
+import type { Coordinate } from '@agri/mobile-contracts';
+import { mobilePlatform as platform } from '../../services/platform';
 import type { RecordingState } from '@agri/mobile-contracts/recorder';
 import { getDeviceRecorder } from '../../services/device-recorder';
-declare const wx: SecureRandomPort;
-const random = typeof wx !== 'undefined' && typeof wx.getRandomValues === 'function'
-  ? { getRandomValues: (options: Parameters<SecureRandomPort['getRandomValues']>[0]) => wx.getRandomValues(options) } : undefined;
-const platform = createMobilePlatform(uni, random);
 const busy = ref(false);
 const message = ref('选择一项检查，结果会显示在这里。');
 const address = ref('');

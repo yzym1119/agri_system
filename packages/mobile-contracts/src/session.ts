@@ -1,3 +1,4 @@
+import { normalizeLongId } from './ids.js';
 export type ActorSession = {
   epoch: number; staffId: string; storeId: string; name: string;
   tokenName: string; tokenValue: string; permissions: string[];
@@ -6,8 +7,8 @@ export type HttpResponse = { statusCode: number; data?: unknown };
 type ObjectValue = Record<string, unknown>;
 const object = (value: unknown): value is ObjectValue => !!value && typeof value === 'object' && !Array.isArray(value);
 function id(value: unknown): string {
-  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return String(value);
-  if (typeof value === 'string' && /^[1-9]\d*$/.test(value)) return value;
+  const normalized = normalizeLongId(value);
+  if (normalized) return normalized;
   throw new Error('IDENTITY_INVALID');
 }
 export function decodeLogin(value: unknown): Omit<ActorSession, 'epoch'> {

@@ -29,6 +29,11 @@ export function createStaffAuth(send: Sender) {
   return {
     current: session.current,
     beginLogin,
+    async request<T>(request: StaffRequest, validate: (value: unknown) => value is T, expectedEpoch: number) {
+      const current = session.current();
+      if (!current || current.epoch !== expectedEpoch) throw new Error('STALE_SESSION');
+      return requestInSession(session, actor => send({ ...request, header: { ...request.header, ...authorization(actor) } }), 'raw', validate);
+    },
     async login(account: string, password: string) { await beginLogin(account, password).result; },
     async refresh() {
       const version = ++refreshVersion;

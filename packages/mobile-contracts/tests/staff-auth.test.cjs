@@ -61,3 +61,14 @@ test('当前身份读取换人或缺门店必须拒绝并清理，退出先本�
   });
   await auth.login('test', 'password'); await auth.logout(); assert.equal(auth.current(), null);
 });
+test('业务读取绑定预期会话，不能用调用者的旧header覆盖当前token', async () => {
+  const { createStaffAuth } = await moduleUnderTest();
+  const calls=[];
+  const auth=createStaffAuth(async req => {calls.push(req);return {statusCode:200,data:req.url.endsWith('/login')?loginBody():7};});
+  await auth.login('test','password'); const epoch=auth.current().epoch;
+  const value=await auth.request({url:'/api/admin/test',method:'GET',header:{Authorization:'wrong'}}, v=>typeof v==='number', epoch);
+  assert.equal(value,7); assert.equal(calls[1].header.Authorization,'fictional-token');
+  await auth.login('test','password');
+  await assert.rejects(auth.request({url:'/api/admin/test',method:'GET'},v=>typeof v==='number',epoch),/STALE_SESSION/);
+  assert.equal(calls.length,3);
+});

@@ -2,6 +2,7 @@
   "pages": [
     { "path": "pages/login/index", "style": { "navigationBarTitleText": "员工登录" } },
     { "path": "pages/workbench/index", "style": { "navigationBarTitleText": "门店工作台" } },
+    { "path": "pages/recovery/index", "style": { "navigationBarTitleText": "核对上次收银" } },
     {
       "path": "pages/device-check/index",
       "style": {

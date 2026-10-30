@@ -1,28 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
-const ts = require('typescript');
-const { parse, compileScript } = require('@vue/compiler-sfc');
+const { setupPage } = require('./helpers/page.cjs');
 const { createStaffAuth } = require('../../packages/mobile-contracts/dist/staff-auth.js');
 const user = { id: 1, name: '虚构验收员工', permissions: [], extra: { storeId: 1 } };
 const loginBody = { tokenName: 'Authorization', tokenValue: 'test-token', userInfo: user };
 function deferred() { let resolve, reject; const promise = new Promise((ok, fail) => { resolve=ok; reject=fail; }); return {promise,resolve,reject}; }
-function setupPage(page, auth, configured = true) {
-  const file = path.join(__dirname, '../src/pages',page,'index.vue');
-  const { descriptor } = parse(fs.readFileSync(file, 'utf8'));
-  const compiled = compileScript(descriptor, { id: page });
-  const js = ts.transpileModule(compiled.content, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText;
-  const hooks = {}, routes = [], mod = { exports: {} };
-  const imports = { vue: require('vue'), '@dcloudio/uni-app': {
-    onShow: cb => hooks.show = cb, onHide: cb => hooks.hide = cb,
-  }, '../../services/auth': { staffAuth: auth, serviceConfigured: configured } };
-  vm.runInNewContext(js, { module: mod, exports: mod.exports, Error, uni: {
-    reLaunch: options => routes.push(options.url), navigateTo: options => routes.push(options.url),
-  }, require: name => { assert.ok(name in imports, name); return imports[name]; } }, { filename: file });
-  return { state: mod.exports.default.setup({}, { expose() {} }), hooks, routes };
-}
 test('真实登录页面隐藏后晚到成功不得建立身份或跳转', async () => {
   const delayed = deferred(), auth = createStaffAuth(() => delayed.promise);
   const page = setupPage('login', auth);

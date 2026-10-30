@@ -8,6 +8,8 @@ test('身份ID保留字符串，不能接收丢精度数字、空门店或空权
   const { decodeLogin } = await load();
   assert.equal(decodeLogin(login('9007199254740993')).staffId, '9007199254740993');
   assert.throws(() => decodeLogin(login(9007199254740992)), /IDENTITY_INVALID/);
+  assert.throws(() => decodeLogin(login('9223372036854775808')), /IDENTITY_INVALID/);
+  assert.equal(decodeLogin(login('9223372036854775807')).staffId, '9223372036854775807');
   assert.throws(() => decodeLogin(login(1, null)), /IDENTITY_INVALID/);
   const payload = login(); payload.userInfo.permissions = null;
   assert.throws(() => decodeLogin(payload), /IDENTITY_INVALID/);
