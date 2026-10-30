@@ -3,14 +3,15 @@ import { ref } from 'vue';
 import { onShow, onHide } from '@dcloudio/uni-app';
 import { staffAuth } from '../../services/auth';
 const name = ref(''), store = ref(''), checking = ref(true), error = ref('');
-const canRecover = ref(false);
+const canRecover = ref(false),canQueryInventory=ref(false);
 let epoch = 0;
 const openDeviceCheck = () => uni.navigateTo({ url: '/pages/device-check/index' });
 const openRecovery = () => uni.navigateTo({ url:'/pages/recovery/index' });
+const openInventory = () => uni.navigateTo({ url:'/pages/scan/index' });
 onShow(async () => {
   const current = ++epoch;
   checking.value = true; error.value = ''; name.value = ''; store.value = '';
-  canRecover.value = false;
+  canRecover.value = false;canQueryInventory.value=false;
   try {
     await staffAuth.refresh();
     if (epoch !== current) return;
@@ -18,6 +19,7 @@ onShow(async () => {
     if (!actor) throw Error('UNAUTHORIZED');
     name.value = actor.name; store.value = actor.storeId;
     canRecover.value = actor.permissions.includes('*') || actor.permissions.includes('pos:order:create');
+    canQueryInventory.value=actor.permissions.includes('*')||actor.permissions.includes('inventory:view');
   } catch {
     if (epoch === current) {
       error.value = '当前身份未能确认，请重新登录。';
@@ -38,7 +40,8 @@ async function logout() {
     <template v-else-if="name">
       <text class="name">{{ name }}</text>
       <text class="intro">当前门店编号：{{ store }}</text>
-      <view class="notice"><text>收货与交付入口正在准备。目前可先完成手机设备检查。</text></view>
+      <view class="notice"><text>查货可查看本店最新批次与货位。收货和交付入口仍在准备。</text></view>
+      <button v-if="canQueryInventory" class="primary" @click="openInventory">扫码 / 搜索查货</button>
       <button class="primary" @click="openDeviceCheck">检查手机设备</button>
       <button v-if="canRecover" @click="openRecovery">核对上次收银</button>
       <button @click="logout">退出登录</button>

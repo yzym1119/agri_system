@@ -339,6 +339,7 @@ class RetailFactChainEndToEndTest {
         assertStock(1, "1", "20");
         assertEquals(1L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE movement_type='RECEIPT'"));
         assertDecimal("箱成本转换成每瓶成本", "5", jdbcDecimal("SELECT base_unit_cost FROM inventory_receipt_batch WHERE id=" + batch));
+        assertMobileInventory("1",batch);
         long movements = movementCount();
         assertThrows(RuntimeException.class, () -> purchaseApplicationService.receive(receipt, 1L));
         assertEquals(movements, movementCount(), "重复半收货不能多记账");
@@ -377,12 +378,14 @@ class RetailFactChainEndToEndTest {
         assertStock(1, "1", "20");
 
         // 半箱退回原批次，日期与成本谱系不变；重复、超量退货全部回滚。
+        assertMobileInventory("1",batch);
         var returned = new com.agri_system.application.inventory.dto.command.InventoryInCommand();
         returned.setStoreId(1L); returned.setProductId(101L); returned.setUnit("箱");
         returned.setQuantity(new BigDecimal("0.5")); returned.setSourceType("SALES_RETURN");
         returned.setSourceId(9001L); returned.setSourceLineNo(Math.toIntExact(item));
         assertEquals(batch, inventoryApplicationService.inbound(returned, 1L));
         assertStock(1, "1.5", "30");
+        assertMobileInventory("1.5",batch);
         assertEquals(2L, jdbcLong("SELECT COUNT(*) FROM inventory_receipt_batch WHERE product_id=101"), "退货沿用原批次");
         assertDecimal("退货沿用原成本", "5", jdbcDecimal("SELECT unit_cost FROM inventory_movement WHERE movement_type='RETURN'"));
         movements = movementCount();
@@ -466,6 +469,23 @@ class RetailFactChainEndToEndTest {
     }
 
     /** POS整单人工配送复用现有单据，真实HTTP派单/退货/签收不增加第二份钱货绩效。 */
+    private void assertMobileInventory(String expectedQuantity,long batch) throws Exception {
+        long before=movementCount(); E2EToken owner=loginToken(1L);
+        String path="/api/admin/mobile/inventory/101";
+        JsonNode stock=objectMapper.readTree(mockMvc.perform(get(path).header(owner.name(),owner.value()).param("storeId","2"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertEquals("1",stock.path("storeId").asText());assertEquals(expectedQuantity,stock.path("quantity").asText(),stock.toString());
+        assertEquals("箱",stock.path("mainUnitName").asText());assertTrue(stock.path("rows").isArray(),stock.toString());
+        assertTrue(!stock.toString().contains("Cost")&&!stock.toString().contains("costPrice"),"查货不附带成本");
+        for(String code:List.of("E2E-P101",jdbcString("SELECT internal_receipt_batch_no FROM inventory_receipt_batch WHERE id="+batch),"BACK-A","BACK-B")) {
+            JsonNode resolved=objectMapper.readTree(mockMvc.perform(post("/api/admin/mobile/scan/resolve").header(owner.name(),owner.value())
+                    .contentType(MediaType.APPLICATION_JSON).content(objectMapper.writeValueAsString(Map.of("code",code,"purpose","INVENTORY_LOOKUP"))))
+                    .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+            assertEquals(code.equals("BACK-B")?"UNKNOWN":code.equals("BACK-A")?"LOCATION":code.equals("E2E-P101")?"SKU":"RECEIPT_BATCH",resolved.path("type").asText(),resolved.toString());
+        }
+        assertEquals(before,movementCount(),"移动查货不能记钱货");
+    }
+
     private void assertManualDeliveryBusinessChain() throws Exception {
         E2EToken manager=loginToken(1L), secondStore=loginToken(3L);
         for(int id=630;id<=635;id++) exec("INSERT INTO customer(id,code,name,phone,type,status,credit_limit) VALUES("+id+",'DELIVERY-C"+id+"','配送验收客户"+id+"','13800000"+id+"',1,1,1000)");
@@ -2289,6 +2309,7 @@ class RetailFactChainEndToEndTest {
     @ComponentScan(basePackages = {"com.agri_system.application", "com.agri_system.infrastructure"},
             excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = SaTokenConfigure.class))
     @Import({InventoryController.class, InventoryWarningController.class, ProductController.class, OrderAdminController.class,
+            com.agri_system.api.admin.controller.MobileScanController.class,
             ProductPackageController.class, AfterSalesAdminController.class, CreditAdminController.class, ReportDashboardController.class,
             RetailFactChainEndToEndTest.E2ELoginController.class, DomainServiceConfig.class})
     static class E2EConfig {
@@ -2320,7 +2341,7 @@ class RetailFactChainEndToEndTest {
                 public void addInterceptors(InterceptorRegistry registry) {
                     registry.addInterceptor(new SaInterceptor())
                             .addPathPatterns("/api/admin/products/**", "/api/admin/orders/**",
-                                    "/api/admin/product-packages/**", "/api/admin/after-sales/**", "/api/admin/credit/**", "/api/admin/report/**");
+                                    "/api/admin/product-packages/**", "/api/admin/after-sales/**", "/api/admin/credit/**", "/api/admin/report/**", "/api/admin/mobile/**");
                     // 测试不加载生产租户工厂；仅还原请求级身份缓存清理，不能跨token复用旧员工。
                     registry.addInterceptor(new org.springframework.web.servlet.HandlerInterceptor() {
                         @Override public boolean preHandle(jakarta.servlet.http.HttpServletRequest request,

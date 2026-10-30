@@ -11,7 +11,7 @@ function setupPage(page, auth, configured = true, extraImports = {}) {
   const js = ts.transpileModule(compiled.content, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText;
   const hooks = {}, routes = [], mod = { exports: {} };
   const imports = { vue: require('vue'), '@dcloudio/uni-app': {
-    onShow: cb => hooks.show = cb, onHide: cb => hooks.hide = cb,
+    onShow: cb => hooks.show = cb, onHide: cb => hooks.hide = cb, onLoad: cb => hooks.load = cb,
   }, '../../services/auth': { staffAuth: auth, serviceConfigured: configured }, ...extraImports };
   vm.runInNewContext(js, { module: mod, exports: mod.exports, Error, uni: {
     reLaunch: options => routes.push(options.url), navigateTo: options => routes.push(options.url),
@@ -19,3 +19,10 @@ function setupPage(page, auth, configured = true, extraImports = {}) {
   return { state: mod.exports.default.setup({}, { expose() {} }), hooks, routes };
 }
 module.exports = { setupPage };
+module.exports.setupService = (name, imports) => {
+  const file=path.join(__dirname,'../../src/services',name+'.ts');
+  const js=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS}}).outputText;
+  const mod={exports:{}};
+  vm.runInNewContext(js,{module:mod,exports:mod.exports,Error,encodeURIComponent,require:key=>{assert.ok(key in imports,key);return imports[key];}},{filename:file});
+  return mod.exports;
+};

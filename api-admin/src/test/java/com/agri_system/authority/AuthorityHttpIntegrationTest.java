@@ -97,6 +97,7 @@ class AuthorityHttpIntegrationTest {
     @MockBean com.agri_system.application.store.service.StoreApplicationService businessStores;
     @MockBean com.agri_system.application.purchase.service.PurchaseApplicationService receiving;
     @MockBean com.agri_system.application.product.service.ProductApplicationService productCatalogAdmin;
+    @MockBean com.agri_system.application.inventory.service.MobileScanQueryService mobileInventory;
 
     /** 可选真实 MySQL，同一HTTP套及生产锁代码，仅使用本次成功创建的随机隔离库。 */
     @DynamicPropertySource
@@ -130,6 +131,7 @@ class AuthorityHttpIntegrationTest {
             com.agri_system.api.admin.controller.PosCatalogController.class,
             com.agri_system.api.admin.controller.StoreController.class,
             com.agri_system.api.admin.controller.PurchaseController.class,
+            com.agri_system.api.admin.controller.MobileScanController.class,
             com.agri_system.api.admin.controller.ProductController.class})
     static class Config {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
@@ -253,6 +255,24 @@ class AuthorityHttpIntegrationTest {
     void businessPermission(int menuId,String permission) {
         jdbc.update("INSERT INTO sys_menu(id,parent_id,name,permission,type,sort_order,visible) VALUES(?,0,?,?,2,0,1)",menuId,permission,permission);
         jdbc.update("INSERT INTO sys_role_menu(role_id,menu_id) VALUES(4,?)",menuId);
+    }
+
+    @Test void 移动查货仅真实库存权限可读且撤权立即拒绝() throws Exception {
+        String body="{\"code\":\"P1\",\"purpose\":\"INVENTORY_LOOKUP\"}";
+        String token=login(4);
+        reject(call(null,"POST","/api/admin/mobile/scan/resolve",body));
+        reject(call(loginId("CUST_1"),"POST","/api/admin/mobile/scan/resolve",body));
+        reject(call(token,"POST","/api/admin/mobile/scan/resolve",body));
+        businessPermission(110,"inventory:view");
+        when(mobileInventory.resolve("P1","INVENTORY_LOOKUP",4L)).thenReturn(
+                new com.agri_system.application.inventory.service.MobileScanQueryService.Resolution("1","UNKNOWN",List.of(),false));
+        assertEquals("UNKNOWN",call(token,"POST","/api/admin/mobile/scan/resolve",body).path("type").asText());
+        org.mockito.Mockito.verify(mobileInventory).resolve("P1","INVENTORY_LOOKUP",4L);
+        jdbc.update("DELETE FROM sys_role_menu WHERE role_id=4 AND menu_id=110");
+        reject(call(token,"POST","/api/admin/mobile/scan/resolve",body));
+        reject(call(token,"GET","/api/admin/mobile/inventory/1",null));
+        reject(call(token,"GET","/api/admin/mobile/inventory/products?keyword=x",null));
+        reject(call(token,"GET","/api/admin/mobile/locations/1/products",null));
     }
 
     @Test void 最小收银可读专用目录但不能读管理商品和门店档案() throws Exception {
