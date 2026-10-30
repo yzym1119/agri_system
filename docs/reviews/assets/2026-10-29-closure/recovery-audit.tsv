@@ -1,0 +1,17 @@
+only_9_orders	only_9_payments	only_24_movements	only_5_requests
+1	1	1	1
+original_request_completed
+1
+original_cash_payment_once
+1
+original_sale_once
+1
+product_id	base_quantity
+1	11.00000000
+2	14.00000000
+3	9.00000000
+remaining_stock_cost_622
+1
+migrations_89_success_v133
+1
+
