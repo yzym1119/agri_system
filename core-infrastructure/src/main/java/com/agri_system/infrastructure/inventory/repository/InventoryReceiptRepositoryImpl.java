@@ -11,6 +11,10 @@ import org.springframework.stereotype.Repository;
 public class InventoryReceiptRepositoryImpl implements InventoryReceiptRepository {
     private final InventoryReceiptMapper mapper;
 
+    @Override public java.util.Optional<InventoryReceipt> findByRequestKeyAndOwner(String key, Long storeId, Long receiverId) {
+        return java.util.Optional.ofNullable(mapper.findByRequestKeyAndOwner(key,storeId,receiverId));
+    }
+
     @Override
     public void save(InventoryReceipt receipt) {
         if (receipt.getId() == null) {

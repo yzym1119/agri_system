@@ -22,6 +22,9 @@ public class PurchaseItemVO {
     
     @Schema(description = "商品编码", example = "P001")
     private String productCode;
+
+    @Schema(description = "商品条码，仅定位商品，不作为批次证据")
+    private String productBarcode;
     
     @Schema(description = "商品名称", example = "XX农药")
     private String productName;

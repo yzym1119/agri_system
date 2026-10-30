@@ -275,6 +275,22 @@ class AuthorityHttpIntegrationTest {
         reject(call(token,"GET","/api/admin/mobile/locations/1/products",null));
     }
 
+    @Test void 手机收货查询只需原收货权限且撤权立即生效() throws Exception {
+        String token=login(4),path="/api/admin/purchase/receipts/submissions/original-key";
+        reject(call(token,"GET",path,null));reject(call(null,"GET",path,null));reject(call(loginId("CUST_1"),"GET",path,null));
+        reject(call(token,"GET","/api/admin/purchase/receiving/mobile/orders",null));
+        reject(call(token,"GET","/api/admin/purchase/receiving/mobile/orders/8",null));
+        businessPermission(112,"purchase:inbound");
+        when(receiving.getReceiptSubmission("original-key",4L)).thenReturn(new com.agri_system.application.purchase.dto.vo.ReceiptSubmissionVO("original-key","UNKNOWN","1",null,null,null,List.of()));
+        assertEquals("UNKNOWN",call(token,"GET",path+"?staffId=99&storeId=2",null).path("status").asText());
+        org.mockito.Mockito.verify(receiving).getReceiptSubmission("original-key",4L);
+        when(receiving.mobileReceivingPage(1,"",4L)).thenReturn(new com.agri_system.application.purchase.dto.vo.MobileReceivingVO.Orders("1",1,false,List.of()));
+        assertEquals("1",call(token,"GET","/api/admin/purchase/receiving/mobile/orders?storeId=2",null).path("storeId").asText());
+        jdbc.update("DELETE FROM sys_role_menu WHERE role_id=4 AND menu_id=112");reject(call(token,"GET",path,null));
+        reject(call(token,"GET","/api/admin/purchase/receiving/mobile/orders",null));
+        reject(call(token,"GET","/api/admin/purchase/receiving/mobile/orders/8",null));
+    }
+
     @Test void 最小收银可读专用目录但不能读管理商品和门店档案() throws Exception {
         businessPermission(101,"pos:order:create");
         when(posCatalog.products(1,1000)).thenReturn(new com.mybatisflex.core.paginate.Page<>());

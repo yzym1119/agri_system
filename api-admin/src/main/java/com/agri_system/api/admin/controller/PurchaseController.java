@@ -41,6 +41,25 @@ public class PurchaseController {
     
     private final PurchaseApplicationService purchaseService;
 
+    @GetMapping("/receipts/submissions/{requestKey}")
+    @SaCheckPermission("purchase:inbound")
+    public com.agri_system.application.purchase.dto.vo.ReceiptSubmissionVO receiptSubmission(@PathVariable String requestKey) {
+        return purchaseService.getReceiptSubmission(requestKey,getCurrentUserId());
+    }
+
+    @GetMapping("/receiving/mobile/orders")
+    @SaCheckPermission("purchase:inbound")
+    public com.agri_system.application.purchase.dto.vo.MobileReceivingVO.Orders mobileReceivingOrders(@RequestParam(defaultValue="1") int page,
+            @RequestParam(defaultValue="") String orderNo) {
+        return purchaseService.mobileReceivingPage(page,orderNo,getCurrentUserId());
+    }
+
+    @GetMapping("/receiving/mobile/orders/{orderId}")
+    @SaCheckPermission("purchase:inbound")
+    public com.agri_system.application.purchase.dto.vo.MobileReceivingVO.Detail mobileReceivingDetail(@PathVariable Long orderId) {
+        return purchaseService.mobileReceivingDetail(orderId,getCurrentUserId());
+    }
+
     @GetMapping("/receiving-orders")
     @SaCheckPermission("purchase:inbound")
     public ResponseEntity<Map<String,Object>> receivingOrders(@Valid PurchasePageQuery query) {

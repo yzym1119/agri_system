@@ -63,6 +63,7 @@ public class PurchaseApplicationService {
     private final InventoryReceiptLineRepository receiptLineRepository;
     private final InventoryReceiptBatchRepository receiptBatchRepository;
     private final BatchBalanceService batchBalanceService;
+    private final com.agri_system.domain.store.repository.StaffRepository staffRepository;
     
     /**
      * 创建采购单
@@ -258,6 +259,86 @@ public class PurchaseApplicationService {
                         b.getProductionDate(), b.getExpiryDate(), b.getDateStatus())).toList();
     }
 
+    /** 只读原事实；即使采购已收齐/取消也不能用当前采购状态否认历史成功。 */
+    public com.agri_system.application.purchase.dto.vo.ReceiptSubmissionVO getReceiptSubmission(String requestKey,Long receiverId) {
+        Long storeId=mobileStore(receiverId);
+        if(requestKey==null||requestKey.isBlank()||requestKey.length()>64||!requestKey.equals(requestKey.trim())
+                ||requestKey.chars().anyMatch(Character::isISOControl)) throw new IllegalArgumentException("收货请求号无效");
+        var receipt=receiptRepository.findByRequestKeyAndOwner(requestKey,storeId,receiverId).orElse(null);
+        if(receipt==null) return new com.agri_system.application.purchase.dto.vo.ReceiptSubmissionVO(requestKey,"UNKNOWN",storeId.toString(),null,null,null,List.of());
+        if(!storeId.equals(receipt.getStoreId())||!receiverId.equals(receipt.getReceiverId())||!requestKey.equals(receipt.getRequestKey())
+                ||!"RECEIVED".equals(receipt.getStatus())||receipt.getId()==null||receipt.getPurchaseOrderId()==null)
+            throw new IllegalStateException("收货事实不完整，请联系门店核对");
+        var originalLines=receiptLineRepository.findByReceiptId(receipt.getId());
+        var originalBatches=receiptBatchRepository.findByReceiptId(receipt.getId());
+        if(originalLines==null||originalLines.isEmpty()||originalBatches==null||originalBatches.isEmpty())
+            throw new IllegalStateException("收货明细不完整，请联系门店核对");
+        var seen=new HashSet<Long>();
+        var resultLines=new ArrayList<com.agri_system.application.purchase.dto.vo.ReceiptSubmissionVO.Line>();
+        for(var line:originalLines) {
+            if(line.getId()==null||!seen.add(line.getId())||!receipt.getId().equals(line.getReceiptId())||!storeId.equals(line.getStoreId())
+                    ||line.getProductId()==null||line.getPurchaseOrderItemId()==null) throw new IllegalStateException("收货行事实不一致");
+            var lineBatches=originalBatches.stream().filter(b->line.getId().equals(b.getReceiptLineId())).map(b->{
+                if(b.getId()==null||!storeId.equals(b.getStoreId())||!line.getProductId().equals(b.getProductId())
+                        ||!hasText(b.getInternalReceiptBatchNo())||!hasText(b.getOriginalUnitName())||b.getOriginalQuantity()==null||b.getOriginalQuantity().signum()<=0
+                        ||b.getOriginalUnitCost()==null||b.getOriginalUnitCost().signum()<=0) throw new IllegalStateException("收货批次事实不一致");
+                return new com.agri_system.application.purchase.dto.vo.ReceiptSubmissionVO.Batch(b.getId().toString(),b.getInternalReceiptBatchNo(),b.getSupplierBatchNo(),
+                        b.getOriginalUnitName(),decimalText(b.getOriginalQuantity()),decimalText(b.getOriginalUnitCost()),
+                        b.getProductionDate()==null?null:b.getProductionDate().toString(),b.getExpiryDate()==null?null:b.getExpiryDate().toString(),b.getDateStatus(),b.getInspectionReference());
+            }).toList();
+            if(lineBatches.isEmpty()) throw new IllegalStateException("收货行缺少批次事实");
+            resultLines.add(new com.agri_system.application.purchase.dto.vo.ReceiptSubmissionVO.Line(line.getPurchaseOrderItemId().toString(),line.getProductId().toString(),line.getRemark(),lineBatches));
+        }
+        if(resultLines.stream().mapToInt(l->l.batches().size()).sum()!=originalBatches.size()) throw new IllegalStateException("收货批次归属不完整");
+        return new com.agri_system.application.purchase.dto.vo.ReceiptSubmissionVO(requestKey,"COMPLETED",storeId.toString(),receipt.getPurchaseOrderId().toString(),receipt.getId().toString(),receipt.getReceiptNo(),List.copyOf(resultLines));
+    }
+
+    private Long mobileStore(Long receiverId) {
+        var staff=receiverId==null?null:staffRepository.findIdentityById(receiverId).orElse(null);
+        if(staff==null||!staff.isActive()||staff.hasBeenDeleted()) throw new IllegalArgumentException("需要当前有效员工身份");
+        Long store=staff.getStoreId();
+        if(store==null||store<=0) throw new IllegalArgumentException("当前员工未分配门店");
+        return store;
+    }
+    private static String decimalText(BigDecimal value) {return value.stripTrailingZeros().toPlainString();}
+
+    public com.agri_system.application.purchase.dto.vo.MobileReceivingVO.Detail mobileReceivingDetail(Long orderId,Long receiverId) {
+        Long store=mobileStore(receiverId);
+        var detail=receivingDetail(orderId);
+        if(!store.equals(detail.getStoreId())) throw new IllegalArgumentException("采购单不存在或不在本店");
+        var result=new ArrayList<com.agri_system.application.purchase.dto.vo.MobileReceivingVO.Item>();
+        for(var item:detail.getItems()) {
+            var units=productUnitService.getUnits(item.getProductId()).stream().filter(ProductUnit::isEnabled).filter(u->u.getId()!=null).toList();
+            ProductUnit base=units.stream().filter(ProductUnit::isBase).findFirst().orElseThrow(()->new IllegalArgumentException("商品缺少已确认的基准单位"));
+            ProductUnit ordered=units.stream().filter(u->item.getUnit().equals(u.getUnitName())).findFirst().orElseThrow(()->new IllegalArgumentException("采购单位不可用"));
+            BigDecimal ratio=ordered.getBaseQuantityPerUnit();
+            if(ratio==null||ratio.signum()<=0||!Integer.valueOf(1).equals(ordered.getAllowPurchase())) throw new IllegalArgumentException("采购单位资料待核对");
+            BigDecimal received=zero(receiptBatchRepository.sumBaseQuantityByPurchaseOrderItemId(item.getId()));
+            BigDecimal original=item.getQty();
+            BigDecimal remainingBase=original.multiply(ratio).subtract(received).max(BigDecimal.ZERO);
+            var purchasable=units.stream().filter(u->Integer.valueOf(1).equals(u.getAllowPurchase())).map(u->
+                    new com.agri_system.application.purchase.dto.vo.MobileReceivingVO.Unit(u.getId().toString(),u.getUnitName(),decimalText(u.getBaseQuantityPerUnit()))).toList();
+            var codes=new ArrayList<String>();codes.add(item.getProductCode());codes.add(item.getProductBarcode());units.forEach(u->codes.add(u.getBarcode()));
+            var scanCodes=codes.stream().filter(this::hasText).distinct().toList();
+            result.add(new com.agri_system.application.purchase.dto.vo.MobileReceivingVO.Item(item.getId().toString(),item.getProductId().toString(),item.getProductCode(),item.getProductName(),
+                    decimalText(original),decimalText(received),decimalText(remainingBase),item.getUnit(),base.getUnitName(),
+                    com.agri_system.domain.product.service.QuantityGranularityPolicy.allowsFractionalBaseQuantity(base.getUnitName()),purchasable,scanCodes));
+        }
+        return new com.agri_system.application.purchase.dto.vo.MobileReceivingVO.Detail(detail.getId().toString(),store.toString(),detail.getOrderNo(),detail.getSupplierName(),List.copyOf(result));
+    }
+
+    public com.agri_system.application.purchase.dto.vo.MobileReceivingVO.Orders mobileReceivingPage(int page,String orderNo,Long receiverId) {
+        Long store=mobileStore(receiverId);
+        if(page<1||page>10000||orderNo==null||orderNo.length()>100) throw new IllegalArgumentException("页码或采购单号无效");
+        var query=new PurchasePageQuery();query.setPageNum(page);query.setPageSize(20);query.setStoreId(store);query.setStatus(2);query.setOrderNo(orderNo.trim());
+        var result=receivingPage(query);
+        var orders=result.getRecords().stream().map(order->{
+            if(!store.equals(order.getStoreId())) throw new IllegalStateException("采购门店资料待核对");
+            return new com.agri_system.application.purchase.dto.vo.MobileReceivingVO.Order(order.getId().toString(),order.getOrderNo(),order.getSupplierName());
+        }).toList();
+        return new com.agri_system.application.purchase.dto.vo.MobileReceivingVO.Orders(store.toString(),page,result.getTotalRow()>(long)page*20,orders);
+    }
+
     /** 调用方必须先持有 purchase_order 的行锁，避免 legacy adapter 二次锁定。 */
     private Long receiveLocked(ReceivePurchaseCommand command, Long receiverId,
                                PurchaseOrder order, List<PurchaseOrderItem> orderItems) {
@@ -426,6 +507,8 @@ public class PurchaseApplicationService {
                 || batchCommand.getOriginalUnitCost() == null || batchCommand.getOriginalUnitCost().compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("收货批次的单位、数量和单价必须完整且大于0");
         }
+        requireReceiptDecimal(batchCommand.getOriginalQuantity(),"原始数量");
+        requireReceiptDecimal(batchCommand.getOriginalUnitCost(),"原始单位进价");
         boolean hasProductionDate = batchCommand.getProductionDate() != null;
         boolean hasExpiryDate = batchCommand.getExpiryDate() != null;
         if (hasProductionDate && hasExpiryDate && batchCommand.getProductionDate().isAfter(batchCommand.getExpiryDate())) {
@@ -438,6 +521,12 @@ public class PurchaseApplicationService {
                 .divide(conversion.baseQuantityPerUnit(), 8, RoundingMode.HALF_UP);
         return new PreparedReceiptBatch(batchCommand, originalUnit, conversion.baseQuantity(), baseUnitCost,
                 hasProductionDate && hasExpiryDate ? "KNOWN" : hasProductionDate || hasExpiryDate ? "PARTIAL" : "UNKNOWN");
+    }
+
+    private static void requireReceiptDecimal(BigDecimal value,String label) {
+        try {
+            if(value.setScale(8,RoundingMode.UNNECESSARY).precision()>20) throw new ArithmeticException();
+        } catch(ArithmeticException error) {throw new IllegalArgumentException(label+"超出12位整数或8位小数，不能舍入",error);}
     }
 
     private boolean isOrderFullyReceived(List<PurchaseOrderItem> orderItems) {
@@ -541,6 +630,7 @@ public class PurchaseApplicationService {
                     // 填充商品信息
                     productRepository.findById(item.getProductId()).ifPresent(product -> {
                         vo.setProductCode(product.getCode());
+                        vo.setProductBarcode(product.getBarcode());
                         vo.setProductName(product.getName());
                         vo.setSpecification(product.getSpecification());
                         vo.setManufacturer(product.getManufacturer());

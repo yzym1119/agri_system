@@ -670,6 +670,14 @@ class PurchaseApplicationServiceTest {
         verify(receiptBatchRepository, never()).save(any());
     }
 
+    @Test void receiptCostCannotSilentlyRoundBeyondEightDecimals() {
+        assertRejectedDateBatch(batch("PRECISION","1","10.123456789",null,null));
+    }
+
+    @Test void receiptOriginalValuesCannotOverflowTheirPersistedDecimal() {
+        assertRejectedDateBatch(batch("OVERFLOW","1","1000000000000",null,null));
+    }
+
     private ReceivePurchaseCommand receiveCommand(ReceiptBatchCommand... batches) {
         ReceivePurchaseCommand command = new ReceivePurchaseCommand();
         command.setPurchaseOrderId(1L);

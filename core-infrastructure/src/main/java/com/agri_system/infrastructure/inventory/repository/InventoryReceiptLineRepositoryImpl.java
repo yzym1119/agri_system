@@ -11,6 +11,10 @@ import org.springframework.stereotype.Repository;
 public class InventoryReceiptLineRepositoryImpl implements InventoryReceiptLineRepository {
     private final InventoryReceiptLineMapper mapper;
 
+    @Override public java.util.List<InventoryReceiptLine> findByReceiptId(Long receiptId) {
+        return mapper.findByReceiptId(receiptId);
+    }
+
     @Override
     public void save(InventoryReceiptLine line) {
         if (line.getId() == null) {

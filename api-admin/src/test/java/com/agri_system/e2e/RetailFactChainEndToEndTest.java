@@ -334,7 +334,12 @@ class RetailFactChainEndToEndTest {
         ReceivePurchaseCommand receipt = receiveCmd(1L, 1L, "SUP-BATCH-1", "箱", "1", "100.00",
                 LocalDate.now().minusDays(10), LocalDate.now().plusYears(1));
         receipt.setRequestKey("E2E-RECEIPT-HALF-1");
-        Long firstReceipt = purchaseApplicationService.receive(receipt, 1L);
+        // 实际HTTP已提交，但恢复端不消费成功响应体；按原key从持久收货事实恢复。
+        E2EToken receiver=loginToken(1L);
+        mockMvc.perform(post("/api/admin/purchase/receipts").header(receiver.name(),receiver.value()).contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(receipt))).andExpect(status().isOk());
+        Long firstReceipt = jdbcLong("SELECT id FROM inventory_receipt WHERE request_key='E2E-RECEIPT-HALF-1'");
+        assertReceiptRecovery(firstReceipt,receipt);
         long batch = jdbcLong("SELECT id FROM inventory_receipt_batch WHERE product_id=101 ORDER BY id LIMIT 1");
         assertStock(1, "1", "20");
         assertEquals(1L, jdbcLong("SELECT COUNT(*) FROM inventory_movement WHERE movement_type='RECEIPT'"));
@@ -469,6 +474,36 @@ class RetailFactChainEndToEndTest {
     }
 
     /** POS整单人工配送复用现有单据，真实HTTP派单/退货/签收不增加第二份钱货绩效。 */
+    private void assertReceiptRecovery(long receiptId,ReceivePurchaseCommand original) throws Exception {
+        E2EToken owner=loginToken(1L);long before=movementCount();
+        String path="/api/admin/purchase/receipts/submissions/"+original.getRequestKey();
+        JsonNode result=objectMapper.readTree(mockMvc.perform(get(path).header(owner.name(),owner.value()).param("storeId","2").param("staffId","999"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertEquals("COMPLETED",result.path("status").asText(),result.toString());assertEquals(Long.toString(receiptId),result.path("receiptId").asText());
+        assertEquals("1",result.path("storeId").asText());assertEquals("100",result.path("lines").get(0).path("batches").get(0).path("originalUnitCost").asText());
+        JsonNode detail=objectMapper.readTree(mockMvc.perform(get("/api/admin/purchase/receiving/mobile/orders/1").header(owner.name(),owner.value()))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+        assertEquals("20",detail.path("items").get(0).path("remainingBaseQuantity").asText(),detail.toString());
+        assertEquals("瓶",detail.path("items").get(0).path("baseUnitName").asText());assertTrue(!detail.path("items").get(0).path("allowFractionalBaseQuantity").asBoolean());
+        exec("INSERT INTO staff(id,code,name,store_id,role,status) VALUES(77001,'E3-OTHER','另一库管',1,'STAFF',1),(77002,'E3-FOREIGN','外店库管',2,'STAFF',1)");
+        for(long id:List.of(77001L,77002L)) {
+            E2EToken other=loginToken(id);JsonNode unknown=objectMapper.readTree(mockMvc.perform(get(path).header(other.name(),other.value()))
+                    .andExpect(status().isOk()).andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
+            assertEquals("UNKNOWN",unknown.path("status").asText(),unknown.toString());assertTrue(unknown.path("receiptId").isNull());assertTrue(unknown.path("lines").isEmpty());
+        }
+        // 两个并发原号重试都不能追加事实；不是用GET的UNKNOWN猜测未收货。
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2);var gate=new java.util.concurrent.CyclicBarrier(2);
+        try {
+            var futures=new ArrayList<java.util.concurrent.Future<Throwable>>();
+            for(int i=0;i<2;i++)futures.add(pool.submit(()->{gate.await(10,java.util.concurrent.TimeUnit.SECONDS);try{purchaseApplicationService.receive(original,1L);return null;}catch(RuntimeException rejected){return rejected;}}));
+            for(var f:futures){Throwable rejected=f.get(20,java.util.concurrent.TimeUnit.SECONDS);assertNotNull(rejected,"重试应由原请求唯一键拒绝");
+                while(rejected.getCause()!=null)rejected=rejected.getCause();assertTrue(rejected instanceof java.sql.SQLIntegrityConstraintViolationException,rejected.toString());}
+        }finally{pool.shutdownNow();}
+        var modified=objectMapper.readValue(objectMapper.writeValueAsString(original),ReceivePurchaseCommand.class);modified.getLines().get(0).getBatches().get(0).setOriginalUnitCost(new BigDecimal("101"));
+        assertThrows(RuntimeException.class,()->purchaseApplicationService.receive(modified,1L));
+        assertEquals(before,movementCount());assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM inventory_receipt WHERE request_key='E2E-RECEIPT-HALF-1'"));
+    }
+
     private void assertMobileInventory(String expectedQuantity,long batch) throws Exception {
         long before=movementCount(); E2EToken owner=loginToken(1L);
         String path="/api/admin/mobile/inventory/101";
@@ -2309,7 +2344,7 @@ class RetailFactChainEndToEndTest {
     @ComponentScan(basePackages = {"com.agri_system.application", "com.agri_system.infrastructure"},
             excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = SaTokenConfigure.class))
     @Import({InventoryController.class, InventoryWarningController.class, ProductController.class, OrderAdminController.class,
-            com.agri_system.api.admin.controller.MobileScanController.class,
+            com.agri_system.api.admin.controller.MobileScanController.class,com.agri_system.api.admin.controller.PurchaseController.class,
             ProductPackageController.class, AfterSalesAdminController.class, CreditAdminController.class, ReportDashboardController.class,
             RetailFactChainEndToEndTest.E2ELoginController.class, DomainServiceConfig.class})
     static class E2EConfig {
@@ -2341,7 +2376,7 @@ class RetailFactChainEndToEndTest {
                 public void addInterceptors(InterceptorRegistry registry) {
                     registry.addInterceptor(new SaInterceptor())
                             .addPathPatterns("/api/admin/products/**", "/api/admin/orders/**",
-                                    "/api/admin/product-packages/**", "/api/admin/after-sales/**", "/api/admin/credit/**", "/api/admin/report/**", "/api/admin/mobile/**");
+                                    "/api/admin/product-packages/**", "/api/admin/after-sales/**", "/api/admin/credit/**", "/api/admin/report/**", "/api/admin/mobile/**", "/api/admin/purchase/**");
                     // 测试不加载生产租户工厂；仅还原请求级身份缓存清理，不能跨token复用旧员工。
                     registry.addInterceptor(new org.springframework.web.servlet.HandlerInterceptor() {
                         @Override public boolean preHandle(jakarta.servlet.http.HttpServletRequest request,
