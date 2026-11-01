@@ -5,7 +5,7 @@ function page(overrides={},live=false,storage=new Map()){
  const props=vue.reactive({modelValue:true,orderId:42}),events=[],user=vue.reactive({userInfo:{id:8}}),permissions=vue.reactive({permissions:['order:ship','staff:list']});
  const context={localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},ref:vue.ref,computed:vue.computed,watch:live?vue.watch:()=>{},onUnmounted:()=>{},defineProps:()=>props,defineEmits:()=> (...args)=>events.push(args),useUserStore:()=>user,usePermissionStore:()=>permissions,hasPermission:(p,ps)=>ps.includes(p)||ps.includes('*'),
  getReassignment:async()=>({storeId:'3',orderId:'42',currentStaffId:'9',version:'0',canReassign:true,blockReason:null}),getStaffList:async()=>({records:[{id:10,name:'新配送员',status:1,storeId:3}]}),reassignDelivery:async()=>{},ElMessage:{success(){},warning(){},error(){}},...overrides};
- vm.createContext(context);vm.runInContext(ts.transpileModule(body+'\nglobalThis.page={reload,submit,finishReview,canFinishReview,detail,target,reason,busy,uncertain,message,options};',{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS}}).outputText,context);
+ vm.createContext(context);vm.runInContext(ts.transpileModule(body+'\nglobalThis.page={reload,submit,finishReview,canFinishReview,canSubmit,detail,target,reason,busy,uncertain,message,options};',{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS}}).outputText,context);
  return {...context.page,props,user,permissions,events};
 }
 test('改派必须读取原版本并填写不同配送员和原因，提交保持原版本字符串',async()=>{
@@ -20,6 +20,13 @@ test('缺员工查询权限不读取员工名单，旧订单响应不回填新�
  let reads=0,resolve;const p=page({getStaffList:async()=>{reads++;return{records:[]};},getReassignment:()=>new Promise(done=>resolve=done)});p.permissions.permissions=['order:ship'];const old=p.reload();p.props.orderId=43;resolve({storeId:'3',orderId:'42',currentStaffId:'9',version:'0',canReassign:true});await old;assert.equal(p.detail.value,null);assert.equal(reads,0);
 });
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
+test('首次渲染先读取禁用状态后，异步资料加载和填写仍能启用确认按钮',async()=>{
+ const calls=[],p=page({reassignDelivery:async(...args)=>calls.push(args)},true);
+ assert.equal(p.canSubmit.value,false);
+ await tick();p.target.value='10';p.reason.value='临时换人';
+ assert.equal(p.canSubmit.value,true);
+ await p.submit();assert.equal(calls.length,1);
+});
 test('真实watch切订单后旧预览不能覆盖新订单',async()=>{
  const reads=[],p=page({getReassignment:id=>new Promise(resolve=>reads.push({id,resolve}))},true);await tick();
  p.props.orderId=43;await tick();assert.equal(reads.length,2);

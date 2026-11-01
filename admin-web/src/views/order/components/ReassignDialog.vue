@@ -12,7 +12,8 @@ const user=useUserStore(),permissions=usePermissionStore()
 const detail=ref<ReassignmentPreview|null>(null),target=ref(''),reason=ref(''),options=ref<{id:string;name:string}[]>([])
 const loading=ref(false),busy=ref(false),uncertain=ref(false),message=ref('')
 const pendingVersion=ref<string|null>(null)
-let generation=0,loadedActor=''
+let generation=0
+const loadedActor=ref('')
 const identity=()=>String(user.userInfo?.id)+':'+String(user.userInfo?.extra?.storeId)
 const hasShip=()=>hasPermission('order:ship',permissions.permissions)
 const hasStaff=()=>hasPermission('staff:list',permissions.permissions)
@@ -39,7 +40,7 @@ async function reload(){
  if(!uncertain.value)message.value=''
  try{const answer=await getReassignment(id);if(!current(ticket,id,actor))return
   if(!integer(answer.storeId)||answer.orderId!==String(id)||!integer(answer.version,true)||typeof answer.canReassign!=='boolean'||!(answer.currentStaffId===null||integer(answer.currentStaffId)))throw Error('INVALID_PREVIEW')
-  detail.value=answer;loadedActor=actor
+  detail.value=answer;loadedActor.value=actor
   if(uncertain.value)message.value='上次结果尚待核对。当前显示最新指派，请联系店长确认原操作，不要重复提交。'
   if(!answer.canReassign||!hasStaff())return
   const staff=await getStaffList({pageNum:1,pageSize:1000,status:1});if(!current(ticket,id,actor)||!hasStaff())return
@@ -47,7 +48,7 @@ async function reload(){
  }catch{if(current(ticket,id,actor))message.value='改派信息未能完整读取，请重新查询；不能按旧资料提交。'}
  finally{if(ticket===generation)loading.value=false}
 }
-const canSubmit=computed(()=>props.modelValue&&hasShip()&&hasStaff()&&identity()===loadedActor&&!loading.value&&!busy.value&&!uncertain.value&&detail.value?.canReassign===true&&integer(detail.value.version,true)&&options.value.some(s=>s.id===target.value)&&!!reason.value.trim()&&reason.value.trim().length<=200)
+const canSubmit=computed(()=>props.modelValue&&hasShip()&&hasStaff()&&identity()===loadedActor.value&&!loading.value&&!busy.value&&!uncertain.value&&detail.value?.canReassign===true&&integer(detail.value.version,true)&&options.value.some(s=>s.id===target.value)&&!!reason.value.trim()&&reason.value.trim().length<=200)
 async function submit(){
  if(!canSubmit.value||!detail.value||!props.orderId)return
  const ticket=generation,id=props.orderId,actor=identity(),body={expectedVersion:detail.value.version!,targetStaffId:target.value,reason:reason.value.trim()};busy.value=true

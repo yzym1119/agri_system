@@ -1,0 +1,55 @@
+{
+  "scope": "独立虚构浏览器验收：人工收款、首次派单及改派后",
+  "checks": [
+    {
+      "name": "唯一销售订单",
+      "passed": true
+    },
+    {
+      "name": "订单金额250",
+      "passed": true
+    },
+    {
+      "name": "唯一原请求已完成",
+      "passed": true
+    },
+    {
+      "name": "唯一现金收款250未退款",
+      "passed": true
+    },
+    {
+      "name": "原收货20与销售5各一次",
+      "passed": true
+    },
+    {
+      "name": "余额15预留0",
+      "passed": true
+    },
+    {
+      "name": "流水重算与余额一致",
+      "passed": true
+    },
+    {
+      "name": "原销售分配成本150",
+      "passed": true
+    },
+    {
+      "name": "唯一配送已改派乙版本1",
+      "passed": true
+    },
+    {
+      "name": "原发货时间保留且未签收",
+      "passed": true
+    },
+    {
+      "name": "未生成自提任务",
+      "passed": true
+    },
+    {
+      "name": "唯一业务改派日志",
+      "passed": true
+    }
+  ],
+  "passed": 12,
+  "total": 12
+}
