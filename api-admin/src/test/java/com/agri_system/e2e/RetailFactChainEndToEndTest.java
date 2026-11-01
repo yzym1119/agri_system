@@ -648,12 +648,42 @@ class RetailFactChainEndToEndTest {
         assertCreditRejected(postCreditJson(manager,"/api/admin/orders/"+beforeShip+"/confirm-receipt",Map.of()));
         assertEquals(paused,deliveryFacts());assertTrue(!deliveryRow(manager,beforeShip,3).path("canConfirmReceipt").asBoolean());
         exec("UPDATE after_sales SET status=90 WHERE after_sales_no='DELIVERY-PENDING'");
-        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+beforeShip+"/confirm-receipt",Map.of()));
+        var partialReturnBody=creditReturnBody(beforeShip,creditPreview(manager,beforeShip,"1"));
+        var partialRace=raceCreditHttp(i->i==0?postCreditJson(manager,"/api/admin/after-sales",partialReturnBody)
+                :postCreditJson(manager,"/api/admin/orders/"+beforeShip+"/reassign",Map.of("expectedVersion","0","targetStaffId","1","reason","验收部分退货与改派竞争")));
+        partialRace.forEach(this::requireCreditSuccess);
+        assertEquals(1L,jdbcLong("SELECT assignment_version FROM order_delivery WHERE order_id="+beforeShip));
+        assertOrderReturned(beforeShip,"3");
+        JsonNode remainingTask=getDeliveryJson(manager,"/api/admin/mobile/delivery/tasks/"+beforeShip,Map.of());
+        assertEquals("2",remainingTask.path("items").get(0).path("quantity").asText());
+        assertEquals("COMPLETED",postCreditJson(manager,"/api/admin/mobile/delivery/tasks/"+beforeShip+"/confirm",Map.of("confirmationKey",remainingTask.path("confirmationKey").asText())).path("status").asText());
 
+        long neverShipped=createPOSViaHttp(manager,deliverySale(632,"1"));
+        directDeliveryReturn(manager,neverShipped,creditPreview(manager,neverShipped,"1"));
+        DeliveryFacts beforeFirstDispatch=deliveryFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/"+neverShipped+"/ship",Map.of("deliveryStaffId",2)));
+        assertEquals(beforeFirstDispatch,deliveryFacts(),"未派单就全退必须拒绝首次发货");
+        assertEquals(2L,jdbcLong("SELECT delivery_status FROM order_delivery WHERE order_id="+neverShipped));
         long fullyReturned=createPOSViaHttp(manager,deliverySale(632,"2"));
-        directDeliveryReturn(manager,fullyReturned,creditPreview(manager,fullyReturned,"2"));
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+fullyReturned+"/ship",Map.of("deliveryStaffId",2)));
+        var fullReturnBody=creditReturnBody(fullyReturned,creditPreview(manager,fullyReturned,"2"));
+        long fullLogs=jdbcLong("SELECT COUNT(*) FROM sys_operation_log WHERE action='配送改派'");
+        var fullRace=raceCreditHttp(i->i==0?postCreditJson(manager,"/api/admin/after-sales",fullReturnBody)
+                :postCreditJson(manager,"/api/admin/orders/"+fullyReturned+"/reassign",Map.of("expectedVersion","0","targetStaffId","1","reason","验收全退与改派竞争")));
+        requireCreditSuccess(fullRace.get(0));
+        if(creditSuccess(fullRace.get(1))) {
+            assertEquals(1L,jdbcLong("SELECT assignment_version FROM order_delivery WHERE order_id="+fullyReturned));
+            assertEquals(fullLogs+1,jdbcLong("SELECT COUNT(*) FROM sys_operation_log WHERE action='配送改派'"));
+        } else {
+            assertCreditRejected(fullRace.get(1));assertEquals(0L,jdbcLong("SELECT assignment_version FROM order_delivery WHERE order_id="+fullyReturned));
+            assertEquals(fullLogs,jdbcLong("SELECT COUNT(*) FROM sys_operation_log WHERE action='配送改派'"));
+        }
+        assertOrderReturned(fullyReturned,"2");
         DeliveryFacts full=deliveryFacts();
-        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/"+fullyReturned+"/ship",Map.of("deliveryStaffId",2)));
+        assertTrue(!getDeliveryJson(manager,"/api/admin/orders/"+fullyReturned+"/reassignment",Map.of()).path("canReassign").asBoolean());
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/"+fullyReturned+"/reassign",Map.of("expectedVersion",Long.toString(jdbcLong("SELECT assignment_version FROM order_delivery WHERE order_id="+fullyReturned)),"targetStaffId","2","reason","全退后不得改派")));
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+fullyReturned+"/ship",Map.of("deliveryStaffId",2)));
+        assertEquals(3L,jdbcLong("SELECT delivery_status FROM order_delivery WHERE order_id="+fullyReturned),"旧派单重放不新建交付或倒改全退状态");
         assertEquals(full,deliveryFacts());assertEquals(8L,jdbcLong("SELECT order_status FROM `order` WHERE id="+fullyReturned));
         assertEquals(initialPending,deliveryDashboard(manager,1).path("pendingDeliveryCount").asLong(),"全退停止配送并移出待派送统计");
         // 显式门店过滤必须使用真实关系，同时保留POS来源。
