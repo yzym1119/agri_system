@@ -1,18 +1,75 @@
 {
   "pages": [
-    { "path": "pages/login/index", "style": { "navigationBarTitleText": "员工登录" } },
-    { "path": "pages/workbench/index", "style": { "navigationBarTitleText": "门店工作台" } },
-    { "path": "pages/scan/index", "style": { "navigationBarTitleText": "扫码查货" } },
-    { "path": "pages/inventory/detail/index", "style": { "navigationBarTitleText": "库存详情" } },
-    { "path": "pages/receipt/list/index", "style": { "navigationBarTitleText": "待收采购单" } },
-    { "path": "pages/receipt/detail/index", "style": { "navigationBarTitleText": "登记本次到货" } },
-    { "path": "pages/delivery/list/index", "style": { "navigationBarTitleText": "我的配送任务" } },
-    { "path": "pages/delivery/detail/index", "style": { "navigationBarTitleText": "核对配送交付" } },
-    { "path": "pages/recovery/index", "style": { "navigationBarTitleText": "核对上次收银" } },
+    {
+      "path": "pages/login/index",
+      "style": {
+        "navigationBarTitleText": "员工登录"
+      }
+    },
+    {
+      "path": "pages/workbench/index",
+      "style": {
+        "navigationBarTitleText": "门店工作台"
+      }
+    },
+    {
+      "path": "pages/scan/index",
+      "style": {
+        "navigationBarTitleText": "扫码查货"
+      }
+    },
+    {
+      "path": "pages/inventory/detail/index",
+      "style": {
+        "navigationBarTitleText": "库存详情"
+      }
+    },
+    {
+      "path": "pages/receipt/list/index",
+      "style": {
+        "navigationBarTitleText": "待收采购单"
+      }
+    },
+    {
+      "path": "pages/receipt/detail/index",
+      "style": {
+        "navigationBarTitleText": "登记本次到货"
+      }
+    },
+    {
+      "path": "pages/delivery/list/index",
+      "style": {
+        "navigationBarTitleText": "我的配送任务"
+      }
+    },
+    {
+      "path": "pages/delivery/detail/index",
+      "style": {
+        "navigationBarTitleText": "核对配送交付"
+      }
+    },
+    {
+      "path": "pages/recovery/index",
+      "style": {
+        "navigationBarTitleText": "核对上次收银"
+      }
+    },
     {
       "path": "pages/device-check/index",
       "style": {
         "navigationBarTitleText": "员工端设备验证"
+      }
+    },
+    {
+      "path": "pages/pickup/list/index",
+      "style": {
+        "navigationBarTitleText": "库房提货"
+      }
+    },
+    {
+      "path": "pages/pickup/detail/index",
+      "style": {
+        "navigationBarTitleText": "核对库房提货"
       }
     }
   ],

@@ -41,9 +41,14 @@ class PickupRemainingEvidenceTest {
         jdbc.execute("CREATE TABLE after_sales(id BIGINT PRIMARY KEY,order_id BIGINT,status INT)");
         orders = mock(OrderRepository.class); requests = mock(OrderPickupRequestRepository.class);
         allocations = mock(OrderItemBatchAllocationRepository.class); afterSales = mock(AfterSalesRepository.class);
+        var staff=mock(com.agri_system.domain.store.repository.StaffRepository.class);var actor=new com.agri_system.domain.store.model.Staff();actor.setId(7L);actor.setStoreId(3L);actor.setStatus(1);
+        lenient().when(staff.findIdentityById(7L)).thenReturn(Optional.of(actor));
+        var colleague = new com.agri_system.domain.store.model.Staff();
+        colleague.setId(8L); colleague.setStoreId(3L); colleague.setStatus(1);
+        lenient().when(staff.findIdentityById(8L)).thenReturn(Optional.of(colleague));
         service = new PickupFulfillmentService(allocations, requests, mock(InventoryLocationRepository.class),
                 mock(InventoryReceiptBatchRepository.class), orders, mock(OrderItemRepository.class),
-                mock(ProductRepository.class), afterSales, jdbc);
+                mock(ProductRepository.class), afterSales, jdbc,staff);
         request = new OrderPickupRequest(); request.setId(60L);request.setOrderId(50L);request.setOrderItemId(90L);
         request.setStoreId(3L);request.setProductId(99L);request.setRequestedBaseQuantity(new BigDecimal("2"));request.setStatus("PENDING");
         order = new Order();order.setId(50L);order.setStoreId(3L);order.setOrderStatus(9);
@@ -71,7 +76,22 @@ class PickupRemainingEvidenceTest {
     private void returned(Long id, Long allocation, Long batch, Long store, String quantity) {
         jdbc.update("INSERT INTO inventory_movement VALUES(?,?,99,?,NULL,?,'RETURN','SALE_ALLOCATION',?)",id,store,batch,new BigDecimal(quantity),allocation);
     }
-    private PickupFulfillmentCommand confirm(Long... ids) {PickupFulfillmentCommand c=new PickupFulfillmentCommand();c.setAllocationIds(List.of(ids));return c;}
+    private PickupFulfillmentCommand confirm(Long... ids) {PickupFulfillmentCommand c=new PickupFulfillmentCommand();c.setAllocationIds(List.of(ids));c.setConfirmationKey(service.previewPickupRequest(60L,7L).getConfirmationKey());return c;}
+
+    @Test
+    void pendingHandoverMustRejectMissingQuantityPreviewBeforeMarkingAnyGoodsConfirmed() {
+        var command=new PickupFulfillmentCommand();command.setAllocationIds(List.of(1L,2L));
+        assertThatThrownBy(()->service.fulfill(60L,command,7L)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("核对");
+        assertThat(request.getStatus()).isEqualTo("PENDING");verify(allocations,never()).save(any());
+    }
+
+    @Test void sameAllocationIdsWithReducedQuantityRejectOldPreviewAndFreshPreviewCanComplete() {
+        var before=confirm(1L,2L);returned(2001L,1L,101L,3L,"0.5");
+        assertThatThrownBy(()->service.fulfill(60L,before,7L)).isInstanceOf(IllegalArgumentException.class).hasMessageContaining("数量");
+        assertThat(request.getStatus()).isEqualTo("PENDING");verify(allocations,never()).save(any());
+        var fresh=confirm(1L,2L);assertThat(fresh.getConfirmationKey()).isNotEqualTo(before.getConfirmationKey());
+        assertThat(service.fulfill(60L,fresh,7L)).containsExactly(early,late);assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM inventory_movement",Integer.class)).isEqualTo(3);
+    }
 
     @Test
     void returnsEarlyBatchAndHandsOverOnlyLateBatchWithoutRewritingOriginalQuantity() {

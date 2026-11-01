@@ -168,6 +168,8 @@ export interface OrderPageResponse {
  * 取货待办工作项VO（零售事实链 Task9：库房取货待办）
  */
 export interface PickupWorkItemVO {
+  confirmationKey?: string
+  fulfilledAt?: string
   baseUnitName?: string | null
   /** 取货请求ID */
   id: number
@@ -215,6 +217,7 @@ export interface PickupRequestCreateDTO {
  * 完成库房取货（扫描内部批次标签或显式确认批次与货位）
  */
 export interface PickupFulfillmentDTO {
+  confirmationKey: string
   allocationIds?: number[]
   scannedCode?: string | null
   batchId?: number | null

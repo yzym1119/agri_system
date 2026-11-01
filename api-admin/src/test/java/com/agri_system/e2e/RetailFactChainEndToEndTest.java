@@ -85,6 +85,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -373,6 +374,7 @@ class RetailFactChainEndToEndTest {
         // 取货仅核对已出库的批次，不再次移动或扣库存。
         long pickup = jdbcLong("SELECT id FROM order_pickup_request WHERE order_item_id=" + item);
         PickupFulfillmentCommand scan = new PickupFulfillmentCommand();
+        scan.setConfirmationKey(pickupFulfillmentService.previewPickupRequest(pickup,1L).getConfirmationKey());
         scan.setScannedCode(jdbcString("SELECT internal_receipt_batch_no FROM inventory_receipt_batch WHERE id=" + batch));
         pickupFulfillmentService.fulfill(pickup, scan, 1L);
         assertEquals("FULFILLED", jdbcString("SELECT status FROM order_pickup_request WHERE id=" + pickup));
@@ -1880,6 +1882,7 @@ class RetailFactChainEndToEndTest {
         assertEquals(2, ids.size());
         long movements = movementCount();
         var command = new PickupFulfillmentCommand(); command.setAllocationIds(ids);
+        command.setConfirmationKey(pickupFulfillmentService.previewPickupRequest(request,1L).getConfirmationKey());
         pickupFulfillmentService.fulfill(request, command, 1L);
         assertEquals("FULFILLED", jdbcString("SELECT status FROM order_pickup_request WHERE id=" + request));
         assertEquals(movements, movementCount());
@@ -1922,7 +1925,17 @@ class RetailFactChainEndToEndTest {
         assertTrue(pending.isCanFulfill());assertDecimal("本次只剩1公斤可交","1",pending.getRemainingBaseQuantity());
         assertDecimal("已退批次不要求再交","0",pending.getAllocations().stream().filter(a->a.getId().equals(first)).findFirst().orElseThrow().getRemainingBaseQuantity());
         DeliveryFacts returned=deliveryFacts();
-        var remaining=Map.of("allocationIds",List.of(last));
+        String mobilePickup="/api/admin/mobile/pickup/tasks/"+request;
+        JsonNode mobilePreview=getDeliveryJson(manager,mobilePickup,Map.of("storeId","2","staffId","999"));
+        assertEquals("1",mobilePreview.path("storeId").asText());
+        assertEquals(Long.toString(request),mobilePreview.path("requestId").asText());
+        assertTrue(mobilePreview.path("canConfirm").asBoolean());
+        assertEquals(1,mobilePreview.path("allocations").size());
+        assertEquals("1",mobilePreview.path("allocations").get(0).path("quantity").asText());
+        assertEquals("公斤",mobilePreview.path("allocations").get(0).path("unit").asText());
+        assertEquals(pending.getConfirmationKey(),mobilePreview.path("confirmationKey").asText());
+        assertEquals(returned,deliveryFacts(),"手机只读不能变更钱货");
+        var remaining=Map.of("allocationIds",List.of(last),"confirmationKey",pending.getConfirmationKey());
         requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/pickup/requests/"+request+"/fulfill",remaining));
         assertEquals("FULFILLED",jdbcString("SELECT status FROM order_pickup_request WHERE id="+request));
         assertEquals("FULFILLMENT_CONFIRMED",jdbcString("SELECT evidence_level FROM order_item_batch_allocation WHERE id="+last));
@@ -1930,6 +1943,11 @@ class RetailFactChainEndToEndTest {
         assertEquals(returned,deliveryFacts(),"提货不能再次扣库、收款或结算客户和提成");
         requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/pickup/requests/"+request+"/fulfill",remaining));
         assertEquals(returned,deliveryFacts(),"完成请求原样重放没有副作用");
+        JsonNode mobileDone=getDeliveryJson(manager,mobilePickup,Map.of());
+        assertEquals("FULFILLED",mobileDone.path("status").asText());
+        assertTrue(mobileDone.path("allocations").isEmpty());
+        assertTrue(mobileDone.path("confirmationKey").isNull());
+        assertTrue(!mobileDone.path("fulfilledAt").isNull());
         // 完成后的退货不能倒改过去交货事实，已完成查询不伪造历史交货量。
         pickupReturn(manager,order,pickupReturnPreview(manager,order,item,"1"));
         var fulfilled=pickupFulfillmentService.listPickupRequests(1L,"FULFILLED").stream().filter(r->r.getId().equals(request)).findFirst().orElseThrow();
@@ -1946,10 +1964,18 @@ class RetailFactChainEndToEndTest {
         Map<String,Object> returnBody=new LinkedHashMap<>(creditReturnBody(racing,pickupReturnPreview(manager,racing,racingItem,"0.5")));
         String batchCode=jdbcString("SELECT b.internal_receipt_batch_no FROM order_item_batch_allocation a JOIN inventory_receipt_batch b ON b.id=a.batch_id WHERE a.order_item_id="+racingItem+" LIMIT 1");
         long payments=jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+racing);
+        var racingConfirmation=Map.of("scannedCode",batchCode,"confirmationKey",pickupFulfillmentService.previewPickupRequest(racingRequest,1L).getConfirmationKey());
         List<JsonNode> responses=raceCreditHttp(index->index==0
                 ?postCreditJson(manager,"/api/admin/after-sales",returnBody)
-                :postCreditJson(manager,"/api/admin/orders/pickup/requests/"+racingRequest+"/fulfill",Map.of("scannedCode",batchCode)));
-        for(JsonNode response:responses) requireCreditSuccess(response);
+                :postCreditJson(manager,"/api/admin/orders/pickup/requests/"+racingRequest+"/fulfill",racingConfirmation));
+        requireCreditSuccess(responses.get(0));
+        if ("PENDING".equals(jdbcString("SELECT status FROM order_pickup_request WHERE id="+racingRequest))) {
+            assertCreditRejected(responses.get(1));
+            var refreshed=pickupFulfillmentService.previewPickupRequest(racingRequest,1L);
+            assertDecimal("退货先取得锁时，必须重新核对剩余半公斤","0.5",refreshed.getRemainingBaseQuantity());
+            assertNotEquals(racingConfirmation.get("confirmationKey"),refreshed.getConfirmationKey());
+            requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/pickup/requests/"+racingRequest+"/fulfill",Map.of("scannedCode",batchCode,"confirmationKey",refreshed.getConfirmationKey())));
+        } else requireCreditSuccess(responses.get(1));
         assertEquals("FULFILLED",jdbcString("SELECT status FROM order_pickup_request WHERE id="+racingRequest));
         assertEquals(9L,jdbcLong("SELECT order_status FROM `order` WHERE id="+racing));
         assertEquals(payments,jdbcLong("SELECT COUNT(*) FROM order_payment WHERE order_id="+racing));
@@ -1958,11 +1984,21 @@ class RetailFactChainEndToEndTest {
         long full=createPOSViaHttp(manager,posSale(140L,"1","公斤","10",true,null,"10"));
         long fullItem=jdbcLong("SELECT id FROM order_item WHERE order_id="+full);
         long fullRequest=jdbcLong("SELECT id FROM order_pickup_request WHERE order_item_id="+fullItem);
-        pickupReturn(manager,full,pickupReturnPreview(manager,full,fullItem,"1"));
+        var oldPreview=pickupFulfillmentService.previewPickupRequest(fullRequest,1L);
+        var staleConfirmation=Map.of("allocationIds",oldPreview.getAllocations().stream().map(a->a.getId()).toList(),"confirmationKey",oldPreview.getConfirmationKey());
+        pickupReturn(manager,full,pickupReturnPreview(manager,full,fullItem,"0.5"));
+        DeliveryFacts beforeStale=deliveryFacts();
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/pickup/requests/"+fullRequest+"/fulfill",staleConfirmation));
+        assertEquals("PENDING",jdbcString("SELECT status FROM order_pickup_request WHERE id="+fullRequest));
+        assertEquals(beforeStale,deliveryFacts(),"同一分配编号数量下降后，拒绝旧核对不能改动钱货事实");
+        var freshPreview=pickupFulfillmentService.previewPickupRequest(fullRequest,1L);
+        assertEquals(oldPreview.getAllocations().stream().map(a->a.getId()).toList(),freshPreview.getAllocations().stream().map(a->a.getId()).toList());
+        assertNotEquals(oldPreview.getConfirmationKey(),freshPreview.getConfirmationKey());
+        pickupReturn(manager,full,pickupReturnPreview(manager,full,fullItem,"0.5"));
         var blocked=pickupFulfillmentService.listPickupRequests(1L,"PENDING").stream().filter(r->r.getId().equals(fullRequest)).findFirst().orElseThrow();
         assertTrue(!blocked.isCanFulfill());assertDecimal("待交前全部退货剩余为0","0",blocked.getRemainingBaseQuantity());
         DeliveryFacts beforeRefusal=deliveryFacts();
-        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/pickup/requests/"+fullRequest+"/fulfill",Map.of("allocationIds",List.of())));
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/pickup/requests/"+fullRequest+"/fulfill",staleConfirmation));
         assertEquals(beforeRefusal,deliveryFacts());
         assertEquals("PENDING",jdbcString("SELECT status FROM order_pickup_request WHERE id="+fullRequest),"全退不能伪造已交货");
         log("[提货] 两次采购收货、先退一批再确认剩余批次及退货确认竞争均不重复钱货事实");
@@ -2372,6 +2408,7 @@ class RetailFactChainEndToEndTest {
     @Import({InventoryController.class, InventoryWarningController.class, ProductController.class, OrderAdminController.class,
             com.agri_system.api.admin.controller.MobileScanController.class,com.agri_system.api.admin.controller.PurchaseController.class,
             com.agri_system.api.admin.controller.MobileDeliveryController.class,
+            com.agri_system.api.admin.controller.MobilePickupController.class,
             ProductPackageController.class, AfterSalesAdminController.class, CreditAdminController.class, ReportDashboardController.class,
             RetailFactChainEndToEndTest.E2ELoginController.class, DomainServiceConfig.class})
     static class E2EConfig {

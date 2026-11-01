@@ -44,6 +44,7 @@ public class PickupFulfillmentService {
 
     private final com.agri_system.domain.after_sales.repository.AfterSalesRepository afterSalesRepository;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private final com.agri_system.domain.store.repository.StaffRepository staffRepository;
 
     /** 货架无货或选择库房取货时创建后仓拣货请求。 */
     @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
@@ -135,6 +136,7 @@ public class PickupFulfillmentService {
                                               Map<Long, Product> productsById,
                                               Map<Long, InventoryLocation> locationsById, Map<Long, InventoryReceiptBatch> batchesById, List<OrderItemBatchAllocation> allocations, RemainingEvidence evidence) {
         PickupWorkItemVO vo = new PickupWorkItemVO();
+        vo.setStoreId(request.getStoreId());
         vo.setId(request.getId());
         vo.setOrderId(request.getOrderId());
         Order order = request.getOrderId() == null ? null : ordersById.get(request.getOrderId());
@@ -151,6 +153,7 @@ public class PickupFulfillmentService {
         vo.setSourceLocationName(location == null ? null : location.getName());
         vo.setStatus(request.getStatus());
         vo.setCreatedAt(request.getCreatedAt());
+        vo.setFulfilledAt(request.getFulfilledAt());
         // 完成后的当前未退数量不是当时实际交货数量，历史页只保留原申请及确认事实。
         if (OrderPickupRequest.Status.PENDING.name().equals(request.getStatus())) {
             String blocked = handoverBlockReason(order);
@@ -163,6 +166,7 @@ public class PickupFulfillmentService {
             if (blocked == null && remaining.signum() <= 0) blocked = "原销售商品已全部回库，无剩余可交物料";
             vo.setCanFulfill(blocked == null);
             vo.setFulfillmentBlockReason(blocked);
+            if(blocked==null)vo.setConfirmationKey(confirmationKey(request,order,allocations,evidence));
         }
         vo.setAllocations(allocations.stream().map(allocation -> {
             PickupWorkItemVO.AllocationVO line = new PickupWorkItemVO.AllocationVO();
@@ -189,6 +193,42 @@ public class PickupFulfillmentService {
         return vo;
     }
 
+    /** 手机/单项刷新在原订单锁内取得当前请求及原余量；不按旧列表猜已交数量。 */
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public PickupWorkItemVO previewPickupRequest(Long requestId,Long operatorId) {
+        OrderPickupRequest locator=pickupRequestRepository.findById(requestId).orElseThrow(()->new IllegalArgumentException("库房取货请求不存在"));
+        Order order=orderRepository.findByIdForUpdate(locator.getOrderId()).orElseThrow(()->new IllegalStateException("订单不存在"));
+        OrderPickupRequest request=pickupRequestRepository.findByIdForUpdate(requestId).orElseThrow(()->new IllegalArgumentException("库房取货请求不存在"));
+        if(!order.getId().equals(request.getOrderId())||!order.getStoreId().equals(request.getStoreId()))throw new IllegalStateException("取货请求与订单归属不一致");
+        requireStoreEmployee(order.getStoreId(),operatorId);
+        List<OrderItemBatchAllocation> assigned=allocationRepository.findByOrderItemId(request.getOrderItemId());
+        var evidence=OrderPickupRequest.Status.PENDING.name().equals(request.getStatus())?remainingEvidence(assigned,Map.of(request.getOrderItemId(),order.getId())):new RemainingEvidence(Map.of(),Set.of());
+        var products=productRepository.findById(request.getProductId()).map(p->Map.of(p.getId(),p)).orElseGet(Map::of);
+        var locations=locationRepository.findByStoreId(order.getStoreId()).stream().collect(Collectors.toMap(InventoryLocation::getId,Function.identity()));
+        var batches=receiptBatchRepository.findByStore(order.getStoreId()).stream().collect(Collectors.toMap(InventoryReceiptBatch::getId,Function.identity()));
+        return toPickupWorkItem(request,Map.of(order.getId(),order),products,locations,batches,assigned,evidence);
+    }
+
+    private void requireStoreEmployee(Long storeId,Long operatorId) {
+        var actor=operatorId==null?null:staffRepository.findIdentityById(operatorId).orElse(null);
+        if(actor==null||!actor.isActive()||actor.hasBeenDeleted()||!java.util.Objects.equals(storeId,actor.getStoreId()))
+            throw new IllegalArgumentException("需要本店有效员工身份核对提货");
+    }
+
+    private String confirmationKey(OrderPickupRequest request,Order order,List<OrderItemBatchAllocation> assigned,RemainingEvidence evidence) {
+        var parts=new java.util.ArrayList<String>();
+        parts.add(String.valueOf(request.getId()));parts.add(String.valueOf(request.getStoreId()));parts.add(String.valueOf(request.getOrderId()));
+        parts.add(String.valueOf(request.getOrderItemId()));parts.add(String.valueOf(request.getProductId()));parts.add(String.valueOf(request.getSourceLocationId()));
+        parts.add(request.getStatus());parts.add(String.valueOf(order.getOrderStatus()));parts.add(request.getRequestedBaseQuantity().stripTrailingZeros().toPlainString());
+        assigned.stream().sorted(java.util.Comparator.comparing(OrderItemBatchAllocation::getId)).forEach(a->{
+            parts.add(String.valueOf(a.getId()));parts.add(String.valueOf(a.getBatchId()));parts.add(String.valueOf(a.getLocationId()));parts.add(String.valueOf(a.getSourceMovementId()));
+            parts.add(a.getAllocatedBaseQuantity().stripTrailingZeros().toPlainString());parts.add(evidence.remaining().get(a.getId()).stripTrailingZeros().toPlainString());
+        });
+        String raw=parts.stream().map(p->p.length()+":"+p).collect(Collectors.joining());
+        try{return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8)));}
+        catch(java.security.NoSuchAlgorithmException error){throw new IllegalStateException("提货核对摘要不可用",error);}
+    }
+
     /** 核对已出库分配并确认交货，永不再次扣库存。 */
     @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public List<OrderItemBatchAllocation> fulfill(Long pickupRequestId, PickupFulfillmentCommand command,
@@ -203,6 +243,7 @@ public class PickupFulfillmentService {
         if (!order.getId().equals(request.getOrderId()) || !order.getStoreId().equals(request.getStoreId())) {
             throw new IllegalStateException("取货请求与订单归属不一致");
         }
+        requireStoreEmployee(order.getStoreId(),operatorId);
         OrderItem item = itemRepository.findByIdForUpdate(request.getOrderItemId()).orElseThrow();
         if (!request.getOrderId().equals(item.getOrderId()) || !request.getProductId().equals(item.getProductId())) {
             throw new IllegalStateException("取货请求与订单明细不一致");
@@ -247,6 +288,8 @@ public class PickupFulfillmentService {
                 throw new IllegalArgumentException("取货批次与已出库记录不一致，请逐项完整核对所有出库分配");
             }
         }
+        if(command.getConfirmationKey()==null||!command.getConfirmationKey().equals(confirmationKey(request,order,assigned,evidence)))
+            throw new IllegalArgumentException("提货商品或数量已变化，请重新核对最新清单");
         for (OrderItemBatchAllocation allocation : remaining) {
             allocation.setEvidenceLevel(scanned ? "SCANNED" : "FULFILLMENT_CONFIRMED");
             allocationRepository.save(allocation);

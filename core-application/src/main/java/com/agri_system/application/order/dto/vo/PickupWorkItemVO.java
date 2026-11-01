@@ -15,6 +15,7 @@ import java.util.List;
 @Data
 @Schema(description = "取货待办工作项VO")
 public class PickupWorkItemVO {
+    private Long storeId;
 
     @Schema(description = "取货请求ID")
     private Long id;
@@ -49,6 +50,11 @@ public class PickupWorkItemVO {
     private boolean canFulfill;
 
     private String fulfillmentBlockReason;
+
+    @Schema(description = "待交数量与原分配核对摘要；暂停或完成时为空")
+    private String confirmationKey;
+
+    private LocalDateTime fulfilledAt;
 
     @Schema(description = "期望源货位ID")
     private Long sourceLocationId;

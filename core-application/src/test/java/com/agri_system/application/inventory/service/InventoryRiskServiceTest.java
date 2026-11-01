@@ -155,7 +155,7 @@ class InventoryRiskServiceTest {
                 afterSalesRepository, afterSalesItemRepository, eventPublisher, walletAuthCodeRepository,
                 new PickupFulfillmentService(allocationRepository, pickupRequestRepository, locationRepository, receiptBatchRepository,
                         orderRepository, itemRepository, productRepository, afterSalesRepository,
-                        org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class)),
+                        org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class),staffRepository),
                 manualPriceAuditService);
     }
 

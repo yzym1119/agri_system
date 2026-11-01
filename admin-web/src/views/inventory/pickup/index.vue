@@ -226,6 +226,7 @@ const remainingAllocations = computed(() => (currentItem.value?.allocations || [
 const canSubmit = computed(() => {
   if (!fulfillVisible.value || !fulfillmentContext || !contextMatches(fulfillmentContext)) return false
   if (currentItem.value?.canFulfill !== true || currentItem.value.status !== 'PENDING') return false
+  if (!/^[a-f0-9]{64}$/.test(currentItem.value.confirmationKey || '')) return false
   const allocations = remainingAllocations.value
   const expectedIds = new Set(allocations.map(allocation => allocation.id))
   const confirmedIds = new Set(confirmedAllocationIds.value)
@@ -325,7 +326,7 @@ function openFulfillDialog(row: PickupWorkItemVO) {
   const context = currentContext()
   // 只能打开当前查询中的工作项；切店后留存的旧行引用不可重新发起交货。
   const target = workItems.value.find(item => item.id === row.id)
-  if (!context || context.status !== 'PENDING' || !target || target.status !== 'PENDING' || target.canFulfill !== true) {
+  if (!context || context.status !== 'PENDING' || !target || target.status !== 'PENDING' || target.canFulfill !== true || !/^[a-f0-9]{64}$/.test(target.confirmationKey || '')) {
     invalidateFulfillment()
     return
   }
@@ -346,7 +347,7 @@ async function submitFulfill() {
   const context = fulfillmentContext!
   const session = fulfillmentSession
   const active = () => session === fulfillmentSession && contextMatches(context) && currentItem.value === target
-  const payload: PickupFulfillmentDTO = {}
+  const payload: PickupFulfillmentDTO = { confirmationKey: target.confirmationKey! }
   const allocations = remainingAllocations.value
   if (confirmedAllocationIds.value.length === allocations.length && allocations.length > 0) {
     payload.allocationIds = [...confirmedAllocationIds.value]

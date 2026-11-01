@@ -10,10 +10,13 @@ const openRecovery = () => uni.navigateTo({ url:'/pages/recovery/index' });
 const openInventory = () => uni.navigateTo({ url:'/pages/scan/index' });
 const openReceiving = () => uni.navigateTo({url:'/pages/receipt/list/index'});
 const openDelivery = () => uni.navigateTo({url:'/pages/delivery/list/index'});
+const canPickup=ref(false);
+const openPickup=()=>uni.navigateTo({url:'/pages/pickup/list/index'});
 onShow(async () => {
   const current = ++epoch;
   checking.value = true; error.value = ''; name.value = ''; store.value = '';
   canRecover.value = false;canQueryInventory.value=false;canReceive.value=false;canDeliver.value=false;
+  canPickup.value=false;
   try {
     await staffAuth.refresh();
     if (epoch !== current) return;
@@ -24,6 +27,7 @@ onShow(async () => {
     canQueryInventory.value=actor.permissions.includes('*')||actor.permissions.includes('inventory:view');
     canReceive.value=actor.permissions.includes('*')||actor.permissions.includes('purchase:inbound');
     canDeliver.value=actor.permissions.includes('*')||actor.permissions.includes('order:delivery:assigned');
+    canPickup.value=actor.permissions.includes('*')||actor.permissions.includes('order:pickup:verify');
   } catch {
     if (epoch === current) {
       error.value = '当前身份未能确认，请重新登录。';
@@ -47,6 +51,7 @@ async function logout() {
       <view class="notice"><text>按实际到货登记收货，可随时查询本店最新批次与货位。</text></view>
       <button v-if="canReceive" class="primary" @click="openReceiving">采购收货 / 原收货核对</button>
       <button v-if="canDeliver" class="primary" @click="openDelivery">我的配送任务</button>
+      <button v-if="canPickup" class="primary" @click="openPickup">库房提货任务</button>
       <button v-if="canQueryInventory" class="primary" @click="openInventory">扫码 / 搜索查货</button>
       <button class="primary" @click="openDeviceCheck">检查手机设备</button>
       <button v-if="canRecover" @click="openRecovery">核对上次收银</button>

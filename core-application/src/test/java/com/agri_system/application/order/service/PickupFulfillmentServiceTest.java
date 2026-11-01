@@ -159,7 +159,9 @@ class PickupFulfillmentServiceTest {
         pickupRequestRepository = new InMemoryPickupRequestRepository();
         fulfillmentService = new PickupFulfillmentService(
                 allocationRepository, pickupRequestRepository, locationRepository, receiptBatchRepository,
-                orderRepository, itemRepository, productRepository, afterSalesRepository, jdbc);
+                orderRepository, itemRepository, productRepository, afterSalesRepository, jdbc,staffRepository);
+        var actor=new Staff();actor.setId(STAFF_ID);actor.setStoreId(STORE_ID);actor.setStatus(1);
+        org.mockito.Mockito.lenient().when(staffRepository.findIdentityById(STAFF_ID)).thenReturn(Optional.of(actor));
         org.mockito.Mockito.lenient().when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
         org.mockito.Mockito.lenient().when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.any(Object[].class))).thenAnswer(invocation -> saleMovementRows());
@@ -501,7 +503,7 @@ class PickupFulfillmentServiceTest {
     private PickupFulfillmentCommand confirmedAllocations(List<Long> ids) {
         PickupFulfillmentCommand command = new PickupFulfillmentCommand();
         command.setAllocationIds(ids);
-        return command;
+        return withKey(command);
     }
 
     private Long prepareMultiBatchRequest() {
@@ -625,13 +627,19 @@ class PickupFulfillmentServiceTest {
     private PickupFulfillmentCommand scannedBatch(String barcode) {
         PickupFulfillmentCommand command = new PickupFulfillmentCommand();
         command.setScannedCode(barcode);
-        return command;
+        return withKey(command);
     }
 
     private PickupFulfillmentCommand confirmedBatch(Long batchId, Long locationId) {
         PickupFulfillmentCommand command = new PickupFulfillmentCommand();
         command.setBatchId(batchId);
         command.setLocationId(locationId);
+        return withKey(command);
+    }
+
+    private PickupFulfillmentCommand withKey(PickupFulfillmentCommand command) {
+        var pending=pickupRequestRepository.findByStoreIdAndStatus(STORE_ID,"PENDING");
+        if(!pending.isEmpty())command.setConfirmationKey(fulfillmentService.previewPickupRequest(pending.get(0).getId(),STAFF_ID).getConfirmationKey());
         return command;
     }
 

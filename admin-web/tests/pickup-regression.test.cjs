@@ -42,6 +42,7 @@ function openPickup(page,row) {
   page.openFulfillDialog(page.workItems.value[0])
 }
 const partiallyReturned = () => ({ id: 601, status: 'PENDING', canFulfill: true,
+  confirmationKey: 'a'.repeat(64),
   requestedBaseQuantity: 2, remainingBaseQuantity: 1, allocations: [
     {id: 1, batchId: 10, allocatedBaseQuantity: 1, remainingBaseQuantity: 0},
     {id: 2, batchId: 11, allocatedBaseQuantity: 1, remainingBaseQuantity: 1}
@@ -55,6 +56,16 @@ test('部分退货后只核对尚未退回的批次并提交该分配', async ()
   await page.submitFulfill()
   assert.equal(calls.length,1);assert.equal(calls[0].id,601)
   assert.deepEqual(Array.from(calls[0].body.allocationIds),[2])
+  assert.equal(calls[0].body.confirmationKey, 'a'.repeat(64))
+})
+
+test('缺失或损坏的数量核对摘要不能打开确认或提交',async()=>{
+  for(const confirmationKey of [undefined,'','a'.repeat(63),'A'.repeat(64)]) {
+    const calls=[],page=pickup({fulfillPickupRequest:async (...args)=>calls.push(args)})
+    openPickup(page,{...partiallyReturned(),confirmationKey});page.confirmedAllocationIds.value=[2]
+    assert.equal(page.fulfillVisible.value,false)
+    assert.equal(page.canSubmit.value,false);await page.submitFulfill();assert.equal(calls.length,0)
+  }
 })
 
 test('后端缺失或拒绝提货能力时不能打开确认或提交',async()=>{

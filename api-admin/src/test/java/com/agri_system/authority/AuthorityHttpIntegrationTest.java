@@ -99,6 +99,7 @@ class AuthorityHttpIntegrationTest {
     @MockBean com.agri_system.application.product.service.ProductApplicationService productCatalogAdmin;
     @MockBean com.agri_system.application.inventory.service.MobileScanQueryService mobileInventory;
     @MockBean com.agri_system.application.order.service.DeliveryTaskService assignedTasks;
+    @MockBean com.agri_system.application.order.service.MobilePickupTaskService mobilePickup;
     @MockBean com.agri_system.application.order.service.OrderApplicationService assignedOrders;
     @MockBean com.agri_system.application.order.service.PickupFulfillmentService pickupFulfillment;
     @MockBean com.agri_system.application.order.service.PosSaleSubmissionService posSubmissions;
@@ -137,6 +138,7 @@ class AuthorityHttpIntegrationTest {
             com.agri_system.api.admin.controller.PurchaseController.class,
             com.agri_system.api.admin.controller.MobileScanController.class,
             com.agri_system.api.admin.controller.MobileDeliveryController.class,
+            com.agri_system.api.admin.controller.MobilePickupController.class,
             com.agri_system.api.admin.controller.OrderAdminController.class,
             com.agri_system.api.admin.controller.ProductController.class})
     static class Config {
@@ -327,6 +329,19 @@ class AuthorityHttpIntegrationTest {
     @Test void 没有收银权限不能访问目录() throws Exception {
         reject(call(login(4),"GET","/api/admin/pos/catalog/products",null));
         reject(call(null,"GET","/api/admin/pos/catalog/categories",null));
+    }
+
+    @Test void 手机提货沿用原权限且撤销立即生效() throws Exception {
+        String token=login(4),base="/api/admin/mobile/pickup/tasks";
+        reject(call(null,"GET",base,null));reject(call(loginId("CUST_1"),"GET",base,null));reject(call(token,"GET",base,null));
+        businessPermission(102,"order:pickup:verify");
+        when(mobilePickup.listTasks(4L,"PENDING",null)).thenReturn(new com.agri_system.application.order.service.MobilePickupTaskService.Tasks("1","PENDING",List.of(),null));
+        assertEquals("1",call(token,"GET",base+"?storeId=2&staffId=99",null).path("storeId").asText());
+        org.mockito.Mockito.verify(mobilePickup).listTasks(4L,"PENDING",null);
+        reject(call(token,"GET","/api/admin/orders/42",null));reject(call(token,"GET","/api/admin/staff",null));
+        jdbc.update("DELETE FROM sys_role_menu WHERE role_id=4 AND menu_id=102");
+        reject(call(token,"GET",base,null));reject(call(token,"GET",base+"/42",null));
+        reject(call(token,"POST","/api/admin/orders/pickup/requests/42/fulfill","{\"confirmationKey\":\""+"a".repeat(64)+"\",\"allocationIds\":[1]}"));
     }
 
     @Test void 库管仅提货权限可读门店选项而非管理档案() throws Exception {

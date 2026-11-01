@@ -14,6 +14,10 @@ import java.util.List;
 @Schema(description = "库房取货履约命令")
 public class PickupFulfillmentCommand {
 
+    @jakarta.validation.constraints.NotBlank(message = "请先核对本次提货数量")
+    @jakarta.validation.constraints.Pattern(regexp = "[a-f0-9]{64}", message = "提货核对摘要无效")
+    private String confirmationKey;
+
     @Schema(description = "扫描到的内部批次标签（与批次+货位二选一）", example = "INTERNAL-BATCH-20260701-1")
     private String scannedCode;
 

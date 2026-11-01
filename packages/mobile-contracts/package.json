@@ -3,10 +3,23 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/platform.ts", "./recorder": "./src/recorder.ts", "./session": "./src/session.ts", "./staff-auth": "./src/staff-auth.ts", "./submission": "./src/submission.ts", "./inventory": "./src/inventory.ts", "./receipt": "./src/receipt.ts", "./ids": "./src/ids.ts", "./fulfillment": "./src/fulfillment.ts" },
+  "exports": {
+    ".": "./src/platform.ts",
+    "./recorder": "./src/recorder.ts",
+    "./session": "./src/session.ts",
+    "./staff-auth": "./src/staff-auth.ts",
+    "./submission": "./src/submission.ts",
+    "./inventory": "./src/inventory.ts",
+    "./receipt": "./src/receipt.ts",
+    "./ids": "./src/ids.ts",
+    "./fulfillment": "./src/fulfillment.ts",
+    "./pickup": "./src/pickup.ts"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test tests/*.test.cjs"
   },
-  "devDependencies": { "typescript": "5.9.3" }
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
 }
