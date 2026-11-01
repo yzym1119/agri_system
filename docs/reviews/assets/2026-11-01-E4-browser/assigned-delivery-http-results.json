@@ -1,0 +1,59 @@
+{
+  "scope": "真实接口签收后只读复核，非微信真机；首次与重放时间差异另列未忽略",
+  "checks": [
+    {
+      "name": "甲仅本人配送权限",
+      "passed": true
+    },
+    {
+      "name": "甲无后台全店订单权限",
+      "passed": true
+    },
+    {
+      "name": "甲待交列表为空",
+      "passed": true
+    },
+    {
+      "name": "甲任务列表禁止缓存",
+      "passed": true
+    },
+    {
+      "name": "甲不泄露乙任务或收货资料",
+      "passed": true
+    },
+    {
+      "name": "乙仅本人配送权限",
+      "passed": true
+    },
+    {
+      "name": "乙无后台全店订单权限",
+      "passed": true
+    },
+    {
+      "name": "乙待交列表为空",
+      "passed": true
+    },
+    {
+      "name": "乙任务列表禁止缓存",
+      "passed": true
+    },
+    {
+      "name": "乙已完成详情不可再次交货",
+      "passed": true
+    },
+    {
+      "name": "乙已完成详情不反推或泄露收货资料",
+      "passed": true
+    },
+    {
+      "name": "乙完成列表包含原单",
+      "passed": true
+    },
+    {
+      "name": "签收后唯一钱货及原配送版本时间不变",
+      "passed": true
+    }
+  ],
+  "passed": 13,
+  "total": 13
+}

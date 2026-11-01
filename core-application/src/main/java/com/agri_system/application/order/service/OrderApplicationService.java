@@ -1696,7 +1696,8 @@ public class OrderApplicationService {
             orderRepository.save(order);
         }
         delivery.setDeliveryStatus(4);
-        delivery.setReceivedAt(LocalDateTime.now());
+        // received_at 为 DATETIME(0)，首次响应与数据库重读须使用同一秒精度。
+        delivery.setReceivedAt(LocalDateTime.now().withNano(0));
         deliveryRepository.save(delivery);
         // POS 在开单时已经结算。线上订单仅在首次签收时结算。
         if (!java.util.Objects.equals(order.getOrderType(), 1)) {

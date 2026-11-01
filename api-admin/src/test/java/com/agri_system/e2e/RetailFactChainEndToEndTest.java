@@ -656,7 +656,11 @@ class RetailFactChainEndToEndTest {
         assertOrderReturned(beforeShip,"3");
         JsonNode remainingTask=getDeliveryJson(manager,"/api/admin/mobile/delivery/tasks/"+beforeShip,Map.of());
         assertEquals("2",remainingTask.path("items").get(0).path("quantity").asText());
-        assertEquals("COMPLETED",postCreditJson(manager,"/api/admin/mobile/delivery/tasks/"+beforeShip+"/confirm",Map.of("confirmationKey",remainingTask.path("confirmationKey").asText())).path("status").asText());
+        var signed=postCreditJson(manager,"/api/admin/mobile/delivery/tasks/"+beforeShip+"/confirm",Map.of("confirmationKey",remainingTask.path("confirmationKey").asText()));
+        assertEquals("COMPLETED",signed.path("status").asText());
+        assertEquals(jdbcTimestamp("SELECT received_at FROM order_delivery WHERE order_id="+beforeShip).toLocalDateTime().toString(),signed.path("receivedAt").asText(),"首次响应必须等于真实持久化签收时间");
+        var signedReplay=postCreditJson(manager,"/api/admin/mobile/delivery/tasks/"+beforeShip+"/confirm",Map.of("confirmationKey",remainingTask.path("confirmationKey").asText()));
+        assertEquals(signed,signedReplay,"原确认重放应返回完全相同的完成结果");
 
         long neverShipped=createPOSViaHttp(manager,deliverySale(632,"1"));
         directDeliveryReturn(manager,neverShipped,creditPreview(manager,neverShipped,"1"));

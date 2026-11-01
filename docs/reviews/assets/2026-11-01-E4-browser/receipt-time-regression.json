@@ -1,0 +1,18 @@
+{
+  "scope": "本轮全后端verify含真实MySQL与权限HTTP",
+  "counts": {
+    "tests": 868,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "targeted": {
+    "assignedDelivery": 12,
+    "retailFactChain": 2
+  },
+  "redEvidence": {
+    "firstResponse": "2026-11-01T19:28:57.530928",
+    "database": "2026-11-01T19:28:58"
+  },
+  "fix": "原签收时间使用DATETIME(0)秒精度，首次与重放结果相等"
+}
