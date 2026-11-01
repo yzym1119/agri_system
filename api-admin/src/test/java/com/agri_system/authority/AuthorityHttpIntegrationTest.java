@@ -138,6 +138,7 @@ class AuthorityHttpIntegrationTest {
             com.agri_system.api.admin.controller.PurchaseController.class,
             com.agri_system.api.admin.controller.MobileScanController.class,
             com.agri_system.api.admin.controller.MobileDeliveryController.class,
+            com.agri_system.api.admin.controller.DeliveryReassignmentController.class,
             com.agri_system.api.admin.controller.MobilePickupController.class,
             com.agri_system.api.admin.controller.OrderAdminController.class,
             com.agri_system.api.admin.controller.ProductController.class})
@@ -329,6 +330,16 @@ class AuthorityHttpIntegrationTest {
     @Test void 没有收银权限不能访问目录() throws Exception {
         reject(call(login(4),"GET","/api/admin/pos/catalog/products",null));
         reject(call(null,"GET","/api/admin/pos/catalog/categories",null));
+    }
+
+    @Test void 配送改派沿用整店发货权限且不授权普通配送员() throws Exception {
+        String token=login(4),path="/api/admin/orders/42/reassignment";
+        reject(call(token,"GET",path,null));reject(call(null,"GET",path,null));reject(call(loginId("CUST_1"),"GET",path,null));
+        businessPermission(115,"order:ship");
+        when(assignedOrders.previewDeliveryReassignment(42L,4L)).thenReturn(new com.agri_system.application.order.service.OrderApplicationService.ReassignmentPreview("1","42","8","0",true,null));
+        assertEquals("0",call(token,"GET",path,null).path("version").asText());
+        jdbc.update("DELETE FROM sys_role_menu WHERE role_id=4 AND menu_id=115");reject(call(token,"GET",path,null));
+        reject(call(token,"POST","/api/admin/orders/42/reassign","{\"expectedVersion\":\"0\",\"targetStaffId\":\"8\",\"reason\":\"临时换人\"}"));
     }
 
     @Test void 手机提货沿用原权限且撤销立即生效() throws Exception {

@@ -93,6 +93,7 @@ public class OrderApplicationService {
     private final WalletAuthCodeRepository walletAuthCodeRepository;
     private final PickupFulfillmentService pickupFulfillmentService;
     private final ManualPriceAuditService manualPriceAuditService;
+    private final com.agri_system.domain.system.log.repository.SysOperationLogRepository operationLogRepository;
 
     @Value("${payment.client-confirm.enabled:false}")
     private boolean clientPaymentConfirmEnabled;
@@ -1786,6 +1787,48 @@ public class OrderApplicationService {
         deliveryRepository.save(delivery);
     }
 
+    public record ReassignmentPreview(String storeId,String orderId,String currentStaffId,String version,boolean canReassign,String blockReason) {}
+
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public ReassignmentPreview previewDeliveryReassignment(Long orderId,Long operatorId) {
+        Order order=orderRepository.findByIdForUpdate(orderId).orElseThrow(()->new IllegalArgumentException("配送订单不存在"));
+        OrderDelivery delivery=deliveryRepository.findByOrderId(orderId).orElseThrow(()->new IllegalArgumentException("订单没有配送记录"));
+        requireDeliveryManager(order,operatorId);
+        boolean available=resolveDeliveryType(delivery)==2 && canDeliver(order,delivery,false)
+                && delivery.getAssignmentVersion()!=null && delivery.getAssignmentVersion()>=0 && delivery.getAssignmentVersion()<Long.MAX_VALUE;
+        return new ReassignmentPreview(order.getStoreId().toString(),order.getId().toString(),delivery.getDeliveryStaffId()==null?null:delivery.getDeliveryStaffId().toString(),
+                delivery.getAssignmentVersion()==null?null:delivery.getAssignmentVersion().toString(),available,available?null:"当前配送不能改派，请核对状态、售后和剩余物料");
+    }
+
+    private void requireDeliveryManager(Order order,Long operatorId) {
+        Staff operator=operatorId==null?null:staffRepository.findIdentityById(operatorId).orElse(null);
+        if(operator==null||!operator.isActive()||operator.hasBeenDeleted()||!java.util.Objects.equals(operator.getStoreId(),order.getStoreId()))throw new IllegalArgumentException("需要本店有效员工身份改派");
+    }
+
+    /** 明确改派与原签收争用同一父订单；不改变原发货重放语义。 */
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public void reassignDelivery(Long orderId,Long expectedVersion,Long targetStaffId,String reason,Long operatorId) {
+        if(orderId==null||expectedVersion==null||expectedVersion<0||targetStaffId==null||!StringUtils.hasText(reason)||reason.trim().length()>200)
+            throw new IllegalArgumentException("请提供订单、原指派版本、配送员及200字以内改派原因");
+        Order order=orderRepository.findByIdForUpdate(orderId).orElseThrow(()->new IllegalArgumentException("配送订单不存在"));
+        OrderDelivery delivery=deliveryRepository.findByOrderId(orderId).orElseThrow(()->new IllegalArgumentException("订单没有配送记录"));
+        requireDeliveryManager(order,operatorId);
+        if(resolveDeliveryType(delivery)!=2)throw new IllegalArgumentException("只有门店人工配送支持改派");
+        validateDeliveryAction(order,delivery,false);
+        if(!expectedVersion.equals(delivery.getAssignmentVersion())||expectedVersion==Long.MAX_VALUE)throw new IllegalArgumentException("指派已变化，请重新读取当前配送信息");
+        Staff target=staffRepository.findIdentityById(targetStaffId).orElseThrow(()->new IllegalArgumentException("配送员不存在"));
+        if(!target.isActive()||target.hasBeenDeleted()||!java.util.Objects.equals(target.getStoreId(),order.getStoreId()))throw new IllegalArgumentException("配送员必须是本店在职员工");
+        if(targetStaffId.equals(delivery.getDeliveryStaffId()))throw new IllegalArgumentException("请选择不同的配送员");
+        Long previous=delivery.getDeliveryStaffId();
+        delivery.setDeliveryStaffId(targetStaffId);delivery.setAssignmentVersion(expectedVersion+1);
+        deliveryRepository.save(delivery);
+        var log=new com.agri_system.domain.system.log.model.SysOperationLog();
+        log.setStaffId(operatorId);log.setModule("订单配送");log.setAction("配送改派");log.setStatus(1);log.setCreatedAt(LocalDateTime.now());
+        log.setRequestUri("/api/admin/orders/"+orderId+"/reassign");log.setMethod("POST");
+        log.setRequestParams("订单="+orderId+"; 原配送员="+previous+"; 新配送员="+targetStaffId+"; 原版本="+expectedVersion+"; 原因="+reason.trim());
+        operationLogRepository.save(log);
+    }
+
     private boolean hasProcessingDeliveryAfterSales(Long orderId) {
         return afterSalesRepository.findByOrderId(orderId).stream()
                 .anyMatch(fact -> java.util.Objects.equals(fact.getStatus(), 10) || java.util.Objects.equals(fact.getStatus(), 40));
@@ -1800,6 +1843,7 @@ public class OrderApplicationService {
         parts.add(String.valueOf(order.getId())); parts.add(String.valueOf(order.getOrderStatus()));
         parts.add(String.valueOf(delivery.getDeliveryType())); parts.add(String.valueOf(delivery.getDeliveryStatus()));
         parts.add(String.valueOf(delivery.getDeliveryStaffId()));
+        parts.add(String.valueOf(delivery.getAssignmentVersion()));
         parts.add(String.valueOf(order.getReceiverName())); parts.add(String.valueOf(order.getReceiverPhone()));
         parts.add(String.valueOf(order.getReceiverAddress()));
         items.stream().sorted(java.util.Comparator.comparing(com.agri_system.domain.order.model.DeliveryItemQuantity::getOrderItemId)

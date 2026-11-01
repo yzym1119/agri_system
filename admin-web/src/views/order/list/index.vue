@@ -186,6 +186,7 @@
     <!-- 订单详情抽屉 -->
     <OrderDetail v-model="detailVisible" :order-id="currentOrderId" />
     <ReceiptConfirmDialog v-model="receiptVisible" :order-id="receiptOrderId" @success="loadData" />
+    <ReassignDialog v-model="reassignVisible" :order-id="reassignOrderId" @success="loadData" />
   </div>
 </template>
 
@@ -204,6 +205,7 @@ import VerifyDialog from '../components/VerifyDialog.vue'
 import RefundDialog from '../components/RefundDialog.vue'
 import OrderDetail from '../components/OrderDetail.vue'
 import ReceiptConfirmDialog from '../components/ReceiptConfirmDialog.vue'
+import ReassignDialog from '../components/ReassignDialog.vue'
 import type {OrderListQuery, OrderPageItem, OrderPageResponse} from '@/types/order'
 import type {StoreDetailVO} from '@/types/store'
 
@@ -228,6 +230,8 @@ const refundVisible = ref(false)
 const detailVisible = ref(false)
 const receiptVisible = ref(false)
 const receiptOrderId = ref<number | null>(null)
+const reassignVisible=ref(false)
+const reassignOrderId=ref<number|null>(null)
 const currentOrder = ref<OrderPageItem | null>(null)
 const currentOrderId = ref<number | null>(null)
 const shipMode = ref<'express' | 'local'>('express')
@@ -296,6 +300,7 @@ const getRowActions = (row: OrderPageItem): RowAction[] => {
   if (canShipByExpress(row)) actions.push({key: 'express', label: '快递发货', permission: 'order:ship'})
   if (canShipByLocal(row)) actions.push({key: 'local', label: '同城派单', permission: 'order:ship'})
   if (canConfirmDelivery(row)) actions.push({key: 'receipt', label: '确认签收', permission: 'order:ship'})
+  if (row.deliveryType===2 && row.deliveryStatus===3 && row.canConfirmReceipt===true) actions.push({key:'reassign',label:'更换配送员',permission:'order:ship'})
   if (canRefund(row)) actions.push({key: 'refund', label: getRefundActionText(row), permission: 'order:refund'})
   return actions.filter(action => hasPermission(action.permission, permissionStore.permissions))
 }
@@ -304,6 +309,7 @@ const handleRowAction = (command: string, row: OrderPageItem) => {
   if (command === 'verify') handleVerify(row)
   else if (command === 'express' || command === 'local') handleShip(row, command)
   else if (command === 'receipt') handleConfirmReceipt(row)
+  else if (command === 'reassign') {reassignOrderId.value=row.id;reassignVisible.value=true}
   else if (command === 'refund') handleRefund(row)
 }
 

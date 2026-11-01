@@ -1,4 +1,14 @@
 import request from '@/utils/request'
+export interface ReassignmentPreview {
+  storeId: string
+  orderId: string
+  currentStaffId: string | null
+  version: string | null
+  canReassign: boolean
+  blockReason: string | null
+}
+export const getReassignment=(orderId:number):Promise<ReassignmentPreview>=>request({url:`/api/admin/orders/${orderId}/reassignment`,method:'get'})
+export const reassignDelivery=(orderId:number,data:{expectedVersion:string;targetStaffId:string;reason:string}):Promise<void>=>request({url:`/api/admin/orders/${orderId}/reassign`,method:'post',data})
 import type {POSOrderCreateRequest} from '@/types/pos'
 import type {
   OrderDetail,

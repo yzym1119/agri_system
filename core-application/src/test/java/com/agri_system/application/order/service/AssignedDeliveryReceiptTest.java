@@ -49,6 +49,39 @@ class AssignedDeliveryReceiptTest {
         assertThrows(IllegalArgumentException.class,()->service.confirmAssignedReceipt(42L,old.confirmationKey(),8L));
         verify(deliveries,never()).save(any());verify(orders,never()).save(any());verifyNoInteractions(events);
     }
+    @Test void explicitReassignmentUsesRevisionAndOldDriverImmediatelyLosesTask() {
+        var next=new Staff();next.setId(9L);next.setStoreId(3L);next.setStatus(1);
+        when(staff.findIdentityById(9L)).thenReturn(Optional.of(next));
+        var logs=mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class);
+        ReflectionTestUtils.setField(service,"operationLogRepository",logs);
+        var old=service.previewAssignedReceipt(42L,8L);
+        service.reassignDelivery(42L,0L,9L,"原配送员临时请假",8L);
+        assertEquals(9L,delivery.getDeliveryStaffId());assertEquals(1L,delivery.getAssignmentVersion());
+        assertThrows(IllegalArgumentException.class,()->service.confirmAssignedReceipt(42L,old.confirmationKey(),8L));
+        service.reassignDelivery(42L,1L,8L,"恢复原配送员负责",8L);
+        assertEquals(2L,delivery.getAssignmentVersion());
+        assertThrows(IllegalArgumentException.class,()->service.reassignDelivery(42L,0L,9L,"迟到旧请求",8L));
+        assertThrows(IllegalArgumentException.class,()->service.confirmAssignedReceipt(42L,old.confirmationKey(),8L));
+        verify(orders,never()).save(any());verifyNoInteractions(events);verify(logs,times(2)).save(any());
+    }
+    @Test void managementPreviewUsesCurrentOrderLockAndExactVersionWithoutWriting() {
+        var p=service.previewDeliveryReassignment(42L,8L);
+        assertEquals("42",p.orderId());assertEquals("8",p.currentStaffId());assertEquals("0",p.version());assertTrue(p.canReassign());
+        verify(deliveries,never()).save(any());
+        delivery.setDeliveryStatus(4);var done=service.previewDeliveryReassignment(42L,8L);assertFalse(done.canReassign());assertNotNull(done.blockReason());
+        actor.setStoreId(4L);assertThrows(IllegalArgumentException.class,()->service.previewDeliveryReassignment(42L,8L));
+    }
+    @Test void reassignmentRejectsCompletedExpressAfterSalesForeignStaffAndMissingReason() {
+        var target=new Staff();target.setId(9L);target.setStoreId(4L);target.setStatus(1);
+        lenient().when(staff.findIdentityById(9L)).thenReturn(Optional.of(target));
+        assertThrows(IllegalArgumentException.class,()->service.reassignDelivery(42L,0L,9L,"",8L));
+        delivery.setDeliveryStatus(4);assertThrows(IllegalArgumentException.class,()->service.reassignDelivery(42L,0L,9L,"改派",8L));
+        delivery.setDeliveryStatus(3);delivery.setDeliveryType(3);assertThrows(IllegalArgumentException.class,()->service.reassignDelivery(42L,0L,9L,"改派",8L));
+        delivery.setDeliveryType(2);assertThrows(IllegalArgumentException.class,()->service.reassignDelivery(42L,0L,9L,"改派",8L));
+        target.setStoreId(3L);var fact=new com.agri_system.domain.after_sales.model.AfterSales();fact.setStatus(10);when(afterSales.findByOrderId(42L)).thenReturn(List.of(fact));
+        assertThrows(IllegalArgumentException.class,()->service.reassignDelivery(42L,0L,9L,"改派",8L));
+        verify(deliveries,never()).save(any());verify(orders,never()).save(any());verifyNoInteractions(events);
+    }
     @Test void laterReturnInvalidatesOldKeyAndFreshPreviewCanConfirmRemainingPartialOrder(){
         var old=service.previewAssignedReceipt(42L,8L);order.setOrderStatus(9);item.setQuantity(BigDecimal.ONE);
         assertThrows(IllegalArgumentException.class,()->service.confirmAssignedReceipt(42L,old.confirmationKey(),8L));

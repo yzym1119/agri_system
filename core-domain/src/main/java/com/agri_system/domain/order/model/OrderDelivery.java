@@ -47,6 +47,8 @@ public class OrderDelivery {
     
     /** 配送员工ID */
     private Long deliveryStaffId;
+    /** 当前指派版本；改派递增，不能用员工相同推断仍是原次指派。 */
+    private Long assignmentVersion = 0L;
     
     /** 审核状态：1-待审核, 2-已通过, 3-已拒绝 */
     private Integer auditStatus;

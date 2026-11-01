@@ -578,11 +578,50 @@ class RetailFactChainEndToEndTest {
         DeliveryFacts returned=deliveryFacts();
         assertCreditRejected(postCreditJson(driver,mobileTask+"/confirm",Map.of("confirmationKey",originalTask.path("confirmationKey").asText())));
         assertEquals(returned,deliveryFacts(),"手机旧清单不能签收退货后的物料");
-        // 夹具模拟后台指派发生变化，旧员工读写均拒绝；不冒称已实现配送中改派页面。
-        exec("UPDATE order_delivery SET delivery_staff_id=1 WHERE order_id="+order);
+        JsonNode assignment=getDeliveryJson(manager,"/api/admin/orders/"+order+"/reassignment",Map.of());
+        assertEquals("0",assignment.path("version").asText());assertTrue(assignment.path("canReassign").asBoolean());
+        long logCount=jdbcLong("SELECT COUNT(*) FROM sys_operation_log WHERE action='配送改派'");
+        var originalReassignment=Map.of("expectedVersion","0","targetStaffId","1","reason","验收临时改派");
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/reassign",originalReassignment));
+        assertEquals(1L,jdbcLong("SELECT assignment_version FROM order_delivery WHERE order_id="+order));
+        assertCreditRejected(getDeliveryJsonUnchecked(driver,mobileTask));
         assertCreditRejected(postCreditJson(driver,mobileTask+"/confirm",Map.of("confirmationKey",originalTask.path("confirmationKey").asText())));
-        exec("UPDATE order_delivery SET delivery_staff_id=2 WHERE order_id="+order);
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/reassign",Map.of("expectedVersion","1","targetStaffId","2","reason","验收恢复配送员")));
+        assertCreditRejected(postCreditJson(manager,"/api/admin/orders/"+order+"/reassign",originalReassignment));
+        assertEquals(2L,jdbcLong("SELECT assignment_version FROM order_delivery WHERE order_id="+order));
+        assertEquals(logCount+2,jdbcLong("SELECT COUNT(*) FROM sys_operation_log WHERE action='配送改派'"));
+        assertEquals(shipped,jdbcTimestamp("SELECT delivery_at FROM order_delivery WHERE order_id="+order));
+        assertEquals(returned,deliveryFacts(),"实际改派和改回原人不新增钱货事实");
+        // 仅本次随机隔离库注入日志落库故障，配送写入必须随原Flex事务回滚。
+        exec("CREATE TRIGGER reassignment_log_failure BEFORE INSERT ON sys_operation_log FOR EACH ROW BEGIN IF NEW.action='配送改派' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='IT_REASSIGNMENT_LOG_FAILURE'; END IF; END");
+        try {
+            JsonNode failed=postCreditJson(manager,"/api/admin/orders/"+order+"/reassign",Map.of("expectedVersion","2","targetStaffId","1","reason","验收日志故障回滚"));
+            assertEquals(10002,failed.path("code").asInt(),failed.toString());
+            assertEquals(2L,jdbcLong("SELECT assignment_version FROM order_delivery WHERE order_id="+order));
+            assertEquals(2L,jdbcLong("SELECT delivery_staff_id FROM order_delivery WHERE order_id="+order));
+            assertEquals(logCount+2,jdbcLong("SELECT COUNT(*) FROM sys_operation_log WHERE action='配送改派'"));
+            assertEquals(returned,deliveryFacts(),"日志保存失败必须整笔回滚且不改钱货");
+        } finally {exec("DROP TRIGGER reassignment_log_failure");}
+        var sameVersion=Map.of("expectedVersion","2","targetStaffId","1","reason","验收并发改派");
+        var concurrent=raceCreditHttp(i->postCreditJson(manager,"/api/admin/orders/"+order+"/reassign",sameVersion));
+        assertEquals(1L,concurrent.stream().filter(RetailFactChainEndToEndTest::creditSuccess).count());
+        concurrent.stream().filter(r->!creditSuccess(r)).forEach(this::assertCreditRejected);
+        assertEquals(3L,jdbcLong("SELECT assignment_version FROM order_delivery WHERE order_id="+order));
+        requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/reassign",Map.of("expectedVersion","3","targetStaffId","2","reason","验收并发后恢复配送员")));
+        assertEquals(logCount+4,jdbcLong("SELECT COUNT(*) FROM sys_operation_log WHERE action='配送改派'"));
+        assertEquals(returned,deliveryFacts());
         JsonNode latestTask=getDeliveryJson(driver,mobileTask,Map.of());assertEquals("3",latestTask.path("items").get(0).path("quantity").asText());
+        var signRace=raceCreditHttp(i->i==0?postCreditJson(driver,mobileTask+"/confirm",Map.of("confirmationKey",latestTask.path("confirmationKey").asText()))
+                :postCreditJson(manager,"/api/admin/orders/"+order+"/reassign",Map.of("expectedVersion","4","targetStaffId","1","reason","验收改派与签收竞争")));
+        assertEquals(1L,signRace.stream().filter(RetailFactChainEndToEndTest::creditSuccess).count());
+        signRace.stream().filter(r->!creditSuccess(r)).forEach(this::assertCreditRejected);
+        if(jdbcLong("SELECT delivery_status FROM order_delivery WHERE order_id="+order)==3) {
+            assertEquals(5L,jdbcLong("SELECT assignment_version FROM order_delivery WHERE order_id="+order));
+            requireCreditSuccess(postCreditJson(manager,"/api/admin/orders/"+order+"/reassign",Map.of("expectedVersion","5","targetStaffId","2","reason","验收竞争后恢复配送员")));
+            var freshTask=getDeliveryJson(driver,mobileTask,Map.of());
+            requireCreditSuccess(postCreditJson(driver,mobileTask+"/confirm",Map.of("confirmationKey",freshTask.path("confirmationKey").asText())));
+        }
+        assertEquals(returned,deliveryFacts(),"改派与签收竞争不新增钱货或完成结算");
         for(int repeat=0;repeat<2;repeat++) assertEquals("COMPLETED",postCreditJson(driver,mobileTask+"/confirm",Map.of("confirmationKey",latestTask.path("confirmationKey").asText())).path("status").asText());
         var completedTask=getDeliveryJson(driver,mobileTask,Map.of());assertTrue(completedTask.path("items").isEmpty());assertTrue(completedTask.path("receiverPhone").isNull());
         assertEquals(returned,deliveryFacts(),"本人签收及原确认重放不得再次记钱货/提成");
@@ -635,6 +674,10 @@ class RetailFactChainEndToEndTest {
         var body=new LinkedHashMap<>(creditReturnBody(order,quote));
         body.remove("reason");body.put("refundReason","派单前原单退货");
         requireCreditSuccess(postCreditJson(token,"/api/admin/orders/"+order+"/refund",body));
+    }
+    private JsonNode getDeliveryJsonUnchecked(E2EToken token,String url) throws Exception {
+        return objectMapper.readTree(mockMvc.perform(get(url).header(token.name(),token.value())).andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8));
     }
     private JsonNode getDeliveryJson(E2EToken token,String url,Map<String,String> params) throws Exception {
         var request=get(url).header(token.name(),token.value());params.forEach(request::param);
@@ -2408,6 +2451,7 @@ class RetailFactChainEndToEndTest {
     @Import({InventoryController.class, InventoryWarningController.class, ProductController.class, OrderAdminController.class,
             com.agri_system.api.admin.controller.MobileScanController.class,com.agri_system.api.admin.controller.PurchaseController.class,
             com.agri_system.api.admin.controller.MobileDeliveryController.class,
+            com.agri_system.api.admin.controller.DeliveryReassignmentController.class,
             com.agri_system.api.admin.controller.MobilePickupController.class,
             ProductPackageController.class, AfterSalesAdminController.class, CreditAdminController.class, ReportDashboardController.class,
             RetailFactChainEndToEndTest.E2ELoginController.class, DomainServiceConfig.class})

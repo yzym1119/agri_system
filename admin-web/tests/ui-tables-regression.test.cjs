@@ -65,6 +65,7 @@ test('订单菜单随当前权限收紧，不放出退款且保留原履约能�
   const p=page('order/list',{},['order:ship','order:refund'])
   const row={id:7,orderStatus:9,deliveryType:2,deliveryStatus:2,canShip:true}
   assert.deepEqual(Array.from(p.getRowActions(row),a=>a.key),['local','refund'])
+  assert.ok(Array.from(p.getRowActions({...row,deliveryType:2,deliveryStatus:3,canShip:false,canConfirmReceipt:true}),a=>a.key).includes('reassign'))
   p.handleRowAction('local',row)
   assert.equal(p.shipVisible.value,true); assert.equal(p.shipMode.value,'local')
   p.permission.permissions=[]
