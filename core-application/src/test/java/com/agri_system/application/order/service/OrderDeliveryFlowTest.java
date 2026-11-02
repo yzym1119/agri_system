@@ -296,4 +296,41 @@ class OrderDeliveryFlowTest {
         verify(paymentRepository,never()).save(any());verify(inventoryService,never()).outbound(any(),any());
         verify(creditService,never()).addDebt(any(),any(),any());verify(eventPublisher,never()).publishEvent(any(Object.class));
     }
+
+    @Test void pageReusesRepeatedPartyReadsOnlyWithinOneQueryAndRefreshesNextQuery() {
+        order.setCustomerId(7L);
+        var second=new Order();second.setId(43L);second.setStoreId(3L);second.setCustomerId(7L);second.setOrderType(1);second.setOrderStatus(6);
+        var page=new com.mybatisflex.core.paginate.Page<Order>();page.setRecords(java.util.List.of(order,second));page.setTotalRow(2);
+        when(orderRepository.findPage(any(),any(),any(),any(),any(),any(),any(),any(),any(),any())).thenReturn(page);
+        org.mockito.Mockito.lenient().when(paymentService.financialSummary(any())).thenReturn(new OrderPaymentService.FinancialSummary(BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO));
+        var store=new com.agri_system.domain.store.model.Store();store.setId(3L);store.setName("原门店");
+        var customer=new com.agri_system.domain.customer.model.Customer();customer.setId(7L);customer.setName("原客户");customer.setPhone("13800000007");
+        when(storeRepository.findByIdIncludingDeleted(3L)).thenReturn(Optional.of(store));
+        when(customerRepository.findByIdIncludingDeleted(7L)).thenReturn(Optional.of(customer));
+        var query=new com.agri_system.application.order.dto.query.OrderPageQuery();var first=orderService.queryOrderPage(query);
+        assertEquals(2,first.getRecords().size());assertEquals("原门店",first.getRecords().get(0).getStoreName());assertEquals("原客户",first.getRecords().get(1).getCustomerName());assertEquals("13800000007",first.getRecords().get(0).getCustomerPhone());
+        verify(storeRepository,org.mockito.Mockito.times(1)).findByIdIncludingDeleted(3L);
+        verify(customerRepository,org.mockito.Mockito.times(1)).findByIdIncludingDeleted(7L);
+        store.setName("更新门店");customer.setName("更新客户");
+        var refreshed=orderService.queryOrderPage(query);assertEquals("更新门店",refreshed.getRecords().get(1).getStoreName());assertEquals("更新客户",refreshed.getRecords().get(0).getCustomerName());
+        verify(storeRepository,org.mockito.Mockito.times(2)).findByIdIncludingDeleted(3L);
+        verify(customerRepository,org.mockito.Mockito.times(2)).findByIdIncludingDeleted(7L);
+    }
+
+    @Test void pageKeepsMissingPartiesEmptyWithoutRepeatingMissingReads() {
+        order.setCustomerId(7L);
+        var second=new Order();second.setId(43L);second.setStoreId(3L);second.setCustomerId(7L);
+        var third=new Order();third.setId(44L);third.setStoreId(4L);third.setCustomerId(8L);
+        var page=new com.mybatisflex.core.paginate.Page<Order>();page.setRecords(java.util.List.of(order,second,third));
+        when(orderRepository.findPage(any(),any(),any(),any(),any(),any(),any(),any(),any(),any())).thenReturn(page);
+        org.mockito.Mockito.lenient().when(paymentService.financialSummary(any())).thenReturn(new OrderPaymentService.FinancialSummary(BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO));
+        var other=new com.agri_system.domain.store.model.Store();other.setId(4L);other.setName("其他门店");
+        var customer=new com.agri_system.domain.customer.model.Customer();customer.setId(8L);customer.setName("其他客户");
+        when(storeRepository.findByIdIncludingDeleted(3L)).thenReturn(Optional.empty());when(customerRepository.findByIdIncludingDeleted(7L)).thenReturn(Optional.empty());
+        when(storeRepository.findByIdIncludingDeleted(4L)).thenReturn(Optional.of(other));when(customerRepository.findByIdIncludingDeleted(8L)).thenReturn(Optional.of(customer));
+        var result=orderService.queryOrderPage(new com.agri_system.application.order.dto.query.OrderPageQuery());
+        org.junit.jupiter.api.Assertions.assertNull(result.getRecords().get(0).getStoreName());org.junit.jupiter.api.Assertions.assertNull(result.getRecords().get(1).getCustomerName());
+        assertEquals("其他门店",result.getRecords().get(2).getStoreName());assertEquals("其他客户",result.getRecords().get(2).getCustomerName());
+        verify(storeRepository,org.mockito.Mockito.times(1)).findByIdIncludingDeleted(3L);verify(customerRepository,org.mockito.Mockito.times(1)).findByIdIncludingDeleted(7L);
+    }
 }

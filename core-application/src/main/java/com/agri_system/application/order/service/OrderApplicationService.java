@@ -773,6 +773,10 @@ public class OrderApplicationService {
                 .map(Order::getId).toList();
         java.util.Set<Long> returnableIds=fullyRefundedIds.isEmpty()?java.util.Set.of():itemRepository.findOrderIdsWithReturnableItems(fullyRefundedIds);
 
+        // 只复用本次分页内的显示资料（包含查无结果），不跨请求缓存或改变仓储过滤。
+        Map<Long, Optional<Store>> pageStores = new HashMap<>();
+        Map<Long, Optional<Customer>> pageCustomers = new HashMap<>();
+
         // 2. 转换为VO
         List<OrderPageVO> voList = page.getRecords().stream().map(order -> {
             OrderPageVO vo = new OrderPageVO();
@@ -808,14 +812,14 @@ public class OrderApplicationService {
             
             // 查询门店名称
             if (order.getStoreId() != null) {
-                storeRepository.findByIdIncludingDeleted(order.getStoreId()).ifPresent(store -> {
+                pageStores.computeIfAbsent(order.getStoreId(), storeRepository::findByIdIncludingDeleted).ifPresent(store -> {
                     vo.setStoreName(store.getName());
                 });
             }
             
             // 查询客户信息
             if (order.getCustomerId() != null) {
-                customerRepository.findByIdIncludingDeleted(order.getCustomerId()).ifPresent(customer -> {
+                pageCustomers.computeIfAbsent(order.getCustomerId(), customerRepository::findByIdIncludingDeleted).ifPresent(customer -> {
                     vo.setCustomerName(customer.getName());
                     vo.setCustomerPhone(customer.getPhone());
                 });
