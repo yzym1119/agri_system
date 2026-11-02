@@ -8,16 +8,34 @@ import { readAssignedReceipt,confirmAssignedReceipt } from '../../../services/fu
 import { mobilePlatform } from '../../../services/platform';
 const preview=ref<AssignedReceipt|null>(null),result=ref<DeliveryResult|null>(null),checkedItems=ref<string[]>([]),receiverConfirmed=ref(false);
 const loading=ref(true),busy=ref(false),allowed=ref(false),uncertain=ref(false),message=ref('');
-let orderId:string|null=null,generation=0,actorEpoch=-1,visible=false,attemptedKey:string|null=null;
+let orderId:string|null=null,generation=0,actorEpoch=-1,visible=false,attemptedKey:string|null=null,scope='',storageKey='';
+const stored=(key:string)=>JSON.stringify({version:1,scope,confirmationKey:key});
+function restoreAttempt(){
+ try{const raw=mobilePlatform.readStorage(storageKey);
+  if(uncertain.value){if(!attemptedKey||raw!==stored(attemptedKey))attemptedKey=null;return;}
+  if(raw===null)return;
+  uncertain.value=true;const value=JSON.parse(raw);
+  attemptedKey=value?.version===1&&value.scope===scope&&typeof value.confirmationKey==='string'&&/^[a-f0-9]{64}$/.test(value.confirmationKey)&&raw===stored(value.confirmationKey)?value.confirmationKey:null;
+ }catch{uncertain.value=true;attemptedKey=null;}
+}
+function clearAttempt(){
+ if(!attemptedKey)return false;
+ try{if(mobilePlatform.readStorage(storageKey)!==stored(attemptedKey))return false;
+  mobilePlatform.removeStorage(storageKey);return mobilePlatform.readStorage(storageKey)===null;
+ }catch{return false;}
+}
 const current=(ticket=generation)=>visible&&allowed.value&&ticket===generation&&staffAuth.current()?.epoch===actorEpoch;
 onLoad(options=>{orderId=isPositiveLongId(options?.orderId)?options.orderId:null;});
 onShow(async()=>{
- visible=true;const ticket=++generation;allowed.value=false;loading.value=true;busy.value=false;preview.value=null;result.value=null;uncertain.value=false;attemptedKey=null;checkedItems.value=[];receiverConfirmed.value=false;message.value='';
+ visible=true;const ticket=++generation;allowed.value=false;loading.value=true;busy.value=false;preview.value=null;result.value=null;checkedItems.value=[];receiverConfirmed.value=false;message.value='';
  try{await staffAuth.refresh();if(!visible||ticket!==generation)return;
   const actor=staffAuth.current();if(!actor)throw Error('UNAUTHORIZED');actorEpoch=actor.epoch;
+  const nextScope=actor.staffId+':'+actor.storeId+':'+orderId;
+  if(scope!==nextScope){uncertain.value=false;attemptedKey=null;scope=nextScope;}
+  storageKey='agri.delivery.pending.v1:'+scope;
   allowed.value=actor.permissions.includes('*')||actor.permissions.includes('order:delivery:assigned');
   if(!allowed.value){message.value='当前账号没有本人配送权限，请联系店长。';return;}
-  if(!orderId){message.value='任务编号无效，请返回重新选择。';return;}await readCurrent();
+  if(!orderId){message.value='任务编号无效，请返回重新选择。';return;}restoreAttempt();await readCurrent();
  }catch{if(visible&&ticket===generation)uni.reLaunch({url:'/pages/login/index'});}
  finally{if(ticket===generation)loading.value=false;}
 });
@@ -26,7 +44,7 @@ async function readCurrent(){
  if(!current()||busy.value||!orderId)return;const ticket=++generation;loading.value=true;preview.value=null;result.value=null;checkedItems.value=[];receiverConfirmed.value=false;message.value='';
  try{const answer=await readAssignedReceipt(orderId,actorEpoch);if(!current(ticket))return;
   preview.value=answer;
-  if(answer.status==='COMPLETED'){uncertain.value=false;attemptedKey=null;message.value='这项任务已签收，无需再次交货或确认。';}
+  if(answer.status==='COMPLETED'){const cleared=!uncertain.value||clearAttempt();uncertain.value=!cleared;if(cleared)attemptedKey=null;message.value=cleared?'这项任务已签收，无需再次交货或确认。':'这项任务已签收，但本机核对记录未能清理，请联系店长；不要再次交货。';}
   else if(uncertain.value&&answer.confirmationKey!==attemptedKey)message.value='原签收结果尚未确认，任务内容已变化。请联系店长核对，不要再次交货。';
  }catch{if(visible&&ticket===generation){if(!staffAuth.current())uni.reLaunch({url:'/pages/login/index'});else message.value='任务读取未完成，可能已改派或权限发生变化。请重新查询或联系店长核对。';}}
  finally{if(ticket===generation)loading.value=false;}
@@ -36,13 +54,19 @@ function canConfirm(){
   &&p.items.length===checkedItems.value.length&&p.items.every(item=>checkedItems.value.includes(deliveryItemKey(item)))&&(!uncertain.value||attemptedKey===p.confirmationKey);
 }
 async function confirm(){
- if(!canConfirm()||!preview.value||!orderId)return;const ticket=generation,key=preview.value.confirmationKey!,target=orderId,wasUnknown=uncertain.value;attemptedKey=key;busy.value=true;message.value='';
+ if(!canConfirm()||!preview.value||!orderId)return;const ticket=generation,key=preview.value.confirmationKey!,target=orderId,wasUnknown=uncertain.value;
+ try{const original=mobilePlatform.readStorage(storageKey);
+  if(wasUnknown){if(original!==stored(key))throw Error('PENDING_CHANGED');}
+  else {if(original!==null)throw Error('PENDING_EXISTS');mobilePlatform.writeStorage(storageKey,stored(key));}
+  if(mobilePlatform.readStorage(storageKey)!==stored(key))throw Error('PENDING_UNVERIFIED');
+ }catch{uncertain.value=true;attemptedKey=null;message.value='本机核对记录未能确认，已停止提交，请联系店长核对原任务。';return;}
+ attemptedKey=key;uncertain.value=true;busy.value=true;message.value='';
  try{const answer=await confirmAssignedReceipt(target,key,actorEpoch);if(!current(ticket))return;
-  result.value=answer;preview.value=null;uncertain.value=false;attemptedKey=null;message.value='本次签收已记录，没有重复出库或收款。';
- }catch(failure){if(!visible||ticket!==generation)return;
+  result.value=answer;preview.value=null;const cleared=clearAttempt();uncertain.value=!cleared;if(cleared)attemptedKey=null;message.value=cleared?'本次签收已记录，没有重复出库或收款。':'签收已完成，但本机核对记录未能清理，请联系店长；不要再次交货。';
+ }catch(failure){if(!current(ticket))return;
   if(!staffAuth.current()){uni.reLaunch({url:'/pages/login/index'});return;}
   const rejected=failure instanceof Error&&failure.message==='BUSINESS_REJECTED';
-  uncertain.value=wasUnknown||!rejected;preview.value=null;
+  uncertain.value=wasUnknown||!rejected||!clearAttempt();preview.value=null;
   if(!uncertain.value)attemptedKey=null;
   message.value=uncertain.value?'签收结果待核对，请勿再次交货。先读取同一任务的状态。':'任务或物料已变化，请重新读取并逐项核对后再确认。';
  }finally{if(ticket===generation){checkedItems.value=[];receiverConfirmed.value=false;busy.value=false;}}
