@@ -11,7 +11,7 @@ import com.agri_system.infrastructure.customer.mapper.CustomerMapper;
 import com.agri_system.infrastructure.inventory.mapper.InventoryBatchMapper;
 import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
 import com.agri_system.infrastructure.order.mapper.OrderMapper;
-import com.agri_system.infrastructure.product.mapper.ProductMapper;
+import com.agri_system.domain.product.repository.ProductRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,7 +46,7 @@ class ProfitCalculationTest {
     @Mock
     private CustomerMapper customerMapper;
     @Mock
-    private ProductMapper productMapper;
+    private ProductRepository productRepository;
     @Mock
     private AfterSalesMapper afterSalesMapper;
     @Mock
@@ -58,7 +58,7 @@ class ProfitCalculationTest {
     void setUp() {
         reportAnalysisService = new ReportAnalysisService(
                 orderMapper, orderItemMapper, inventoryBatchMapper,
-                creditAccountMapper, repaymentLogMapper, customerMapper, productMapper, afterSalesMapper,
+                creditAccountMapper, repaymentLogMapper, customerMapper, productRepository, afterSalesMapper,
                 allocationRepository);
     }
 

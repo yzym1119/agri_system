@@ -16,7 +16,7 @@ import com.agri_system.infrastructure.customer.mapper.CustomerMapper;
 import com.agri_system.infrastructure.inventory.mapper.InventoryBatchMapper;
 import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
 import com.agri_system.infrastructure.order.mapper.OrderMapper;
-import com.agri_system.infrastructure.product.mapper.ProductMapper;
+import com.agri_system.domain.product.repository.ProductRepository;
 import com.mybatisflex.core.query.QueryWrapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -44,7 +44,7 @@ public class ReportAnalysisService {
     private final CreditAccountMapper creditAccountMapper;
     private final CreditRepaymentLogMapper repaymentLogMapper;
     private final CustomerMapper customerMapper;
-    private final ProductMapper productMapper;
+    private final ProductRepository productRepository;
     private final AfterSalesMapper afterSalesMapper;
     /** 批次归属事实仓储，销售趋势按实际/估算/成本缺失三口径分别归集。 */
     private final OrderItemBatchAllocationRepository allocationRepository;
@@ -56,7 +56,7 @@ public class ReportAnalysisService {
                                  CreditAccountMapper creditAccountMapper,
                                  CreditRepaymentLogMapper repaymentLogMapper,
                                  CustomerMapper customerMapper,
-                                 ProductMapper productMapper,
+                                 ProductRepository productRepository,
                                  AfterSalesMapper afterSalesMapper,
                                  OrderItemBatchAllocationRepository allocationRepository) {
         this.orderMapper = orderMapper;
@@ -65,7 +65,7 @@ public class ReportAnalysisService {
         this.creditAccountMapper = creditAccountMapper;
         this.repaymentLogMapper = repaymentLogMapper;
         this.customerMapper = customerMapper;
-        this.productMapper = productMapper;
+        this.productRepository = productRepository;
         this.afterSalesMapper = afterSalesMapper;
         this.allocationRepository = allocationRepository;
     }
@@ -569,17 +569,12 @@ public class ReportAnalysisService {
                 .distinct()
                 .collect(Collectors.toList());
         
-        Map<Long, String> productNameMap = productIds.stream()
-                .collect(Collectors.toMap(
-                        id -> id,
-                        id -> {
-                            com.agri_system.domain.product.model.Product product = 
-                                    productMapper.selectOneById(id);
-                            return product != null && product.getName() != null 
-                                    ? product.getName() 
-                                    : "商品" + id;
-                        }));
-        
+        // 复用既有批量仓储；空列表不触发目录全表读取，缺失名称保持原展示兜底。
+        Map<Long, String> productNameMap = productIds.isEmpty() ? Map.of()
+                : productRepository.findByIds(productIds).stream()
+                        .filter(product -> product.getName() != null)
+                        .collect(Collectors.toMap(product -> product.getId(), product -> product.getName()));
+
         return batches.stream()
                 .map(batch -> {
                     SlowMovingInventoryVO vo = new SlowMovingInventoryVO();
