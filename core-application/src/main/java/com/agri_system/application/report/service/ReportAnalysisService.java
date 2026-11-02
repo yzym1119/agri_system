@@ -3,7 +3,8 @@ package com.agri_system.application.report.service;
 import com.agri_system.application.order.dto.vo.OrderMarginVO;
 import com.agri_system.application.order.service.RefundAmountPolicy;
 import com.agri_system.application.report.dto.*;
-import com.agri_system.domain.customer.model.Customer;
+import com.agri_system.domain.customer.query.CustomerReportQuery;
+import com.agri_system.domain.customer.query.CustomerReportRow;
 import com.agri_system.domain.inventory.query.InventoryReportBatch;
 import com.agri_system.domain.inventory.query.InventoryReportQuery;
 import com.agri_system.domain.order.model.Order;
@@ -12,7 +13,6 @@ import com.agri_system.domain.order.model.OrderItemBatchAllocation;
 import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepository;
 import com.agri_system.infrastructure.after_sales.mapper.AfterSalesMapper;
 import com.agri_system.domain.credit.query.CreditReportQuery;
-import com.agri_system.infrastructure.customer.mapper.CustomerMapper;
 import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
 import com.agri_system.infrastructure.order.mapper.OrderMapper;
 import com.agri_system.domain.product.repository.ProductRepository;
@@ -41,7 +41,7 @@ public class ReportAnalysisService {
     private final OrderItemMapper orderItemMapper;
     private final InventoryReportQuery inventoryReportQuery;
     private final CreditReportQuery creditReportQuery;
-    private final CustomerMapper customerMapper;
+    private final CustomerReportQuery customerReportQuery;
     private final ProductRepository productRepository;
     private final AfterSalesMapper afterSalesMapper;
     /** 批次归属事实仓储，销售趋势按实际/估算/成本缺失三口径分别归集。 */
@@ -52,7 +52,7 @@ public class ReportAnalysisService {
                                  OrderItemMapper orderItemMapper,
                                  InventoryReportQuery inventoryReportQuery,
                                  CreditReportQuery creditReportQuery,
-                                 CustomerMapper customerMapper,
+                                 CustomerReportQuery customerReportQuery,
                                  ProductRepository productRepository,
                                  AfterSalesMapper afterSalesMapper,
                                  OrderItemBatchAllocationRepository allocationRepository) {
@@ -60,7 +60,7 @@ public class ReportAnalysisService {
         this.orderItemMapper = orderItemMapper;
         this.inventoryReportQuery = inventoryReportQuery;
         this.creditReportQuery = creditReportQuery;
-        this.customerMapper = customerMapper;
+        this.customerReportQuery = customerReportQuery;
         this.productRepository = productRepository;
         this.afterSalesMapper = afterSalesMapper;
         this.allocationRepository = allocationRepository;
@@ -103,10 +103,7 @@ public class ReportAnalysisService {
         BigDecimal newCreditAmount = creditReportQuery.newCreditAmount(storeId, start, end);
 
         // 今日新增客户数（customer 表无 store_id 字段）
-        QueryWrapper customerQ = QueryWrapper.create()
-                .where("created_at between ? and ?", start, end);
-        Long newCustomerCount = customerMapper.selectOneByQueryAs(
-                customerQ.select("COUNT(1) AS cnt"), Long.class);
+        Long newCustomerCount = customerReportQuery.countCreatedBetween(start,end);
 
         // 待审核售后数（after_sales.status = 10 STATUS_APPLIED）
         QueryWrapper afterSalesQ = QueryWrapper.create()
@@ -167,27 +164,15 @@ public class ReportAnalysisService {
      */
     @Transactional(readOnly = true)
     public List<CustomerRankVO> topCustomers(int limit, Long storeId) {
-        QueryWrapper qw = QueryWrapper.create()
-                .where("total_order_amount is not null");
-
-        if (storeId != null) {
-            List<Long> customerIds = getCustomerIdsByStore(storeId);
-            if (customerIds.isEmpty()) {
-                return List.of();
-            }
-            qw.and(buildInPlaceholders("id", customerIds), customerIds.toArray());
-        }
-
-        qw.orderBy("total_order_amount desc").limit(limit);
-        List<Customer> customers = customerMapper.selectListByQuery(qw);
+        List<CustomerReportRow> customers = customerReportQuery.rankedCustomers(limit,storeId);
         return customers.stream()
                 .map(c -> {
                     CustomerRankVO vo = new CustomerRankVO();
-                    vo.setCustomerId(c.getId());
-                    vo.setCustomerName(c.getName());
-                    vo.setPhone(c.getPhone());
-                    vo.setTotalOrderAmount(defaultZero(c.getTotalOrderAmount()));
-                    vo.setLastOrderTime(c.getLastOrderTime());
+                    vo.setCustomerId(c.customerId());
+                    vo.setCustomerName(c.name());
+                    vo.setPhone(c.phone());
+                    vo.setTotalOrderAmount(defaultZero(c.totalOrderAmount()));
+                    vo.setLastOrderTime(c.lastOrderTime());
                     vo.setStaffName(null);
                     return vo;
                 })
@@ -201,35 +186,22 @@ public class ReportAnalysisService {
     @Transactional(readOnly = true)
     public List<ChurnRiskVO> churnRisks(Long storeId) {
         LocalDateTime deadline = LocalDateTime.now().minusDays(90);
-        QueryWrapper qw = QueryWrapper.create()
-                .where("last_order_time is not null")
-                .and("last_order_time < ?", deadline)
-                .and("total_order_amount > 1000");
-
-        if (storeId != null) {
-            List<Long> customerIds = getCustomerIdsByStore(storeId);
-            if (customerIds.isEmpty()) {
-                return List.of();
-            }
-            qw.and(buildInPlaceholders("id", customerIds), customerIds.toArray());
-        }
-
-        List<Customer> customers = customerMapper.selectListByQuery(qw);
+        List<CustomerReportRow> customers = customerReportQuery.churnCandidates(storeId,deadline);
         LocalDateTime now = LocalDateTime.now();
         return customers.stream()
                 .map(c -> {
                     ChurnRiskVO vo = new ChurnRiskVO();
-                    vo.setCustomerId(c.getId());
-                    vo.setCustomerName(c.getName());
-                    vo.setPhone(c.getPhone());
-                    vo.setLastOrderTime(c.getLastOrderTime());
-                    if (c.getLastOrderTime() != null) {
-                        long days = java.time.Duration.between(c.getLastOrderTime(), now).toDays();
+                    vo.setCustomerId(c.customerId());
+                    vo.setCustomerName(c.name());
+                    vo.setPhone(c.phone());
+                    vo.setLastOrderTime(c.lastOrderTime());
+                    if (c.lastOrderTime() != null) {
+                        long days = java.time.Duration.between(c.lastOrderTime(), now).toDays();
                         vo.setDaysSinceLastOrder(days);
                     } else {
                         vo.setDaysSinceLastOrder(null);
                     }
-                    vo.setTotalOrderAmount(defaultZero(c.getTotalOrderAmount()));
+                    vo.setTotalOrderAmount(defaultZero(c.totalOrderAmount()));
                     return vo;
                 })
                 .sorted(Comparator.comparing(ChurnRiskVO::getDaysSinceLastOrder, Comparator.nullsLast(Long::compareTo)).reversed())
@@ -598,29 +570,4 @@ public class ReportAnalysisService {
         return vo;
     }
 
-    /**
-     * 查询在某门店下过单的客户ID列表
-     */
-    private List<Long> getCustomerIdsByStore(Long storeId) {
-        QueryWrapper orderQ = QueryWrapper.create()
-                .select("DISTINCT customer_id")
-                .where("store_id = ?", storeId)
-                .and("customer_id is not null");
-        List<Order> orders = orderMapper.selectListByQuery(orderQ);
-        return orders.stream()
-                .map(Order::getCustomerId)
-                .filter(id -> id != null)
-                .distinct()
-                .collect(Collectors.toList());
-    }
-
-    /**
-     * 构造 IN 子句条件字符串（占位符形式）
-     */
-    private String buildInPlaceholders(String column, List<Long> ids) {
-        String placeholders = ids.stream().map(id -> "?").collect(Collectors.joining(","));
-        return column + " in (" + placeholders + ")";
-    }
 }
-
-

@@ -126,7 +126,7 @@ class AuthorityHttpIntegrationTest {
     @SpringBootConfiguration
     @EnableAutoConfiguration
     @EnableTransactionManagement
-    @MapperScan(basePackageClasses = {StaffMapper.class, SysRoleMapper.class})
+    @MapperScan(basePackageClasses = {StaffMapper.class, SysRoleMapper.class, com.agri_system.infrastructure.customer.mapper.CustomerMapper.class, com.agri_system.infrastructure.order.mapper.OrderMapper.class})
     @Import({SaTokenConfigure.class, DataScopeConfig.class, CurrentUser.class, StaffStpInterface.class,
             StaffAuthorityService.class, StaffLifecycleService.class, StaffSessionOperator.class,
             StaffRepositoryImpl.class, StoreRepositoryImpl.class, SysRoleRepositoryImpl.class,
@@ -141,9 +141,15 @@ class AuthorityHttpIntegrationTest {
             com.agri_system.api.admin.controller.DeliveryReassignmentController.class,
             com.agri_system.api.admin.controller.MobilePickupController.class,
             com.agri_system.api.admin.controller.OrderAdminController.class,
-            com.agri_system.api.admin.controller.ProductController.class})
+            com.agri_system.api.admin.controller.ProductController.class,
+            com.agri_system.api.admin.controller.ReportCustomerController.class,
+            com.agri_system.infrastructure.customer.query.CustomerReportQueryImpl.class})
     static class Config {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
+        @Bean com.agri_system.application.report.service.ReportAnalysisService customerReports(com.agri_system.domain.customer.query.CustomerReportQuery query) {
+            // 本组只调用客户分析，其他报表依赖不替换此路由的真实查询/权限/SQL。
+            return new com.agri_system.application.report.service.ReportAnalysisService(null,null,null,null,query,null,null,null);
+        }
         @Bean LifecycleIsolationGate lifecycleIsolationGate() { return new LifecycleIsolationGate(); }
     }
 
@@ -264,6 +270,36 @@ class AuthorityHttpIntegrationTest {
     void businessPermission(int menuId,String permission) {
         jdbc.update("INSERT INTO sys_menu(id,parent_id,name,permission,type,sort_order,visible) VALUES(?,0,?,?,2,0,1)",menuId,permission,permission);
         jdbc.update("INSERT INTO sys_role_menu(role_id,menu_id) VALUES(4,?)",menuId);
+    }
+
+    @Test void 客户报表未传门店仍受真实员工门店与权限约束() throws Exception {
+        jdbc.execute("DROP TABLE IF EXISTS customer");jdbc.execute("DROP TABLE IF EXISTS `order`");
+        try {
+            jdbc.execute("""
+                CREATE TABLE customer(id BIGINT PRIMARY KEY,code VARCHAR(50),name VARCHAR(100),company_name VARCHAR(100),tax_id VARCHAR(100),
+                invoice_title VARCHAR(100),invoice_bank VARCHAR(100),invoice_address VARCHAR(100),invoice_phone VARCHAR(50),phone VARCHAR(50),type INT,vip_level INT,
+                vip_start_date DATE,vip_end_date DATE,address VARCHAR(200),land_area DECIMAL(18,4),crop_type VARCHAR(100),id_card VARCHAR(50),credit_limit DECIMAL(18,2),
+                status INT,remark VARCHAR(200),created_at TIMESTAMP,updated_at TIMESTAMP,created_by BIGINT,updated_by BIGINT,total_order_count INT,
+                total_order_amount DECIMAL(18,2),last_order_time TIMESTAMP,bind_staff_id BIGINT,version INT,deleted INT)
+                """);
+            jdbc.execute("CREATE TABLE `order`(id BIGINT PRIMARY KEY,store_id BIGINT,customer_id BIGINT,deleted INT)");
+            jdbc.update("INSERT INTO customer(id,name,total_order_amount,last_order_time,deleted) VALUES(1,'本店',2000,?,0),(2,'他店',9000,?,0),(3,'未关联',5000,?,0)",java.time.LocalDateTime.now().minusDays(120),java.time.LocalDateTime.now().minusDays(130),java.time.LocalDateTime.now().minusDays(140));
+            jdbc.execute("INSERT INTO `order` VALUES(1,1,1,0),(2,2,2,0)");
+            String path="/api/admin/report/customer/",cashier=login(4);
+            reject(call(cashier,"GET",path+"top",null));businessPermission(300,"report:customer");
+            for(String endpoint:List.of("top","churn")) {
+                assertEquals(List.of(1L),customerIds(call(cashier,"GET",path+endpoint,null)));
+                assertTrue(customerIds(call(cashier,"GET",path+endpoint+"?storeId=2",null)).isEmpty());
+            }
+            grant(1,300); // 管理员跨店身份不代替此接口的明确菜单权限。
+            assertEquals(List.of(2L,3L,1L),customerIds(call(login(1),"GET",path+"top",null)));
+            jdbc.update("DELETE FROM sys_role_menu WHERE role_id=4 AND menu_id=300");
+            reject(call(cashier,"GET",path+"top",null));reject(call(cashier,"GET",path+"churn",null));
+        } finally {jdbc.execute("DROP TABLE IF EXISTS `order`");jdbc.execute("DROP TABLE IF EXISTS customer");}
+    }
+    private List<Long> customerIds(JsonNode response) {
+        JsonNode rows=response.isArray()?response:response.get("data");assertNotNull(rows,response.toString());assertTrue(rows.isArray(),response.toString());
+        var ids=new ArrayList<Long>();rows.forEach(row->ids.add(row.get("customerId").asLong()));return ids;
     }
 
     @Test void 移动查货仅真实库存权限可读且撤权立即拒绝() throws Exception {

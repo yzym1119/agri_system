@@ -6,7 +6,7 @@ import com.agri_system.domain.customer.model.Customer;
 import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepository;
 import com.agri_system.infrastructure.after_sales.mapper.AfterSalesMapper;
 import com.agri_system.domain.credit.query.CreditReportQuery;
-import com.agri_system.infrastructure.customer.mapper.CustomerMapper;
+import com.agri_system.domain.customer.query.CustomerReportQuery;
 import com.agri_system.domain.inventory.query.InventoryReportQuery;
 import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
 import com.agri_system.infrastructure.order.mapper.OrderMapper;
@@ -41,7 +41,7 @@ class CustomerAnalysisTest {
     @Mock
     private CreditReportQuery creditReportQuery;
     @Mock
-    private CustomerMapper customerMapper;
+    private CustomerReportQuery customerReportQuery;
     @Mock
     private ProductRepository productRepository;
     @Mock
@@ -55,7 +55,7 @@ class CustomerAnalysisTest {
     void setUp() {
         reportAnalysisService = new ReportAnalysisService(
                 orderMapper, orderItemMapper, inventoryReportQuery,
-                creditReportQuery, customerMapper, productRepository, afterSalesMapper,
+                creditReportQuery, customerReportQuery, productRepository, afterSalesMapper,
                 allocationRepository);
     }
 
@@ -83,7 +83,7 @@ class CustomerAnalysisTest {
         c2.setTotalOrderAmount(new BigDecimal("30000.00"));
         c2.setLastOrderTime(LocalDateTime.now().minusDays(5));
 
-        when(customerMapper.selectListByQuery(any())).thenReturn(List.of(c3, c1, c2));
+        when(customerReportQuery.rankedCustomers(20,null)).thenReturn(rows(c3,c1,c2));
 
         List<CustomerRankVO> result = reportAnalysisService.topCustomers(20, null);
 
@@ -116,7 +116,7 @@ class CustomerAnalysisTest {
         churn2.setLastOrderTime(now.minusDays(100)); // 100天前 < 90天 ✓, 2000 > 1000 ✓
 
         // SQL 已筛选：只返回符合 WHERE 条件的数据
-        when(customerMapper.selectListByQuery(any())).thenReturn(List.of(churn1, churn2));
+        when(customerReportQuery.churnCandidates(org.mockito.ArgumentMatchers.isNull(),any())).thenReturn(rows(churn1,churn2));
 
         List<ChurnRiskVO> result = reportAnalysisService.churnRisks(null);
 
@@ -128,6 +128,9 @@ class CustomerAnalysisTest {
         assertEquals(120L, result.get(0).getDaysSinceLastOrder());
         assertEquals(102L, result.get(1).getCustomerId());
         assertEquals(100L, result.get(1).getDaysSinceLastOrder());
+    }
+    private List<com.agri_system.domain.customer.query.CustomerReportRow> rows(Customer... customers) {
+        return java.util.Arrays.stream(customers).map(c->new com.agri_system.domain.customer.query.CustomerReportRow(c.getId(),c.getName(),c.getPhone(),c.getTotalOrderAmount(),c.getLastOrderTime())).toList();
     }
 }
 
