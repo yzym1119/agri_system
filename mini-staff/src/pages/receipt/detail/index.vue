@@ -41,9 +41,10 @@ onShow(async()=>{
  }catch{
   if(!visible||ticket!==generation)return;
   if(!staffAuth.current()){uni.reLaunch({url:'/pages/login/index'});return;}
+  if(staffAuth.current()?.epoch!==actorEpoch)return;
   try{pending.value=receiptRecovery.restore();message.value='采购资料读取未完成，请返回待收列表重试；不要按旧资料收货。';}
   catch{allowed.value=false;message.value='本机收货记录读取异常，暂停新的收货，请联系老板核对，不要清除数据。';}
- }finally{if(ticket===generation)loading.value=false;}
+ }finally{if(visible&&ticket===generation&&staffAuth.current()?.epoch===actorEpoch)loading.value=false;}
 });
 onHide(()=>{cacheDraft();loadedOwner=null;visible=false;generation++;allowed.value=false;detail.value=null;drafts.value=[];preview.value=null;pending.value=null;result.value=null;confirmed.value=false;remark.value='';exceptionReason.value='';scanInput.value='';scanMessage.value='';scanMatches.value=[];locatedLine.value='';});
 function locateCode(value:string){
@@ -85,8 +86,8 @@ function review(){
 async function submit(){
  if(!editable()||!preview.value)return;const ticket=generation,snapshot=preview.value;busy.value=true;message.value='';confirmed.value=false;
  try{const answer=await receiptRecovery.submit(snapshot,sendReceipt,readReceiptResult);if(!current(ticket))return;result.value=answer;}
- catch{if(!visible||ticket!==generation)return;if(!staffAuth.current()){uni.reLaunch({url:'/pages/login/index'});return;}message.value='本次结果仍需核对，不能重新登记或改内容。请核对原收货结果。';}
- finally{if(visible&&ticket===generation){preview.value=null;try{pending.value=receiptRecovery.restore();}catch{allowed.value=false;message.value='本机收货记录异常，暂停收货。请联系老板核对，不要清除数据。';}busy.value=false;}}
+ catch{if(!visible||ticket!==generation)return;if(!staffAuth.current()){uni.reLaunch({url:'/pages/login/index'});return;}if(!current(ticket))return;message.value='本次结果仍需核对，不能重新登记或改内容。请核对原收货结果。';}
+ finally{if(current(ticket)){preview.value=null;try{pending.value=receiptRecovery.restore();}catch{allowed.value=false;message.value='本机收货记录异常，暂停收货。请联系老板核对，不要清除数据。';}busy.value=false;}}
 }
 async function act(kind:'read'|'retry'|'finish'){
  if(!current()||busy.value||!pending.value||(kind!=='read'&&!confirmed.value))return;
@@ -98,8 +99,8 @@ async function act(kind:'read'|'retry'|'finish'){
   if(!current(ticket))return;result.value=answer;pending.value=receiptRecovery.restore();
   if(!pending.value){finished.value=true;message.value='原收货已核对结束，没有重复增加库存。';}
   else message.value=answer.status==='COMPLETED'?'原请求已收货，请核对原批次后结束这笔。':'尚未查到原结果，不代表没有收货。保留原内容，请勿重新登记。';
- }catch{if(visible&&ticket===generation){result.value=null;if(!staffAuth.current())uni.reLaunch({url:'/pages/login/index'});else message.value='原结果尚未核对或内容已变化，请保持暂停并联系老板。原请求仍保留。';}}
- finally{if(ticket===generation)busy.value=false;}
+ }catch{if(!visible||ticket!==generation)return;if(!staffAuth.current()){uni.reLaunch({url:'/pages/login/index'});return;}if(current(ticket)){result.value=null;message.value='原结果尚未核对或内容已变化，请保持暂停并联系老板。原请求仍保留。';}}
+ finally{if(current(ticket))busy.value=false;}
 }
 const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
 </script>

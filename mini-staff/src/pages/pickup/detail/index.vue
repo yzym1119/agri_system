@@ -11,7 +11,9 @@ let requestId:string|null=null,visible=false,generation=0,epoch=-1,allowed=false
 let storageKey='';
 const stored=(key:string)=>JSON.stringify({version:1,scope,confirmationKey:key});
 function restoreAttempt(){
- try{const raw=mobilePlatform.readStorage(storageKey);if(raw===null)return;
+ try{const raw=mobilePlatform.readStorage(storageKey);
+  if(uncertain.value){if(!attemptedKey||raw!==stored(attemptedKey))attemptedKey=null;return;}
+  if(raw===null)return;
   uncertain.value=true;const value=JSON.parse(raw);
   attemptedKey=value?.version===1&&value.scope===scope&&typeof value.confirmationKey==='string'&&/^[a-f0-9]{64}$/.test(value.confirmationKey)&&raw===stored(value.confirmationKey)?value.confirmationKey:null;
  }catch{uncertain.value=true;attemptedKey=null;}

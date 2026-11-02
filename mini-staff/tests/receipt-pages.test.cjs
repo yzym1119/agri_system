@@ -77,3 +77,29 @@ test('前后台同员工同单恢复未提交原文，但废弃确认摘要；�
  f.p.hooks.hide();f.setUser({id:'9',name:'另一库管',permissions:['purchase:inbound'],extra:{storeId:'1'}});await f.auth.login('other','pass');await f.p.hooks.show();
  assert.equal(f.p.state.drafts.value[0].batches[0].originalUnitCost,'');assert.equal(f.calls.send,0);
 });
+test('提交后换登录，旧失败和收尾不能改动新会话页面状态',async()=>{
+ const f=await fixture();f.p.hooks.load({orderId:'8'});await f.p.hooks.show();fill(f);f.p.state.review();let resolve;
+ f.setResult(()=>new Promise(done=>resolve=done));const old=f.p.state.submit();await new Promise(done=>setImmediate(done));
+ await f.auth.logout();f.setUser({id:'9',name:'另一库管',permissions:['purchase:inbound'],extra:{storeId:'1'}});await f.auth.login('other','pass');
+ const preview=f.p.state.preview.value;resolve(completed());await old;
+ assert.equal(f.p.state.message.value,'');assert.equal(f.p.state.preview.value,preview);assert.equal(f.p.state.pending.value,null);assert.equal(f.data.size,1);
+});
+test('核对原收货期间换登录，旧失败不能抹掉已展示的核对结果',async()=>{
+ const f=await fixture();f.p.hooks.load({orderId:'8'});await f.p.hooks.show();fill(f);f.p.state.review();await f.p.state.submit();let resolve;
+ f.setResult(()=>new Promise(done=>resolve=done));const old=f.p.state.act('read');await new Promise(done=>setImmediate(done));
+ await f.auth.logout();await f.auth.login('again','pass');const result=f.p.state.result.value;
+ resolve(completed());await old;assert.equal(f.p.state.result.value,result);assert.equal(f.p.state.message.value,'');assert.equal(f.data.size,1);
+});
+test('读取采购详情时换登录，旧失败不能转而恢复另一员工的记录',async()=>{
+ const f=await fixture();f.p.hooks.load({orderId:'8'});let reject;f.setDetail(()=>new Promise((_,fail)=>reject=fail));const old=f.p.hooks.show();await new Promise(done=>setImmediate(done));
+ await f.auth.logout();f.setUser({id:'9',name:'另一库管',permissions:['purchase:inbound'],extra:{storeId:'1'}});await f.auth.login('other','pass');reject(Error('RESULT_UNKNOWN'));await old;
+ assert.equal(f.p.state.message.value,'');assert.equal(f.p.state.detail.value,null);assert.equal(f.p.state.pending.value,null);
+});
+test('原收货处理中登录失效仍跳登录，不能清除原收货记录',async()=>{
+ for(const mode of ['submit','read']){
+  const f=await fixture();f.p.hooks.load({orderId:'8'});await f.p.hooks.show();fill(f);f.p.state.review();if(mode==='read')await f.p.state.submit();
+  let resolve;f.setResult(()=>new Promise(done=>resolve=done));const old=mode==='submit'?f.p.state.submit():f.p.state.act('read');await new Promise(done=>setImmediate(done));
+  await f.auth.logout();resolve(completed());await old;assert.equal(f.p.routes.at(-1),'/pages/login/index');assert.equal(f.data.size,1);
+ }
+ const denied=await fixture('receipt/detail',[]);denied.p.hooks.load({orderId:'8'});await denied.p.hooks.show();assert.equal(denied.p.state.loading.value,false);
+});

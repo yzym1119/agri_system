@@ -61,3 +61,9 @@ test('本机记录保存失败或被替换时不能提交，完成后的删除�
  const broken=new Map();broken.set=()=>{throw Error('NO_STORAGE');};const first=await fixture(undefined,broken);await first.p.hooks.show();first.p.state.checked.value=['1'];first.p.state.handedOver.value=true;await first.p.state.confirm();assert.equal(first.calls.length,0);assert.equal(first.p.state.uncertain.value,true);
  const storage=new Map(),f=await fixture(undefined,storage);await f.p.hooks.show();storage.delete=()=>{throw Error('DELETE_FAILED');};f.p.state.checked.value=['1'];f.p.state.handedOver.value=true;await f.p.state.confirm();assert.equal(f.calls.length,1);assert.equal(f.p.state.preview.value.status,'FULFILLED');assert.equal(f.p.state.uncertain.value,true);assert.equal(storage.size,1);
 });
+test('隐藏期间合法原记录被替换，不能按新批次数量再次提货',async()=>{
+ const storage=new Map(),f=await fixture(undefined,storage);await f.p.hooks.show();f.setFail(true);f.p.state.checked.value=['1'];f.p.state.handedOver.value=true;await f.p.state.confirm();f.p.hooks.hide();
+ const key=[...storage.keys()][0],record=JSON.parse(storage.get(key));record.confirmationKey='b'.repeat(64);storage.set(key,JSON.stringify(record));f.setPreview({...ready,confirmationKey:'b'.repeat(64)});
+ for(let i=0;i<2;i++){await f.p.hooks.show();f.p.state.checked.value=['1'];f.p.state.handedOver.value=true;await f.p.state.confirm();f.p.hooks.hide();}
+ assert.equal(f.calls.length,1);assert.equal(f.p.state.uncertain.value,true);
+});
