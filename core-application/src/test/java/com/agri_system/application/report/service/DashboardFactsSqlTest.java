@@ -66,10 +66,10 @@ class DashboardFactsSqlTest {
             configuration.addMapper(mapper);
         }
         session = new FlexSqlSessionFactoryBuilder().build(configuration).openSession(true);
-        service = new ReportAnalysisService(session.getMapper(OrderMapper.class), null,
+        service = new ReportAnalysisService(new com.agri_system.infrastructure.order.query.SalesReportQueryImpl(session.getMapper(OrderMapper.class),null,session.getMapper(AfterSalesMapper.class)),
                 new com.agri_system.infrastructure.inventory.query.InventoryReportQueryImpl(session.getMapper(InventoryBatchMapper.class)), new com.agri_system.infrastructure.credit.query.CreditReportQueryImpl(session.getMapper(CreditAccountMapper.class),
                 session.getMapper(CreditRepaymentLogMapper.class)), new com.agri_system.infrastructure.customer.query.CustomerReportQueryImpl(session.getMapper(CustomerMapper.class),session.getMapper(OrderMapper.class)), null,
-                session.getMapper(AfterSalesMapper.class), null);
+                null);
     }
 
     @AfterEach

@@ -4,12 +4,9 @@ import com.agri_system.application.report.dto.ChurnRiskVO;
 import com.agri_system.application.report.dto.CustomerRankVO;
 import com.agri_system.domain.customer.model.Customer;
 import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepository;
-import com.agri_system.infrastructure.after_sales.mapper.AfterSalesMapper;
 import com.agri_system.domain.credit.query.CreditReportQuery;
 import com.agri_system.domain.customer.query.CustomerReportQuery;
 import com.agri_system.domain.inventory.query.InventoryReportQuery;
-import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
-import com.agri_system.infrastructure.order.mapper.OrderMapper;
 import com.agri_system.domain.product.repository.ProductRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,9 +30,7 @@ import static org.mockito.Mockito.when;
 class CustomerAnalysisTest {
 
     @Mock
-    private OrderMapper orderMapper;
-    @Mock
-    private OrderItemMapper orderItemMapper;
+    private com.agri_system.domain.order.query.SalesReportQuery salesReportQuery;
     @Mock
     private InventoryReportQuery inventoryReportQuery;
     @Mock
@@ -45,8 +40,6 @@ class CustomerAnalysisTest {
     @Mock
     private ProductRepository productRepository;
     @Mock
-    private AfterSalesMapper afterSalesMapper;
-    @Mock
     private OrderItemBatchAllocationRepository allocationRepository;
 
     private ReportAnalysisService reportAnalysisService;
@@ -54,8 +47,8 @@ class CustomerAnalysisTest {
     @BeforeEach
     void setUp() {
         reportAnalysisService = new ReportAnalysisService(
-                orderMapper, orderItemMapper, inventoryReportQuery,
-                creditReportQuery, customerReportQuery, productRepository, afterSalesMapper,
+                salesReportQuery, inventoryReportQuery,
+                creditReportQuery, customerReportQuery, productRepository,
                 allocationRepository);
     }
 

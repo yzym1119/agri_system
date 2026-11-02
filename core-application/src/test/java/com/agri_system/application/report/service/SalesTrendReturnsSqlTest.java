@@ -53,8 +53,8 @@ class SalesTrendReturnsSqlTest {
         config.addMapper(OrderItemMapper.class);
         config.addMapper(OrderItemBatchAllocationMapper.class);
         session = new FlexSqlSessionFactoryBuilder().build(config).openSession(true);
-        service = new ReportAnalysisService(session.getMapper(OrderMapper.class), session.getMapper(OrderItemMapper.class),
-                null, null, null, null, null,
+        service = new ReportAnalysisService(new com.agri_system.infrastructure.order.query.SalesReportQueryImpl(session.getMapper(OrderMapper.class),session.getMapper(OrderItemMapper.class),null),
+                null, null, null, null,
                 new OrderItemBatchAllocationRepositoryImpl(session.getMapper(OrderItemBatchAllocationMapper.class)));
     }
 
@@ -183,6 +183,12 @@ class SalesTrendReturnsSqlTest {
         var trend = trend(1L);
         money("90", trend.getSaleAmount()); money("90", trend.getCostUnavailableSaleAmount());
         money("0", trend.getActualCostAmount()); assertEquals("待核对", trend.getCostStatus());
+    }
+
+    @Test
+    void noOrdersDoesNotReadAnUnboundedItemOrRefundTable() {
+        jdbc.execute("DROP TABLE order_item");jdbc.execute("DROP TABLE after_sales_item");
+        org.junit.jupiter.api.Assertions.assertTrue(service.salesTrend(created.minusDays(1),created.plusDays(1),null).isEmpty());
     }
 
     private SalesTrendVO trend(Long store) {

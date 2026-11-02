@@ -41,7 +41,7 @@ class CustomerReportScopeSqlTest {
         var config=new FlexConfiguration(new Environment("customer-report",new JdbcTransactionFactory(),new FlexDataSource("customer-report",source,false)));
         config.setMapUnderscoreToCamelCase(true);config.setLocalCacheScope(org.apache.ibatis.session.LocalCacheScope.STATEMENT);config.addMapper(OrderMapper.class);config.addMapper(CustomerMapper.class);
         session=new FlexSqlSessionFactoryBuilder().build(config).openSession(true);
-        service=new ReportAnalysisService(session.getMapper(OrderMapper.class),null,null,null,new com.agri_system.infrastructure.customer.query.CustomerReportQueryImpl(session.getMapper(CustomerMapper.class),session.getMapper(OrderMapper.class)),null,null,null);
+        service=new ReportAnalysisService(null,null,null,new com.agri_system.infrastructure.customer.query.CustomerReportQueryImpl(session.getMapper(CustomerMapper.class),session.getMapper(OrderMapper.class)),null,null);
     }
     @AfterEach void close() {TenantManager.setTenantFactory(originalTenant);if(session!=null)session.close();if(jdbc!=null)jdbc.execute("SHUTDOWN");}
     private void customer(long id,String name,Integer amount,Integer days,int deleted) {

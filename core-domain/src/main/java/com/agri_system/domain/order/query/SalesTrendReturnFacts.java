@@ -1,4 +1,4 @@
-package com.agri_system.application.report.dto;
+package com.agri_system.domain.order.query;
 
 import lombok.Data;
 import java.math.BigDecimal;

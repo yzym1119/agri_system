@@ -148,7 +148,7 @@ class AuthorityHttpIntegrationTest {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
         @Bean com.agri_system.application.report.service.ReportAnalysisService customerReports(com.agri_system.domain.customer.query.CustomerReportQuery query) {
             // 本组只调用客户分析，其他报表依赖不替换此路由的真实查询/权限/SQL。
-            return new com.agri_system.application.report.service.ReportAnalysisService(null,null,null,null,query,null,null,null);
+            return new com.agri_system.application.report.service.ReportAnalysisService(null,null,null,query,null,null);
         }
         @Bean LifecycleIsolationGate lifecycleIsolationGate() { return new LifecycleIsolationGate(); }
     }

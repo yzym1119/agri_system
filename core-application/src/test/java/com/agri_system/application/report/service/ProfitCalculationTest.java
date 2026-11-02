@@ -4,12 +4,9 @@ import com.agri_system.application.report.dto.SalesTrendVO;
 import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.order.model.OrderItem;
 import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepository;
-import com.agri_system.infrastructure.after_sales.mapper.AfterSalesMapper;
 import com.agri_system.domain.credit.query.CreditReportQuery;
 import com.agri_system.domain.customer.query.CustomerReportQuery;
 import com.agri_system.domain.inventory.query.InventoryReportQuery;
-import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
-import com.agri_system.infrastructure.order.mapper.OrderMapper;
 import com.agri_system.domain.product.repository.ProductRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,9 +30,7 @@ import static org.mockito.Mockito.when;
 class ProfitCalculationTest {
 
     @Mock
-    private OrderMapper orderMapper;
-    @Mock
-    private OrderItemMapper orderItemMapper;
+    private com.agri_system.domain.order.query.SalesReportQuery salesReportQuery;
     @Mock
     private InventoryReportQuery inventoryReportQuery;
     @Mock
@@ -45,8 +40,6 @@ class ProfitCalculationTest {
     @Mock
     private ProductRepository productRepository;
     @Mock
-    private AfterSalesMapper afterSalesMapper;
-    @Mock
     private OrderItemBatchAllocationRepository allocationRepository;
 
     private ReportAnalysisService reportAnalysisService;
@@ -54,8 +47,8 @@ class ProfitCalculationTest {
     @BeforeEach
     void setUp() {
         reportAnalysisService = new ReportAnalysisService(
-                orderMapper, orderItemMapper, inventoryReportQuery,
-                creditReportQuery, customerReportQuery, productRepository, afterSalesMapper,
+                salesReportQuery, inventoryReportQuery,
+                creditReportQuery, customerReportQuery, productRepository,
                 allocationRepository);
     }
 
@@ -85,8 +78,7 @@ class ProfitCalculationTest {
         item2.setQuantity(new BigDecimal("1"));
         item2.setCostPriceSnapshot(new BigDecimal("30.00"));
 
-        when(orderMapper.selectListByQuery(any())).thenReturn(List.of(order));
-        when(orderItemMapper.selectListByQuery(any())).thenReturn(List.of(item1, item2));
+        when(salesReportQuery.trendSource(any(),any(),any())).thenReturn(new com.agri_system.domain.order.query.SalesTrendSource(List.of(order),List.of(item1,item2),java.util.Map.of(),java.util.Map.of(),java.util.Set.of()));
 
         // 执行
         List<SalesTrendVO> result = reportAnalysisService.salesTrend(start, end, null);
@@ -127,8 +119,7 @@ class ProfitCalculationTest {
         item.setQuantity(new BigDecimal("1"));
         item.setCostPriceSnapshot(null); // 成本快照为空，应降级为0
 
-        when(orderMapper.selectListByQuery(any())).thenReturn(List.of(order));
-        when(orderItemMapper.selectListByQuery(any())).thenReturn(List.of(item));
+        when(salesReportQuery.trendSource(any(),any(),any())).thenReturn(new com.agri_system.domain.order.query.SalesTrendSource(List.of(order),List.of(item),java.util.Map.of(),java.util.Map.of(),java.util.Set.of()));
 
         List<SalesTrendVO> result = reportAnalysisService.salesTrend(start, end, null);
 
