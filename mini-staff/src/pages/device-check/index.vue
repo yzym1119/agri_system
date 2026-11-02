@@ -82,9 +82,16 @@ async function check(kind: 'scan' | 'storage' | 'random' | 'navigation') {
       platform.removeStorage(key);
       resultMessage = '本机记录读写和删除核对成功。';
     }
-  } catch {
+  } catch (failure) {
+    const randomFailures = {
+      RANDOM_UNAVAILABLE: '当前微信环境未提供安全随机能力，请在手机微信中复测。',
+      RANDOM_FAILED: '安全随机调用未完成，请重试；仍失败时请在手机微信中复测。',
+      RANDOM_INVALID: '安全随机返回数据异常，请记录微信版本并联系管理员。',
+    };
+    const randomFailure = failure instanceof Error && Object.prototype.hasOwnProperty.call(randomFailures, failure.message)
+      ? randomFailures[failure.message as keyof typeof randomFailures] : undefined;
     resultMessage = kind === 'navigation' ? '未能打开目的地。请核对地址及两项GCJ02坐标；也可只填写地址手工搜索。'
-      : '检查未通过，请记录手机型号与操作步骤。此设备暂不开放业务提交。';
+      : (kind === 'random' && randomFailure ? randomFailure : '检查未通过，请记录手机型号与操作步骤。') + '此设备暂不开放业务提交。';
   } finally {
     busy.value = false;
     if (visible && epoch === viewEpoch) message.value = resultMessage;

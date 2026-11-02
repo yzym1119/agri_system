@@ -57,6 +57,16 @@ test('无安全随机源/错误长度拒绝，不以Math.random兜底；合法�
   assert.equal(await p.createRequestKey(), 'ffffffff-ffff-4fff-bfff-ffffffffffff');
   await assert.rejects(p.secureRandom(0), /RANDOM_SIZE/);
 });
+test('微信跨运行环境的真实ArrayBuffer可生成请求号，仍拒绝错误长度与伪造类型', async () => {
+  const { createMobilePlatform } = await load;
+  const foreign = require('node:vm').runInNewContext('new Uint8Array(16).fill(255).buffer');
+  assert.equal(foreign instanceof ArrayBuffer, false);
+  const make = value => createMobilePlatform(port(), { getRandomValues: o => o.success({ randomValues: value }) });
+  assert.equal(await make(foreign).createRequestKey(), 'ffffffff-ffff-4fff-bfff-ffffffffffff');
+  for (const invalid of [new ArrayBuffer(2), new Uint8Array(16), { [Symbol.toStringTag]:'ArrayBuffer', byteLength:16, length:16 }, null]) {
+    await assert.rejects(make(invalid).secureRandom(16), /RANDOM_INVALID/);
+  }
+});
 test('导航只使用明确GCJ02坐标，未知坐标保留地址供人工使用', async () => {
   const { createMobilePlatform } = await load;
   let calls = 0;

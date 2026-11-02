@@ -66,10 +66,14 @@ export function createMobilePlatform(uni: UniPlatformPort, random?: SecureRandom
       if (!random) throw new Error('RANDOM_UNAVAILABLE');
       return new Promise((resolve, reject) => random.getRandomValues({ length: size,
         success: result => {
-          if (!(result.randomValues instanceof ArrayBuffer) || result.randomValues.byteLength !== size) {
-            reject(new Error('RANDOM_INVALID')); return;
-          }
-          resolve(new Uint8Array(result.randomValues));
+          try {
+            // 微信桥接可返回另一运行环境的 ArrayBuffer；用内建 getter 验证真实类型，不能只看标签或 instanceof。
+            const length = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength')!.get!.call(result.randomValues);
+            if (length !== size) throw new Error('RANDOM_INVALID');
+            const bytes = new Uint8Array(result.randomValues);
+            if (bytes.byteLength !== size) throw new Error('RANDOM_INVALID');
+            resolve(bytes);
+          } catch { reject(new Error('RANDOM_INVALID')); }
         },
         fail: () => reject(new Error('RANDOM_FAILED')),
       }));
