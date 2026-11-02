@@ -1017,24 +1017,19 @@ public class OrderApplicationService {
         vo.setReceiverName(order.getReceiverName());
         vo.setReceiverPhone(order.getReceiverPhone());
         vo.setReceiverAddress(order.getReceiverAddress());
-        // 备注与操作员（优先使用 staffId，其次使用 createdBy）
+        // 操作员仅按原POS员工事实解析；线上createdBy是客户编号。
         vo.setRemark(order.getRemark());
-        Long operatorId = null;
-        if (order.getStaffId() != null) {
-            operatorId = order.getStaffId();
-        } else if (order.getCreatedBy() != null) {
-            operatorId = order.getCreatedBy();
-        }
-        // 只读核验原POS收银身份；线上createdBy属于客户，不得误映射成员工。
-        vo.setOperatorStaffId(Integer.valueOf(1).equals(order.getOrderType()) ? operatorId : null);
+        Long operatorId = Integer.valueOf(1).equals(order.getOrderType())
+                ? (order.getStaffId() != null ? order.getStaffId() : order.getCreatedBy()) : null;
+        vo.setOperatorStaffId(operatorId);
         if (operatorId != null) {
             try {
                 staffRepository.findById(operatorId).ifPresent(staff -> vo.setOperatorName(staff.getName()));
             } catch (Exception ignored) {
-                // ignore lookup failure
+                // 姓名补充失败不改变原操作员工编号。
             }
         }
-        
+
         // 查询售后记录
         List<com.agri_system.domain.after_sales.model.AfterSales> afterSalesList = 
                 afterSalesRepository.findByOrderId(orderId);
