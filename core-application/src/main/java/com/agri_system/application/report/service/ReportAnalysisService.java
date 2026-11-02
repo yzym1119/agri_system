@@ -11,8 +11,7 @@ import com.agri_system.domain.order.model.OrderItem;
 import com.agri_system.domain.order.model.OrderItemBatchAllocation;
 import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepository;
 import com.agri_system.infrastructure.after_sales.mapper.AfterSalesMapper;
-import com.agri_system.infrastructure.credit.mapper.CreditAccountMapper;
-import com.agri_system.infrastructure.credit.mapper.CreditRepaymentLogMapper;
+import com.agri_system.domain.credit.query.CreditReportQuery;
 import com.agri_system.infrastructure.customer.mapper.CustomerMapper;
 import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
 import com.agri_system.infrastructure.order.mapper.OrderMapper;
@@ -41,8 +40,7 @@ public class ReportAnalysisService {
     private final OrderMapper orderMapper;
     private final OrderItemMapper orderItemMapper;
     private final InventoryReportQuery inventoryReportQuery;
-    private final CreditAccountMapper creditAccountMapper;
-    private final CreditRepaymentLogMapper repaymentLogMapper;
+    private final CreditReportQuery creditReportQuery;
     private final CustomerMapper customerMapper;
     private final ProductRepository productRepository;
     private final AfterSalesMapper afterSalesMapper;
@@ -53,8 +51,7 @@ public class ReportAnalysisService {
     public ReportAnalysisService(OrderMapper orderMapper,
                                  OrderItemMapper orderItemMapper,
                                  InventoryReportQuery inventoryReportQuery,
-                                 CreditAccountMapper creditAccountMapper,
-                                 CreditRepaymentLogMapper repaymentLogMapper,
+                                 CreditReportQuery creditReportQuery,
                                  CustomerMapper customerMapper,
                                  ProductRepository productRepository,
                                  AfterSalesMapper afterSalesMapper,
@@ -62,8 +59,7 @@ public class ReportAnalysisService {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
         this.inventoryReportQuery = inventoryReportQuery;
-        this.creditAccountMapper = creditAccountMapper;
-        this.repaymentLogMapper = repaymentLogMapper;
+        this.creditReportQuery = creditReportQuery;
         this.customerMapper = customerMapper;
         this.productRepository = productRepository;
         this.afterSalesMapper = afterSalesMapper;
@@ -104,11 +100,7 @@ public class ReportAnalysisService {
                 orderQ.clone().select("COUNT(1) AS cnt"), Long.class);
 
         // 今日新增原始赊销额，按应收账户所属门店统计。
-        QueryWrapper creditQ = QueryWrapper.create()
-                .where("created_at between ? and ?", start, end);
-        if (storeId != null) creditQ.and("store_id = ?", storeId);
-        BigDecimal newCreditAmount = creditAccountMapper.selectOneByQueryAs(
-                creditQ.select("COALESCE(SUM(credit_amount),0) AS total"), BigDecimal.class);
+        BigDecimal newCreditAmount = creditReportQuery.newCreditAmount(storeId, start, end);
 
         // 今日新增客户数（customer 表无 store_id 字段）
         QueryWrapper customerQ = QueryWrapper.create()
@@ -582,63 +574,14 @@ public class ReportAnalysisService {
      */
     @Transactional(readOnly = true)
     public CreditRiskVO creditRisk(Long storeId) {
-        // 总欠款
-        QueryWrapper debtQ = QueryWrapper.create()
-                .where("status in (1,3)").and("remaining_amount > 0");
-        if (storeId != null) debtQ.and("store_id = ?", storeId);
-        BigDecimal totalDebt = creditAccountMapper.selectOneByQueryAs(
-                debtQ.clone().select("COALESCE(SUM(remaining_amount),0) AS total"), BigDecimal.class);
-        totalDebt = defaultZero(totalDebt);
-        
-        // 已明确逾期的历史账户即使到期日未知，也保留其逾期事实。
-        BigDecimal overdueDebt = creditAccountMapper.selectOneByQueryAs(
-                debtQ.clone()
-                        .select("COALESCE(SUM(remaining_amount),0) AS total")
-                        .and("(status = 3 OR due_date < ?)", LocalDate.now()),
-                BigDecimal.class);
-        overdueDebt = defaultZero(overdueDebt);
-        
-        // 本月新增赊销额（credit_account.created_at在本月）
-        LocalDate monthStart = LocalDate.now().withDayOfMonth(1);
-        LocalDate monthEnd = LocalDate.now().withDayOfMonth(LocalDate.now().lengthOfMonth());
-        LocalDateTime monthStartTime = monthStart.atStartOfDay();
-        LocalDateTime monthEndTime = monthEnd.atTime(LocalTime.MAX);
-        
-        QueryWrapper monthlyCreditQ = QueryWrapper.create()
-                .where("created_at between ? and ?", monthStartTime, monthEndTime);
-        if (storeId != null) monthlyCreditQ.and("store_id = ?", storeId);
-        BigDecimal monthlyNewCredit = creditAccountMapper.selectOneByQueryAs(
-                monthlyCreditQ.clone().select("COALESCE(SUM(credit_amount),0) AS total"), BigDecimal.class);
-        monthlyNewCredit = defaultZero(monthlyNewCredit);
-        
-        // 本月实收还款额（credit_repayment_log.created_at在本月）
-        QueryWrapper repaymentQ = QueryWrapper.create()
-                .select("COALESCE(SUM(amount),0) AS total")
-                .where("created_at between ? and ?", monthStartTime, monthEndTime);
-        if (storeId != null) {
-            repaymentQ.and("store_id = ?", storeId);
-        }
-        BigDecimal monthlyRepayment = repaymentLogMapper.selectOneByQueryAs(
-                repaymentQ, BigDecimal.class);
-        monthlyRepayment = defaultZero(monthlyRepayment);
-        
-        // 同一批本月新建应收：净实还 / (净实还 + 剩余欠款)。
-        // 本月偿还旧债仍计入上面的本月还款额，但不能混入本月赊销的回款率。
-        // paid_amount 保留原实还事实，必须减去明确归属该账户的已退还款；冲欠不算现金。
-        String sources = " FROM credit_repayment_log rp WHERE rp.credit_account_id = credit_account.id"
-                + " AND rp.store_id = credit_account.store_id";
-        String refunded = "COALESCE((SELECT SUM(rp.refunded_amount)" + sources + "),0)";
-        String sourceAmount = "COALESCE((SELECT SUM(rp.amount)" + sources + "),0)";
-        BigDecimal unknown = creditAccountMapper.selectOneByQueryAs(monthlyCreditQ.clone().select(
-                "COALESCE(SUM(CASE WHEN paid_amount IS NULL OR remaining_amount IS NULL"
-                        + " OR paid_amount < 0 OR remaining_amount < 0 OR paid_amount <> " + sourceAmount
-                        + " OR EXISTS (SELECT 1" + sources + " AND (rp.refunded_amount IS NULL"
-                        + " OR rp.refunded_amount < 0 OR rp.refunded_amount > rp.amount))"
-                        + " THEN 1 ELSE 0 END),0) AS total"), BigDecimal.class);
-        BigDecimal netPaid = creditAccountMapper.selectOneByQueryAs(monthlyCreditQ.clone().select(
-                "COALESCE(SUM(paid_amount - " + refunded + "),0) AS total"), BigDecimal.class);
-        BigDecimal cohortRemaining = creditAccountMapper.selectOneByQueryAs(monthlyCreditQ.clone().select(
-                "COALESCE(SUM(remaining_amount),0) AS total"), BigDecimal.class);
+        var facts = creditReportQuery.riskFacts(storeId, LocalDate.now());
+        BigDecimal totalDebt = defaultZero(facts.totalDebt());
+        BigDecimal overdueDebt = defaultZero(facts.overdueDebt());
+        BigDecimal monthlyNewCredit = defaultZero(facts.monthlyNewCredit());
+        BigDecimal monthlyRepayment = defaultZero(facts.monthlyRepayment());
+        BigDecimal unknown = facts.accountsWithUnknownSources();
+        BigDecimal netPaid = facts.netMonthlyPaid();
+        BigDecimal cohortRemaining = facts.monthlyRemainingCredit();
         BigDecimal denominator = defaultZero(netPaid).add(defaultZero(cohortRemaining));
         BigDecimal repaymentRate = null;
         if (defaultZero(unknown).signum() == 0 && denominator.signum() > 0) {

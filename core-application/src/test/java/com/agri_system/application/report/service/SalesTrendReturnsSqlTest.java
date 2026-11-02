@@ -54,7 +54,7 @@ class SalesTrendReturnsSqlTest {
         config.addMapper(OrderItemBatchAllocationMapper.class);
         session = new FlexSqlSessionFactoryBuilder().build(config).openSession(true);
         service = new ReportAnalysisService(session.getMapper(OrderMapper.class), session.getMapper(OrderItemMapper.class),
-                null, null, null, null, null, null,
+                null, null, null, null, null,
                 new OrderItemBatchAllocationRepositoryImpl(session.getMapper(OrderItemBatchAllocationMapper.class)));
     }
 

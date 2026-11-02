@@ -67,8 +67,8 @@ class DashboardFactsSqlTest {
         }
         session = new FlexSqlSessionFactoryBuilder().build(configuration).openSession(true);
         service = new ReportAnalysisService(session.getMapper(OrderMapper.class), null,
-                new com.agri_system.infrastructure.inventory.query.InventoryReportQueryImpl(session.getMapper(InventoryBatchMapper.class)), session.getMapper(CreditAccountMapper.class),
-                session.getMapper(CreditRepaymentLogMapper.class), session.getMapper(CustomerMapper.class), null,
+                new com.agri_system.infrastructure.inventory.query.InventoryReportQueryImpl(session.getMapper(InventoryBatchMapper.class)), new com.agri_system.infrastructure.credit.query.CreditReportQueryImpl(session.getMapper(CreditAccountMapper.class),
+                session.getMapper(CreditRepaymentLogMapper.class)), session.getMapper(CustomerMapper.class), null,
                 session.getMapper(AfterSalesMapper.class), null);
     }
 
@@ -258,6 +258,32 @@ class DashboardFactsSqlTest {
         money("0", service.creditRisk(1L).getRepaymentRate());
         jdbc.update("UPDATE credit_account SET remaining_amount=0,status=2 WHERE id=1");
         assertNull(service.creditRisk(1L).getRepaymentRate());
+    }
+
+    @Test
+    void inconsistentRepaymentSourcesStayUnknownInsteadOfBecomingARecoveryRate() {
+        account(1,1,200,100,1,null);paid(1,1,1,100,"101",today);
+        assertNull(service.creditRisk(1L).getRepaymentRate());
+        jdbc.update("UPDATE credit_repayment_log SET refunded_amount=-1 WHERE id=1");
+        assertNull(service.creditRisk(1L).getRepaymentRate());
+        jdbc.update("UPDATE credit_repayment_log SET refunded_amount=0 WHERE id=1");
+        jdbc.update("UPDATE credit_account SET paid_amount=101 WHERE id=1");
+        assertNull(service.creditRisk(1L).getRepaymentRate());
+        jdbc.update("UPDATE credit_account SET paid_amount=100 WHERE id=1");
+        money("50",service.creditRisk(1L).getRepaymentRate());
+    }
+
+    @Test
+    void creditReadPortUsesOneExplicitReportingDateForMonthAndOverdueBoundaries() {
+        var asOf=LocalDate.of(2026,2,15);
+        var start=asOf.withDayOfMonth(1).atStartOfDay();
+        var end=asOf.withDayOfMonth(asOf.lengthOfMonth()).atTime(23,59,59);
+        jdbc.update("INSERT INTO credit_account(id,store_id,credit_amount,remaining_amount,status,created_at,paid_amount,due_date) VALUES(1,1,100,100,1,?,0,'2026-02-14'),(2,1,50,50,1,?,0,'2026-02-16'),(3,1,900,900,1,?,0,NULL),(4,1,800,800,1,?,0,NULL)",start,end,start.minusSeconds(1),end.plusSeconds(1));
+        var query=new com.agri_system.infrastructure.credit.query.CreditReportQueryImpl(session.getMapper(CreditAccountMapper.class),session.getMapper(CreditRepaymentLogMapper.class));
+        var facts=query.riskFacts(1L,asOf);
+        money("150",facts.monthlyNewCredit());money("150",facts.monthlyRemainingCredit());money("0",facts.netMonthlyPaid());money("0",facts.accountsWithUnknownSources());
+        money("1850",facts.totalDebt());money("100",facts.overdueDebt());
+        money("150",query.newCreditAmount(1L,start,end));money("0",query.newCreditAmount(2L,start,end));
     }
 
     private void paid(long id, long store, long account, int amount, String refunded, LocalDateTime date) {
