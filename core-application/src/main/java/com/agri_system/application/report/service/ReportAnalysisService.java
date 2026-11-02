@@ -4,7 +4,8 @@ import com.agri_system.application.order.dto.vo.OrderMarginVO;
 import com.agri_system.application.order.service.RefundAmountPolicy;
 import com.agri_system.application.report.dto.*;
 import com.agri_system.domain.customer.model.Customer;
-import com.agri_system.domain.inventory.model.InventoryBatch;
+import com.agri_system.domain.inventory.query.InventoryReportBatch;
+import com.agri_system.domain.inventory.query.InventoryReportQuery;
 import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.order.model.OrderItem;
 import com.agri_system.domain.order.model.OrderItemBatchAllocation;
@@ -13,7 +14,6 @@ import com.agri_system.infrastructure.after_sales.mapper.AfterSalesMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditAccountMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditRepaymentLogMapper;
 import com.agri_system.infrastructure.customer.mapper.CustomerMapper;
-import com.agri_system.infrastructure.inventory.mapper.InventoryBatchMapper;
 import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
 import com.agri_system.infrastructure.order.mapper.OrderMapper;
 import com.agri_system.domain.product.repository.ProductRepository;
@@ -40,7 +40,7 @@ public class ReportAnalysisService {
 
     private final OrderMapper orderMapper;
     private final OrderItemMapper orderItemMapper;
-    private final InventoryBatchMapper inventoryBatchMapper;
+    private final InventoryReportQuery inventoryReportQuery;
     private final CreditAccountMapper creditAccountMapper;
     private final CreditRepaymentLogMapper repaymentLogMapper;
     private final CustomerMapper customerMapper;
@@ -52,7 +52,7 @@ public class ReportAnalysisService {
     @Autowired
     public ReportAnalysisService(OrderMapper orderMapper,
                                  OrderItemMapper orderItemMapper,
-                                 InventoryBatchMapper inventoryBatchMapper,
+                                 InventoryReportQuery inventoryReportQuery,
                                  CreditAccountMapper creditAccountMapper,
                                  CreditRepaymentLogMapper repaymentLogMapper,
                                  CustomerMapper customerMapper,
@@ -61,7 +61,7 @@ public class ReportAnalysisService {
                                  OrderItemBatchAllocationRepository allocationRepository) {
         this.orderMapper = orderMapper;
         this.orderItemMapper = orderItemMapper;
-        this.inventoryBatchMapper = inventoryBatchMapper;
+        this.inventoryReportQuery = inventoryReportQuery;
         this.creditAccountMapper = creditAccountMapper;
         this.repaymentLogMapper = repaymentLogMapper;
         this.customerMapper = customerMapper;
@@ -153,15 +153,8 @@ public class ReportAnalysisService {
 
         // 库存预警数（简单用库龄 > 180 天的批次数量代表）
         LocalDate threshold = today.minusDays(180);
-        QueryWrapper inventoryAlertQ = QueryWrapper.create()
-                .where("is_active = 1")
-                .and("production_date is not null")
-                .and("production_date <= ?", threshold);
-        if (storeId != null) {
-            inventoryAlertQ.and("store_id = ?", storeId);
-        }
-        Long inventoryAlertCount = inventoryBatchMapper.currentBalances(storeId).stream()
-                .filter(b -> b.getProductionDate() != null && !b.getProductionDate().isAfter(threshold)).count();
+        Long inventoryAlertCount = inventoryReportQuery.findCurrentBatches(storeId).stream()
+                .filter(b -> b.productionDate() != null && !b.productionDate().isAfter(threshold)).count();
 
         DashboardVO vo = new DashboardVO();
         vo.setGmv(defaultZero(gmv));
@@ -258,22 +251,18 @@ public class ReportAnalysisService {
     @Transactional(readOnly = true)
     public InventoryValueVO inventoryValue(Long storeId) {
         // 有效批次资金占用
-        QueryWrapper batchQ = QueryWrapper.create().where("is_active = 1");
-        if (storeId != null) {
-            batchQ.and("store_id = ?", storeId);
-        }
-        List<InventoryBatch> batches = inventoryBatchMapper.currentBalances(storeId);
+        List<InventoryReportBatch> batches = inventoryReportQuery.findCurrentBatches(storeId);
         BigDecimal total = batches.stream()
-                .map(b -> defaultZero(b.getQuantity()).multiply(defaultZero(b.getCostPrice())))
+                .map(b -> defaultZero(b.quantityInMainUnit()).multiply(defaultZero(b.unitCostInMainUnit())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         // 库龄 > 180 天：简单按 created_at 维度统计
         LocalDateTime threshold = LocalDateTime.now().minusDays(180);
-        List<InventoryBatch> aged = batches.stream()
-                .filter(b -> b.getCreatedAt() != null && b.getCreatedAt().isBefore(threshold))
+        List<InventoryReportBatch> aged = batches.stream()
+                .filter(b -> b.receivedAt() != null && b.receivedAt().isBefore(threshold))
                 .collect(Collectors.toList());
         BigDecimal over180 = aged.stream()
-                .map(b -> defaultZero(b.getQuantity()).multiply(defaultZero(b.getCostPrice())))
+                .map(b -> defaultZero(b.quantityInMainUnit()).multiply(defaultZero(b.unitCostInMainUnit())))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         InventoryValueVO vo = new InventoryValueVO();
@@ -552,20 +541,12 @@ public class ReportAnalysisService {
     @Transactional(readOnly = true)
     public List<SlowMovingInventoryVO> slowMovingInventory(Long storeId) {
         LocalDate threshold = LocalDate.now().minusDays(180);
-        QueryWrapper batchQ = QueryWrapper.create()
-                .where("is_active = 1")
-                .and("quantity > 0")
-                .and("production_date is not null")
-                .and("production_date <= ?", threshold);
-        if (storeId != null) {
-            batchQ.and("store_id = ?", storeId);
-        }
-        List<InventoryBatch> batches = inventoryBatchMapper.currentBalances(storeId).stream()
-                .filter(b -> b.getProductionDate() != null && !b.getProductionDate().isAfter(threshold)).toList();
+        List<InventoryReportBatch> batches = inventoryReportQuery.findCurrentBatches(storeId).stream()
+                .filter(b -> b.productionDate() != null && !b.productionDate().isAfter(threshold)).toList();
         
         // 获取商品ID集合，批量查询商品名称
         List<Long> productIds = batches.stream()
-                .map(InventoryBatch::getProductId)
+                .map(InventoryReportBatch::productId)
                 .distinct()
                 .collect(Collectors.toList());
         
@@ -578,15 +559,15 @@ public class ReportAnalysisService {
         return batches.stream()
                 .map(batch -> {
                     SlowMovingInventoryVO vo = new SlowMovingInventoryVO();
-                    vo.setProductId(batch.getProductId());
-                    vo.setProductName(productNameMap.getOrDefault(batch.getProductId(), "商品" + batch.getProductId()));
-                    vo.setBatchNo(batch.getBatchNo());
-                    vo.setQuantity(defaultZero(batch.getQuantity()));
-                    vo.setValue(defaultZero(batch.getQuantity()).multiply(defaultZero(batch.getCostPrice())));
-                    vo.setProductionDate(batch.getProductionDate());
-                    vo.setCreatedAt(batch.getCreatedAt());
-                    if (batch.getProductionDate() != null) {
-                        long days = java.time.temporal.ChronoUnit.DAYS.between(batch.getProductionDate(), LocalDate.now());
+                    vo.setProductId(batch.productId());
+                    vo.setProductName(productNameMap.getOrDefault(batch.productId(), "商品" + batch.productId()));
+                    vo.setBatchNo(batch.supplierBatchNo());
+                    vo.setQuantity(defaultZero(batch.quantityInMainUnit()));
+                    vo.setValue(defaultZero(batch.quantityInMainUnit()).multiply(defaultZero(batch.unitCostInMainUnit())));
+                    vo.setProductionDate(batch.productionDate());
+                    vo.setCreatedAt(batch.receivedAt());
+                    if (batch.productionDate() != null) {
+                        long days = java.time.temporal.ChronoUnit.DAYS.between(batch.productionDate(), LocalDate.now());
                         vo.setAgeDays(days);
                     }
                     return vo;

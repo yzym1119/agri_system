@@ -59,6 +59,7 @@ class DashboardFactsSqlTest {
         jdbc.execute("CREATE TABLE product (id BIGINT, main_unit VARCHAR(20))");
         jdbc.execute("CREATE TABLE product_unit (product_id BIGINT, unit_name VARCHAR(20), base_quantity_per_unit DECIMAL(18,4))");
         var configuration = new FlexConfiguration(new Environment("dashboard-test", new JdbcTransactionFactory(), new FlexDataSource("dashboard-test", dataSource, false)));
+        configuration.setMapUnderscoreToCamelCase(true);
         configuration.setLocalCacheScope(org.apache.ibatis.session.LocalCacheScope.STATEMENT);
         for (Class<?> mapper : new Class<?>[]{OrderMapper.class, CreditAccountMapper.class,
                 CreditRepaymentLogMapper.class, CustomerMapper.class, AfterSalesMapper.class, InventoryBatchMapper.class}) {
@@ -66,7 +67,7 @@ class DashboardFactsSqlTest {
         }
         session = new FlexSqlSessionFactoryBuilder().build(configuration).openSession(true);
         service = new ReportAnalysisService(session.getMapper(OrderMapper.class), null,
-                session.getMapper(InventoryBatchMapper.class), session.getMapper(CreditAccountMapper.class),
+                new com.agri_system.infrastructure.inventory.query.InventoryReportQueryImpl(session.getMapper(InventoryBatchMapper.class)), session.getMapper(CreditAccountMapper.class),
                 session.getMapper(CreditRepaymentLogMapper.class), session.getMapper(CustomerMapper.class), null,
                 session.getMapper(AfterSalesMapper.class), null);
     }
@@ -76,6 +77,23 @@ class DashboardFactsSqlTest {
         TenantManager.setTenantFactory(originalTenant);
         if (session != null) session.close();
         if (jdbc != null) jdbc.execute("SHUTDOWN");
+    }
+
+    @Test
+    void reportReadPortPreservesRealMainUnitValuesStoreBoundaryAndBothDateMeanings() {
+        jdbc.execute("INSERT INTO product VALUES(10,'箱')");jdbc.execute("INSERT INTO product_unit VALUES(10,'箱',4),(10,'瓶',1)");
+        LocalDate oldProduction=LocalDate.now().minusDays(190);
+        LocalDateTime recentReceipt=LocalDateTime.now().minusDays(10),oldReceipt=LocalDateTime.now().minusDays(190);
+        jdbc.update("INSERT INTO inventory_receipt_batch VALUES(1,1,10,'LOT1',?,NULL,2,?),(2,1,10,'LOT2',NULL,NULL,3,?),(3,2,10,'OTHER',?,NULL,9,?)",oldProduction,recentReceipt,oldReceipt,oldProduction,oldReceipt);
+        jdbc.execute("INSERT INTO inventory_batch_balance VALUES(1,3),(1,5),(2,4),(3,40)");
+        money("28",service.inventoryValue(1L).getTotalInventoryValue());
+        money("12",service.inventoryValue(1L).getOver180DaysValue());
+        money("360",service.inventoryValue(2L).getTotalInventoryValue());
+        money("388",service.inventoryValue(null).getTotalInventoryValue());
+        money("372",service.inventoryValue(null).getOver180DaysValue());
+        // 日期未知不补造；原工作台按生产日期统计，资金库龄仍按实际入库时间。
+        assertEquals(1L,service.dashboardToday(1L).getInventoryAlertCount());
+        assertEquals(2L,service.dashboardToday(null).getInventoryAlertCount());
     }
 
     @Test

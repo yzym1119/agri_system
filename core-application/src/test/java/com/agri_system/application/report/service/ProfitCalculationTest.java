@@ -8,7 +8,7 @@ import com.agri_system.infrastructure.after_sales.mapper.AfterSalesMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditAccountMapper;
 import com.agri_system.infrastructure.credit.mapper.CreditRepaymentLogMapper;
 import com.agri_system.infrastructure.customer.mapper.CustomerMapper;
-import com.agri_system.infrastructure.inventory.mapper.InventoryBatchMapper;
+import com.agri_system.domain.inventory.query.InventoryReportQuery;
 import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
 import com.agri_system.infrastructure.order.mapper.OrderMapper;
 import com.agri_system.domain.product.repository.ProductRepository;
@@ -38,7 +38,7 @@ class ProfitCalculationTest {
     @Mock
     private OrderItemMapper orderItemMapper;
     @Mock
-    private InventoryBatchMapper inventoryBatchMapper;
+    private InventoryReportQuery inventoryReportQuery;
     @Mock
     private CreditAccountMapper creditAccountMapper;
     @Mock
@@ -57,7 +57,7 @@ class ProfitCalculationTest {
     @BeforeEach
     void setUp() {
         reportAnalysisService = new ReportAnalysisService(
-                orderMapper, orderItemMapper, inventoryBatchMapper,
+                orderMapper, orderItemMapper, inventoryReportQuery,
                 creditAccountMapper, repaymentLogMapper, customerMapper, productRepository, afterSalesMapper,
                 allocationRepository);
     }
