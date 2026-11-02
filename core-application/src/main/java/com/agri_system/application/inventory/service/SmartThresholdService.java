@@ -1,11 +1,13 @@
 package com.agri_system.application.inventory.service;
 
 import com.agri_system.application.inventory.dto.vo.ThresholdRecommendation;
-import com.agri_system.domain.inventory.repository.InventoryBatchBalanceRepository;
-import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
+import com.agri_system.domain.inventory.query.InventoryPlanningQuery;
+import com.agri_system.domain.inventory.query.PlanningStock;
+import com.agri_system.domain.inventory.query.SalesVelocity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -15,9 +17,9 @@ import java.util.*;
  * 智能库存阈值服务
  * 基于历史销售数据自动计算推荐的安全库存、最高库存和补货量
  *
- * <p>当前库存来自批次余额的<b>单次分组查询</b>（available = base - reserved），
+ * <p>当前库存来自批次余额的<b>单次分组查询</b>（base - reserved后换算为主单位），
  * 季节系数所需的近7天/长期销售速度也在每次计算时一次性预加载，绝不逐商品重复查询。
- * 推荐值只供人工参考（“在推荐区间内”不等于“安全”）；样本不足的行照常返回，
+ * 推荐值只供人工参考（“在推荐区间内”不等于“安全”）；样本或换算证据不足的行不生成可采纳推荐值，仍返回，
  * 但以 {@code status=DATA_INSUFFICIENT} / {@code confidence=INSUFFICIENT_DATA} 明确标注。</p>
  */
 @Slf4j
@@ -25,8 +27,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class SmartThresholdService {
 
-    private final OrderItemMapper orderItemMapper;
-    private final InventoryBatchBalanceRepository batchBalanceRepository;
+    private final InventoryPlanningQuery planningQuery;
 
     /** 安全库存覆盖天数（默认7天） */
     private static final int SAFETY_DAYS = 7;
@@ -54,34 +55,39 @@ public class SmartThresholdService {
      * @param days 统计天数（默认90天）
      * @return 每个商品的推荐阈值列表
      */
+    @Transactional(readOnly = true)
     public List<ThresholdRecommendation> calculateRecommendations(Long storeId, int days) {
         if (days <= 0) days = 90;
 
         // 1. 查询销售速度（观察窗口）
-        List<Map<String, Object>> salesData = orderItemMapper.selectProductSalesVelocity(days, storeId);
+        List<SalesVelocity> salesData = planningQuery.salesVelocity(days, storeId);
         if (salesData == null || salesData.isEmpty()) {
             return Collections.emptyList();
         }
 
-        // 2. 查询当前库存：门店一次分组查询，缺键默认 0（不表示“安全”，只是沿用既有默认口径）
-        Map<Long, BigDecimal> currentStockMap = loadCurrentStock(storeId);
+        // 2. 查询当前库存：门店一次分组查询，缺失余额或换算证据保持未知
+        Map<Long, PlanningStock> currentStockMap = planningQuery.stocks(storeId);
 
         // 3. 季节系数所需的近期/长期速度只预加载一次，与商品数量无关
-        List<Map<String, Object>> recentData = days == RECENT_WINDOW_DAYS
+        List<SalesVelocity> recentData = days == RECENT_WINDOW_DAYS
                 ? salesData
-                : orderItemMapper.selectProductSalesVelocity(RECENT_WINDOW_DAYS, storeId);
+                : planningQuery.salesVelocity(RECENT_WINDOW_DAYS, storeId);
         Map<Long, BigDecimal> windowAvgByProduct = indexAvgDailySales(salesData);
         Map<Long, BigDecimal> recentAvgByProduct = indexAvgDailySales(recentData);
 
         // 4. 计算推荐值
         List<ThresholdRecommendation> recommendations = new ArrayList<>();
-        for (Map<String, Object> row : salesData) {
-            Long productId = toLong(row.get("productId"));
+        for (SalesVelocity row : salesData) {
+            Long productId = row.productId();
             if (productId == null) continue;
 
-            BigDecimal avgDailySales = toBigDecimal(row.get("avgDailySales"));
-            BigDecimal currentStock = currentStockMap.getOrDefault(productId, BigDecimal.ZERO);
-            boolean insufficient = avgDailySales == null || avgDailySales.compareTo(MIN_SALES_THRESHOLD) < 0;
+            BigDecimal avgDailySales = row.avgDailySales();
+            PlanningStock stock=currentStockMap.get(productId);
+            boolean sameStockUnit=stock!=null&&row.mainUnit()!=null&&!row.mainUnit().isBlank()
+                    &&Objects.equals(stock.mainUnit(),row.mainUnit())&&stock.basePerMainUnit()!=null&&stock.basePerMainUnit().signum()>0;
+            BigDecimal currentStock=sameStockUnit?stock.quantity():null;
+            boolean incompleteUnits=row.unresolvedUnitCount()>0 || recentData.stream().anyMatch(r->productId.equals(r.productId())&&(r.unresolvedUnitCount()>0||!Objects.equals(r.mainUnit(),row.mainUnit())));
+            boolean insufficient = incompleteUnits || currentStock==null || avgDailySales == null || avgDailySales.compareTo(MIN_SALES_THRESHOLD) < 0;
             // 日均缺失时按 0 参与公式，行本身仍以 DATA_INSUFFICIENT 标注，绝不当作安全
             BigDecimal effectiveAvg = avgDailySales == null ? BigDecimal.ZERO : avgDailySales;
 
@@ -115,19 +121,19 @@ public class SmartThresholdService {
 
             ThresholdRecommendation rec = new ThresholdRecommendation();
             rec.setProductId(productId);
-            rec.setProductName(toString(row.get("productName")));
-            rec.setProductCode(toString(row.get("productCode")));
-            rec.setMainUnit(toString(row.get("mainUnit")));
+            rec.setProductName(row.productName());
+            rec.setProductCode(row.productCode());
+            rec.setMainUnit(row.mainUnit());
             rec.setCurrentStock(currentStock);
-            rec.setAvgDailySales(effectiveAvg.setScale(2, RoundingMode.HALF_UP));
-            rec.setTotalSold(toBigDecimal(row.get("totalSold")));
-            rec.setOrderCount(toInteger(row.get("orderCount")));
-            rec.setRecommendedMinStock(recommendedMin);
-            rec.setRecommendedMaxStock(recommendedMax);
-            rec.setRecommendedReorderQuantity(recommendedReorder);
-            rec.setCurrentMinStock(toBigDecimal(row.get("currentMinStock")));
-            rec.setCurrentMaxStock(toBigDecimal(row.get("currentMaxStock")));
-            rec.setCurrentReorderQuantity(toBigDecimal(row.get("currentReorderQuantity")));
+            rec.setAvgDailySales(incompleteUnits?null:avgDailySales);
+            rec.setTotalSold(row.totalSold());
+            rec.setOrderCount(row.orderCount());
+            rec.setRecommendedMinStock(insufficient?null:recommendedMin);
+            rec.setRecommendedMaxStock(insufficient?null:recommendedMax);
+            rec.setRecommendedReorderQuantity(insufficient?null:recommendedReorder);
+            rec.setCurrentMinStock(row.minStock());
+            rec.setCurrentMaxStock(row.maxStock());
+            rec.setCurrentReorderQuantity(row.reorderQuantity());
             rec.setObservationDays(days);
             rec.setConfidence(insufficient ? CONFIDENCE_INSUFFICIENT : CONFIDENCE_SUFFICIENT);
 
@@ -176,24 +182,18 @@ public class SmartThresholdService {
     }
 
     /** 把销售速度行按商品索引成 商品ID → 日均销量 的内存映射。 */
-    private Map<Long, BigDecimal> indexAvgDailySales(List<Map<String, Object>> rows) {
+    private Map<Long, BigDecimal> indexAvgDailySales(List<SalesVelocity> rows) {
         Map<Long, BigDecimal> indexed = new HashMap<>();
         if (rows == null) return indexed;
-        for (Map<String, Object> row : rows) {
+        for (SalesVelocity row : rows) {
             if (row == null) continue;
-            Long productId = toLong(row.get("productId"));
-            BigDecimal avgDailySales = toBigDecimal(row.get("avgDailySales"));
+            Long productId = row.productId();
+            BigDecimal avgDailySales = row.avgDailySales();
             if (productId != null && avgDailySales != null) {
                 indexed.put(productId, avgDailySales);
             }
         }
         return indexed;
-    }
-
-    /** 当前库存 = 批次余额可用量（base - reserved）按商品分组；缺键按既有口径默认 0。 */
-    private Map<Long, BigDecimal> loadCurrentStock(Long storeId) {
-        Map<Long, BigDecimal> grouped = batchBalanceRepository.sumAvailableBaseQuantityGroupedByProduct(storeId);
-        return grouped == null ? Collections.emptyMap() : grouped;
     }
 
     private static BigDecimal nullSafeSales(ThresholdRecommendation rec) {
@@ -210,26 +210,4 @@ public class SmartThresholdService {
         };
     }
 
-    private Long toLong(Object obj) {
-        if (obj == null) return null;
-        if (obj instanceof Number) return ((Number) obj).longValue();
-        try { return Long.parseLong(obj.toString()); } catch (Exception e) { return null; }
-    }
-
-    private BigDecimal toBigDecimal(Object obj) {
-        if (obj == null) return null;
-        if (obj instanceof BigDecimal) return (BigDecimal) obj;
-        if (obj instanceof Number) return BigDecimal.valueOf(((Number) obj).doubleValue());
-        try { return new BigDecimal(obj.toString()); } catch (Exception e) { return null; }
-    }
-
-    private Integer toInteger(Object obj) {
-        if (obj == null) return null;
-        if (obj instanceof Number) return ((Number) obj).intValue();
-        try { return Integer.parseInt(obj.toString()); } catch (Exception e) { return null; }
-    }
-
-    private String toString(Object obj) {
-        return obj != null ? obj.toString() : null;
-    }
 }

@@ -2,7 +2,7 @@ package com.agri_system.application.inventory.service;
 
 import com.agri_system.application.inventory.dto.vo.ThresholdRecommendation;
 import com.agri_system.domain.inventory.repository.InventoryBatchBalanceRepository;
-import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
+import com.agri_system.domain.inventory.query.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,25 +32,23 @@ class SmartThresholdServiceTest {
     private static final Long PRODUCT_ID = 5L;
 
     @Mock
-    private OrderItemMapper orderItemMapper;
+    private InventoryPlanningQuery planningQuery;
 
-    @Mock
-    private InventoryBatchBalanceRepository batchBalanceRepository;
 
     private SmartThresholdService service;
 
     @BeforeEach
     void setUp() {
-        service = new SmartThresholdService(orderItemMapper, batchBalanceRepository);
+        service = new SmartThresholdService(planningQuery);
     }
 
     @Test
     void recommendationUsesRealCurrentStockAndMarksInsufficientHistory() {
-        when(orderItemMapper.selectProductSalesVelocity(90, STORE_ID))
+        when(planningQuery.salesVelocity(90, STORE_ID))
                 .thenReturn(List.of(velocityRow(PRODUCT_ID, "0.05", "5", "2")));
-        when(orderItemMapper.selectProductSalesVelocity(7, STORE_ID)).thenReturn(List.of());
-        when(batchBalanceRepository.sumAvailableBaseQuantityGroupedByProduct(STORE_ID))
-                .thenReturn(Map.of(PRODUCT_ID, new BigDecimal("24")));
+        when(planningQuery.salesVelocity(7, STORE_ID)).thenReturn(List.of());
+        when(planningQuery.stocks(STORE_ID))
+                .thenReturn(Map.of(PRODUCT_ID, new PlanningStock("袋",BigDecimal.ONE,new BigDecimal("24"))));
 
         ThresholdRecommendation recommendation = service.calculateRecommendations(STORE_ID, 90).get(0);
 
@@ -60,23 +58,23 @@ class SmartThresholdServiceTest {
 
     @Test
     void groupedStockQueryRunsOnceAndInsufficientRowsKeepWindowAndEvidence() {
-        when(orderItemMapper.selectProductSalesVelocity(90, STORE_ID)).thenReturn(List.of(
+        when(planningQuery.salesVelocity(90, STORE_ID)).thenReturn(List.of(
                 velocityRow(1L, "4.00", "360", "12"),
                 velocityRow(2L, "0.04", "4", "1")));
-        when(orderItemMapper.selectProductSalesVelocity(7, STORE_ID)).thenReturn(List.of(
+        when(planningQuery.salesVelocity(7, STORE_ID)).thenReturn(List.of(
                 velocityRow(1L, "6.00", "42", "3"),
                 velocityRow(2L, "0.04", "4", "1")));
-        when(batchBalanceRepository.sumAvailableBaseQuantityGroupedByProduct(STORE_ID)).thenReturn(
-                Map.of(1L, new BigDecimal("30"), 2L, new BigDecimal("8")));
+        when(planningQuery.stocks(STORE_ID)).thenReturn(
+                Map.of(1L, new PlanningStock("袋",BigDecimal.ONE,new BigDecimal("30")), 2L, new PlanningStock("袋",BigDecimal.ONE,new BigDecimal("8"))));
 
         List<ThresholdRecommendation> recommendations = service.calculateRecommendations(STORE_ID, 90);
 
         assertThat(recommendations).hasSize(2);
         // 门店库存只做一次分组查询，绝不逐商品查询
-        verify(batchBalanceRepository, times(1)).sumAvailableBaseQuantityGroupedByProduct(STORE_ID);
+        verify(planningQuery, times(1)).stocks(STORE_ID);
         // 速度只预加载两次（观察窗口 + 近7天），与商品数量无关
-        verify(orderItemMapper, times(1)).selectProductSalesVelocity(90, STORE_ID);
-        verify(orderItemMapper, times(1)).selectProductSalesVelocity(7, STORE_ID);
+        verify(planningQuery, times(1)).salesVelocity(90, STORE_ID);
+        verify(planningQuery, times(1)).salesVelocity(7, STORE_ID);
 
         ThresholdRecommendation insufficient = recommendations.get(1);
         assertThat(insufficient.getProductId()).isEqualTo(2L);
@@ -96,11 +94,11 @@ class SmartThresholdServiceTest {
 
     @Test
     void withinBandIsReportedAsNormalAndNeverAsSafe() {
-        when(orderItemMapper.selectProductSalesVelocity(90, STORE_ID))
+        when(planningQuery.salesVelocity(90, STORE_ID))
                 .thenReturn(List.of(velocityRow(PRODUCT_ID, "1.00", "90", "9")));
-        when(orderItemMapper.selectProductSalesVelocity(7, STORE_ID)).thenReturn(List.of());
-        when(batchBalanceRepository.sumAvailableBaseQuantityGroupedByProduct(STORE_ID))
-                .thenReturn(Map.of(PRODUCT_ID, new BigDecimal("20")));
+        when(planningQuery.salesVelocity(7, STORE_ID)).thenReturn(List.of());
+        when(planningQuery.stocks(STORE_ID))
+                .thenReturn(Map.of(PRODUCT_ID, new PlanningStock("袋",BigDecimal.ONE,new BigDecimal("20"))));
 
         ThresholdRecommendation recommendation = service.calculateRecommendations(STORE_ID, 90).get(0);
 
@@ -111,28 +109,36 @@ class SmartThresholdServiceTest {
     }
 
     @Test
-    void productWithoutGroupedBalanceKeepsZeroDefaultButNotAsSafetyProof() {
-        when(orderItemMapper.selectProductSalesVelocity(90, STORE_ID))
+    void productWithoutBalanceEvidenceStaysUnknownAndHasNoAdoptableValues() {
+        when(planningQuery.salesVelocity(90, STORE_ID))
                 .thenReturn(List.of(velocityRow(PRODUCT_ID, "1.00", "90", "9")));
-        when(orderItemMapper.selectProductSalesVelocity(7, STORE_ID)).thenReturn(List.of());
-        when(batchBalanceRepository.sumAvailableBaseQuantityGroupedByProduct(STORE_ID)).thenReturn(Map.of());
+        when(planningQuery.salesVelocity(7, STORE_ID)).thenReturn(List.of());
+        when(planningQuery.stocks(STORE_ID)).thenReturn(Map.of());
 
         ThresholdRecommendation recommendation = service.calculateRecommendations(STORE_ID, 90).get(0);
 
-        assertThat(recommendation.getCurrentStock()).isEqualByComparingTo("0");
-        assertThat(recommendation.getStatus()).isEqualTo("LOW");
-        assertThat(recommendation.getConfidence()).isEqualTo("SUFFICIENT_DATA");
+        assertThat(recommendation.getCurrentStock()).isNull();
+        assertThat(recommendation.getRecommendedMinStock()).isNull();
+        assertThat(recommendation.getStatus()).isEqualTo("DATA_INSUFFICIENT");
+        assertThat(recommendation.getConfidence()).isEqualTo("INSUFFICIENT_DATA");
     }
 
-    private Map<String, Object> velocityRow(Long productId, String avgDailySales, String totalSold, String orderCount) {
-        Map<String, Object> row = new HashMap<>();
-        row.put("productId", productId);
-        row.put("productName", "商品" + productId);
-        row.put("productCode", "P" + productId);
-        row.put("mainUnit", "袋");
-        row.put("totalSold", new BigDecimal(totalSold));
-        row.put("avgDailySales", new BigDecimal(avgDailySales));
-        row.put("orderCount", new BigDecimal(orderCount));
-        return row;
+    @Test
+    void differentMainUnitsBetweenWindowsCannotBeUsedAsASeasonalFactor() {
+        when(planningQuery.salesVelocity(90,STORE_ID)).thenReturn(List.of(velocityRow(PRODUCT_ID,"1","90","2")));
+        when(planningQuery.salesVelocity(7,STORE_ID)).thenReturn(List.of(new SalesVelocity(PRODUCT_ID,"商品","P5","箱",BigDecimal.ONE,new BigDecimal("7"),2,null,null,null,0)));
+        when(planningQuery.stocks(STORE_ID)).thenReturn(Map.of(PRODUCT_ID,new PlanningStock("袋",BigDecimal.ONE,new BigDecimal("20"))));
+        var row=service.calculateRecommendations(STORE_ID,90).get(0);assertThat(row.getStatus()).isEqualTo("DATA_INSUFFICIENT");assertThat(row.getRecommendedMinStock()).isNull();
+    }
+
+    @Test
+    void stockInDifferentMainUnitCannotBeComparedWithSales() {
+        when(planningQuery.salesVelocity(7,STORE_ID)).thenReturn(List.of(velocityRow(PRODUCT_ID,"1","7","2")));
+        when(planningQuery.stocks(STORE_ID)).thenReturn(Map.of(PRODUCT_ID,new PlanningStock("箱",new BigDecimal("12"),new BigDecimal("20"))));
+        var row=service.calculateRecommendations(STORE_ID,7).get(0);assertThat(row.getCurrentStock()).isNull();assertThat(row.getStatus()).isEqualTo("DATA_INSUFFICIENT");
+    }
+
+    private SalesVelocity velocityRow(Long productId,String avgDailySales,String totalSold,String orderCount) {
+        return new SalesVelocity(productId,"商品"+productId,"P"+productId,"袋",new BigDecimal(avgDailySales),new BigDecimal(totalSold),Integer.valueOf(orderCount),null,null,null,0);
     }
 }

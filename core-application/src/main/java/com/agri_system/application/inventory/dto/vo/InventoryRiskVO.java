@@ -31,8 +31,11 @@ public class InventoryRiskVO {
     /** 内部收货批次号（库房标签）。 */
     private String internalReceiptBatchNo;
 
-    /** 当前可用库存（基准单位 = base - reserved）；数据不足时为 null，绝不按 0 当作安全。 */
+    /** 当前可用库存（base - reserved换算为商品主单位）；数据不足时为 null，绝不按 0 当作安全。 */
     private BigDecimal currentStock;
+
+    /** currentStock及商品阈值的商品主单位；未知时为空。 */
+    private String unit;
 
     /** 商品已配置的最低库存；未配置为 null。 */
     private BigDecimal minStock;

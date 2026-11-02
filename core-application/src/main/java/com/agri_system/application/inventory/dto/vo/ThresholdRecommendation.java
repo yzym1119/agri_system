@@ -15,7 +15,7 @@ public class ThresholdRecommendation {
     private String productCode;
     private String mainUnit;
 
-    /** 当前库存 */
+    /** 主单位可用库存；缺少余额/换算证据为null，不猜0。 */
     private BigDecimal currentStock;
 
     /** 日均销量（近N天平均） */
@@ -27,7 +27,7 @@ public class ThresholdRecommendation {
     /** 订单数（统计周期内） */
     private Integer orderCount;
 
-    /** 推荐最低库存 */
+    /** 推荐最低库存；样本或换算证据不足时为null，不可采纳。 */
     private BigDecimal recommendedMinStock;
 
     /** 推荐最高库存 */

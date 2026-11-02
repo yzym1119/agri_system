@@ -34,7 +34,7 @@ class BackendReportGateTest(unittest.TestCase):
     def test_complete_reports_pass(self):
         self.complete()
         result = self.gate.verify(self.root)
-        self.assertEqual(result['tests'], 4)
+        self.assertEqual(result['tests'], 5)
         self.assertEqual(result['skipped'], 0)
 
     def test_skipped_case_cannot_hide_behind_zero_summary(self):

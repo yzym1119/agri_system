@@ -4,7 +4,7 @@ function load(relative,overrides={}) {
  const filename=path.join(__dirname,'..',relative),file=fs.readFileSync(filename,'utf8'),source=relative.endsWith('.vue')?file.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]:file
  const ast=ts.createSourceFile(filename,source,ts.ScriptTarget.Latest,true),names=ast.statements.filter(ts.isVariableStatement).flatMap(s=>[...s.declarationList.declarations].filter(d=>ts.isIdentifier(d.name)).map(d=>d.name.text)),events=[]
  const imports=Object.fromEntries(ast.statements.filter(ts.isImportDeclaration).flatMap(s=>[s.importClause?.name?.text,...(s.importClause?.namedBindings?.elements||[]).map(e=>e.name.text)].filter(Boolean).map(n=>[n,{}])))
- const context={exports:{},...imports,...vue,...moneyUtils(),onMounted(){},defineProps:()=>({modelValue:true,order:{id:1}}),defineEmits:()=>()=>{},defineExpose(){},useUserStore:()=>({userInfo:{id:1}}),usePermissionStore:()=>({permissions:['product:unit:create']}),getProductList:async()=>({records:[]}),ElMessage:{warning:m=>events.push(m),error(){},success(){}},...overrides}
+ const context={exports:{},...imports,...vue,...moneyUtils(),onMounted(){},onBeforeUnmount(){},defineProps:()=>({modelValue:true,order:{id:1}}),defineEmits:()=>()=>{},defineExpose(){},useUserStore:()=>({userInfo:{id:1}}),usePermissionStore:()=>({permissions:['product:unit:create']}),getProductList:async()=>({records:[]}),ElMessage:{warning:m=>events.push(m),error(){},success(){}},...overrides}
  vm.createContext(context);vm.runInContext(ts.transpileModule(ast.statements.filter(s=>!ts.isImportDeclaration(s)).map(s=>s.getFullText(ast)).join('\n')+`\nglobalThis.bindings={${names.join(',')}}`,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context)
  return {...context.bindings,exports:context.exports,events}
 }
@@ -77,3 +77,34 @@ test('采购行金额模板与合计使用同一HALF_UP口径，半分不再出�
  p.createForm.items=[{qty:0.5,price:0.01},{qty:0.5,price:0.01}];
  assert.equal(p.totalAmount.value,0.02);
 });
+test('补货证据不足或未知状态不能显示正常绿色',()=>{
+ const p=load('src/views/inventory/warning/index.vue')
+ assert.equal(p.statusLabel('DATA_INSUFFICIENT'),'数据不足');assert.notEqual(p.statusTagType('DATA_INSUFFICIENT'),'success')
+ assert.equal(p.statusLabel('UNRECOGNIZED'),'待核对');assert.notEqual(p.statusTagType('UNRECOGNIZED'),'success')
+})
+test('样本不足即使残留推荐数值，也不能单条或批量采纳',async()=>{
+ const writes=[],confirmations=[];const p=load('src/views/inventory/warning/index.vue',{ElMessageBox:{confirm:async m=>confirmations.push(m)},updateProduct:async(id,data)=>writes.push({id,data})})
+ const row={productId:1,productName:'测试商品',mainUnit:'箱',currentStock:2,avgDailySales:.36,status:'DATA_INSUFFICIENT',confidence:'INSUFFICIENT_DATA',recommendedMinStock:4,recommendedMaxStock:11,recommendedReorderQuantity:6}
+ await p.applyOne(row);assert.equal(writes.length,0);assert.equal(confirmations.length,0)
+ p.selectedRows.value=[row];await p.applySelected();assert.equal(writes.length,0)
+})
+test('确认期间推荐变成不足不能提交，合法零库存推荐仍可人工采纳',async()=>{
+ let resolve;const writes=[];const p=load('src/views/inventory/warning/index.vue',{ElMessageBox:{confirm:()=>new Promise(done=>resolve=done)},updateProduct:async(id,data)=>writes.push({id,data})})
+ const row={productId:1,productName:'测试商品',mainUnit:'箱',currentStock:0,avgDailySales:.36,status:'LOW',confidence:'SUFFICIENT_DATA',recommendedMinStock:4,recommendedMaxStock:11,recommendedReorderQuantity:6}
+ p.smartList.value=[row]
+ const pending=p.applyOne(row);row.status='DATA_INSUFFICIENT';resolve();await pending;assert.equal(writes.length,0)
+ row.status='LOW';const valid=p.applyOne(row);resolve();await valid;assert.equal(writes.length,1);assert.equal(writes[0].data.minStock,4);assert.equal(row.status,'LOW')
+})
+
+test('刷新替换列表后旧确认不能单条或批量采纳',async()=>{
+ for(const batch of [false,true]){
+  let resolve;const writes=[];const p=load('src/views/inventory/warning/index.vue',{ElMessageBox:{confirm:()=>new Promise(done=>resolve=done)},getSmartThresholdRecommendations:async()=>[{productId:1,status:'DATA_INSUFFICIENT',confidence:'INSUFFICIENT_DATA',recommendedMinStock:null}],updateProduct:async(id,data)=>writes.push({id,data})})
+  const row={productId:1,productName:'测试商品',mainUnit:'箱',currentStock:2,avgDailySales:.36,status:'LOW',confidence:'SUFFICIENT_DATA',recommendedMinStock:4,recommendedMaxStock:11,recommendedReorderQuantity:6}
+  p.smartList.value=[row];p.selectedRows.value=[row];const pending=batch?p.applySelected():p.applyOne(row)
+  await p.loadSmartRecommendations();resolve();await pending;assert.equal(writes.length,0)
+ }
+})
+test('旧门店推荐查询迟到不能覆盖新查询',async()=>{
+ let old;const p=load('src/views/inventory/warning/index.vue',{getSmartThresholdRecommendations:({storeId})=>storeId===1?new Promise(done=>old=done):Promise.resolve([{productId:2,status:'DATA_INSUFFICIENT'}])})
+ p.smartStoreId.value=1;const first=p.loadSmartRecommendations();p.smartStoreId.value=2;await p.loadSmartRecommendations();old([{productId:1,status:'NORMAL'}]);await first;assert.equal(p.smartList.value[0].productId,2)
+})

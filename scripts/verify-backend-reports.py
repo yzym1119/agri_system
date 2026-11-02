@@ -7,6 +7,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 REQUIRED_SUITES = {
+    'com.agri_system.application.inventory.service.InventoryPlanningUnitsMysqlTest',
     'com.agri_system.infrastructure.migration.MysqlRetailFactChainIntegrationTest',
     'com.agri_system.infrastructure.migration.LegacyCleanupMigrationTest',
     'com.agri_system.e2e.RetailFactChainEndToEndTest',

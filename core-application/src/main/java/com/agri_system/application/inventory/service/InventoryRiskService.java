@@ -11,10 +11,12 @@ import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepositor
 import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepository.WindowMargin;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.repository.ProductRepository;
-import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
+import com.agri_system.domain.inventory.query.InventoryPlanningQuery;
+import com.agri_system.domain.inventory.query.PlanningStock;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -91,7 +93,7 @@ public class InventoryRiskService {
     private final InventoryReceiptBatchRepository receiptBatchRepository;
     private final ProductRepository productRepository;
     private final OrderItemBatchAllocationRepository allocationRepository;
-    private final OrderItemMapper orderItemMapper;
+    private final InventoryPlanningQuery planningQuery;
     private final InventoryDecisionLogRepository decisionLogRepository;
 
     /**
@@ -100,10 +102,12 @@ public class InventoryRiskService {
      * @param storeId 门店ID（风险提示必须按门店口径）
      * @return 可解释的提示列表；只包含“有事实依据”的提示
      */
+    @Transactional(readOnly = true)
     public List<InventoryRiskVO> list(Long storeId) {
         // 1) 每类事实只做一次批量读取
-        Map<Long, BigDecimal> availableByProduct = safeGrouped(
-                batchBalanceRepository.sumAvailableBaseQuantityGroupedByProduct(storeId));
+        Map<Long,PlanningStock> stocks=planningQuery.stocks(storeId);
+        Map<Long,BigDecimal> availableByProduct=new LinkedHashMap<>();
+        stocks.forEach((id,stock)->availableByProduct.put(id,stock.quantity()));
         Map<Long, BigDecimal> availableByBatch = safeGrouped(
                 batchBalanceRepository.sumAvailableBaseQuantityGroupedByBatch(storeId));
         List<InventoryReceiptBatch> receiptBatches = nullSafe(receiptBatchRepository.findByStore(storeId));
@@ -114,7 +118,7 @@ public class InventoryRiskService {
         // 2) 组装提示（商品名称解析带缓存，避免同类商品重复查询）
         List<InventoryRiskVO> risks = new ArrayList<>();
         Map<Long, Product> productCache = new HashMap<>();
-        collectDateRisks(risks, receiptBatches, availableByBatch, evidenceByProduct, productCache, storeId);
+        collectDateRisks(risks, receiptBatches, availableByBatch, stocks, evidenceByProduct, productCache, storeId);
         collectStockRisks(risks, configuredProducts, availableByProduct, evidenceByProduct, storeId);
         collectMarginRisks(risks, margins, availableByProduct, evidenceByProduct, productCache, storeId);
         risks.sort(InventoryRiskService::compareBySeverity);
@@ -186,6 +190,7 @@ public class InventoryRiskService {
     private void collectDateRisks(List<InventoryRiskVO> risks,
                                   List<InventoryReceiptBatch> receiptBatches,
                                   Map<Long, BigDecimal> availableByBatch,
+                                  Map<Long, PlanningStock> stocks,
                                   Map<Long, Integer> evidenceByProduct,
                                   Map<Long, Product> productCache,
                                   Long storeId) {
@@ -224,11 +229,15 @@ public class InventoryRiskService {
             if (product != null) {
                 risk.setProductName(product.getName());
                 risk.setProductCode(product.getCode());
+                risk.setUnit(product.getMainUnit());
             }
             risk.setStoreId(storeId != null ? storeId : batch.getStoreId());
             risk.setBatchId(batch.getId());
             risk.setInternalReceiptBatchNo(batch.getInternalReceiptBatchNo());
-            risk.setCurrentStock(available);
+            PlanningStock stock=stocks.get(batch.getProductId());
+            risk.setUnit(stock!=null?stock.mainUnit():product==null?null:product.getMainUnit());
+            risk.setCurrentStock(stock!=null&&stock.quantity()!=null&&stock.basePerMainUnit()!=null&&stock.basePerMainUnit().signum()>0
+                    ?available.divide(stock.basePerMainUnit(),8,RoundingMode.HALF_UP):null);
             risk.setDateStatus(batch.getDateStatus());
             risk.setProductionDate(batch.getProductionDate());
             risk.setExpiryDate(expiryDate);
@@ -291,7 +300,7 @@ public class InventoryRiskService {
         InventoryRiskVO risk = productRisk(KIND_DATA_INSUFFICIENT, product, null, evidenceByProduct, storeId);
         risk.setConfidence(CONFIDENCE_INSUFFICIENT);
         risk.setMessage("该商品已配置库存阈值（最低库存 " + plain(product.getMinStock()) + "，最高库存 "
-                + plain(product.getMaxStock()) + "），但本门店未启用批次收货余额（无收货批次或批次余额为零），"
+                + plain(product.getMaxStock()) + "），但本门店缺少可核对的批次余额或主单位换算证据，"
                 + "无法判断当前库存是否充足；这不是 0 库存结论，请人工盘点后再决定，系统不会自动处理。");
         return risk;
     }
@@ -303,6 +312,7 @@ public class InventoryRiskService {
         risk.setProductId(product.getId());
         risk.setProductName(product.getName());
         risk.setProductCode(product.getCode());
+                risk.setUnit(product.getMainUnit());
         risk.setStoreId(storeId);
         risk.setCurrentStock(currentStock);
         risk.setMinStock(product.getMinStock());
@@ -345,6 +355,7 @@ public class InventoryRiskService {
             if (product != null) {
                 risk.setProductName(product.getName());
                 risk.setProductCode(product.getCode());
+                risk.setUnit(product.getMainUnit());
             }
             risk.setStoreId(storeId);
             risk.setCurrentStock(availableByProduct.get(margin.productId()));
@@ -362,16 +373,9 @@ public class InventoryRiskService {
     // ==================== 读取与组装辅助 ====================
 
     private Map<Long, Integer> countOrdersByProduct(Long storeId) {
-        List<Map<String, Object>> rows = nullSafe(orderItemMapper.selectProductSalesVelocity(OBSERVATION_WINDOW_DAYS, storeId));
-        Map<Long, Integer> evidence = new LinkedHashMap<>();
-        for (Map<String, Object> row : rows) {
-            Long productId = toLong(row.get("productId"));
-            if (productId == null) {
-                continue;
-            }
-            Integer orderCount = toInteger(row.get("orderCount"));
-            evidence.put(productId, orderCount == null ? 0 : orderCount);
-        }
+        var rows=planningQuery.salesVelocity(OBSERVATION_WINDOW_DAYS,storeId);
+        Map<Long,Integer> evidence=new LinkedHashMap<>();
+        for(var row:rows)if(row.productId()!=null)evidence.put(row.productId(),row.orderCount()==null?0:row.orderCount());
         return evidence;
     }
 
@@ -464,15 +468,4 @@ public class InventoryRiskService {
         return grouped == null ? Collections.emptyMap() : grouped;
     }
 
-    private static Long toLong(Object obj) {
-        if (obj == null) return null;
-        if (obj instanceof Number) return ((Number) obj).longValue();
-        try { return Long.parseLong(obj.toString()); } catch (Exception e) { return null; }
-    }
-
-    private static Integer toInteger(Object obj) {
-        if (obj == null) return null;
-        if (obj instanceof Number) return ((Number) obj).intValue();
-        try { return Integer.parseInt(obj.toString()); } catch (Exception e) { return null; }
-    }
 }

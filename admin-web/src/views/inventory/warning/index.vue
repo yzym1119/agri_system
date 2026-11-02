@@ -44,7 +44,7 @@
             <el-table-column prop="productName" label="商品名称" min-width="200" />
             <el-table-column prop="currentStock" label="当前库存" width="130" align="right">
               <template #default="{ row }">
-                <span class="text-danger">{{ row.currentStock }}</span>
+                <span class="text-danger">{{ formatQuantity(row.currentStock) }}</span>
                 <span class="unit-text">{{ row.mainUnit }}</span>
               </template>
             </el-table-column>
@@ -106,7 +106,7 @@
             <el-table-column prop="productName" label="商品名称" min-width="240" />
             <el-table-column prop="currentStock" label="当前库存" width="130" align="right">
               <template #default="{ row }">
-                <span class="text-warning">{{ row.currentStock }}</span>
+                <span class="text-warning">{{ formatQuantity(row.currentStock) }}</span>
                 <span class="unit-text">{{ row.mainUnit }}</span>
               </template>
             </el-table-column>
@@ -161,7 +161,7 @@
               <div class="toolbar-right">
                 <el-button
                   type="success"
-                  :disabled="selectedRows.length === 0"
+                  :disabled="selectedRows.length === 0 || !selectedRows.every(canApplyRecommendation)"
                   :loading="applyLoading"
                   @click="applySelected"
                 >
@@ -188,7 +188,7 @@
             style="width: 100%"
             @selection-change="handleSelectionChange"
           >
-            <el-table-column type="selection" width="45" />
+            <el-table-column type="selection" width="45" :selectable="canSelectRecommendation" />
             <el-table-column prop="productCode" label="编码" width="120" />
             <el-table-column prop="productName" label="商品名称" min-width="180" />
             <el-table-column label="状态" width="80" align="center">
@@ -198,14 +198,14 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="currentStock" label="当前库存" width="110" align="right">
+            <el-table-column prop="currentStock" label="可用库存" width="110" align="right">
               <template #default="{ row }">
-                {{ row.currentStock }} <span class="unit-text">{{ row.mainUnit }}</span>
+                {{ formatQuantity(row.currentStock) }} <span class="unit-text">{{ row.mainUnit }}</span>
               </template>
             </el-table-column>
             <el-table-column prop="avgDailySales" label="日均销量" width="110" align="right">
               <template #default="{ row }">
-                {{ row.avgDailySales }} <span class="unit-text">{{ row.mainUnit }}</span>
+                {{ formatQuantity(row.avgDailySales) }} <span class="unit-text">{{ row.mainUnit }}</span>
               </template>
             </el-table-column>
             <el-table-column label="最低库存" width="170" align="center">
@@ -219,7 +219,7 @@
                 <div class="compare-cell">
                   <span class="current-val">{{ row.currentMinStock != null ? row.currentMinStock + (row.mainUnit ? row.mainUnit : '') : '-' }}</span>
                   <el-icon style="margin: 0 4px; color: #909399;"><Right /></el-icon>
-                  <span class="recommend-val">{{ row.recommendedMinStock }}<span class="unit-text">{{ row.mainUnit }}</span></span>
+                  <span class="recommend-val">{{ formatQuantity(row.recommendedMinStock) }}<span class="unit-text">{{ row.mainUnit }}</span></span>
                 </div>
               </template>
             </el-table-column>
@@ -234,7 +234,7 @@
                 <div class="compare-cell">
                   <span class="current-val">{{ row.currentMaxStock != null ? row.currentMaxStock + (row.mainUnit ? row.mainUnit : '') : '-' }}</span>
                   <el-icon style="margin: 0 4px; color: #909399;"><Right /></el-icon>
-                  <span class="recommend-val">{{ row.recommendedMaxStock }}<span class="unit-text">{{ row.mainUnit }}</span></span>
+                  <span class="recommend-val">{{ formatQuantity(row.recommendedMaxStock) }}<span class="unit-text">{{ row.mainUnit }}</span></span>
                 </div>
               </template>
             </el-table-column>
@@ -249,7 +249,7 @@
                 <div class="compare-cell">
                   <span class="current-val">{{ row.currentReorderQuantity != null ? row.currentReorderQuantity + (row.mainUnit ? row.mainUnit : '') : '-' }}</span>
                   <el-icon style="margin: 0 4px; color: #909399;"><Right /></el-icon>
-                  <span class="recommend-val">{{ row.recommendedReorderQuantity }}<span class="unit-text">{{ row.mainUnit }}</span></span>
+                  <span class="recommend-val">{{ formatQuantity(row.recommendedReorderQuantity) }}<span class="unit-text">{{ row.mainUnit }}</span></span>
                 </div>
               </template>
             </el-table-column>
@@ -260,6 +260,7 @@
                   link
                   size="small"
                   :loading="row._applying"
+                  :disabled="!canApplyRecommendation(row)"
                   @click="applyOne(row)"
                 >
                   采纳
@@ -336,9 +337,9 @@
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="当前库存" width="110" align="right">
+              <el-table-column label="可用库存" width="110" align="right">
                 <template #default="{ row }">
-                  {{ row.currentStock != null ? row.currentStock : '-' }}
+                  {{ formatQuantity(row.currentStock) }} <span class="unit-text">{{ row.unit }}</span>
                 </template>
               </el-table-column>
               <el-table-column label="日期情况" width="180">
@@ -441,7 +442,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { formatQuantity } from '@/utils/number'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, QuestionFilled, Right } from '@element-plus/icons-vue'
 import {
@@ -463,17 +465,18 @@ interface SmartRecommendation {
   productName: string
   productCode: string
   mainUnit?: string
-  currentStock: number
-  avgDailySales: number
-  totalSold: number
+  currentStock: number | null
+  avgDailySales: number | null
+  totalSold: number | null
   orderCount: number
-  recommendedMinStock: number
-  recommendedMaxStock: number
-  recommendedReorderQuantity: number
+  recommendedMinStock: number | null
+  recommendedMaxStock: number | null
+  recommendedReorderQuantity: number | null
   currentMinStock: number | null
   currentMaxStock: number | null
   currentReorderQuantity: number | null
-  status: 'LOW' | 'OVER' | 'NORMAL'
+  status: 'LOW' | 'OVER' | 'NORMAL' | 'DATA_INSUFFICIENT'
+  confidence: 'SUFFICIENT_DATA' | 'INSUFFICIENT_DATA'
   _applying?: boolean
 }
 
@@ -493,6 +496,9 @@ const overstockLoading = ref(false)
 const smartStoreId = ref<number | undefined>(undefined)
 const smartDays = ref(90)
 const smartList = ref<SmartRecommendation[]>([])
+let smartGeneration = 0
+let smartAlive = true
+onBeforeUnmount(() => { smartAlive = false; smartGeneration++; smartList.value = []; selectedRows.value = [] })
 const smartLoading = ref(false)
 const applyLoading = ref(false)
 const selectedRows = ref<SmartRecommendation[]>([])
@@ -674,33 +680,48 @@ const loadOverstock = async () => {
 }
 
 const loadSmartRecommendations = async () => {
+  const ticket = ++smartGeneration
   smartLoading.value = true
+  smartList.value = []
+  selectedRows.value = []
+  const params = { storeId: smartStoreId.value, days: smartDays.value }
   try {
-    const data = await getSmartThresholdRecommendations({
-      storeId: smartStoreId.value,
-      days: smartDays.value
-    })
-    smartList.value = (Array.isArray(data) ? data : []).map((item: any) => ({
-      ...item,
-      _applying: false
-    }))
+    const data = await getSmartThresholdRecommendations(params)
+    if (!smartAlive || ticket !== smartGeneration) return
+    smartList.value = (Array.isArray(data) ? data : []).map((item: any) => ({ ...item, _applying: false }))
   } catch (e: any) {
+    if (!smartAlive || ticket !== smartGeneration) return
     ElMessage.error(e?.message || '加载智能推荐失败')
     smartList.value = []
   } finally {
-    smartLoading.value = false
+    if (smartAlive && ticket === smartGeneration) smartLoading.value = false
   }
 }
 
+type AdoptableRecommendation = SmartRecommendation & { recommendedMinStock: number; recommendedMaxStock: number; recommendedReorderQuantity: number }
+const canApplyRecommendation = (row: SmartRecommendation): row is AdoptableRecommendation => {
+  const known = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0
+  return row.confidence === 'SUFFICIENT_DATA' && ['LOW', 'OVER', 'NORMAL'].includes(row.status)
+    && known(row.currentStock) && known(row.avgDailySales) && row.avgDailySales > 0
+    && known(row.recommendedMinStock) && known(row.recommendedMaxStock) && known(row.recommendedReorderQuantity)
+    && row.recommendedMinStock <= row.recommendedMaxStock
+}
+
+const currentSmartRow = (row: SmartRecommendation, ticket: number) =>
+  smartAlive && ticket === smartGeneration && !smartLoading.value && smartList.value.includes(row)
+const canSelectRecommendation = (row: SmartRecommendation) => !applyLoading.value && !row._applying && canApplyRecommendation(row)
+
 const handleSelectionChange = (rows: SmartRecommendation[]) => {
-  selectedRows.value = rows
+  if (!applyLoading.value) selectedRows.value = rows.filter(canApplyRecommendation)
 }
 
 const statusLabel = (status: string) => {
   switch (status) {
     case 'LOW': return '偏低'
     case 'OVER': return '积压'
-    default: return '正常'
+    case 'NORMAL': return '区间内'
+    case 'DATA_INSUFFICIENT': return '数据不足'
+    default: return '待核对'
   }
 }
 
@@ -708,89 +729,68 @@ const statusTagType = (status: string) => {
   switch (status) {
     case 'LOW': return 'danger'
     case 'OVER': return 'warning'
-    default: return 'success'
+    case 'NORMAL': return 'success'
+    default: return 'info'
   }
 }
 
 const applyOne = async (row: SmartRecommendation) => {
-  const u = row.mainUnit || ''
+  const ticket = smartGeneration
+  if (applyLoading.value || row._applying || !currentSmartRow(row, ticket) || !canApplyRecommendation(row)) { ElMessage.warning('证据不足或推荐已变化，请重新查询核对。'); return }
+  const target = row.productId, unit = row.mainUnit || ''
+  const data = { minStock: row.recommendedMinStock, maxStock: row.recommendedMaxStock, reorderQuantity: row.recommendedReorderQuantity }
+  const unchanged = () => currentSmartRow(row, ticket) && canApplyRecommendation(row) && row.productId === target && (row.mainUnit || '') === unit
+    && row.recommendedMinStock === data.minStock && row.recommendedMaxStock === data.maxStock && row.recommendedReorderQuantity === data.reorderQuantity
   try {
     await ElMessageBox.confirm(
-      `将「${row.productName}」的库存阈值更新为推荐值？\n\n最低库存: ${row.currentMinStock ?? '未设'}${u ? ' ' + u : ''} → ${row.recommendedMinStock} ${u}\n最高库存: ${row.currentMaxStock ?? '未设'}${u ? ' ' + u : ''} → ${row.recommendedMaxStock} ${u}\n补货量: ${row.currentReorderQuantity ?? '未设'}${u ? ' ' + u : ''} → ${row.recommendedReorderQuantity} ${u}`,
-      '采纳推荐',
-      { confirmButtonText: '确认', cancelButtonText: '取消', type: 'info' }
-    )
-  } catch {
-    return // cancelled
-  }
-
+      `将「${row.productName}」的库存阈值更新为推荐值？\n\n最低库存: ${row.currentMinStock ?? '未设'} ${unit} → ${data.minStock} ${unit}\n最高库存: ${row.currentMaxStock ?? '未设'} ${unit} → ${data.maxStock} ${unit}\n补货量: ${row.currentReorderQuantity ?? '未设'} ${unit} → ${data.reorderQuantity} ${unit}`,
+      '采纳推荐', { confirmButtonText: '确认', cancelButtonText: '取消', type: 'info' })
+  } catch { return }
+  if (!unchanged()) { if (smartAlive) ElMessage.warning('推荐已变化，请重新查询核对。'); return }
   row._applying = true
   try {
-    await updateProduct(row.productId, {
-      minStock: row.recommendedMinStock,
-      maxStock: row.recommendedMaxStock,
-      reorderQuantity: row.recommendedReorderQuantity
-    })
+    await updateProduct(target, data)
+    if (!unchanged()) { if (smartAlive) ElMessage.warning('推荐列表已更新，原修改请到商品档案核对。'); return }
+    row.currentMinStock = data.minStock; row.currentMaxStock = data.maxStock; row.currentReorderQuantity = data.reorderQuantity
     ElMessage.success(`${row.productName} 阈值已更新`)
-    // 更新本地状态
-    row.currentMinStock = row.recommendedMinStock
-    row.currentMaxStock = row.recommendedMaxStock
-    row.currentReorderQuantity = row.recommendedReorderQuantity
-    row.status = 'NORMAL'
-  } catch (e: any) {
-    ElMessage.error(e?.message || '更新失败')
-  } finally {
-    row._applying = false
-  }
+  } catch (e: any) { if (smartAlive) ElMessage.error(e?.message || '阈值修改结果请到商品档案核对') }
+  finally { row._applying = false }
 }
 
 const applySelected = async () => {
-  if (selectedRows.value.length === 0) return
-  try {
-    await ElMessageBox.confirm(
-      `将选中的 ${selectedRows.value.length} 个商品的库存阈值更新为推荐值？`,
-      '批量采纳',
-      { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch {
-    return
-  }
-
+  if (applyLoading.value || selectedRows.value.length === 0) return
+  const ticket = smartGeneration
+  const rows = selectedRows.value.filter(canApplyRecommendation)
+  if (rows.length !== selectedRows.value.length || rows.some(row => !currentSmartRow(row, ticket))) { ElMessage.warning('选中推荐已变化，请重新选择。'); return }
+  const proposals = rows.map(row => ({ row, target: row.productId, unit: row.mainUnit,
+    data: { minStock: row.recommendedMinStock, maxStock: row.recommendedMaxStock, reorderQuantity: row.recommendedReorderQuantity } }))
+  const unchanged = (p: typeof proposals[number]) => currentSmartRow(p.row, ticket) && canApplyRecommendation(p.row) && p.row.productId === p.target && p.row.mainUnit === p.unit
+    && p.row.recommendedMinStock === p.data.minStock && p.row.recommendedMaxStock === p.data.maxStock && p.row.recommendedReorderQuantity === p.data.reorderQuantity
+  try { await ElMessageBox.confirm(`将选中的 ${proposals.length} 个商品的库存阈值更新为推荐值？`, '批量采纳', { confirmButtonText: '确认', cancelButtonText: '取消', type: 'warning' }) }
+  catch { return }
+  if (!proposals.every(unchanged)) { if (smartAlive) ElMessage.warning('推荐已变化，请重新选择。'); return }
   applyLoading.value = true
-  let successCount = 0
-  let failCount = 0
-  for (const row of selectedRows.value) {
-    row._applying = true
+  let successCount = 0, failCount = 0, interrupted = false
+  for (const p of proposals) {
+    if (!unchanged(p)) { interrupted = true; break }
+    p.row._applying = true
     try {
-      await updateProduct(row.productId, {
-        minStock: row.recommendedMinStock,
-        maxStock: row.recommendedMaxStock,
-        reorderQuantity: row.recommendedReorderQuantity
-      })
-      row.currentMinStock = row.recommendedMinStock
-      row.currentMaxStock = row.recommendedMaxStock
-      row.currentReorderQuantity = row.recommendedReorderQuantity
-      row.status = 'NORMAL'
-      successCount++
-    } catch {
-      failCount++
-    } finally {
-      row._applying = false
-    }
+      await updateProduct(p.target, p.data); successCount++
+      if (!unchanged(p)) { interrupted = true; break }
+      p.row.currentMinStock = p.data.minStock; p.row.currentMaxStock = p.data.maxStock; p.row.currentReorderQuantity = p.data.reorderQuantity
+    } catch { failCount++ }
+    finally { p.row._applying = false }
   }
   applyLoading.value = false
-
-  if (failCount === 0) {
-    ElMessage.success(`全部 ${successCount} 个商品阈值已更新`)
-  } else {
-    ElMessage.warning(`成功 ${successCount} 个，失败 ${failCount} 个`)
-  }
-
-  // 清除选中
+  if (!smartAlive) return
+  if (interrupted || ticket !== smartGeneration) { ElMessage.warning('推荐列表已更新，已停止后续采纳；已发送项请到商品档案核对。'); return }
+  if (failCount === 0) ElMessage.success(`全部 ${successCount} 个商品阈值已更新`)
+  else ElMessage.warning(`已更新 ${successCount} 个，未完成 ${failCount} 个，请查询核对`)
   smartTableRef.value?.clearSelection()
 }
 
 watch(activeTab, (tab) => {
+  if (tab !== 'smart') { smartGeneration++; smartList.value = []; selectedRows.value = [] }
   if (tab === 'low-stock') {
     loadLowStock()
   } else if (tab === 'overstock') {

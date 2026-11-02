@@ -39,7 +39,8 @@ import com.agri_system.domain.store.model.Staff;
 import com.agri_system.domain.store.repository.StaffRepository;
 import com.agri_system.domain.store.repository.StoreRepository;
 import com.agri_system.domain.wallet.repository.WalletAuthCodeRepository;
-import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
+import com.agri_system.domain.inventory.query.SalesVelocity;
+import com.agri_system.domain.inventory.query.PlanningStock;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -136,10 +137,9 @@ class InventoryRiskServiceTest {
     @Mock
     private OrderPickupRequestRepository pickupRequestRepository;
     @Mock
-    private OrderItemMapper orderItemMapper;
-    @Mock
     private InventoryDecisionLogRepository decisionLogRepository;
 
+    @Mock private com.agri_system.domain.inventory.query.InventoryPlanningQuery planningQuery;
     private InventoryRiskService riskService;
     private OrderApplicationService orderService;
 
@@ -147,7 +147,7 @@ class InventoryRiskServiceTest {
     void setUp() {
         riskService = new InventoryRiskService(
                 batchBalanceRepository, receiptBatchRepository, productRepository,
-                allocationRepository, orderItemMapper, decisionLogRepository);
+                allocationRepository, planningQuery, decisionLogRepository);
         orderService = new OrderApplicationService(
                 orderRepository, itemRepository, paymentRepository, paymentIntentRepository, deliveryRepository,
                 orderDomainService, paymentService, inventoryService, walletService, creditService,
@@ -160,13 +160,30 @@ class InventoryRiskServiceTest {
     }
 
     @Test
+    void stockThresholdMustCompareMainUnitsInsteadOfBasePieces() {
+        Product product=new Product();product.setId(PRODUCT_ID);product.setName("箱装商品");product.setMainUnit("箱");product.setMinStock(new BigDecimal("3"));product.setMaxStock(new BigDecimal("20"));
+        when(productRepository.findAllWithMinStock()).thenReturn(List.of(product));
+        org.mockito.Mockito.lenient().when(planningQuery.stocks(STORE_ID)).thenReturn(Map.of(PRODUCT_ID,new com.agri_system.domain.inventory.query.PlanningStock("箱",new BigDecimal("12"),new BigDecimal("2"))));
+        var risks=riskService.list(STORE_ID);
+        assertThat(risks).extracting(InventoryRiskVO::kind).containsExactly("LOW_STOCK");assertThat(risks.get(0).getCurrentStock()).isEqualByComparingTo("2");
+    }
+
+    @Test
+    void knownExpiryWarningRemainsVisibleWhenMainUnitConversionIsUnknown() {
+        when(receiptBatchRepository.findByStore(STORE_ID)).thenReturn(List.of(knownDateBatch(BATCH_ID,"EXPIRED-UNKNOWN-UNIT",LocalDate.now().minusDays(2))));
+        when(batchBalanceRepository.sumAvailableBaseQuantityGroupedByBatch(STORE_ID)).thenReturn(Map.of(BATCH_ID,new BigDecimal("5")));
+        when(planningQuery.stocks(STORE_ID)).thenReturn(Map.of(PRODUCT_ID,new PlanningStock("箱",null,null)));
+        var risks=riskService.list(STORE_ID);assertThat(risks).extracting(InventoryRiskVO::kind).containsExactly("EXPIRED");assertThat(risks.get(0).getCurrentStock()).isNull();assertThat(risks.get(0).getUnit()).isEqualTo("箱");
+    }
+
+    @Test
     void dateUnknownIsVisibleAsUnknownRatherThanSafeOrBlocked() {
         when(receiptBatchRepository.findByStore(STORE_ID))
                 .thenReturn(List.of(unknownDateBatch(BATCH_ID, "B-UNKNOWN-61", new BigDecimal("10"))));
         when(batchBalanceRepository.sumAvailableBaseQuantityGroupedByBatch(STORE_ID))
                 .thenReturn(Map.of(BATCH_ID, new BigDecimal("10")));
-        when(batchBalanceRepository.sumAvailableBaseQuantityGroupedByProduct(STORE_ID))
-                .thenReturn(Map.of(PRODUCT_ID, new BigDecimal("10")));
+        when(planningQuery.stocks(STORE_ID))
+                .thenReturn(Map.of(PRODUCT_ID, new PlanningStock("袋",BigDecimal.ONE,new BigDecimal("10"))));
         when(productRepository.findAllWithMinStock()).thenReturn(Collections.emptyList());
         when(productRepository.findAllWithMaxStock()).thenReturn(Collections.emptyList());
         stubPosOrderThenSave();
@@ -188,6 +205,7 @@ class InventoryRiskServiceTest {
                 63L, BigDecimal.ZERO,
                 64L, new BigDecimal("7")));
 
+        when(planningQuery.stocks(STORE_ID)).thenReturn(Map.of(PRODUCT_ID,new PlanningStock("袋",BigDecimal.ONE,new BigDecimal("15"))));
         List<InventoryRiskVO> risks = riskService.list(STORE_ID);
 
         assertThat(risks).extracting(InventoryRiskVO::kind).containsExactly("EXPIRED", "EXPIRING");
@@ -222,7 +240,7 @@ class InventoryRiskServiceTest {
         assertThat(risk.getCurrentStock()).isNull();
         assertThat(risk.getMinStock()).isEqualByComparingTo("100");
         assertThat(risk.getConfidence()).isEqualTo("INSUFFICIENT_DATA");
-        assertThat(risk.getMessage()).contains("未启用").contains("收货");
+        assertThat(risk.getMessage()).contains("无法判断").doesNotContain("未启用");
     }
 
     @Test
@@ -239,9 +257,9 @@ class InventoryRiskServiceTest {
         over.setMaxStock(new BigDecimal("50"));
         when(productRepository.findAllWithMinStock()).thenReturn(List.of(low));
         when(productRepository.findAllWithMaxStock()).thenReturn(List.of(over));
-        when(batchBalanceRepository.sumAvailableBaseQuantityGroupedByProduct(STORE_ID))
-                .thenReturn(Map.of(1L, new BigDecimal("30"), 2L, new BigDecimal("80")));
-        when(orderItemMapper.selectProductSalesVelocity(90, STORE_ID)).thenReturn(List.of(
+        when(planningQuery.stocks(STORE_ID))
+                .thenReturn(Map.of(1L,new PlanningStock("袋",BigDecimal.ONE,new BigDecimal("30")),2L,new PlanningStock("袋",BigDecimal.ONE,new BigDecimal("80"))));
+        when(planningQuery.salesVelocity(90, STORE_ID)).thenReturn(List.of(
                 velocityRow(1L, "20", "2"), velocityRow(2L, "40", "8")));
 
         List<InventoryRiskVO> risks = riskService.list(STORE_ID);
@@ -397,14 +415,7 @@ class InventoryRiskServiceTest {
         return batch;
     }
 
-    private Map<String, Object> velocityRow(Long productId, String totalSold, String orderCount) {
-        Map<String, Object> row = new java.util.HashMap<>();
-        row.put("productId", productId);
-        row.put("productName", "商品" + productId);
-        row.put("productCode", "P" + productId);
-        row.put("totalSold", new BigDecimal(totalSold));
-        row.put("avgDailySales", new BigDecimal("1.00"));
-        row.put("orderCount", new BigDecimal(orderCount));
-        return row;
+    private SalesVelocity velocityRow(Long productId,String totalSold,String orderCount) {
+        return new SalesVelocity(productId,"商品"+productId,"P"+productId,"袋",BigDecimal.ONE,new BigDecimal(totalSold),Integer.valueOf(orderCount),null,null,null,0);
     }
 }

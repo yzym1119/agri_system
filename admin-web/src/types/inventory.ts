@@ -187,6 +187,8 @@ export interface InventoryRiskVO {
   batchId?: number | null
   internalReceiptBatchNo?: string | null
   currentStock?: number | null
+  /** 数量与阈值的商品主单位。 */
+  unit?: string | null
   minStock?: number | null
   maxStock?: number | null
   dateStatus?: string | null
