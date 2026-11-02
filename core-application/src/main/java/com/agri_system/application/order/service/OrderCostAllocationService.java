@@ -6,7 +6,7 @@ import com.agri_system.domain.order.model.OrderItem;
 import com.agri_system.domain.order.model.OrderItemBatchAllocation;
 import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepository;
 import com.agri_system.domain.product.model.ProductUnit;
-import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
+import com.agri_system.domain.order.repository.OrderItemRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -27,7 +27,7 @@ import java.util.Objects;
  * 不参与毛利核算。</p>
  *
  * <p>订单行基准单位快照（base_unit_id/base_quantity/unit_cost）仅在 ACTUAL 口径下写入，
- * 作为展示缓存；重跑幂等，且未激活 SKU 与 legacy 投影（无持久化基准单位）不写任何值。</p>
+ * 作为展示缓存；重跑幂等，且无持久化基准单位的历史投影不写任何值。</p>
  */
 @Slf4j
 @Service
@@ -37,14 +37,14 @@ public class OrderCostAllocationService {
     /** unit_cost 展示快照精度。 */
     private static final int UNIT_COST_SCALE = 8;
 
-    private final OrderItemMapper orderItemMapper;
+    private final OrderItemRepository orderItemRepository;
     private final OrderItemBatchAllocationRepository allocationRepository;
     private final ProductUnitService productUnitService;
 
     /** 按批次归属事实核算单行毛利；成本置信度在读取时派生，不落库。 */
     @Transactional(readOnly = true)
     public OrderMarginVO calculate(Long orderItemId) {
-        OrderItem item = orderItemMapper.selectOneById(orderItemId);
+        OrderItem item = orderItemRepository.findById(orderItemId).orElse(null);
         if (item == null) {
             throw new IllegalArgumentException("订单明细不存在: " + orderItemId);
         }
@@ -60,7 +60,7 @@ public class OrderCostAllocationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void refreshOrderItemSnapshot(Long orderItemId, Long operatorId) {
-        OrderItem item = orderItemMapper.selectOneById(orderItemId);
+        OrderItem item = orderItemRepository.findById(orderItemId).orElse(null);
         if (item == null) {
             log.warn("刷新订单行批次成本快照跳过：订单明细不存在, orderItemId={}", orderItemId);
             return;
@@ -85,7 +85,7 @@ public class OrderCostAllocationService {
         }
         BigDecimal unitCost = margin.actualCost().divide(totalBaseQuantity, UNIT_COST_SCALE, RoundingMode.HALF_UP);
         BigDecimal writableUnitCost = unitCost.compareTo(BigDecimal.ZERO) > 0 ? unitCost : null;
-        orderItemMapper.updateBatchCostSnapshot(orderItemId, baseUnitId, totalBaseQuantity, writableUnitCost);
+        orderItemRepository.updateBatchCostSnapshot(orderItemId, baseUnitId, totalBaseQuantity, writableUnitCost);
         log.debug("订单行批次成本快照已刷新, orderItemId={}, baseUnitId={}, baseQuantity={}, unitCost={}, operatorId={}",
                 orderItemId, baseUnitId, totalBaseQuantity, writableUnitCost, operatorId);
     }

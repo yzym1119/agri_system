@@ -2,6 +2,7 @@ package com.agri_system.domain.order.repository;
 
 import com.agri_system.domain.order.model.OrderItem;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -36,6 +37,13 @@ public interface OrderItemRepository {
     Optional<OrderItem> findById(Long id);
 
     Optional<OrderItem> findByIdForUpdate(Long id);
+
+    /**
+     * 仅刷新已核实批次归属的展示快照三列，不保存传入整行或改写历史成本。
+     * 在调用方既有出库事务中执行，不新增锁或独立事务；返回实际更新行数。
+     */
+    int updateBatchCostSnapshot(Long id, Long baseUnitId, BigDecimal baseQuantity, BigDecimal unitCost);
+
 
     /**
      * 统计商品被订单明细引用次数

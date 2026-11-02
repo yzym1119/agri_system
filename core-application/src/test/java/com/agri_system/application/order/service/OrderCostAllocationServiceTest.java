@@ -7,7 +7,7 @@ import com.agri_system.domain.order.model.OrderItem;
 import com.agri_system.domain.order.model.OrderItemBatchAllocation;
 import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepository;
 import com.agri_system.domain.product.model.ProductUnit;
-import com.agri_system.infrastructure.order.mapper.OrderItemMapper;
+import com.agri_system.domain.order.repository.OrderItemRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,6 +17,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -43,7 +44,7 @@ class OrderCostAllocationServiceTest {
     private static final Long OPERATOR_ID = 7L;
 
     @Mock
-    private OrderItemMapper orderItemMapper;
+    private OrderItemRepository orderItemRepository;
     @Mock
     private OrderItemBatchAllocationRepository allocationRepository;
     @Mock
@@ -53,7 +54,7 @@ class OrderCostAllocationServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new OrderCostAllocationService(orderItemMapper, allocationRepository, productUnitService);
+        service = new OrderCostAllocationService(orderItemRepository, allocationRepository, productUnitService);
     }
 
     @Test
@@ -71,7 +72,7 @@ class OrderCostAllocationServiceTest {
 
     @Test
     void historicalSnapshotOrderIsEstimatedNeverActual() {
-        when(orderItemMapper.selectOneById(ITEM_ID)).thenReturn(orderItem("2", "50.00"));
+        when(orderItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem("2", "50.00")));
         when(allocationRepository.findByOrderItemId(ITEM_ID)).thenReturn(List.of());
 
         OrderMarginVO margin = service.calculate(ITEM_ID);
@@ -84,7 +85,7 @@ class OrderCostAllocationServiceTest {
 
     @Test
     void unknownEvidenceNeverMergesIntoActualCost() {
-        when(orderItemMapper.selectOneById(ITEM_ID)).thenReturn(orderItem("2", "50.00"));
+        when(orderItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem("2", "50.00")));
         when(allocationRepository.findByOrderItemId(ITEM_ID)).thenReturn(List.of(
                 allocation("1.5", "60.00", BatchEvidenceLevel.SCANNED),
                 allocation("0.5", null, BatchEvidenceLevel.UNKNOWN)));
@@ -98,7 +99,7 @@ class OrderCostAllocationServiceTest {
 
     @Test
     void snapshotRefreshWritesWeightedBaseUnitCostForActualAllocations() {
-        when(orderItemMapper.selectOneById(ITEM_ID)).thenReturn(orderItem("2", "50.00"));
+        when(orderItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem("2", "50.00")));
         when(allocationRepository.findByOrderItemId(ITEM_ID)).thenReturn(List.of(
                 allocation("1.5", "60.00", BatchEvidenceLevel.SCANNED),
                 allocation("1.0", "66.00", BatchEvidenceLevel.FULFILLMENT_CONFIRMED)));
@@ -108,13 +109,13 @@ class OrderCostAllocationServiceTest {
 
         ArgumentCaptor<BigDecimal> baseQuantity = ArgumentCaptor.forClass(BigDecimal.class);
         ArgumentCaptor<BigDecimal> unitCost = ArgumentCaptor.forClass(BigDecimal.class);
-        verify(orderItemMapper).updateBatchCostSnapshot(eq(ITEM_ID), eq(BASE_UNIT_ID),
+        verify(orderItemRepository).updateBatchCostSnapshot(eq(ITEM_ID), eq(BASE_UNIT_ID),
                 baseQuantity.capture(), unitCost.capture());
         assertThat(baseQuantity.getValue()).isEqualByComparingTo("2.5");
         assertThat(unitCost.getValue()).isEqualByComparingTo("62.40");
         // 重跑必须幂等：相同事实产生相同快照值
         service.refreshOrderItemSnapshot(ITEM_ID, OPERATOR_ID);
-        verify(orderItemMapper, times(2)).updateBatchCostSnapshot(eq(ITEM_ID), eq(BASE_UNIT_ID),
+        verify(orderItemRepository, times(2)).updateBatchCostSnapshot(eq(ITEM_ID), eq(BASE_UNIT_ID),
                 baseQuantity.capture(), unitCost.capture());
         assertThat(baseQuantity.getValue()).isEqualByComparingTo("2.5");
         assertThat(unitCost.getValue()).isEqualByComparingTo("62.40");
@@ -122,30 +123,30 @@ class OrderCostAllocationServiceTest {
 
     @Test
     void snapshotRefreshSkipsNonActualEvidence() {
-        when(orderItemMapper.selectOneById(ITEM_ID)).thenReturn(orderItem("2", "50.00"));
+        when(orderItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem("2", "50.00")));
         when(allocationRepository.findByOrderItemId(ITEM_ID)).thenReturn(List.of(
                 allocation("2", null, BatchEvidenceLevel.UNKNOWN)));
 
         service.refreshOrderItemSnapshot(ITEM_ID, OPERATOR_ID);
 
-        verify(orderItemMapper, never()).updateBatchCostSnapshot(any(), any(), any(), any());
+        verify(orderItemRepository, never()).updateBatchCostSnapshot(any(), any(), any(), any());
         verify(productUnitService, never()).getUnits(any());
     }
 
     @Test
     void snapshotRefreshSkipsLegacyProjectionWithoutPersistedBaseUnitId() {
-        when(orderItemMapper.selectOneById(ITEM_ID)).thenReturn(orderItem("2", "50.00"));
+        when(orderItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem("2", "50.00")));
         when(allocationRepository.findByOrderItemId(ITEM_ID)).thenReturn(List.of(
                 allocation("2", "40.00", BatchEvidenceLevel.RULE_ALLOCATED)));
         when(productUnitService.getUnits(PRODUCT_ID)).thenReturn(List.of(baseUnit(null)));
 
         service.refreshOrderItemSnapshot(ITEM_ID, OPERATOR_ID);
 
-        verify(orderItemMapper, never()).updateBatchCostSnapshot(any(), any(), any(), any());
+        verify(orderItemRepository, never()).updateBatchCostSnapshot(any(), any(), any(), any());
     }
 
     private Long orderItemIdWithTwoAllocations() {
-        when(orderItemMapper.selectOneById(ITEM_ID)).thenReturn(orderItem("2", "50.00"));
+        when(orderItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem("2", "50.00")));
         when(allocationRepository.findByOrderItemId(ITEM_ID)).thenReturn(List.of(
                 allocation("1.5", "60.00", BatchEvidenceLevel.SCANNED),
                 allocation("1.0", "66.00", BatchEvidenceLevel.FULFILLMENT_CONFIRMED)));
@@ -153,7 +154,7 @@ class OrderCostAllocationServiceTest {
     }
 
     private Long orderItemIdWithUnknownAllocation() {
-        when(orderItemMapper.selectOneById(ITEM_ID)).thenReturn(orderItem("2", "50.00"));
+        when(orderItemRepository.findById(ITEM_ID)).thenReturn(Optional.of(orderItem("2", "50.00")));
         when(allocationRepository.findByOrderItemId(ITEM_ID)).thenReturn(List.of(
                 allocation("2", null, BatchEvidenceLevel.UNKNOWN)));
         return ITEM_ID;

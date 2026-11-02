@@ -7,6 +7,7 @@ import com.mybatisflex.core.query.QueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 
@@ -68,6 +69,12 @@ public class OrderItemRepositoryImpl implements OrderItemRepository {
     @Override
     public Optional<OrderItem> findByIdForUpdate(Long id) {
         return Optional.ofNullable(mapper.findByIdForUpdate(id));
+    }
+
+    @Override
+    public int updateBatchCostSnapshot(Long id, Long baseUnitId, BigDecimal baseQuantity, BigDecimal unitCost) {
+        // 复用原定向SQL，不能用save/update整行覆盖成交与历史成本事实。
+        return mapper.updateBatchCostSnapshot(id, baseUnitId, baseQuantity, unitCost);
     }
 
     @Override
