@@ -12,9 +12,11 @@ import java.util.Optional;
 
 /**
  * 商品价格仓储实现
- * 
+ *
+ * @deprecated product_price 已归档只读（V130 停用多维定价），save/update/delete 无应用层调用方，禁止新增。
  * @author AI Generated
  */
+@Deprecated
 @Repository
 @RequiredArgsConstructor
 public class ProductPriceRepositoryImpl implements ProductPriceRepository {

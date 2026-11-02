@@ -149,14 +149,6 @@ class ProductApplicationServiceTest {
     }
 
     @Test
-    void cannotSetSeparateOnlinePrice() {
-        createCommand.setOnlinePrice(new BigDecimal("49"));
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> productService.createProduct(createCommand))
-                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("线上");
-        verify(productRepository, never()).save(any());
-    }
-
-    @Test
     void rejectsVipPriceAboveRetail() {
         createCommand.setVipPrice(new BigDecimal("60"));
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> productService.createProduct(createCommand))

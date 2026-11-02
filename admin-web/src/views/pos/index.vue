@@ -156,6 +156,7 @@ import ModernSettlementBar from './components/ModernSettlementBar.vue'
 import CheckoutDialog from './components/CheckoutDialog.vue'
 import type {CartItem, POSCustomerInfo} from '@/types/pos'
 import { fetchServerPriceQuote, fetchServerPackageQuote } from '@/utils/posPricing'
+import { subtotalAmount } from '@/utils/money'
 import type { ServerPriceQuote, ServerPackageQuote } from '@/utils/posPricing'
 
 const userStore = useUserStore()
@@ -559,7 +560,7 @@ const handleAddToCart = async (item: CartItem) => {
   if (generation !== cartGeneration || saleLocked()) return
   if (resolvedPrice !== null) {
     item.unitPrice = resolvedPrice
-    if (item.itemType === 1) item.subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
+    if (item.itemType === 1) item.subtotal = subtotalAmount(item.quantity, item.unitPrice)
   }
 
   if (resolvedPrice === null) {
@@ -583,7 +584,7 @@ const handleAddToCart = async (item: CartItem) => {
     const existing = cartItems.value[existingIndex]
     existing.quantity = (Math.round(existing.quantity * 10000) + Math.round(item.quantity * 10000)) / 10000
     if (existing.itemType === 2) await resolveCartItemUnitPrice(existing, true)
-    else existing.subtotal = Math.round(existing.quantity * existing.unitPrice * 100) / 100
+    else existing.subtotal = subtotalAmount(existing.quantity, existing.unitPrice)
   } else {
     // 新增
     cartItems.value.push({
@@ -604,7 +605,7 @@ const recalculateCartPrices = async (preserveNegotiation = false) => {
     const newPrice = await resolveCartItemUnitPrice(item, preserveNegotiation)
     if (newPrice !== null && newPrice !== item.unitPrice) {
       item.unitPrice = newPrice
-      item.subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
+      item.subtotal = subtotalAmount(item.quantity, item.unitPrice)
     }
   }
 
@@ -634,7 +635,7 @@ const handleUnitChange = async (payload: { id: string; oldUnit: string; newUnit:
     const newPrice = await resolveCartItemUnitPrice(item)
     if (newPrice !== null && newPrice !== item.unitPrice) {
       item.unitPrice = newPrice
-      item.subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
+      item.subtotal = subtotalAmount(item.quantity, item.unitPrice)
     }
   }
   // 无论报价结果如何都重新赋值，确保 belowReference/priceFallback 标签按最新报价结果刷新

@@ -72,11 +72,11 @@ public class PurchaseDomainService {
         return items.stream()
                 .map(item -> {
                     if (item.getTotalPrice() != null) {
-                        return item.getTotalPrice();
+                        return item.getTotalPrice().setScale(2, java.math.RoundingMode.HALF_UP);
                     }
                     // 如果金额未计算，则计算
                     if (item.getQuantity() != null && item.getBuyPrice() != null) {
-                        return item.getQuantity().multiply(item.getBuyPrice());
+                        return item.getQuantity().multiply(item.getBuyPrice()).setScale(2, java.math.RoundingMode.HALF_UP);
                     }
                     return BigDecimal.ZERO;
                 })

@@ -50,7 +50,7 @@ public class PurchaseOrderItem {
      */
     public void calculateTotalPrice() {
         if (quantity != null && buyPrice != null) {
-            this.totalPrice = quantity.multiply(buyPrice);
+            this.totalPrice = quantity.multiply(buyPrice).setScale(2, java.math.RoundingMode.HALF_UP);
         }
     }
     

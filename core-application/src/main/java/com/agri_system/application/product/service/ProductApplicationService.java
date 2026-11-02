@@ -74,7 +74,7 @@ public class ProductApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public Long createProduct(ProductCreateCommand command) {
-        validatePrices(command.getSuggestedRetailPrice(), command.getVipPrice(), command.getMinPrice(), command.getOnlinePrice());
+        validatePrices(command.getSuggestedRetailPrice(), command.getVipPrice(), command.getMinPrice());
         // 自动生成编码（如果未提供）
         String productCode = command.getCode();
         if (productCode == null || productCode.isBlank()) {
@@ -121,7 +121,6 @@ public class ProductApplicationService {
         product.setImageUrl(command.getImageUrl());
         product.setDetailText(command.getDetailText());
         product.setIsOnline(command.getIsOnline() != null ? command.getIsOnline() : 0);
-        // online_price 仅保留历史存储，当前线上与门店使用同一报价。
         product.setBaseShippingFee(command.getBaseShippingFee() != null ? command.getBaseShippingFee() : java.math.BigDecimal.ZERO);
         product.setAllowSpecialFund(command.getAllowSpecialFund() != null ? command.getAllowSpecialFund() : 0);
         product.setStatus(1);
@@ -177,7 +176,7 @@ public class ProductApplicationService {
 
         validatePrices(command.getSuggestedRetailPrice() != null ? command.getSuggestedRetailPrice() : product.getSuggestedRetailPrice(),
                 command.getVipPrice() != null ? command.getVipPrice() : product.getVipPrice(),
-                command.getMinPrice() != null ? command.getMinPrice() : product.getMinPrice(), command.getOnlinePrice());
+                command.getMinPrice() != null ? command.getMinPrice() : product.getMinPrice());
 
         // 更新商品信息（只更新非空字段，避免清空未传递的字段）
         if (command.getName() != null) {
@@ -672,16 +671,13 @@ public class ProductApplicationService {
 
     // ==================== 私有方法：转换 ====================
     
-    /** 价格都按持久化基准单位维护；0 表示可选会员价/最低价未启用。 */
+    /** 价格都按持久化基准单位维护；0 表示可选会员价/最低价未启用。线上与门店统一使用商品价格，不存在独立线上价。 */
     private void validatePrices(java.math.BigDecimal retail, java.math.BigDecimal member,
-                                java.math.BigDecimal floor, java.math.BigDecimal online) {
+                                java.math.BigDecimal floor) {
         for (java.math.BigDecimal price : new java.math.BigDecimal[]{retail, member, floor}) {
             if (price != null && (price.signum() < 0 || price.scale() > 2 || price.precision() - price.scale() > 8)) {
                 throw new IllegalArgumentException("商品价格不能为负，最多两位小数且小于一亿元");
             }
-        }
-        if (online != null && online.signum() != 0 && (retail == null || online.compareTo(retail) != 0)) {
-            throw new IllegalArgumentException("线上与门店使用统一价格，请修改商品零售价，不再单独设置线上价");
         }
         if (member != null && member.signum() > 0 && (retail == null || member.compareTo(retail) > 0)) {
             throw new IllegalArgumentException("会员价不能高于零售价");
@@ -713,7 +709,6 @@ public class ProductApplicationService {
         vo.setImageUrl(product.getImageUrl());
         vo.setDetailText(product.getDetailText());
         vo.setIsOnline(product.getIsOnline());
-        vo.setOnlinePrice(product.getSuggestedRetailPrice()); // 旧客户端展示字段使用当前零售价，禁止另一套线上价
         vo.setBaseShippingFee(product.getBaseShippingFee());
         vo.setAllowSpecialFund(product.getAllowSpecialFund());
         vo.setStatus(product.getStatus());

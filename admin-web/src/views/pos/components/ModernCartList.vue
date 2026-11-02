@@ -138,6 +138,7 @@
 import { usePermissionStore } from '@/store/permission'
 import {computed, reactive, ref} from 'vue'
 import {isWholeBaseQuantity} from '@/utils/quantity'
+import {subtotalAmount} from '@/utils/money'
 import {ElMessage} from 'element-plus'
 import {Box, Delete, Minus, Plus} from '@element-plus/icons-vue'
 import CustomerBar from './CustomerBar.vue'
@@ -161,7 +162,7 @@ const canChangePrice = computed(() => permissionStore.permissions.includes('*') 
 const handlePriceChange = (item: CartItem, value?: number) => {
   if (!canChangePrice.value || value == null || value <= 0) return
   item.unitPrice = value
-  item.subtotal = Math.round(item.quantity * value * 100) / 100
+  item.subtotal = subtotalAmount(item.quantity, value)
   item.belowReference = item.referenceFloor != null && value < item.referenceFloor
   if (item.itemType === 2) {
     item.pricePending = true
@@ -212,7 +213,7 @@ const handleQuantityChange = (item: CartItem, input: number | string) => {
   }
   if (newQuantity === item.quantity) return
   item.quantity = newQuantity
-  item.subtotal = Math.round(item.quantity * item.unitPrice * 100) / 100
+  item.subtotal = subtotalAmount(item.quantity, item.unitPrice)
   if (item.itemType === 2) {
     item.pricePending = true
     emit('packageChange', { id: item.id })

@@ -12,9 +12,13 @@ import java.time.LocalDateTime;
 
 /**
  * 商品价格实体（策略价格）
- * 
+ *
+ * @deprecated V130 起多维价格策略已停用：写入入口在 ProductApplicationService 被拒绝，
+ * 定价一律走商品档案基准单价 × 单位系数。本表仅保留历史数据只读查询（getPriceRules），
+ * 禁止新增任何写入调用方或结构变更。
  * @author AI Generated
  */
+@Deprecated
 @Data
 @Table("product_price")
 public class ProductPrice {

@@ -5,6 +5,7 @@ const vm = require('node:vm')
 const test = require('node:test')
 const ts = require('typescript')
 const vue = require('vue')
+const {moneyUtils} = require('./helpers/money.cjs')
 
 const webRoot = path.resolve(__dirname, '..')
 
@@ -42,6 +43,7 @@ function loadPage(relativePath, exports, overrides = {}) {
       level, message => messages.push({ level, text: typeof message === 'string' ? message : message?.message || '' })
     ])),
     console: { warn() {}, error() {} },
+    ...moneyUtils(),
     ...overrides
   }
   vm.createContext(context)

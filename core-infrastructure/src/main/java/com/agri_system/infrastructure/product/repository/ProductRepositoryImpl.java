@@ -55,7 +55,6 @@ public class ProductRepositoryImpl implements ProductRepository {
                 product.getImageUrl(),
                 product.getDetailText(),
                 product.getIsOnline(),
-                product.getOnlinePrice(),
                 product.getBaseShippingFee(),
                 product.getAllowSpecialFund(),
                 product.getRemark(),

@@ -189,7 +189,7 @@
           </el-table-column>
           <el-table-column label="金额" width="120" align="right">
             <template #default="{ row }">
-              ¥{{ (row.qty && row.price ? row.qty * row.price : 0).toFixed(2) }}
+              ¥{{ subtotalAmount(row.qty, row.price).toFixed(2) }}
             </template>
           </el-table-column>
           <el-table-column label="操作" width="80" align="center">
@@ -253,6 +253,7 @@
 import {computed, reactive, ref, watch} from 'vue'
 import {usePermissionStore} from '@/store/permission'
 import {hasPermission} from '@/utils/permission'
+import {subtotalAmount, sumAmount} from '@/utils/money'
 import {Plus, Refresh, Search} from '@element-plus/icons-vue'
 import {
   cancelPurchase,
@@ -361,12 +362,7 @@ const selectedProductIds = computed(() => createForm.items.map(i => i.productId)
 // 快捷新建商品
 const quickProductFormVisible = ref(false)
 
-const totalAmount = computed(() =>
-  createForm.items.reduce((sum, item) => {
-    const amount = (item.qty || 0) * (item.price || 0)
-    return sum + amount
-  }, 0)
-)
+const totalAmount = computed(() => sumAmount(createForm.items.map(item => subtotalAmount(item.qty, item.price))))
 
 // 加载数据
 const loadOptions = async () => {

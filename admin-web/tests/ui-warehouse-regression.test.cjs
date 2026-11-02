@@ -1,9 +1,10 @@
 const assert=require('node:assert/strict'), test=require('node:test'), fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),ts=require('typescript'),vue=require('vue')
+const {moneyUtils}=require('./helpers/money.cjs')
 function load(relative,overrides={}) {
  const filename=path.join(__dirname,'..',relative),file=fs.readFileSync(filename,'utf8'),source=relative.endsWith('.vue')?file.match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]:file
  const ast=ts.createSourceFile(filename,source,ts.ScriptTarget.Latest,true),names=ast.statements.filter(ts.isVariableStatement).flatMap(s=>[...s.declarationList.declarations].filter(d=>ts.isIdentifier(d.name)).map(d=>d.name.text)),events=[]
  const imports=Object.fromEntries(ast.statements.filter(ts.isImportDeclaration).flatMap(s=>[s.importClause?.name?.text,...(s.importClause?.namedBindings?.elements||[]).map(e=>e.name.text)].filter(Boolean).map(n=>[n,{}])))
- const context={exports:{},...imports,...vue,onMounted(){},defineProps:()=>({modelValue:true,order:{id:1}}),defineEmits:()=>()=>{},defineExpose(){},useUserStore:()=>({userInfo:{id:1}}),usePermissionStore:()=>({permissions:['product:unit:create']}),getProductList:async()=>({records:[]}),ElMessage:{warning:m=>events.push(m),error(){},success(){}},...overrides}
+ const context={exports:{},...imports,...vue,...moneyUtils(),onMounted(){},defineProps:()=>({modelValue:true,order:{id:1}}),defineEmits:()=>()=>{},defineExpose(){},useUserStore:()=>({userInfo:{id:1}}),usePermissionStore:()=>({permissions:['product:unit:create']}),getProductList:async()=>({records:[]}),ElMessage:{warning:m=>events.push(m),error(){},success(){}},...overrides}
  vm.createContext(context);vm.runInContext(ts.transpileModule(ast.statements.filter(s=>!ts.isImportDeclaration(s)).map(s=>s.getFullText(ast)).join('\n')+`\nglobalThis.bindings={${names.join(',')}}`,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,context)
  return {...context.bindings,exports:context.exports,events}
 }
@@ -64,3 +65,15 @@ test('POS换销售单位不能把合法半箱变成半瓶',()=>{
  const item={id:'a',itemType:1,quantity:.5,currentUnit:'箱',allowFractionalBaseQuantity:false,baseUnitName:'瓶',saleUnits:[{unitName:'瓶',baseQuantityPerUnit:1},{unitName:'箱',baseQuantityPerUnit:12}]}
  p.handleUnitChange(item,'瓶');assert.equal(item.currentUnit,'箱')
 })
+
+test('采购行金额模板与合计使用同一HALF_UP口径，半分不再出现行额与合计不同',()=>{
+ const relative='src/views/purchase/order/index.vue',p=load(relative,{useRouter:()=>({push(){}}),useRoute:()=>({query:{}})});
+ const source=fs.readFileSync(path.join(__dirname,'..',relative),'utf8');
+ const expression=source.match(/¥\{\{\s*([^\n]*row\.qty[^\n]*?)\s*\}\}/)[1];
+ const row={qty:0.15,price:0.10};
+ p.createForm.items=[row];
+ assert.equal(vm.runInNewContext(expression,{row,...moneyUtils()}),'0.02');
+ assert.equal(p.totalAmount.value,0.02);
+ p.createForm.items=[{qty:0.5,price:0.01},{qty:0.5,price:0.01}];
+ assert.equal(p.totalAmount.value,0.02);
+});

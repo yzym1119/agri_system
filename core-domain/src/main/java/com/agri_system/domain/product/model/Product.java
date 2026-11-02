@@ -75,10 +75,7 @@ public class Product {
     
     /** 是否上架：1-上架，0-下架 */
     private Integer isOnline;
-    
-    /** 线上价（元） */
-    private BigDecimal onlinePrice;
-    
+
     /** 基础运费（元） */
     private BigDecimal baseShippingFee;
     

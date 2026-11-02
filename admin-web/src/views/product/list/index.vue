@@ -592,7 +592,6 @@ const formData = reactive<ProductCreateRequest & { id?: number; avgCostPrice?: n
   imageUrl: '',
   detailText: '',
   isOnline: 0,
-  onlinePrice: undefined,
   baseShippingFee: 0,
   allowSpecialFund: 0,
   remark: '',
@@ -1077,7 +1076,6 @@ const resetForm = () => {
   formData.imageUrl = ''
   formData.detailText = ''
   formData.isOnline = 0
-  formData.onlinePrice = undefined
   formData.baseShippingFee = 0
   formData.allowSpecialFund = 0
   formData.remark = ''

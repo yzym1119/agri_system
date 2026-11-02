@@ -35,7 +35,6 @@ public interface ProductMapper extends BaseMapper<Product> {
             "image_url = #{imageUrl}, " +
             "detail_text = #{detailText}, " +
             "is_online = #{isOnline}, " +
-            "online_price = #{onlinePrice}, " +
             "base_shipping_fee = #{baseShippingFee}, " +
             "allow_special_fund = #{allowSpecialFund}, " +
             "remark = #{remark}, " +
@@ -66,7 +65,6 @@ public interface ProductMapper extends BaseMapper<Product> {
                     @Param("imageUrl") String imageUrl,
                     @Param("detailText") String detailText,
                     @Param("isOnline") Integer isOnline,
-                    @Param("onlinePrice") BigDecimal onlinePrice,
                     @Param("baseShippingFee") BigDecimal baseShippingFee,
                     @Param("allowSpecialFund") Integer allowSpecialFund,
                     @Param("remark") String remark,

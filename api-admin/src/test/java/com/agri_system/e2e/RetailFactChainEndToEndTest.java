@@ -176,6 +176,7 @@ class RetailFactChainEndToEndTest {
             MigrateResult migrateResult = Flyway.configure()
                     .dataSource(jdbcUrl, dbUser, dbPassword)
                     .locations("classpath:db/migration")
+                    .callbacks(new com.agri_system.infrastructure.migration.LegacyPerformanceDropGuard())
                     .load()
                     .migrate();
             log("[flyway] migrationsExecuted=" + migrateResult.migrationsExecuted);
@@ -471,8 +472,31 @@ class RetailFactChainEndToEndTest {
         VipLifecycleMysqlAssertions.verify(jdbcTemplate, vipLifecycleService);
         log("[VIP] 隔离首次权益、同月逐事实重放、失败整笔回滚与过期降级通过");
         assertLedgerReconciles();
+        assertPurchaseDraftRounding();
         assertEquals(0L, jdbcLong("SELECT COUNT(*) FROM inventory_balance_feature_status"));
         log("收货、销售、原单退货、提货、调拨、盘点及失败回滚使用同一账本，验收通过");
+    }
+
+    private void assertPurchaseDraftRounding() throws Exception {
+        E2EToken owner=loginToken(1L);
+        long movements=movementCount(),payments=jdbcLong("SELECT COUNT(*) FROM order_payment");
+        for(int id:List.of(91001,91002)) {
+            exec("INSERT INTO product(id,code,name,main_unit,suggested_retail_price,status) VALUES("+id+",'ROUND-"+id+"','采购金额验收"+id+"','公斤',1,1)");
+            exec("INSERT INTO product_unit(product_id,unit_name,base_quantity_per_unit,is_base_unit,allow_purchase,allow_sale,allow_inventory,allow_transfer,status) VALUES("+id+",'公斤',1,1,1,1,1,1,1)");
+        }
+        var body=Map.of("storeId",1,"supplierId",1,"items",List.of(
+                Map.of("productId",91001,"qty","0.5","unit","公斤","price","0.01"),
+                Map.of("productId",91002,"qty","0.5","unit","公斤","price","0.01")));
+        var created=postCreditJson(owner,"/api/admin/purchase/create",body);requireCreditSuccess(created);
+        long id=created.path("data").path("orderId").asLong();assertTrue(id>0,created.toString());
+        assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM purchase_order WHERE id="+id+" AND total_amount=0.02"));
+        assertEquals(2L,jdbcLong("SELECT COUNT(*) FROM purchase_order_item WHERE purchase_order_id="+id+" AND quantity=0.5 AND buy_price=0.01 AND total_price=0.01"));
+        assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM purchase_order p WHERE p.id="+id+" AND p.total_amount=(SELECT SUM(i.total_price) FROM purchase_order_item i WHERE i.purchase_order_id=p.id)"));
+        var single=postCreditJson(owner,"/api/admin/purchase/create",Map.of("storeId",1,"supplierId",1,"items",List.of(Map.of("productId",91001,"qty","0.15","unit","公斤","price","0.10"))));
+        requireCreditSuccess(single);long singleId=single.path("data").path("orderId").asLong();
+        assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM purchase_order WHERE id="+singleId+" AND total_amount=0.02"));
+        assertEquals(1L,jdbcLong("SELECT COUNT(*) FROM purchase_order_item WHERE purchase_order_id="+singleId+" AND total_price=0.02 AND buy_price=0.10"));
+        assertEquals(movements,movementCount());assertEquals(payments,jdbcLong("SELECT COUNT(*) FROM order_payment"));
     }
 
     /** POS整单人工配送复用现有单据，真实HTTP派单/退货/签收不增加第二份钱货绩效。 */

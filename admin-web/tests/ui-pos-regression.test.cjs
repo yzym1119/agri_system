@@ -5,13 +5,14 @@ const vm = require('node:vm')
 const test = require('node:test')
 const ts = require('typescript')
 const vue = require('vue')
+const {moneyUtils} = require('./helpers/money.cjs')
 function load(file, names, overrides = {}) {
   const source = fs.readFileSync(path.join(__dirname, '../src/views/pos/', file), 'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1]
   const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
   const script = ast.statements.filter(s => !ts.isImportDeclaration(s)).map(s => s.getFullText(ast)).join('\n')
   const events = [], messages = []
   const context = { ...vue, onMounted(){}, defineProps:()=>({storeId:1}), defineEmits:()=> (...args)=>events.push(args), defineExpose(){},
-    usePermissionStore:()=>({permissions:['*']}), ElMessage:{warning:m=>messages.push(m)}, localStorage:{getItem(){return null}}, ...overrides }
+    usePermissionStore:()=>({permissions:['*']}), ElMessage:{warning:m=>messages.push(m)}, localStorage:{getItem(){return null}}, ...moneyUtils(), ...overrides }
   vm.createContext(context)
   vm.runInContext(ts.transpileModule(script+`\nglobalThis.page={${names.join(',')}}`, {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText, context)
   return {...context.page,events,messages}

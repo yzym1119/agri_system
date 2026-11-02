@@ -60,10 +60,6 @@ public class ProductUpdateCommand {
     @Schema(description = "详情文字（纯文字详情）", example = "本品为高效复合肥料...")
     private String detailText;
     
-    @PositiveOrZero(message = "线上价必须大于等于0")
-    @Schema(description = "已停用的线上价字段；线上与门店统一使用商品价格", example = "48.00")
-    private BigDecimal onlinePrice;
-    
     @PositiveOrZero(message = "基础运费必须大于等于0")
     @Schema(description = "基础运费（元，默认0）", example = "5.00")
     private BigDecimal baseShippingFee;

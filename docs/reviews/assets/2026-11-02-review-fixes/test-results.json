@@ -1,0 +1,40 @@
+{
+  "backendCleanVerify": {
+    "tests": 871,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "backendIncludesRealMySQL": true,
+  "adminTests": {
+    "passed": 276,
+    "failed": 0
+  },
+  "sharedTests": {
+    "passed": 51,
+    "failed": 0
+  },
+  "staffTests": {
+    "passed": 54,
+    "failed": 0
+  },
+  "typeChecks": [
+    "admin-web",
+    "mini-staff"
+  ],
+  "builds": [
+    "admin-web",
+    "mini-staff mp-weixin"
+  ],
+  "redEvidence": [
+    "采购单行0.005未到分，领域2项失败",
+    "采购模板0.15*0.10显示0.01而合计0.02",
+    "真实MySQL非空旧绩效原先未拒绝，已先RED再补保护"
+  ],
+  "preservedMigrationChecksums": {
+    "136": true,
+    "137": true,
+    "138": true
+  },
+  "scope": "测试新建随机库，未对原开发库/原预览执行迁移，未部署新包，远程CI未执行"
+}

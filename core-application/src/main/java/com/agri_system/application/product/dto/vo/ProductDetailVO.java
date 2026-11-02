@@ -76,9 +76,6 @@ public class ProductDetailVO {
     @Schema(description = "是否上架：1-上架，0-下架", example = "1")
     private Integer isOnline;
     
-    @Schema(description = "线上价（元）", example = "48.00")
-    private BigDecimal onlinePrice;
-    
     @Schema(description = "基础运费（元）", example = "5.00")
     private BigDecimal baseShippingFee;
     

@@ -68,7 +68,6 @@ export interface ProductDetailVO {
   imageUrl?: string
   detailText?: string
   isOnline: number
-  onlinePrice?: number
   baseShippingFee?: number
   allowSpecialFund?: number
   hasStrategy?: boolean // 是否存在价格策略
@@ -105,7 +104,6 @@ export interface ProductCreateRequest {
   imageUrl?: string
   detailText?: string
   isOnline?: number
-  onlinePrice?: number
   baseShippingFee?: number
   allowSpecialFund?: number
   remark?: string
@@ -138,7 +136,6 @@ export interface ProductUpdateRequest {
   imageUrl?: string
   detailText?: string
   isOnline?: number
-  onlinePrice?: number
   baseShippingFee?: number
   allowSpecialFund?: number
   remark?: string

@@ -36,7 +36,6 @@ class ProductPricingServiceTest {
         product.setAuxUnit("瓶"); product.setMainToAuxRatio(new BigDecimal("3"));
         product.setSuggestedRetailPrice(new BigDecimal("10"));
         product.setVipPrice(new BigDecimal("9")); product.setMinPrice(new BigDecimal("8"));
-        product.setOnlinePrice(new BigDecimal("99"));
         when(products.findById(1L)).thenReturn(Optional.of(product));
         List<ProductUnit> configured = List.of(unit(11L, "瓶", "1", true),
                 unit(12L, "箱", "3", false), unit(13L, "件", "12", false));
@@ -59,10 +58,6 @@ class ProductPricingServiceTest {
     }
     @Test void minimumPriceIsNeverASellingPrice() {
         product.setSuggestedRetailPrice(null); product.setVipPrice(null);
-        assertThatThrownBy(() -> quote("瓶", 1)).hasMessageContaining("零售价");
-    }
-    @Test void onlinePriceIsNeverAnImplicitFallback() {
-        product.setSuggestedRetailPrice(null); product.setVipPrice(null); product.setMinPrice(null);
         assertThatThrownBy(() -> quote("瓶", 1)).hasMessageContaining("零售价");
     }
     @Test void historicalStrategyCannotOverrideProductPrice() {
