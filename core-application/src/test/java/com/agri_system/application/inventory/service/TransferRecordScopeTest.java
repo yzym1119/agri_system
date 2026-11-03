@@ -25,7 +25,7 @@ class TransferRecordScopeTest {
         jdbc.execute("CREATE TABLE inventory_transfer_detail(transfer_id BIGINT)");
         jdbc.execute("INSERT INTO inventory_transfer VALUES(1,'T1',1,2,99,3,7,'2026-11-01 10:00:00',NULL),(2,'T2',3,1,99,4,7,'2026-11-01 11:00:00',NULL),(3,'T3',2,3,99,5,7,'2026-11-01 12:00:00',NULL)");
         service=mock(InventoryApplicationService.class,CALLS_REAL_METHODS);
-        ReflectionTestUtils.setField(service,"jdbcTemplate",jdbc);
+        ReflectionTestUtils.setField(service,"transferRecordQuery",new com.agri_system.infrastructure.inventory.query.TransferRecordQueryImpl(jdbc));
     }
     @AfterEach void close(){TenantManager.setTenantFactory(original);jdbc.execute("SHUTDOWN");}
     @Test void 员工默认只见涉及本店的调出与调入且他店过滤不能绕过() {
@@ -36,6 +36,19 @@ class TransferRecordScopeTest {
         query.setPageNum(2);assertEquals(1L,service.queryTransferPage(query).getRecords().get(0).getTransferId());
         query.setPageNum(1);query.setFromStoreId(2L);query.setToStoreId(3L);
         assertEquals(0,service.queryTransferPage(query).getTotalRow());
+    }
+    @Test void 原筛选字段数量批次数和名称映射保持() {
+        TenantManager.setTenantFactory(()->new Object[]{1L});
+        jdbc.execute("INSERT INTO product VALUES(99,'测试肥料','12瓶/箱')");
+        jdbc.execute("INSERT INTO store VALUES(1,'一店'),(2,'二店')");jdbc.execute("INSERT INTO staff VALUES(7,'测试员工')");
+        jdbc.execute("INSERT INTO inventory_transfer_detail VALUES(1),(1),(2)");
+        var query=new InventoryTransferRecordQuery();query.setFromStoreId(1L);query.setToStoreId(2L);query.setProductName("肥料");
+        query.setStartTime("2026-11-01T09:00:00");query.setEndTime("2026-11-01T10:30:00");
+        var page=service.queryTransferPage(query);assertEquals(1,page.getTotalRow());
+        var row=page.getRecords().get(0);assertEquals("T1",row.getTransferNo());assertEquals("一店",row.getFromStoreName());assertEquals("二店",row.getToStoreName());
+        assertEquals("测试肥料",row.getProductName());assertEquals("12瓶/箱",row.getProductSpec());assertEquals(2,row.getBatchCount());
+        assertEquals(0,new java.math.BigDecimal("3").compareTo(row.getQuantity()));assertEquals(7L,row.getCreatedBy());assertEquals("测试员工",row.getCreatedByName());
+        assertEquals(java.time.LocalDateTime.of(2026,11,1,10,0),row.getCreatedAt());assertNull(row.getRemark());
     }
     @Test void 管理员全店但空租户范围不返回全局数据() {
         var query=new InventoryTransferRecordQuery();TenantManager.setTenantFactory(null);

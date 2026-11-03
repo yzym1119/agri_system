@@ -48,13 +48,11 @@ import com.agri_system.domain.store.repository.StoreRepository;
 import com.mybatisflex.core.paginate.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.sql.Timestamp;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -84,7 +82,7 @@ public class InventoryApplicationService {
     private final StoreRepository storeRepository;
     private final StaffRepository staffRepository;
     private final PurchaseRepository purchaseRepository;
-    private final JdbcTemplate jdbcTemplate;
+    private final com.agri_system.domain.inventory.query.TransferRecordQuery transferRecordQuery;
     private final BatchBalanceService batchBalanceService;
     private final InventoryLocationRepository locationRepository;
     private final InventoryReceiptBatchRepository receiptBatchRepository;
@@ -290,114 +288,28 @@ public class InventoryApplicationService {
     }
 
     public Page<InventoryTransferRecordVO> queryTransferPage(InventoryTransferRecordQuery query) {
-        StringBuilder fromSql = new StringBuilder("""
-                FROM inventory_transfer o
-                LEFT JOIN product p ON o.product_id = p.id
-                LEFT JOIN store fs ON o.from_store_id = fs.id
-                LEFT JOIN store ts ON o.to_store_id = ts.id
-                LEFT JOIN staff st ON o.created_by = st.id
-                LEFT JOIN (
-                    SELECT transfer_id, COUNT(1) AS batch_count
-                    FROM inventory_transfer_detail
-                    GROUP BY transfer_id
-                ) td ON td.transfer_id = o.id
-                WHERE 1 = 1
-                """);
-
-        List<Object> params = new ArrayList<>();
-
-        // JDBC不会自动应用Flex租户条件；调出或调入任一端属于当前范围才可见。
-        Object[] tenantStores = com.mybatisflex.core.tenant.TenantManager.getTenantIds();
-        if (tenantStores != null) {
-            if (tenantStores.length == 0) {
-                fromSql.append(" AND 1 = 0 ");
-            } else {
-                String placeholders = String.join(",", java.util.Collections.nCopies(tenantStores.length, "?"));
-                fromSql.append(" AND (o.from_store_id IN (").append(placeholders)
-                        .append(") OR o.to_store_id IN (").append(placeholders).append(")) ");
-                params.addAll(java.util.Arrays.asList(tenantStores));
-                params.addAll(java.util.Arrays.asList(tenantStores));
-            }
-        }
-
-        if (query.getFromStoreId() != null) {
-            fromSql.append(" AND o.from_store_id = ? ");
-            params.add(query.getFromStoreId());
-        }
-
-        if (query.getToStoreId() != null) {
-            fromSql.append(" AND o.to_store_id = ? ");
-            params.add(query.getToStoreId());
-        }
-
-        if (StringUtils.hasText(query.getProductName())) {
-            fromSql.append(" AND p.name LIKE ? ");
-            params.add("%" + query.getProductName().trim() + "%");
-        }
-
-        if (StringUtils.hasText(query.getStartTime())) {
-            fromSql.append(" AND o.created_at >= ? ");
-            params.add(LocalDateTime.parse(query.getStartTime(), DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-        }
-
-        if (StringUtils.hasText(query.getEndTime())) {
-            fromSql.append(" AND o.created_at <= ? ");
-            params.add(LocalDateTime.parse(query.getEndTime(), DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-        }
-
-        String countSql = "SELECT COUNT(1) " + fromSql;
-
-        Long total = jdbcTemplate.queryForObject(countSql, Long.class, params.toArray());
-        long totalRows = total == null ? 0L : total;
-
-        String dataSql = """
-                SELECT
-                    o.id AS transfer_id,
-                    o.transfer_no AS transfer_no,
-                    o.from_store_id AS from_store_id,
-                    fs.name AS from_store_name,
-                    o.to_store_id AS to_store_id,
-                    ts.name AS to_store_name,
-                    o.product_id AS product_id,
-                    p.name AS product_name,
-                    p.specification AS product_spec,
-                    o.quantity AS quantity,
-                    COALESCE(td.batch_count, 0) AS batch_count,
-                    o.created_by AS created_by,
-                    st.name AS created_by_name,
-                    o.created_at AS created_at,
-                    o.remark AS remark
-                """ + fromSql + """
-                ORDER BY o.created_at DESC
-                LIMIT ? OFFSET ?
-                """;
-
-        List<Object> dataParams = new ArrayList<>(params);
-        dataParams.add(query.getPageSize());
-        dataParams.add((long) (query.getPageNum() - 1) * query.getPageSize());
-
-        List<InventoryTransferRecordVO> records = jdbcTemplate.query(dataSql, dataParams.toArray(), (rs, rowNum) -> {
-            InventoryTransferRecordVO vo = new InventoryTransferRecordVO();
-            vo.setTransferId(rs.getLong("transfer_id"));
-            vo.setTransferNo(rs.getString("transfer_no"));
-            vo.setFromStoreId((Long) rs.getObject("from_store_id"));
-            vo.setFromStoreName(rs.getString("from_store_name"));
-            vo.setToStoreId((Long) rs.getObject("to_store_id"));
-            vo.setToStoreName(rs.getString("to_store_name"));
-            vo.setProductId(rs.getLong("product_id"));
-            vo.setProductName(rs.getString("product_name"));
-            vo.setProductSpec(rs.getString("product_spec"));
-            vo.setQuantity(rs.getBigDecimal("quantity"));
-            Number batchCount = (Number) rs.getObject("batch_count");
-            vo.setBatchCount(batchCount == null ? 0 : batchCount.intValue());
-            vo.setCreatedBy((Long) rs.getObject("created_by"));
-            vo.setCreatedByName(rs.getString("created_by_name"));
-            Timestamp createdAt = rs.getTimestamp("created_at");
-            vo.setCreatedAt(createdAt != null ? createdAt.toLocalDateTime() : null);
-            vo.setRemark(rs.getString("remark"));
+        var result=transferRecordQuery.find(new com.agri_system.domain.inventory.query.TransferRecordQuery.Criteria(
+                query.getPageNum(),query.getPageSize(),query.getFromStoreId(),query.getToStoreId(),query.getProductName(),query.getStartTime(),query.getEndTime()));
+        List<InventoryTransferRecordVO> records=result.rows().stream().map(row->{
+            var vo=new InventoryTransferRecordVO();
+            vo.setTransferId(row.transferId());
+            vo.setTransferNo(row.transferNo());
+            vo.setFromStoreId(row.fromStoreId());
+            vo.setFromStoreName(row.fromStoreName());
+            vo.setToStoreId(row.toStoreId());
+            vo.setToStoreName(row.toStoreName());
+            vo.setProductId(row.productId());
+            vo.setProductName(row.productName());
+            vo.setProductSpec(row.productSpec());
+            vo.setQuantity(row.quantity());
+            vo.setBatchCount(row.batchCount());
+            vo.setCreatedBy(row.createdBy());
+            vo.setCreatedByName(row.createdByName());
+            vo.setCreatedAt(row.createdAt());
+            vo.setRemark(row.remark());
             return vo;
-        });
-
+        }).toList();
+        long totalRows=result.totalRows();
         Page<InventoryTransferRecordVO> page = new Page<>();
         page.setRecords(records);
         page.setPageNumber(query.getPageNum());
