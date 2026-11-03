@@ -127,7 +127,7 @@ class OrderDeliveryFlowTest {
             return org.mockito.Mockito.RETURNS_DEFAULTS.answer(invocation);
         });
         ReflectionTestUtils.setField(orderService,"orderRepository",orderRepository);
-        ReflectionTestUtils.setField(orderService,"queryService",new OrderQueryService(orderRepository,itemRepository,paymentRepository,deliveryRepository,storeRepository,customerRepository,afterSalesRepository,paymentService));
+        ReflectionTestUtils.setField(orderService,"queryService",new OrderQueryService(orderRepository,itemRepository,paymentRepository,deliveryRepository,storeRepository,customerRepository,afterSalesRepository,paymentService,productRepository,staffRepository,afterSalesItemRepository,inventoryService));
         org.mockito.Mockito.lenient().when(orderRepository.findById(42L)).thenReturn(Optional.of(order));
         org.mockito.Mockito.lenient().when(orderRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(order));
         org.mockito.Mockito.lenient().when(deliveryRepository.findByOrderId(42L)).thenReturn(Optional.of(delivery));

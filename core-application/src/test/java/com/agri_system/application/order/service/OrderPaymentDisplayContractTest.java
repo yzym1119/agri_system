@@ -30,7 +30,7 @@ class OrderPaymentDisplayContractTest {
         ReflectionTestUtils.setField(service,"paymentService",finance);
         ReflectionTestUtils.setField(service,"queryService",new OrderQueryService(orders,
                 (OrderItemRepository)ReflectionTestUtils.getField(service,"itemRepository"),payments,
-                (OrderDeliveryRepository)ReflectionTestUtils.getField(service,"deliveryRepository"),null,null,null,finance));
+                (OrderDeliveryRepository)ReflectionTestUtils.getField(service,"deliveryRepository"),null,null,null,finance,null,null,null,null));
     }
     private com.agri_system.application.order.dto.vo.OrderPageVO view() {return service.queryOrderPage(new com.agri_system.application.order.dto.query.OrderPageQuery()).getRecords().get(0);}
     private OrderPayment payment(int type,String amount) {var p=new OrderPayment();p.setPaymentType(type);p.setAmount(new BigDecimal(amount));return p;}

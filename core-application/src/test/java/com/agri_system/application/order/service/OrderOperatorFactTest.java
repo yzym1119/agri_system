@@ -53,6 +53,15 @@ class OrderOperatorFactTest {
         }
     }
 
+    @Test void foreignOrMissingCustomerOwnershipIsRejectedBeforeDetailReads() {
+        var service=mock(OrderApplicationService.class,CALLS_REAL_METHODS);var orders=mock(OrderRepository.class);
+        ReflectionTestUtils.setField(service,"orderRepository",orders);
+        ReflectionTestUtils.setField(service,"queryService",new OrderQueryService(orders,null,null,null,null,null,null,null,null,null,null,null));
+        var order=new Order();order.setId(77L);order.setCustomerId(8L);when(orders.findById(77L)).thenReturn(Optional.of(order));
+        assertThrows(IllegalArgumentException.class,()->service.getOrderDetailForCustomer(77L,9L));
+        order.setCustomerId(null);assertThrows(IllegalArgumentException.class,()->service.getOrderDetailForCustomer(77L,8L));
+    }
+
     private Long operator(Long staffId, Long createdBy, int type) throws Exception {
         return detail(staffId, createdBy, type, mock(StaffRepository.class)).getOperatorStaffId();
     }
@@ -74,6 +83,12 @@ class OrderOperatorFactTest {
         when(orders.findById(77L)).thenReturn(Optional.of(order));
         when(payments.financialSummary(order)).thenReturn(new OrderPaymentService.FinancialSummary(
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
+        ReflectionTestUtils.setField(service,"queryService",new OrderQueryService(orders,
+                (OrderItemRepository)ReflectionTestUtils.getField(service,"itemRepository"),
+                (OrderPaymentRepository)ReflectionTestUtils.getField(service,"paymentRepository"),
+                (OrderDeliveryRepository)ReflectionTestUtils.getField(service,"deliveryRepository"),
+                (StoreRepository)ReflectionTestUtils.getField(service,"storeRepository"),null,
+                (AfterSalesRepository)ReflectionTestUtils.getField(service,"afterSalesRepository"),payments,null,staff,null,null));
         return service.getOrderDetail(77L);
     }
 }
