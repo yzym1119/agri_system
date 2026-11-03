@@ -16,6 +16,9 @@ public interface ProductRepository {
      * 保存商品
      */
     void save(Product product);
+
+    /** 编辑完整商品资料，保留原强制写入null/零值的持久化语义。 */
+    void updateForce(Product product);
     
     /**
      * 根据ID查找商品

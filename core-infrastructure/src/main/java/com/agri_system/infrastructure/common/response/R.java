@@ -1,6 +1,6 @@
 package com.agri_system.infrastructure.common.response;
 
-import com.agri_system.infrastructure.common.error.SystemErrorCode;
+import com.agri_system.domain.common.error.SystemErrorCode;
 import org.slf4j.MDC;
 
 import java.io.Serial;

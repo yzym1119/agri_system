@@ -50,7 +50,7 @@ class OrderShipPathValidationTest {
             verify(service).confirmReceipt(42L,7L,"checked-key");
             mvc.perform(post("/api/admin/orders/42/confirm-receipt")
                 .contentType(MediaType.APPLICATION_JSON).content("{\"confirmationKey\":\" \"}"))
-                .andExpect(jsonPath("$.code").value(com.agri_system.infrastructure.common.error.SystemErrorCode.INVALID_ARGUMENT.getCode()))
+                .andExpect(jsonPath("$.code").value(com.agri_system.domain.common.error.SystemErrorCode.INVALID_ARGUMENT.getCode()))
                 .andExpect(jsonPath("$.message").value("请先核对配送商品与收货信息"));
             verifyNoMoreInteractions(service);
         }

@@ -38,6 +38,7 @@ public class ProductRepositoryImpl implements ProductRepository {
      * 强制更新商品（包括 null 值和 0 值字段）
      * 用于处理需要清空字段或设置值为 0 的情况
      */
+    @Override
     public void updateForce(Product product) {
         productMapper.updateForce(
                 product.getId(),

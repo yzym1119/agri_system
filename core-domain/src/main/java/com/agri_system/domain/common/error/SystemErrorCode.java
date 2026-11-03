@@ -1,4 +1,4 @@
-package com.agri_system.infrastructure.common.error;
+package com.agri_system.domain.common.error;
 
 /**
  * 系统通用错误码：10000-19999

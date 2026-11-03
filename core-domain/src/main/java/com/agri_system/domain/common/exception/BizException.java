@@ -1,7 +1,7 @@
-package com.agri_system.infrastructure.common.exception;
+package com.agri_system.domain.common.exception;
 
-import com.agri_system.infrastructure.common.error.IErrorCode;
-import com.agri_system.infrastructure.common.error.SystemErrorCode;
+import com.agri_system.domain.common.error.IErrorCode;
+import com.agri_system.domain.common.error.SystemErrorCode;
 
 public class BizException extends RuntimeException {
 

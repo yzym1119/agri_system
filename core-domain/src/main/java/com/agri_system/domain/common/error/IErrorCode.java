@@ -1,4 +1,4 @@
-package com.agri_system.infrastructure.common.error;
+package com.agri_system.domain.common.error;
 
 public interface IErrorCode {
 

@@ -282,11 +282,7 @@ public class ProductApplicationService {
         product.setUpdatedBy(currentStaffId);
         
         // 使用强制更新，确保 0/null 值被正确持久化
-        if (productRepository instanceof com.agri_system.infrastructure.product.repository.ProductRepositoryImpl) {
-            ((com.agri_system.infrastructure.product.repository.ProductRepositoryImpl) productRepository).updateForce(product);
-        } else {
-            productRepository.save(product);
-        }
+        productRepository.updateForce(product);
     }
     
     /**

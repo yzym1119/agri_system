@@ -1,4 +1,4 @@
-package com.agri_system.infrastructure.common.log;
+package com.agri_system.domain.common.log;
 
 import java.util.regex.Pattern;
 

@@ -22,11 +22,12 @@
             <version>${project.version}</version>
         </dependency>
         
-        <!-- 引入基础设施模块，使用统一的错误码、异常等通用能力 -->
+        <!-- 仅集成测试使用真实仓储，应用主代码不得依赖基础设施实现 -->
         <dependency>
             <groupId>com.agri_system</groupId>
             <artifactId>core-infrastructure</artifactId>
             <version>${project.version}</version>
+            <scope>test</scope>
         </dependency>
         
         <dependency>
@@ -101,6 +102,25 @@
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
+        <!-- 主代码实际使用的框架能力显式声明，不再经基础设施模块传递 -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.data</groupId>
+            <artifactId>spring-data-redis</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mybatis-flex</groupId>
+            <artifactId>mybatis-flex-spring-boot3-starter</artifactId>
         </dependency>
     </dependencies>
 

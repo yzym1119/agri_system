@@ -1,6 +1,6 @@
 package com.agri_system.infrastructure.common;
 
-import com.agri_system.infrastructure.common.log.LogMaskingUtils;
+import com.agri_system.domain.common.log.LogMaskingUtils;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
