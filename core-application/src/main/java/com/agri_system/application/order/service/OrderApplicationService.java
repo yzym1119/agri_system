@@ -1336,13 +1336,7 @@ public class OrderApplicationService {
     }
 
     private int validatePosDelivery(POSOrderCreateCommand command) {
-        int type = command.getDeliveryType() == null ? 1 : command.getDeliveryType();
-        if (type != 1 && type != 2) throw new IllegalArgumentException("POS履约方式只支持当场交货或门店配送");
-        if (type == 2 && (!StringUtils.hasText(command.getReceiverName()) || !StringUtils.hasText(command.getReceiverPhone())
-                || !StringUtils.hasText(command.getReceiverAddress()))) {
-            throw new IllegalArgumentException("门店配送必须填写收货人、收货电话及收货地址");
-        }
-        return type;
+        return PosOrderInputPolicy.validatePosDelivery(command);
     }
 
     @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
@@ -1602,29 +1596,7 @@ public class OrderApplicationService {
 
     /** 下单只允许真实收款方式，优惠券及专用金拆分由后端产生。 */
     private void validatePosPayments(POSOrderCreateCommand command) {
-        java.util.Set<Integer> mainTypes = java.util.Set.of(1, 2, 3, 4, 6, 10);
-        if (command.getPaymentType() == null || !mainTypes.contains(command.getPaymentType())) {
-            throw new IllegalArgumentException("POS支付方式不正确");
-        }
-        if (command.getPaymentType() == OrderMainPaymentMethod.BALANCE.getCode() && command.getCustomerId() == null) {
-            throw new IllegalArgumentException("余额支付必须指定客户");
-        }
-        if (command.getPayments() == null || command.getPayments().isEmpty()) {
-            if (command.getPaymentType() == OrderMainPaymentMethod.MIXED.getCode()) {
-                throw new IllegalArgumentException("混合支付必须提供支付明细");
-            }
-            return;
-        }
-        java.util.Set<Integer> tenderTypes = java.util.Set.of(1, 2, 3, 4, 6);
-        for (PaymentDetailDTO detail : command.getPayments()) {
-            if (detail == null || detail.getPaymentType() == null || !tenderTypes.contains(detail.getPaymentType())) {
-                throw new IllegalArgumentException("支付明细方式不正确");
-            }
-            if (detail.getAmount() == null || detail.getAmount().signum() <= 0
-                    || detail.getAmount().stripTrailingZeros().scale() > 2) {
-                throw new IllegalArgumentException("每笔支付明细金额必须大于0且精确到分");
-            }
-        }
+        PosOrderInputPolicy.validatePosPayments(command);
     }
 
     private record PackageLineContext(int groupNo,
