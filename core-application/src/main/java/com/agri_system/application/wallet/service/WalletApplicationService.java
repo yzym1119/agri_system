@@ -34,6 +34,7 @@ public class WalletApplicationService {
     private final JdbcTemplate jdbcTemplate;
     
     private static final int AUTH_CODE_LENGTH = 6;
+    private static final java.security.SecureRandom AUTH_CODE_RANDOM = new java.security.SecureRandom();
     
     /**
      * 扣减本金余额
@@ -377,12 +378,12 @@ public class WalletApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public String generateAndStoreWalletAuthCode(Long customerId, Long orderId, java.math.BigDecimal amount, int expireMinutes) {
-        String code = String.format("%0" + AUTH_CODE_LENGTH + "d", (int)(Math.random() * Math.pow(10, AUTH_CODE_LENGTH)));
+        String code = String.format(java.util.Locale.ROOT, "%0" + AUTH_CODE_LENGTH + "d", AUTH_CODE_RANDOM.nextInt(1_000_000));
         java.time.LocalDateTime now = java.time.LocalDateTime.now();
         java.time.LocalDateTime expireAt = now.plusMinutes(expireMinutes > 0 ? expireMinutes : 5);
         String sql = "INSERT INTO wallet_auth_code(customer_id, order_id, auth_code, amount, status, expire_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)";
         jdbcTemplate.update(sql, customerId, orderId, code, amount != null ? amount : java.math.BigDecimal.ZERO, 1, java.sql.Timestamp.valueOf(expireAt), java.sql.Timestamp.valueOf(now));
-        logger.info("Generated wallet auth code for customerId={} code={} expireAt={}", customerId, code, expireAt);
+        logger.info("钱包授权码已生成，expireAt={}", expireAt);
         return code;
     }
 
@@ -405,9 +406,9 @@ public class WalletApplicationService {
         String sql = "UPDATE wallet_auth_code SET order_id = ? WHERE auth_code = ? AND status = 2 AND (order_id IS NULL OR order_id = '')";
         int updated = jdbcTemplate.update(sql, orderId, authCode);
         if (updated > 0) {
-            logger.info("Associated authCode={} with orderId={}", authCode, orderId);
+            logger.info("钱包授权已关联订单，orderId={}", orderId);
         } else {
-            logger.warn("Failed to associate authCode={} with orderId={}", authCode, orderId);
+            logger.warn("钱包授权未关联订单，orderId={}", orderId);
         }
     }
     
