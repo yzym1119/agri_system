@@ -19,7 +19,7 @@ class PackageSaleLockOrderTest {
     @Test
     void reversedCartLocksPackagesInStableOrderButPreservesCartMaterialOrder() {
         var pricing=Mockito.mock(PackagePricingService.class);
-        var service=Mockito.mock(OrderApplicationService.class,Mockito.CALLS_REAL_METHODS);
+        var service=Mockito.mock(PosOrderCreationService.class,Mockito.CALLS_REAL_METHODS);
         ReflectionTestUtils.setField(service,"packagePricingService",pricing);
         List<Long> lockOrder=new ArrayList<>();
         Mockito.when(pricing.quoteForSale(anyLong(),isNull(),eq(1L),eq(BigDecimal.ONE),isNull())).thenAnswer(call->{

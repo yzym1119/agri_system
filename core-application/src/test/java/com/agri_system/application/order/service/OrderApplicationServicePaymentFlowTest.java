@@ -360,7 +360,7 @@ class OrderApplicationServicePaymentFlowTest {
         when(walletService.getBalance(12L)).thenReturn(new BigDecimal("30.00"));
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> orderService.createPOSOrder(command, 8L));
+                () -> com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L));
 
         assertEquals("ORDER_AMOUNT_INVALID: 钱包可支付金额不足，当前最多可支付 ¥50.00", ex.getMessage());
         verify(walletService, never()).deductSpecialFund(any(), any(), any(), any(), any(), any());
@@ -372,7 +372,7 @@ class OrderApplicationServicePaymentFlowTest {
     void createPosOrderDeductsInventoryWithPersistedOrderLine() {
         POSOrderCreateCommand command = cashPosCommand(false);
         stubCashPosOrderPersistence();
-        assertEquals(500L, orderService.createPOSOrder(command, 8L));
+        assertEquals(500L, com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L));
         assertSaleOutbound();
     }
 
@@ -380,7 +380,7 @@ class OrderApplicationServicePaymentFlowTest {
     void createPosOrderWarehousePickupAlsoDeductsInventoryAtCheckout() {
         POSOrderCreateCommand command = cashPosCommand(true);
         stubCashPosOrderPersistence();
-        assertEquals(500L, orderService.createPOSOrder(command, 8L));
+        assertEquals(500L, com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L));
         assertSaleOutbound();
     }
 
@@ -390,7 +390,7 @@ class OrderApplicationServicePaymentFlowTest {
         org.mockito.Mockito.doThrow(new IllegalArgumentException("库存不足"))
                 .when(inventoryService).outbound(any(), eq(8L));
         assertEquals("库存不足", assertThrows(IllegalArgumentException.class,
-                () -> orderService.createPOSOrder(cashPosCommand(false), 8L)).getMessage());
+                () -> com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(cashPosCommand(false), 8L)).getMessage());
         verify(eventPublisher, never()).publishEvent(any(OrderFinishedEvent.class));
     }
 
@@ -404,7 +404,7 @@ class OrderApplicationServicePaymentFlowTest {
         when(productPricingService.quote(any(PriceContext.class)))
                 .thenThrow(new IllegalArgumentException("商品未配置零售价"));
         assertEquals("商品未配置零售价", assertThrows(IllegalArgumentException.class,
-                () -> orderService.createPOSOrder(cashPosCommand(false), 8L)).getMessage());
+                () -> com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(cashPosCommand(false), 8L)).getMessage());
         verify(itemRepository, never()).save(any());
         verify(inventoryService, never()).outbound(any(), any());
     }
@@ -417,7 +417,7 @@ class OrderApplicationServicePaymentFlowTest {
                 new ManualPriceAuditService(org.mockito.Mockito.mock(com.agri_system.domain.order.repository.OrderItemPriceAuditRepository.class)));
         POSOrderCreateCommand command = cashPosCommand(false);
         command.setDiscountAmount(new BigDecimal("9.00"));
-        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        assertThrows(IllegalArgumentException.class, () -> com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L));
         verify(orderRepository, never()).save(any());
     }
 
@@ -427,7 +427,7 @@ class OrderApplicationServicePaymentFlowTest {
         stubCashPosOrderPersistence();
         POSOrderCreateCommand command = cashPosCommand(false);
         command.getItems().get(0).setQuotedUnitPrice(new BigDecimal("90.00"));
-        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        assertThrows(IllegalArgumentException.class, () -> com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L));
         verify(orderRepository, never()).save(any());
         verify(inventoryService, never()).outbound(any(), any());
     }
@@ -438,7 +438,7 @@ class OrderApplicationServicePaymentFlowTest {
         stubCashPosOrderPersistence();
         POSOrderCreateCommand command = cashPosCommand(false);
         command.getItems().get(0).setPackageId(7L);
-        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        assertThrows(IllegalArgumentException.class, () -> com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L));
         verify(orderRepository, never()).save(any());
     }
 
@@ -448,7 +448,7 @@ class OrderApplicationServicePaymentFlowTest {
         POSOrderCreateCommand command = cashPosCommand(false);
         command.getItems().get(0).setQuantity(new BigDecimal("0.3333"));
         command.setReceiveAmount(new BigDecimal("33.33"));
-        orderService.createPOSOrder(command, 8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L);
         ArgumentCaptor<OrderItem> item = ArgumentCaptor.forClass(OrderItem.class);
         verify(itemRepository).save(item.capture());
         assertEquals(new BigDecimal("33.33"), item.getValue().getTotalPrice());
@@ -468,7 +468,7 @@ class OrderApplicationServicePaymentFlowTest {
                 new BigDecimal("2"),new BigDecimal("80.00"),new BigDecimal("60.00"),false,new BigDecimal("80.00"),
                 new BigDecimal("160.00"),BigDecimal.ZERO,java.util.List.of(material));
         when(packagePricingService.quoteForSale(eq(7L),isNull(),eq(3L),eq(new BigDecimal("2")),isNull())).thenReturn(quote);
-        orderService.createPOSOrder(command,8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command,8L);
         ArgumentCaptor<OrderItem> saved = ArgumentCaptor.forClass(OrderItem.class); verify(itemRepository).save(saved.capture());
         assertEquals(new BigDecimal("160.00"),saved.getValue().getTotalPrice());
         assertEquals(new BigDecimal("14"),saved.getValue().getQuantity());
@@ -503,7 +503,7 @@ class OrderApplicationServicePaymentFlowTest {
                 new BigDecimal("160.00"),BigDecimal.ZERO,java.util.List.of(material1,material2));
         when(packagePricingService.quoteForSale(eq(7L),isNull(),eq(3L),eq(new BigDecimal("2")),isNull())).thenReturn(quote);
 
-        orderService.createPOSOrder(command,8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command,8L);
 
         verify(inventoryService, org.mockito.Mockito.times(3)).outbound(any(),eq(8L));
         verify(pickupFulfillmentService).createRequest(500L,900L,null);
@@ -520,7 +520,7 @@ class OrderApplicationServicePaymentFlowTest {
         var facts = couponPosFixture("10.00");
         var command = couponPosCommand(4);
         command.setWalletAuthCode("TEST90");
-        orderService.createPOSOrder(command, 8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L);
         assertEquals(new BigDecimal("110.00"), facts.wallet().get(), "100元商品减10元券只能扣90元");
         assertPaymentTotal(facts.payments(), 4, "90.00");
         assertPaymentTotal(facts.payments(), 5, "10.00");
@@ -532,7 +532,7 @@ class OrderApplicationServicePaymentFlowTest {
     @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
     void couponAndCashRecordCashNetAmount() {
         var facts = couponPosFixture("10.00");
-        orderService.createPOSOrder(couponPosCommand(1), 8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(couponPosCommand(1), 8L);
         assertPaymentTotal(facts.payments(), 1, "90.00");
         assertPaymentTotal(facts.payments(), 5, "10.00");
         assertEquals(new BigDecimal("200.00"), facts.wallet().get());
@@ -544,7 +544,7 @@ class OrderApplicationServicePaymentFlowTest {
         var facts = couponPosFixture("10.00");
         var command = couponPosCommand(10);
         command.setPayments(java.util.List.of(paymentDetail(1, "40.00"), paymentDetail(2, "50.00")));
-        orderService.createPOSOrder(command, 8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L);
         assertPaymentTotal(facts.payments(), 1, "40.00");
         assertPaymentTotal(facts.payments(), 2, "50.00");
         assertPaymentTotal(facts.payments(), 5, "10.00");
@@ -555,7 +555,7 @@ class OrderApplicationServicePaymentFlowTest {
     @org.mockito.junit.jupiter.MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
     void fullCouponDoesNotChargeWalletOrRequireCode() {
         var facts = couponPosFixture("100.00");
-        orderService.createPOSOrder(couponPosCommand(4), 8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(couponPosCommand(4), 8L);
         assertEquals(new BigDecimal("200.00"), facts.wallet().get());
         assertPaymentTotal(facts.payments(), 5, "100.00");
         assertEquals(1, facts.payments().size());
@@ -568,7 +568,7 @@ class OrderApplicationServicePaymentFlowTest {
         stubCashPosOrderPersistence();
         var command = cashPosCommand(false); command.setPaymentType(10);
         command.setPayments(java.util.List.of(paymentDetail(type, "100.00")));
-        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        assertThrows(IllegalArgumentException.class, () -> com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L));
     }
 
     @Test
@@ -577,7 +577,7 @@ class OrderApplicationServicePaymentFlowTest {
         stubCashPosOrderPersistence();
         var command = cashPosCommand(false); command.setPaymentType(10);
         command.setPayments(java.util.List.of(paymentDetail(1, "150.00"), paymentDetail(6, "-50.00")));
-        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        assertThrows(IllegalArgumentException.class, () -> com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L));
     }
 
     @org.junit.jupiter.params.ParameterizedTest
@@ -588,7 +588,7 @@ class OrderApplicationServicePaymentFlowTest {
         var command = cashPosCommand(false); command.setPaymentType(10);
         command.setPayments(java.util.List.of(paymentDetail(1, new BigDecimal("100.00").subtract(new BigDecimal(invalid)).toPlainString()),
                 paymentDetail(2, invalid)));
-        assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        assertThrows(IllegalArgumentException.class, () -> com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L));
     }
 
     @Test
@@ -602,7 +602,7 @@ class OrderApplicationServicePaymentFlowTest {
             fund.updateAndGet(amount -> amount.subtract(invocation.getArgument(1))); return null;
         }).when(walletService).deductSpecialFund(eq(12L),any(),any(),any(),any(),any());
         var command = couponPosCommand(4); command.setUseSpecialFund(true); command.setWalletAuthCode("TEST85");
-        orderService.createPOSOrder(command,8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command,8L);
         assertPaymentTotal(facts.payments(),8,"5.00");
         assertPaymentTotal(facts.payments(),4,"85.00");
         assertEquals(new BigDecimal("115.00"),facts.wallet().get());
@@ -615,7 +615,7 @@ class OrderApplicationServicePaymentFlowTest {
         var facts = couponPosFixture("10.00");
         var command = couponPosCommand(10);
         command.setPayments(java.util.List.of(paymentDetail(1,"40.00"),paymentDetail(4,"50.00")));
-        assertThrows(IllegalArgumentException.class,()->orderService.createPOSOrder(command,8L));
+        assertThrows(IllegalArgumentException.class,()->com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command,8L));
         assertEquals(new BigDecimal("200.00"),facts.wallet().get());
     }
 
@@ -626,7 +626,7 @@ class OrderApplicationServicePaymentFlowTest {
         when(walletAuthCodeRepository.consumeAuthCode(eq(12L),any(),any(),eq(500L))).thenReturn(0);
         var command = couponPosCommand(10); command.setWalletAuthCode("EXPIRED");
         command.setPayments(java.util.List.of(paymentDetail(1,"40.00"),paymentDetail(4,"50.00")));
-        assertThrows(IllegalStateException.class,()->orderService.createPOSOrder(command,8L));
+        assertThrows(IllegalStateException.class,()->com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command,8L));
         assertEquals(new BigDecimal("200.00"),facts.wallet().get());
     }
 
@@ -636,7 +636,7 @@ class OrderApplicationServicePaymentFlowTest {
         var facts = couponPosFixture("10.00");
         var command = couponPosCommand(10); command.setWalletAuthCode("TEST50");
         command.setPayments(java.util.List.of(paymentDetail(1,"40.00"),paymentDetail(4,"50.00")));
-        orderService.createPOSOrder(command,8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command,8L);
         assertEquals(new BigDecimal("150.00"),facts.wallet().get());
         assertPaymentTotal(facts.payments(),4,"50.00");
         assertEquals(1,facts.authUses().get());
@@ -655,7 +655,7 @@ class OrderApplicationServicePaymentFlowTest {
             case "category" -> facts.coupon().setLimitCategoryId(999L);
             case "product" -> facts.coupon().setLimitProductId(999L);
         }
-        assertThrows(IllegalArgumentException.class,()->orderService.createPOSOrder(couponPosCommand(1),8L));
+        assertThrows(IllegalArgumentException.class,()->com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(couponPosCommand(1),8L));
         assertEquals(1,facts.coupon().getStatus());
         assertEquals(0,facts.payments().size());
     }
@@ -672,7 +672,7 @@ class OrderApplicationServicePaymentFlowTest {
         if (!"coupon".equals(kind)) command.setCouponId(null);
         if ("discount".equals(kind)) { command.setDiscountAmount(new BigDecimal("10.00")); command.setRemark("破损包装优惠"); }
         if ("details".equals(kind)) command.setPayments(java.util.List.of(paymentDetail(6,"100.00")));
-        orderService.createPOSOrder(command,8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command,8L);
         var orders = ArgumentCaptor.forClass(Order.class); verify(orderRepository,org.mockito.Mockito.atLeastOnce()).save(orders.capture());
         BigDecimal expected = new BigDecimal("coupon".equals(kind) || "discount".equals(kind) ? "90.00" : "100.00");
         assertEquals(expected,orders.getValue().getPayAmount());
@@ -696,7 +696,7 @@ class OrderApplicationServicePaymentFlowTest {
         org.mockito.Mockito.doAnswer(invocation->{if(((BigDecimal)invocation.getArgument(2)).signum()<=0) throw new IllegalArgumentException("新增欠款必须为正");return null;})
                 .when(creditService).addDebt(any(),any(),any());
         var command=couponPosCommand(6);
-        orderService.createPOSOrder(command,8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command,8L);
         assertPaymentTotal(facts.payments(),5,"100.00");assertEquals(1,facts.payments().size());
     }
 
@@ -780,7 +780,7 @@ class OrderApplicationServicePaymentFlowTest {
                 LocalDate.now(), new BigDecimal("90.00"), "v1", new BigDecimal("80.00"), false, false);
         when(productPricingService.quote(any(PriceContext.class))).thenReturn(quote);
 
-        Long orderId = orderService.createPOSOrder(command, 8L);
+        Long orderId = com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L);
 
         assertEquals(500L, orderId);
         ArgumentCaptor<PriceQuote> quoteCaptor = ArgumentCaptor.forClass(PriceQuote.class);
@@ -818,14 +818,14 @@ class OrderApplicationServicePaymentFlowTest {
         var node=(com.fasterxml.jackson.databind.node.ObjectNode)json.valueToTree(command);
         node.put("receiverPhone"," ");command=json.treeToValue(node,POSOrderCreateCommand.class);
         final var submitted=command;
-        var error=assertThrows(IllegalArgumentException.class,()->orderService.createPOSOrder(submitted,8L));
+        var error=assertThrows(IllegalArgumentException.class,()->com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(submitted,8L));
         org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("收货"));
         verifyNoBusinessWrites();
     }
 
     @Test void posDeliveryCreatesWaitingDeliveryWhileSettlingSaleExactlyOnce() throws Exception {
         stubCashPosOrderPersistence();
-        orderService.createPOSOrder(deliveryPosCommand(true),8L);
+        com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(deliveryPosCommand(true),8L);
         var orders=ArgumentCaptor.forClass(Order.class);verify(orderRepository,org.mockito.Mockito.atLeastOnce()).save(orders.capture());
         assertEquals(1,orders.getValue().getOrderType());assertEquals(4,orders.getValue().getOrderStatus());
         assertEquals("张三",orders.getValue().getReceiverName());
@@ -838,7 +838,7 @@ class OrderApplicationServicePaymentFlowTest {
     }
 
     @Test void defaultPosSaleRemainsImmediateWithoutDeliveryRelation() {
-        stubCashPosOrderPersistence();orderService.createPOSOrder(cashPosCommand(false),8L);
+        stubCashPosOrderPersistence();com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(cashPosCommand(false),8L);
         var orders=ArgumentCaptor.forClass(Order.class);verify(orderRepository,org.mockito.Mockito.atLeastOnce()).save(orders.capture());
         assertEquals(6,orders.getValue().getOrderStatus());verify(deliveryRepository,never()).save(any());
         verify(eventPublisher).publishEvent(any(OrderFinishedEvent.class));
@@ -849,7 +849,7 @@ class OrderApplicationServicePaymentFlowTest {
     void posRejectsSplitBottleBeforeSavingOrderOrPayment() {
         stubCashPosOrderPersistence(); installActualQuantityValidation();
         var command = cashPosCommand(false); command.getItems().get(0).setQuantity(new BigDecimal("0.1"));
-        var error = assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        var error = assertThrows(IllegalArgumentException.class, () -> com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L));
         org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("整数")); verifyNoBusinessWrites();
     }
 
@@ -881,7 +881,7 @@ class OrderApplicationServicePaymentFlowTest {
         var quote = new com.agri_system.application.productpackage.dto.vo.PackagePriceQuote("fractional-package",7L,"套餐",
                 BigDecimal.ONE, BigDecimal.ONE,null,false,BigDecimal.ONE,BigDecimal.ONE,BigDecimal.ZERO,java.util.List.of(material));
         when(packagePricingService.quoteForSale(any(),any(),any(),any(),any())).thenReturn(quote);
-        var error = assertThrows(IllegalArgumentException.class, () -> orderService.createPOSOrder(command, 8L));
+        var error = assertThrows(IllegalArgumentException.class, () -> com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(command, 8L));
         org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("整数")); verifyNoBusinessWrites();
     }
 

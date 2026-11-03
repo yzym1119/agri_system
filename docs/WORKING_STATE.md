@@ -9,6 +9,8 @@
 
 ## 当前判断
 
+- **2026-11-03清单B4完整POS创建迁移：**原主体及9专用helpers/套餐议价records迁PosOrderCreationService，18原依赖；原入口保留READ_COMMITTED/rollbackForException同默认REQUIRED委托，请求协调器先请求锁再钱货不改。程序和独审逐体10方法等价。改前65基线过，首全量套餐反射旧目标一error已指向新service且原断言不变；最终完整后端920零失败错误跳过、140报告门禁及独审通过。测试专用工厂每次安装当前夹具真实依赖，无生产测试分支。原库部署前端不改；门面残余依赖/支付退款履约仍待整理，详见docs/reviews/2026-11-03-POS完整创建职责拆分.md。
+
 - **2026-11-03清单B4 POS输入与迁移边界准备：**两POS输入校验原样提PosOrderInputPolicy，原helper委托，无Bean事务数据访问。原PaymentFlow52/DeliveryFlow21基线73过，完整后端920零失败错误跳过、140报告门禁及独审通过。调用图确认钱包可用额三helpers、支付记录/授权/套餐展开均仅POS使用，下一步随POS整体迁移不复制/不造共享框架。主方法未迁移，钱货锁/原库部署前端未变。详见docs/reviews/2026-11-03-POS输入规则与迁移边界.md。
 
 - **2026-11-03清单B4线上创建职责拆分：**createOrder及四专用校验迁OnlineOrderCreationService，原公开入口事务委托；同Flex默认REQUIRED参与，不独立提交。五方法体逐体比对原样，原报价/单位/逐行分/待支付/明细/配送自提保存不改，无支付出库。改前PaymentFlow52过，完整后端920零失败错误跳过、140报告门禁通过。无原库部署前端变更，POS创建/支付/退款/履约仍在原服务。详见docs/reviews/2026-11-03-线上订单创建职责拆分.md。

@@ -156,7 +156,7 @@ class InventoryRiskServiceTest {
                 new PickupFulfillmentService(allocationRepository, pickupRequestRepository, locationRepository, receiptBatchRepository,
                         orderRepository, itemRepository, productRepository, afterSalesRepository,
                         org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class),staffRepository),
-                manualPriceAuditService, org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null);
+                manualPriceAuditService, org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null, null);
     }
 
     @Test
@@ -189,7 +189,7 @@ class InventoryRiskServiceTest {
         stubPosOrderThenSave();
 
         assertThat(riskService.list(1L)).extracting(InventoryRiskVO::kind).contains("DATE_UNKNOWN");
-        assertThat(orderService.createPOSOrder(commandForUnknownDateSku(), 7L)).isNotNull();
+        assertThat(com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(commandForUnknownDateSku(), 7L)).isNotNull();
     }
 
     @Test
