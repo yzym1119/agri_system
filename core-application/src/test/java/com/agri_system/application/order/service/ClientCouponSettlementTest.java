@@ -66,7 +66,7 @@ class ClientCouponSettlementTest {
                 mock(com.agri_system.application.credit.service.CreditApplicationService.class),products,
                 mock(com.agri_system.application.product.service.ProductPricingService.class),mock(com.agri_system.application.productpackage.service.PackagePricingService.class),
                 staff,mock(com.agri_system.domain.store.repository.StoreRepository.class),customers,
-                afterSales,afterItems,mock(org.springframework.context.ApplicationEventPublisher.class),mock(com.agri_system.domain.wallet.repository.WalletAuthCodeRepository.class),mock(PickupFulfillmentService.class),mock(ManualPriceAuditService.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null, null, null);
+                afterSales,afterItems,mock(org.springframework.context.ApplicationEventPublisher.class),mock(com.agri_system.domain.wallet.repository.WalletAuthCodeRepository.class),mock(PickupFulfillmentService.class),mock(ManualPriceAuditService.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null, null, null, null);
         when(intents.save(any())).thenAnswer(i->{OrderPaymentIntent intent=i.getArgument(0);intent.setId(70L);storedIntents.put(intent.getIntentNo(),intent);return intent;});
         when(intents.findByIntentNo(anyString())).thenAnswer(i->Optional.ofNullable(storedIntents.get(i.getArgument(0))));
         ClientPaymentTestFixture.install(service);
@@ -150,7 +150,7 @@ class ClientCouponSettlementTest {
         assertEquals(1,delivery.getDeliveryStatus());verify(deliveries,never()).save(any());
         var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("delivery-alipay-50");
         service.confirmExternalPayment(confirm,10L);assertEquals(2,delivery.getDeliveryStatus());
-        service.shipOrder(shipment(2),8L);service.confirmExternalPayment(confirm,10L);
+        OrderFulfillmentTestFixture.withFulfillment(service).shipOrder(shipment(2),8L);service.confirmExternalPayment(confirm,10L);
         assertEquals(3,delivery.getDeliveryStatus());verify(inventory,times(1)).outbound(any(),isNull());
     }
     private void assertDeliveryPaymentChain(int type) {
@@ -158,9 +158,9 @@ class ClientCouponSettlementTest {
         service.previewOrderPayment(request,10L);assertEquals(1,delivery.getDeliveryStatus());
         service.payOrder(request,10L);assertEquals(4,order.getOrderStatus());assertEquals(2,delivery.getDeliveryStatus());
         assertNet("70","30",4);
-        service.shipOrder(shipment(type),8L);var dispatched=delivery.getDeliveryAt();
+        OrderFulfillmentTestFixture.withFulfillment(service).shipOrder(shipment(type),8L);var dispatched=delivery.getDeliveryAt();
         service.payOrder(request,10L);assertEquals(3,delivery.getDeliveryStatus());assertEquals(dispatched,delivery.getDeliveryAt());
-        service.confirmReceipt(1L,8L);var received=delivery.getReceivedAt();
+        OrderFulfillmentTestFixture.withFulfillment(service).confirmReceipt(1L,8L);var received=delivery.getReceivedAt();
         service.payOrder(request,10L);assertEquals(4,delivery.getDeliveryStatus());assertEquals(received,delivery.getReceivedAt());
         verify(inventory,times(1)).outbound(any(),isNull());assertEquals(2,sources.size());
     }
