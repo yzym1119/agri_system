@@ -1,5 +1,9 @@
 package com.agri_system.application.order.service;
 
+import static com.agri_system.application.order.service.OrderPaymentDisplayPolicy.summarizePayment;
+import static com.agri_system.application.order.service.OrderPaymentDisplayPolicy.resolveMainPaymentMethodName;
+import static com.agri_system.application.order.service.OrderPaymentDisplayPolicy.resolvePaymentRecordDisplayName;
+import com.agri_system.application.order.service.OrderPaymentDisplayPolicy.PaymentSummary;
 import com.agri_system.application.credit.service.CreditApplicationService;
 import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.dto.command.InventoryOutCommand;
@@ -1104,55 +1108,9 @@ public class OrderApplicationService {
         return value != null ? value : BigDecimal.ZERO;
     }
 
-    private PaymentSummary summarizePayment(Order order, List<OrderPayment> payments) {
-        BigDecimal receivedAmount = BigDecimal.ZERO;
-        BigDecimal creditAmount = BigDecimal.ZERO;
-
-        if (payments != null && !payments.isEmpty()) {
-            for (OrderPayment payment : payments) {
-                if (payment == null || payment.getAmount() == null) {
-                    continue;
-                }
-                Integer paymentType = payment.getPaymentType();
-                if (paymentType != null && paymentType == PaymentMethod.COUPON.getCode()) {
-                    continue;
-                }
-                if (paymentType != null && paymentType == PaymentMethod.CREDIT.getCode()) {
-                    creditAmount = creditAmount.add(payment.getAmount());
-                } else {
-                    receivedAmount = receivedAmount.add(payment.getAmount());
-                }
-            }
-            return new PaymentSummary(receivedAmount, creditAmount);
-        }
-
-        BigDecimal netReceivable = safeSubtract(
-                safeSubtract(order.getTotalAmount(), order.getDiscountAmount()),
-                order.getCouponAmount()
-        );
-
-        if (order.getPaymentMethod() != null && order.getPaymentMethod() == OrderMainPaymentMethod.CREDIT.getCode()) {
-            return new PaymentSummary(BigDecimal.ZERO, netReceivable);
-        }
-
-        receivedAmount = defaultAmount(order.getPayAmount());
-        creditAmount = safeSubtract(netReceivable, receivedAmount);
-        return new PaymentSummary(receivedAmount, creditAmount);
-    }
-
     private static class RefundAggregate {
         private BigDecimal quantity = BigDecimal.ZERO;
         private BigDecimal amount = BigDecimal.ZERO;
-    }
-
-    private static class PaymentSummary {
-        private final BigDecimal receivedAmount;
-        private final BigDecimal creditAmount;
-
-        private PaymentSummary(BigDecimal receivedAmount, BigDecimal creditAmount) {
-            this.receivedAmount = receivedAmount == null ? BigDecimal.ZERO : receivedAmount;
-            this.creditAmount = creditAmount == null ? BigDecimal.ZERO : creditAmount;
-        }
     }
 
     /** 来源没有贡献金额时无法还原原选项；只核对本次请求仍允许原实际用到的来源。 */
@@ -1293,66 +1251,6 @@ public class OrderApplicationService {
         String timePart = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS"));
         int randomPart = ThreadLocalRandom.current().nextInt(100, 1000);
         return "PI" + timePart + orderId + randomPart;
-    }
-
-    private String resolveMainPaymentMethodName(Integer paymentMethod) {
-        if (paymentMethod == null) {
-            return null;
-        }
-        if (paymentMethod.equals(OrderMainPaymentMethod.CASH.getCode())) {
-            return "现金";
-        }
-        if (paymentMethod.equals(OrderMainPaymentMethod.WECHAT.getCode())) {
-            return "微信";
-        }
-        if (paymentMethod.equals(OrderMainPaymentMethod.ALIPAY.getCode())) {
-            return "支付宝";
-        }
-        if (paymentMethod.equals(OrderMainPaymentMethod.BALANCE.getCode())) {
-            return "本金余额";
-        }
-        if (paymentMethod.equals(OrderMainPaymentMethod.COUPON.getCode())) {
-            return "优惠券";
-        }
-        if (paymentMethod.equals(OrderMainPaymentMethod.CREDIT.getCode())) {
-            return "赊销";
-        }
-        if (paymentMethod.equals(OrderMainPaymentMethod.MIXED.getCode())) {
-            return "混合支付";
-        }
-        return "未知";
-    }
-
-    private String resolvePaymentRecordDisplayName(OrderPayment payment) {
-        Integer paymentType = payment.getPaymentType();
-        if (paymentType == null) {
-            return "未知";
-        }
-        if (paymentType.equals(PaymentMethod.CASH.getCode())) {
-            return "现金";
-        }
-        if (paymentType.equals(PaymentMethod.WECHAT.getCode())) {
-            return "微信";
-        }
-        if (paymentType.equals(PaymentMethod.ALIPAY.getCode())) {
-            return "支付宝";
-        }
-        if (paymentType.equals(PaymentMethod.BALANCE.getCode())) {
-            return "本金余额";
-        }
-        if (paymentType.equals(PaymentMethod.SPECIAL_FUND.getCode())) {
-            return "专用金";
-        }
-        if (paymentType.equals(PaymentMethod.COUPON.getCode())) {
-            return "优惠券";
-        }
-        if (paymentType.equals(PaymentMethod.CREDIT.getCode())) {
-            return "赊销";
-        }
-        if (paymentType.equals(PaymentMethod.MIXED.getCode())) {
-            return "混合支付";
-        }
-        return "未知";
     }
 
     private BigDecimal safeGetBalance(Long customerId) {
