@@ -175,6 +175,10 @@ class AuthorityHttpIntegrationTest {
             }
             Object result=invocation.proceed();
             if("disabler".equals(actor)) {
+                var connection=((Executor)invocation.getTarget()).getTransaction().getConnection();
+                try(var sql=connection.createStatement();var rs=sql.executeQuery("SELECT CONNECTION_ID()")) {
+                    rs.next();active.disablerConnectionId=rs.getLong(1);
+                }
                 active.disablerHasLock.countDown();
                 if(!active.releaseDisabler.await(15,TimeUnit.SECONDS)) throw new IllegalStateException("测试停用角色释放锁超时");
             }
@@ -186,6 +190,7 @@ class AuthorityHttpIntegrationTest {
         final CountDownLatch creatorAtLock=new CountDownLatch(1);
         final CountDownLatch releaseDisabler=new CountDownLatch(1);
         volatile long creatorConnectionId;
+        volatile long disablerConnectionId;
         volatile int creatorIsolation;
     }
 
@@ -580,11 +585,16 @@ class AuthorityHttpIntegrationTest {
             assertTrue(race.creatorAtLock.await(10,TimeUnit.SECONDS),"真实Lifecycle创建必须走到管理员锁");
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(10);boolean waiting=false;
             while(System.nanoTime()<deadline) {
-                Integer count=jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.innodb_trx WHERE trx_mysql_thread_id=? AND trx_state='LOCK WAIT'",Integer.class,race.creatorConnectionId);
+                Integer count=jdbc.queryForObject("""
+                        SELECT COUNT(*) FROM performance_schema.data_lock_waits w
+                        JOIN performance_schema.threads requester ON requester.THREAD_ID=w.REQUESTING_THREAD_ID
+                        JOIN performance_schema.threads blocker ON blocker.THREAD_ID=w.BLOCKING_THREAD_ID
+                        WHERE requester.PROCESSLIST_ID=? AND blocker.PROCESSLIST_ID=?
+                        """,Integer.class,race.creatorConnectionId,race.disablerConnectionId);
                 if(count!=null && count==1) {waiting=true;break;}
                 Thread.sleep(20);
             }
-            assertTrue(waiting,"MySQL必须证实创建请求在真实锁等待，不能仅靠线程启动或时序猜测");
+            assertTrue(waiting,"MySQL必须证实创建请求等待本次停用请求持有的真实锁，不能仅靠线程启动或时序猜测");
             race.releaseDisabler.countDown();
             ok(disabling.get(15,TimeUnit.SECONDS));assertEquals(0,state("sys_role",4));
             JsonNode result=creating.get(15,TimeUnit.SECONDS);

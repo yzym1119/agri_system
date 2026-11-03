@@ -1728,8 +1728,7 @@ public class OrderApplicationService {
     }
 
     private boolean hasProcessingDeliveryAfterSales(Long orderId) {
-        return afterSalesRepository.findByOrderId(orderId).stream()
-                .anyMatch(fact -> java.util.Objects.equals(fact.getStatus(), 10) || java.util.Objects.equals(fact.getStatus(), 40));
+        return com.agri_system.domain.order.service.OrderDeliveryEligibility.hasProcessingAfterSales(orderId,afterSalesRepository);
     }
 
     private String deliveryConfirmationKey(Order order, OrderDelivery delivery,
@@ -1755,13 +1754,7 @@ public class OrderApplicationService {
     }
 
     private boolean canDeliver(Order order, OrderDelivery delivery, boolean shipping) {
-        if (delivery == null || !java.util.Objects.equals(delivery.getDeliveryStatus(), shipping ? 2 : 3)) return false;
-        Integer type = resolveDeliveryType(delivery);
-        if (!Integer.valueOf(2).equals(type) && !Integer.valueOf(3).equals(type)) return false;
-        Integer status = order.getOrderStatus();
-        return (java.util.Objects.equals(status, shipping ? 4 : 5) || java.util.Objects.equals(status, 9))
-                && !hasProcessingDeliveryAfterSales(order.getId())
-                && orderRepository.hasRemainingDeliveryQuantity(order.getId());
+        return com.agri_system.domain.order.service.OrderDeliveryEligibility.canDeliver(order,delivery,shipping,afterSalesRepository,orderRepository);
     }
 
     private void validateDeliveryAction(Order order, OrderDelivery delivery, boolean shipping) {
