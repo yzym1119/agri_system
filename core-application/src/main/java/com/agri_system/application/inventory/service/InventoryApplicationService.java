@@ -306,6 +306,20 @@ public class InventoryApplicationService {
 
         List<Object> params = new ArrayList<>();
 
+        // JDBC不会自动应用Flex租户条件；调出或调入任一端属于当前范围才可见。
+        Object[] tenantStores = com.mybatisflex.core.tenant.TenantManager.getTenantIds();
+        if (tenantStores != null) {
+            if (tenantStores.length == 0) {
+                fromSql.append(" AND 1 = 0 ");
+            } else {
+                String placeholders = String.join(",", java.util.Collections.nCopies(tenantStores.length, "?"));
+                fromSql.append(" AND (o.from_store_id IN (").append(placeholders)
+                        .append(") OR o.to_store_id IN (").append(placeholders).append(")) ");
+                params.addAll(java.util.Arrays.asList(tenantStores));
+                params.addAll(java.util.Arrays.asList(tenantStores));
+            }
+        }
+
         if (query.getFromStoreId() != null) {
             fromSql.append(" AND o.from_store_id = ? ");
             params.add(query.getFromStoreId());
