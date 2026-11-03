@@ -166,11 +166,12 @@ class PickupFulfillmentServiceTest {
         org.mockito.Mockito.lenient().when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.any(Object[].class))).thenAnswer(invocation -> saleMovementRows());
         orderService = new OrderApplicationService(
-                orderRepository, itemRepository, paymentRepository, paymentIntentRepository, deliveryRepository,
-                orderDomainService, paymentService, inventoryService, walletService, creditService,
-                productRepository, productPricingService, org.mockito.Mockito.mock(com.agri_system.application.productpackage.service.PackagePricingService.class), staffRepository, storeRepository, customerRepository,
-                afterSalesRepository, afterSalesItemRepository, eventPublisher, walletAuthCodeRepository,
-                fulfillmentService, manualPriceAuditService, org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null, null, null, null, null);
+                null,
+                null,
+                new com.agri_system.application.order.service.PosOrderCreationService(orderRepository, itemRepository, paymentRepository, deliveryRepository, orderDomainService, paymentService, inventoryService, walletService, creditService, productRepository, productPricingService, org.mockito.Mockito.mock(com.agri_system.application.productpackage.service.PackagePricingService.class), staffRepository, customerRepository, eventPublisher, walletAuthCodeRepository, fulfillmentService, manualPriceAuditService),
+                null,
+                null,
+                null);
     }
 
     @Test

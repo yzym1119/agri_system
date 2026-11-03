@@ -111,7 +111,6 @@ class OrderDeliveryFlowTest {
     @Mock
     private ManualPriceAuditService manualPriceAuditService;
 
-    @InjectMocks
     private OrderApplicationService orderService;
 
     private Order order;
@@ -126,8 +125,10 @@ class OrderDeliveryFlowTest {
             if(invocation.getMethod().getName().equals("hasRemainingDeliveryQuantity")) return remaining.get();
             return org.mockito.Mockito.RETURNS_DEFAULTS.answer(invocation);
         });
-        ReflectionTestUtils.setField(orderService,"orderRepository",orderRepository);
-        ReflectionTestUtils.setField(orderService,"queryService",new OrderQueryService(orderRepository,itemRepository,paymentRepository,deliveryRepository,storeRepository,customerRepository,afterSalesRepository,paymentService,productRepository,staffRepository,afterSalesItemRepository,inventoryService));
+        orderService = new OrderApplicationService(
+                new OrderQueryService(orderRepository,itemRepository,paymentRepository,deliveryRepository,storeRepository,customerRepository,afterSalesRepository,paymentService,productRepository,staffRepository,afterSalesItemRepository,inventoryService),
+                null, null, null,
+                new OrderFulfillmentService(orderRepository,deliveryRepository,staffRepository,afterSalesRepository,eventPublisher,null), null);
         org.mockito.Mockito.lenient().when(orderRepository.findById(42L)).thenReturn(Optional.of(order));
         org.mockito.Mockito.lenient().when(orderRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(order));
         org.mockito.Mockito.lenient().when(deliveryRepository.findByOrderId(42L)).thenReturn(Optional.of(delivery));
@@ -141,29 +142,29 @@ class OrderDeliveryFlowTest {
     }
     @Test void onlinePickupPausesPendingAfterSalesBeforeAnyCompletion() {
         var command=onlinePickup();pendingAfterSales(10);
-        assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).verifyPickup(command,8L));
+        assertThrows(IllegalArgumentException.class,()->orderService.verifyPickup(command,8L));
         verify(orderRepository,never()).save(any());assertNoSettlement();
     }
     @Test void onlinePickupPausesRefundingAfterSalesBeforeAnyCompletion() {
         var command=onlinePickup();pendingAfterSales(40);
-        assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).verifyPickup(command,8L));
+        assertThrows(IllegalArgumentException.class,()->orderService.verifyPickup(command,8L));
         verify(orderRepository,never()).save(any());assertNoSettlement();
     }
     @Test void onlinePickupRequiresActualRemainingSaleBeforeCompletion() {
         var command=onlinePickup();remaining.set(false);
-        assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).verifyPickup(command,8L));
+        assertThrows(IllegalArgumentException.class,()->orderService.verifyPickup(command,8L));
         verify(orderRepository,never()).save(any());assertNoSettlement();
     }
     @Test void onlinePickupRechecksParentAfterLocatorInsteadOfOverwritingRefund() {
         var command=onlinePickup();Order refunded=new Order();refunded.setId(42L);refunded.setOrderType(2);refunded.setOrderStatus(8);refunded.setPickupCode("123456");
         when(orderRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(refunded));
-        assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).verifyPickup(command,8L));
+        assertThrows(IllegalArgumentException.class,()->orderService.verifyPickup(command,8L));
         verify(orderRepository,never()).save(any());assertNoSettlement();
     }
     @Test void onlinePickupFinishedReplayDoesNotPublishCompletionAgain() {
         var command=onlinePickup();
-        org.junit.jupiter.api.Assertions.assertDoesNotThrow(()->OrderFulfillmentTestFixture.withFulfillment(orderService).verifyPickup(command,8L));
-        org.junit.jupiter.api.Assertions.assertDoesNotThrow(()->OrderFulfillmentTestFixture.withFulfillment(orderService).verifyPickup(command,8L));
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(()->orderService.verifyPickup(command,8L));
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(()->orderService.verifyPickup(command,8L));
         verify(orderRepository,org.mockito.Mockito.times(2)).findByIdForUpdate(42L);
         verify(orderRepository,org.mockito.Mockito.times(1)).save(order);
         verify(eventPublisher,org.mockito.Mockito.times(1)).publishEvent(any(OrderFinishedEvent.class));
@@ -176,21 +177,21 @@ class OrderDeliveryFlowTest {
         org.mockito.Mockito.lenient().when(afterSalesRepository.findByOrderId(42L)).thenReturn(java.util.List.of(fact));
     }
     @Test void partialReturnedOrderShipsRemainingGoodsAndPreservesRefundStatus() {
-        order.setOrderStatus(9);pendingAfterSales(50);OrderFulfillmentTestFixture.withFulfillment(orderService).shipOrder(shipment(),8L);
+        order.setOrderStatus(9);pendingAfterSales(50);orderService.shipOrder(shipment(),8L);
         assertEquals(9,order.getOrderStatus());assertEquals(3,delivery.getDeliveryStatus());
         org.junit.jupiter.api.Assertions.assertNotNull(delivery.getDeliveryAt());verify(orderRepository).findByIdForUpdate(42L);
         assertNoSettlement();
     }
     @Test void partialReturnedOrderReceivesRemainingGoodsAndPreservesRefundStatus() {
         order.setOrderStatus(9);delivery.setDeliveryStatus(3);pendingAfterSales(50);
-        OrderFulfillmentTestFixture.withFulfillment(orderService).confirmReceipt(42L,8L);assertEquals(9,order.getOrderStatus());assertEquals(4,delivery.getDeliveryStatus());
+        orderService.confirmReceipt(42L,8L);assertEquals(9,order.getOrderStatus());assertEquals(4,delivery.getDeliveryStatus());
         org.junit.jupiter.api.Assertions.assertNotNull(delivery.getReceivedAt());assertNoSettlement();
     }
     @Test void receiptConfirmationRejectsChangedDisplayedGoodsUnderOriginalOrderLock() throws Exception {
         order.setOrderStatus(5);delivery.setDeliveryStatus(3);
         var row=new com.agri_system.domain.order.model.DeliveryItemQuantity();row.setOrderItemId(1L);row.setProductName("肥料");row.setQuantity(new BigDecimal("3"));row.setUnit("袋");
         var rows=java.util.List.of(row);when(orderRepository.findRemainingDeliveryItems(42L)).thenReturn(rows);
-        String key=ReflectionTestUtils.invokeMethod(ReflectionTestUtils.getField(OrderFulfillmentTestFixture.withFulfillment(orderService),"fulfillmentService"),"deliveryConfirmationKey",order,delivery,rows);
+        String key=ReflectionTestUtils.invokeMethod(ReflectionTestUtils.getField(orderService,"fulfillmentService"),"deliveryConfirmationKey",order,delivery,rows);
         var method=orderService.getClass().getMethod("confirmReceipt",Long.class,Long.class,String.class);
         row.setQuantity(new BigDecimal("2"));
         var failure=assertThrows(java.lang.reflect.InvocationTargetException.class,()->method.invoke(orderService,42L,8L,key));
@@ -199,46 +200,46 @@ class OrderDeliveryFlowTest {
         assertEquals(4,delivery.getDeliveryStatus());assertNoSettlement();
     }
     @Test void posReceiptAndReplayDoNotSettleOrMoveInventoryAgain() {
-        order.setOrderStatus(5);delivery.setDeliveryStatus(3);OrderFulfillmentTestFixture.withFulfillment(orderService).confirmReceipt(42L,8L);
+        order.setOrderStatus(5);delivery.setDeliveryStatus(3);orderService.confirmReceipt(42L,8L);
         assertEquals(6,order.getOrderStatus());assertEquals(4,delivery.getDeliveryStatus());
-        var received=delivery.getReceivedAt();OrderFulfillmentTestFixture.withFulfillment(orderService).confirmReceipt(42L,8L);
+        var received=delivery.getReceivedAt();orderService.confirmReceipt(42L,8L);
         assertEquals(received,delivery.getReceivedAt());assertNoSettlement();
     }
     @Test void firstOnlineReceiptSettlesOnceAndReplayDoesNotRepeat() {
         order.setOrderType(3);order.setOrderStatus(5);delivery.setDeliveryStatus(3);
-        OrderFulfillmentTestFixture.withFulfillment(orderService).confirmReceipt(42L,8L);OrderFulfillmentTestFixture.withFulfillment(orderService).confirmReceipt(42L,8L);
+        orderService.confirmReceipt(42L,8L);orderService.confirmReceipt(42L,8L);
         verify(eventPublisher).publishEvent(any(OrderFinishedEvent.class));
         verify(inventoryService,never()).outbound(any(),any());
     }
     @Test void appliedAfterSalesPausesShipmentWithoutChangingDelivery() {
-        pendingAfterSales(10);assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).shipOrder(shipment(),8L));
+        pendingAfterSales(10);assertThrows(IllegalArgumentException.class,()->orderService.shipOrder(shipment(),8L));
         assertEquals(4,order.getOrderStatus());assertEquals(2,delivery.getDeliveryStatus());assertNoDeliveryWrite();
     }
     @Test void approvedAfterSalesPausesReceiptWithoutChangingDelivery() {
         order.setOrderStatus(5);delivery.setDeliveryStatus(3);pendingAfterSales(40);
-        assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).confirmReceipt(42L,8L));
+        assertThrows(IllegalArgumentException.class,()->orderService.confirmReceipt(42L,8L));
         assertEquals(5,order.getOrderStatus());assertEquals(3,delivery.getDeliveryStatus());assertNoDeliveryWrite();
     }
     @Test void absentOrFullyReturnedOutboundEvidenceBlocksBothActions() {
-        remaining.set(false);assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).shipOrder(shipment(),8L));
+        remaining.set(false);assertThrows(IllegalArgumentException.class,()->orderService.shipOrder(shipment(),8L));
         order.setOrderStatus(5);delivery.setDeliveryStatus(3);
-        assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).confirmReceipt(42L,8L));assertNoDeliveryWrite();
+        assertThrows(IllegalArgumentException.class,()->orderService.confirmReceipt(42L,8L));assertNoDeliveryWrite();
     }
     @Test void cancelledOrFullyRefundedOrderCannotDeliver() {
         for(int status:java.util.List.of(7,8)) {
-            order.setOrderStatus(status);assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).shipOrder(shipment(),8L));
-            delivery.setDeliveryStatus(3);assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).confirmReceipt(42L,8L));
+            order.setOrderStatus(status);assertThrows(IllegalArgumentException.class,()->orderService.shipOrder(shipment(),8L));
+            delivery.setDeliveryStatus(3);assertThrows(IllegalArgumentException.class,()->orderService.confirmReceipt(42L,8L));
             delivery.setDeliveryStatus(2);
         }
         assertNoDeliveryWrite();
     }
     @Test void shipmentReplayKeepsOriginalDeliveryTimestamp() {
-        OrderFulfillmentTestFixture.withFulfillment(orderService).shipOrder(shipment(),8L);var sent=delivery.getDeliveryAt();OrderFulfillmentTestFixture.withFulfillment(orderService).shipOrder(shipment(),8L);
+        orderService.shipOrder(shipment(),8L);var sent=delivery.getDeliveryAt();orderService.shipOrder(shipment(),8L);
         assertEquals(sent,delivery.getDeliveryAt());assertEquals(3,delivery.getDeliveryStatus());assertNoSettlement();
     }
     @Test void localDeliveryRequiresDriverAndCannotBecomeExpress() {
         var command=shipment();command.setDeliveryStaffId(null);command.setLogisticsCompany("顺丰");command.setTrackingNo("123");
-        assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).shipOrder(command,8L));
+        assertThrows(IllegalArgumentException.class,()->orderService.shipOrder(command,8L));
         assertEquals(2,delivery.getDeliveryType());assertEquals(2,delivery.getDeliveryStatus());assertNoDeliveryWrite();
     }
     @Test void 全退订单分页剩余物料标记来自整单且不受前三条概览限制() throws Exception {
@@ -256,7 +257,6 @@ class OrderDeliveryFlowTest {
             if (invocation.getMethod().getName().equals("findOrderIdsWithReturnableItems")) return remaining.get()?java.util.Set.of(order.getId()):java.util.Set.of();
             return org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation);
         });
-        ReflectionTestUtils.setField(orderService,"itemRepository",repository);
         ReflectionTestUtils.setField(ReflectionTestUtils.getField(orderService,"queryService"),"itemRepository",repository);
         var query=new com.agri_system.application.order.dto.query.OrderPageQuery();query.setPageNum(1);query.setPageSize(10);
         var row=orderService.queryOrderPage(query).getRecords().get(0);
@@ -291,7 +291,7 @@ class OrderDeliveryFlowTest {
     @Test void unknownDeliveryTypeDoesNotGuessExpressOrOfferActions() {
         delivery.setDeliveryType(null);var command=shipment();command.setDeliveryStaffId(null);
         command.setLogisticsCompany("快递");command.setTrackingNo("123");
-        assertThrows(IllegalArgumentException.class,()->OrderFulfillmentTestFixture.withFulfillment(orderService).shipOrder(command,8L));assertNoDeliveryWrite();
+        assertThrows(IllegalArgumentException.class,()->orderService.shipOrder(command,8L));assertNoDeliveryWrite();
     }
     private void assertNoDeliveryWrite() {verify(deliveryRepository,never()).save(any());verify(orderRepository,never()).save(any());assertNoSettlement();}
     private void assertNoSettlement() {

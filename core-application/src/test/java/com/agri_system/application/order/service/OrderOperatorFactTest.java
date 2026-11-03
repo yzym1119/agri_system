@@ -6,7 +6,6 @@ import com.agri_system.domain.order.repository.*;
 import com.agri_system.domain.store.repository.StaffRepository;
 import com.agri_system.domain.store.repository.StoreRepository;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -54,9 +53,8 @@ class OrderOperatorFactTest {
     }
 
     @Test void foreignOrMissingCustomerOwnershipIsRejectedBeforeDetailReads() {
-        var service=mock(OrderApplicationService.class,CALLS_REAL_METHODS);var orders=mock(OrderRepository.class);
-        ReflectionTestUtils.setField(service,"orderRepository",orders);
-        ReflectionTestUtils.setField(service,"queryService",new OrderQueryService(orders,null,null,null,null,null,null,null,null,null,null,null));
+        var orders=mock(OrderRepository.class);
+        var service=new OrderApplicationService(new OrderQueryService(orders,null,null,null,null,null,null,null,null,null,null,null),null,null,null,null,null);
         var order=new Order();order.setId(77L);order.setCustomerId(8L);when(orders.findById(77L)).thenReturn(Optional.of(order));
         assertThrows(IllegalArgumentException.class,()->service.getOrderDetailForCustomer(77L,9L));
         order.setCustomerId(null);assertThrows(IllegalArgumentException.class,()->service.getOrderDetailForCustomer(77L,8L));
@@ -67,28 +65,17 @@ class OrderOperatorFactTest {
     }
 
     private com.agri_system.application.order.dto.vo.OrderDetailVO detail(Long staffId, Long createdBy, int type, StaffRepository staff) {
-        OrderApplicationService service = mock(OrderApplicationService.class, CALLS_REAL_METHODS);
         OrderRepository orders = mock(OrderRepository.class);
         OrderPaymentService payments = mock(OrderPaymentService.class);
-        ReflectionTestUtils.setField(service, "orderRepository", orders);
-        ReflectionTestUtils.setField(service, "itemRepository", mock(OrderItemRepository.class));
-        ReflectionTestUtils.setField(service, "paymentRepository", mock(OrderPaymentRepository.class));
-        ReflectionTestUtils.setField(service, "afterSalesRepository", mock(AfterSalesRepository.class));
-        ReflectionTestUtils.setField(service, "paymentService", payments);
-        ReflectionTestUtils.setField(service, "storeRepository", mock(StoreRepository.class));
-        ReflectionTestUtils.setField(service, "staffRepository", staff);
-        ReflectionTestUtils.setField(service, "deliveryRepository", mock(OrderDeliveryRepository.class));
         Order order = new Order(); order.setId(77L); order.setStaffId(staffId); order.setCreatedBy(createdBy);
         order.setOrderType(type); order.setOrderStatus(5); order.setTotalAmount(BigDecimal.TEN); order.setPayAmount(BigDecimal.TEN);
         when(orders.findById(77L)).thenReturn(Optional.of(order));
         when(payments.financialSummary(order)).thenReturn(new OrderPaymentService.FinancialSummary(
                 BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO));
-        ReflectionTestUtils.setField(service,"queryService",new OrderQueryService(orders,
-                (OrderItemRepository)ReflectionTestUtils.getField(service,"itemRepository"),
-                (OrderPaymentRepository)ReflectionTestUtils.getField(service,"paymentRepository"),
-                (OrderDeliveryRepository)ReflectionTestUtils.getField(service,"deliveryRepository"),
-                (StoreRepository)ReflectionTestUtils.getField(service,"storeRepository"),null,
-                (AfterSalesRepository)ReflectionTestUtils.getField(service,"afterSalesRepository"),payments,null,staff,null,null));
+        var service=new OrderApplicationService(new OrderQueryService(orders,
+                mock(OrderItemRepository.class),mock(OrderPaymentRepository.class),
+                mock(OrderDeliveryRepository.class),mock(StoreRepository.class),null,
+                mock(AfterSalesRepository.class),payments,null,staff,null,null),null,null,null,null,null);
         return service.getOrderDetail(77L);
     }
 }

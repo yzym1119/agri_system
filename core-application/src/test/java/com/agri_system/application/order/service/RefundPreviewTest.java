@@ -44,14 +44,13 @@ class RefundPreviewTest {
         var productRepo=mock(com.agri_system.domain.product.repository.ProductRepository.class);
         var domain=mock(com.agri_system.domain.order.service.OrderDomainService.class);
         var funding=new OrderPaymentService(payments,mock(com.agri_system.domain.coupon.repository.CustomerCouponRepository.class),wallet,domain,items,productRepo,orders,customers,accounts,repayments,afterSales,afterItems);
-        service=new OrderApplicationService(orders,items,payments,mock(com.agri_system.domain.order.repository.OrderPaymentIntentRepository.class),
-                mock(com.agri_system.domain.order.repository.OrderDeliveryRepository.class),domain,funding,inventory,wallet,
-                mock(com.agri_system.application.credit.service.CreditApplicationService.class),productRepo,
-                mock(com.agri_system.application.product.service.ProductPricingService.class),mock(com.agri_system.application.productpackage.service.PackagePricingService.class),
-                mock(com.agri_system.domain.store.repository.StaffRepository.class),mock(com.agri_system.domain.store.repository.StoreRepository.class),customers,
-                afterSales,afterItems,mock(org.springframework.context.ApplicationEventPublisher.class),mock(com.agri_system.domain.wallet.repository.WalletAuthCodeRepository.class),
-                mock(PickupFulfillmentService.class),mock(ManualPriceAuditService.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null, null, null, null, null);
-        OrderRefundTestFixture.install(service);
+        service=new OrderApplicationService(
+                null,
+                null,
+                null,
+                null,
+                null,
+                new com.agri_system.application.order.service.OrderRefundService(orders, items, funding, inventory, productRepo, afterSales, afterItems, mock(org.springframework.context.ApplicationEventPublisher.class)));
     }
     private BigDecimal m(String s){return new BigDecimal(s).setScale(2);}
     private OrderRefundPreviewCommand request(String quantity){var c=new OrderRefundPreviewCommand();var i=new OrderRefundPreviewCommand.Item();i.setOrderItemId(1L);i.setQuantity(new BigDecimal(quantity));c.setItems(List.of(i));return c;}
@@ -61,7 +60,7 @@ class RefundPreviewTest {
         return new com.agri_system.application.after_sales.service.AfterSalesApplicationService(afterSales,afterItems,
                 mock(com.agri_system.domain.after_sales.service.AfterSalesDomainService.class),orders,items,products,customers,
                 mock(com.agri_system.domain.store.repository.StoreRepository.class),mock(com.agri_system.domain.store.repository.StaffRepository.class),
-                inventory,(OrderPaymentService)org.springframework.test.util.ReflectionTestUtils.getField(service,"paymentService"),service,
+                inventory,(OrderPaymentService)org.springframework.test.util.ReflectionTestUtils.getField(org.springframework.test.util.ReflectionTestUtils.getField(service,"refundService"),"paymentService"),service,
                 mock(org.springframework.context.ApplicationEventPublisher.class));
     }
     private AfterSales pendingCancellation(String total,String childAmount) {
@@ -146,7 +145,7 @@ class RefundPreviewTest {
     @Test void cashDirectFullRefundReplaysOriginalNullDefaultRequestWithoutRebuildingRemainder() {
         cashSources("100",m("0"));
         var product=new com.agri_system.domain.product.model.Product();product.setId(20L);
-        var products=(com.agri_system.domain.product.repository.ProductRepository)org.springframework.test.util.ReflectionTestUtils.getField(service,"productRepository");when(products.findById(20L)).thenReturn(Optional.of(product));
+        var products=(com.agri_system.domain.product.repository.ProductRepository)org.springframework.test.util.ReflectionTestUtils.getField(org.springframework.test.util.ReflectionTestUtils.getField(service,"refundService"),"productRepository");when(products.findById(20L)).thenReturn(Optional.of(product));
         var stored=new java.util.concurrent.atomic.AtomicReference<AfterSales>();
         var details=new java.util.concurrent.atomic.AtomicReference<List<AfterSalesItem>>(List.of());
         when(afterSales.save(any())).thenAnswer(i->{AfterSales fact=i.getArgument(0);fact.setId(50L);stored.set(fact);return fact;});

@@ -1,50 +1,33 @@
 package com.agri_system.application.order.service;
-
-import static com.agri_system.application.order.service.OrderPaymentDisplayPolicy.summarizePayment;
-import static com.agri_system.application.order.service.OrderPaymentDisplayPolicy.resolveMainPaymentMethodName;
-import static com.agri_system.application.order.service.OrderPaymentDisplayPolicy.resolvePaymentRecordDisplayName;
-import com.agri_system.application.order.service.OrderPaymentDisplayPolicy.PaymentSummary;
-import com.agri_system.application.order.service.OrderRefundHistory.RefundAggregate;
 import com.agri_system.application.credit.service.CreditApplicationService;
-import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.dto.command.InventoryOutCommand;
 import com.agri_system.application.inventory.service.InventoryApplicationService;
 import com.agri_system.application.order.dto.command.*;
-import com.agri_system.application.order.dto.query.OrderPageQuery;
 import com.agri_system.application.order.dto.vo.*;
 import com.agri_system.application.order.exception.OrderErrorCode;
 import com.agri_system.application.performance.event.OrderFinishedEvent;
-import com.agri_system.application.performance.event.OrderRefundedEvent;
 import com.agri_system.application.product.dto.vo.PriceContext;
 import com.agri_system.application.product.dto.vo.PriceQuote;
 import com.agri_system.application.product.service.ProductPricingService;
 import com.agri_system.application.wallet.service.WalletApplicationService;
-import com.agri_system.domain.after_sales.repository.AfterSalesRepository;
-import com.agri_system.domain.after_sales.repository.AfterSalesItemRepository;
 import com.agri_system.domain.wallet.repository.WalletAuthCodeRepository;
 import com.agri_system.domain.customer.repository.CustomerRepository;
-import com.agri_system.domain.customer.model.Customer;
 import com.agri_system.domain.order.enums.OrderMainPaymentMethod;
 import com.agri_system.domain.order.enums.PaymentMethod;
 import com.agri_system.domain.order.model.Order;
 import com.agri_system.domain.order.model.OrderDelivery;
 import com.agri_system.domain.order.model.OrderItem;
-import com.agri_system.domain.order.model.OrderPaymentIntent;
 import com.agri_system.domain.order.model.OrderPayment;
 import com.agri_system.domain.order.repository.OrderDeliveryRepository;
 import com.agri_system.domain.order.repository.OrderItemRepository;
-import com.agri_system.domain.order.repository.OrderPaymentIntentRepository;
 import com.agri_system.domain.order.repository.OrderPaymentRepository;
 import com.agri_system.domain.order.repository.OrderRepository;
 import com.agri_system.domain.order.service.OrderDomainService;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.store.model.Staff;
-import com.agri_system.domain.store.model.Store;
 import com.agri_system.domain.store.repository.StaffRepository;
-import com.agri_system.domain.store.repository.StoreRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -53,14 +36,10 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
-import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -121,7 +100,6 @@ public class PosOrderCreationService {
         }
 
         // 2. 赊销风控：已放宽，允许部分赊销及混合支付，具体支付金额由 payments 或前端 paymentType/receiveAmount 指定
-
 
         // 3. 生成订单号
         String orderNo = orderDomainService.generateOrderNo();
@@ -491,7 +469,6 @@ public class PosOrderCreationService {
             creditService.addDebt(order.getCustomerId(), order.getId(), creditAmount);
         }
 
-
         // 11. 扣减库存（POS订单立即扣减，使用操作员所属门店ID）
         // 重要：订单已保存，更新所有库存扣减命令的 referenceId
         List<Integer> stockIndices = java.util.stream.IntStream.range(0, inventoryOutCommands.size()).boxed()
@@ -681,6 +658,5 @@ public class PosOrderCreationService {
     /** 明细保存拿到 ID 后追加议价记录，成交价留在订单行，不随商品改价变化。 */
     private record PendingPriceChange(OrderItem item, PriceQuote quote, BigDecimal submittedUnitPrice, String reason, boolean packageAllocation) {
     }
-
 
 }

@@ -1,5 +1,4 @@
 package com.agri_system.application.order.service;
-
 import com.agri_system.application.order.dto.query.OrderPageQuery;
 import com.agri_system.application.order.exception.OrderErrorCode;
 import com.agri_system.application.order.service.OrderRefundHistory.RefundAggregate;
@@ -36,7 +35,6 @@ public class OrderQueryService {
     private final com.agri_system.domain.store.repository.StaffRepository staffRepository;
     private final com.agri_system.domain.after_sales.repository.AfterSalesItemRepository afterSalesItemRepository;
     private final com.agri_system.application.inventory.service.InventoryApplicationService inventoryService;
-
 
     public com.mybatisflex.core.paginate.Page<OrderPageVO> queryOrderPage(OrderPageQuery query) {
         // 1. 查询订单分页数据

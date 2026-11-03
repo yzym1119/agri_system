@@ -5,7 +5,7 @@ import com.agri_system.domain.order.repository.*;
 import com.mybatisflex.core.paginate.Page;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
+
 import java.math.BigDecimal;
 import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
@@ -17,7 +17,6 @@ class OrderPaymentDisplayContractTest {
     private Order order;
     private OrderPaymentRepository payments;
     @BeforeEach void setup() {
-        service=mock(OrderApplicationService.class,CALLS_REAL_METHODS);
         var orders=mock(OrderRepository.class);payments=mock(OrderPaymentRepository.class);
         var finance=mock(OrderPaymentService.class);
         order=new Order();order.setId(1L);order.setOrderStatus(6);order.setOrderType(2);
@@ -25,12 +24,9 @@ class OrderPaymentDisplayContractTest {
         var page=new Page<Order>();page.setRecords(List.of(order));page.setTotalRow(1);
         when(orders.findPage(anyInt(),anyInt(),any(),any(),any(),any(),any(),any(),any(),any())).thenReturn(page);
         when(finance.financialSummary(order)).thenReturn(new OrderPaymentService.FinancialSummary(BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO));
-        ReflectionTestUtils.setField(service,"orderRepository",orders);ReflectionTestUtils.setField(service,"paymentRepository",payments);
-        ReflectionTestUtils.setField(service,"itemRepository",mock(OrderItemRepository.class));ReflectionTestUtils.setField(service,"deliveryRepository",mock(OrderDeliveryRepository.class));
-        ReflectionTestUtils.setField(service,"paymentService",finance);
-        ReflectionTestUtils.setField(service,"queryService",new OrderQueryService(orders,
-                (OrderItemRepository)ReflectionTestUtils.getField(service,"itemRepository"),payments,
-                (OrderDeliveryRepository)ReflectionTestUtils.getField(service,"deliveryRepository"),null,null,null,finance,null,null,null,null));
+        service=new OrderApplicationService(new OrderQueryService(orders,
+                mock(OrderItemRepository.class),payments,mock(OrderDeliveryRepository.class),
+                null,null,null,finance,null,null,null,null),null,null,null,null,null);
     }
     private com.agri_system.application.order.dto.vo.OrderPageVO view() {return service.queryOrderPage(new com.agri_system.application.order.dto.query.OrderPageQuery()).getRecords().get(0);}
     private OrderPayment payment(int type,String amount) {var p=new OrderPayment();p.setPaymentType(type);p.setAmount(new BigDecimal(amount));return p;}

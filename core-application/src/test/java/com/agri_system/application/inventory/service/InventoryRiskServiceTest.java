@@ -149,14 +149,14 @@ class InventoryRiskServiceTest {
                 batchBalanceRepository, receiptBatchRepository, productRepository,
                 allocationRepository, planningQuery, decisionLogRepository);
         orderService = new OrderApplicationService(
-                orderRepository, itemRepository, paymentRepository, paymentIntentRepository, deliveryRepository,
-                orderDomainService, paymentService, inventoryService, walletService, creditService,
-                productRepository, productPricingService, org.mockito.Mockito.mock(com.agri_system.application.productpackage.service.PackagePricingService.class), staffRepository, storeRepository, customerRepository,
-                afterSalesRepository, afterSalesItemRepository, eventPublisher, walletAuthCodeRepository,
-                new PickupFulfillmentService(allocationRepository, pickupRequestRepository, locationRepository, receiptBatchRepository,
+                null,
+                null,
+                new com.agri_system.application.order.service.PosOrderCreationService(orderRepository, itemRepository, paymentRepository, deliveryRepository, orderDomainService, paymentService, inventoryService, walletService, creditService, productRepository, productPricingService, org.mockito.Mockito.mock(com.agri_system.application.productpackage.service.PackagePricingService.class), staffRepository, customerRepository, eventPublisher, walletAuthCodeRepository, new PickupFulfillmentService(allocationRepository, pickupRequestRepository, locationRepository, receiptBatchRepository,
                         orderRepository, itemRepository, productRepository, afterSalesRepository,
-                        org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class),staffRepository),
-                manualPriceAuditService, org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null, null, null, null, null);
+                        org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class),staffRepository), manualPriceAuditService),
+                null,
+                null,
+                null);
     }
 
     @Test
@@ -189,7 +189,7 @@ class InventoryRiskServiceTest {
         stubPosOrderThenSave();
 
         assertThat(riskService.list(1L)).extracting(InventoryRiskVO::kind).contains("DATE_UNKNOWN");
-        assertThat(com.agri_system.application.order.service.PosOrderTestFixture.withPos(orderService).createPOSOrder(commandForUnknownDateSku(), 7L)).isNotNull();
+        assertThat(orderService.createPOSOrder(commandForUnknownDateSku(), 7L)).isNotNull();
     }
 
     @Test

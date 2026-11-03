@@ -62,14 +62,15 @@ class ClientCouponSettlementTest {
         var afterItems=mock(com.agri_system.domain.after_sales.repository.AfterSalesItemRepository.class);
         funding=new OrderPaymentService(payments,coupons,wallet,domain,items,products,orders,customers,
                 mock(com.agri_system.domain.credit.repository.CreditAccountRepository.class),mock(com.agri_system.domain.credit.repository.CreditRepaymentLogRepository.class),afterSales,afterItems);
-        service=new OrderApplicationService(orders,items,payments,intents,deliveries,domain,funding,inventory,wallet,
-                mock(com.agri_system.application.credit.service.CreditApplicationService.class),products,
-                mock(com.agri_system.application.product.service.ProductPricingService.class),mock(com.agri_system.application.productpackage.service.PackagePricingService.class),
-                staff,mock(com.agri_system.domain.store.repository.StoreRepository.class),customers,
-                afterSales,afterItems,mock(org.springframework.context.ApplicationEventPublisher.class),mock(com.agri_system.domain.wallet.repository.WalletAuthCodeRepository.class),mock(PickupFulfillmentService.class),mock(ManualPriceAuditService.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null, null, null, null, null);
+        service=new OrderApplicationService(
+                null,
+                null,
+                null,
+                new com.agri_system.application.order.service.ClientOrderPaymentService(orders, items, payments, intents, deliveries, funding, inventory, customers),
+                new com.agri_system.application.order.service.OrderFulfillmentService(orders, deliveries, staff, afterSales, mock(org.springframework.context.ApplicationEventPublisher.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class)),
+                null);
         when(intents.save(any())).thenAnswer(i->{OrderPaymentIntent intent=i.getArgument(0);intent.setId(70L);storedIntents.put(intent.getIntentNo(),intent);return intent;});
         when(intents.findByIntentNo(anyString())).thenAnswer(i->Optional.ofNullable(storedIntents.get(i.getArgument(0))));
-        ClientPaymentTestFixture.install(service);
         ReflectionTestUtils.setField(ReflectionTestUtils.getField(service,"clientOrderPaymentService"),"clientPaymentConfirmEnabled",true);
     }
     private BigDecimal m(String amount){return new BigDecimal(amount).setScale(2);}
@@ -150,7 +151,7 @@ class ClientCouponSettlementTest {
         assertEquals(1,delivery.getDeliveryStatus());verify(deliveries,never()).save(any());
         var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("delivery-alipay-50");
         service.confirmExternalPayment(confirm,10L);assertEquals(2,delivery.getDeliveryStatus());
-        OrderFulfillmentTestFixture.withFulfillment(service).shipOrder(shipment(2),8L);service.confirmExternalPayment(confirm,10L);
+        service.shipOrder(shipment(2),8L);service.confirmExternalPayment(confirm,10L);
         assertEquals(3,delivery.getDeliveryStatus());verify(inventory,times(1)).outbound(any(),isNull());
     }
     private void assertDeliveryPaymentChain(int type) {
@@ -158,9 +159,9 @@ class ClientCouponSettlementTest {
         service.previewOrderPayment(request,10L);assertEquals(1,delivery.getDeliveryStatus());
         service.payOrder(request,10L);assertEquals(4,order.getOrderStatus());assertEquals(2,delivery.getDeliveryStatus());
         assertNet("70","30",4);
-        OrderFulfillmentTestFixture.withFulfillment(service).shipOrder(shipment(type),8L);var dispatched=delivery.getDeliveryAt();
+        service.shipOrder(shipment(type),8L);var dispatched=delivery.getDeliveryAt();
         service.payOrder(request,10L);assertEquals(3,delivery.getDeliveryStatus());assertEquals(dispatched,delivery.getDeliveryAt());
-        OrderFulfillmentTestFixture.withFulfillment(service).confirmReceipt(1L,8L);var received=delivery.getReceivedAt();
+        service.confirmReceipt(1L,8L);var received=delivery.getReceivedAt();
         service.payOrder(request,10L);assertEquals(4,delivery.getDeliveryStatus());assertEquals(received,delivery.getReceivedAt());
         verify(inventory,times(1)).outbound(any(),isNull());assertEquals(2,sources.size());
     }
