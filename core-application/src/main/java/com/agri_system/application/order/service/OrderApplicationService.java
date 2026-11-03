@@ -4,6 +4,7 @@ import static com.agri_system.application.order.service.OrderPaymentDisplayPolic
 import static com.agri_system.application.order.service.OrderPaymentDisplayPolicy.resolveMainPaymentMethodName;
 import static com.agri_system.application.order.service.OrderPaymentDisplayPolicy.resolvePaymentRecordDisplayName;
 import com.agri_system.application.order.service.OrderPaymentDisplayPolicy.PaymentSummary;
+import com.agri_system.application.order.service.OrderRefundHistory.RefundAggregate;
 import com.agri_system.application.credit.service.CreditApplicationService;
 import com.agri_system.application.inventory.dto.command.InventoryInCommand;
 import com.agri_system.application.inventory.dto.command.InventoryOutCommand;
@@ -969,33 +970,7 @@ public class OrderApplicationService {
         return loadOrderItemRefundAggregates(orderId,null);
     }
     private java.util.Map<Long, RefundAggregate> loadOrderItemRefundAggregates(Long orderId,Long excludedAfterSalesId) {
-        java.util.Map<Long, RefundAggregate> aggregates = new java.util.HashMap<>();
-        List<com.agri_system.domain.after_sales.model.AfterSales> afterSalesList = afterSalesRepository.findByOrderId(orderId);
-        if (afterSalesList == null || afterSalesList.isEmpty()) {
-            return aggregates;
-        }
-
-        for (com.agri_system.domain.after_sales.model.AfterSales afterSales : afterSalesList) {
-            if (afterSales == null || java.util.Objects.equals(afterSales.getId(),excludedAfterSalesId)
-                    || afterSales.getStatus() == com.agri_system.domain.after_sales.model.AfterSales.STATUS_REJECTED) {
-                continue;
-            }
-            List<com.agri_system.domain.after_sales.model.AfterSalesItem> refundItems =
-                    afterSalesItemRepository.findByAfterSalesId(afterSales.getId());
-            if (refundItems == null || refundItems.isEmpty()) {
-                continue;
-            }
-            for (com.agri_system.domain.after_sales.model.AfterSalesItem refundItem : refundItems) {
-                if (refundItem == null || refundItem.getOrderItemId() == null) {
-                    continue;
-                }
-                RefundAggregate aggregate = aggregates.computeIfAbsent(refundItem.getOrderItemId(),
-                        key -> new RefundAggregate());
-                aggregate.quantity = aggregate.quantity.add(defaultAmount(refundItem.getQuantity()));
-                aggregate.amount = aggregate.amount.add(defaultAmount(refundItem.getRefundAmount()));
-            }
-        }
-        return aggregates;
+        return OrderRefundHistory.load(orderId,excludedAfterSalesId,afterSalesRepository,afterSalesItemRepository);
     }
 
     private BigDecimal safeSubtract(BigDecimal total, BigDecimal used) {
@@ -1005,11 +980,6 @@ public class OrderApplicationService {
 
     private BigDecimal defaultAmount(BigDecimal value) {
         return value != null ? value : BigDecimal.ZERO;
-    }
-
-    private static class RefundAggregate {
-        private BigDecimal quantity = BigDecimal.ZERO;
-        private BigDecimal amount = BigDecimal.ZERO;
     }
 
     /** 来源没有贡献金额时无法还原原选项；只核对本次请求仍允许原实际用到的来源。 */
@@ -1632,24 +1602,7 @@ public class OrderApplicationService {
 
     private String deliveryConfirmationKey(Order order, OrderDelivery delivery,
             List<com.agri_system.domain.order.model.DeliveryItemQuantity> items) {
-        if (items == null || items.isEmpty() || items.stream().anyMatch(item -> item.getOrderItemId() == null
-                || item.getQuantity() == null || item.getQuantity().signum() <= 0 || !StringUtils.hasText(item.getUnit()))) return null;
-        // 仅绑定本次所见内容，不是新业务身份或存储来源；签收时在原订单锁内重算。
-        var parts = new ArrayList<String>();
-        parts.add(String.valueOf(order.getId())); parts.add(String.valueOf(order.getOrderStatus()));
-        parts.add(String.valueOf(delivery.getDeliveryType())); parts.add(String.valueOf(delivery.getDeliveryStatus()));
-        parts.add(String.valueOf(delivery.getDeliveryStaffId()));
-        parts.add(String.valueOf(delivery.getAssignmentVersion()));
-        parts.add(String.valueOf(order.getReceiverName())); parts.add(String.valueOf(order.getReceiverPhone()));
-        parts.add(String.valueOf(order.getReceiverAddress()));
-        items.stream().sorted(java.util.Comparator.comparing(com.agri_system.domain.order.model.DeliveryItemQuantity::getOrderItemId)
-                .thenComparing(com.agri_system.domain.order.model.DeliveryItemQuantity::getUnit)).forEach(item -> {
-            parts.add(String.valueOf(item.getOrderItemId())); parts.add(item.getProductName());
-            parts.add(item.getQuantity().stripTrailingZeros().toPlainString()); parts.add(item.getUnit());
-        });
-        // 长度前缀防止商品名或地址里的分隔符造成相同摘要。
-        return refundHash(parts.stream().map(value -> value == null ? "-1:" : value.length() + ":" + value)
-                .collect(Collectors.joining()));
+        return OrderDeliveryConfirmation.key(order,delivery,items);
     }
 
     private boolean canDeliver(Order order, OrderDelivery delivery, boolean shipping) {
