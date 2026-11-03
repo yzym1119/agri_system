@@ -18,7 +18,7 @@ class AssignedDeliveryTaskQueryTest {
         jdbc.execute("CREATE TABLE `order`(id BIGINT PRIMARY KEY,order_no VARCHAR(50),store_id BIGINT,deleted INT)");
         jdbc.execute("CREATE TABLE order_delivery(order_id BIGINT PRIMARY KEY,delivery_type INT,delivery_status INT,delivery_staff_id BIGINT,delivery_at TIMESTAMP,received_at TIMESTAMP)");
         var staff=mock(StaffRepository.class);actor=new Staff();actor.setId(8L);actor.setStoreId(3L);actor.setStatus(1);
-        when(staff.findIdentityById(8L)).thenReturn(Optional.of(actor));service=new DeliveryTaskService(jdbc,staff);
+        when(staff.findIdentityById(8L)).thenReturn(Optional.of(actor));service=new DeliveryTaskService(new com.agri_system.infrastructure.order.query.AssignedDeliveryTaskQueryImpl(jdbc),staff);
     }
     @AfterEach void cleanup(){jdbc.execute("DROP ALL OBJECTS");}
     void task(long id,long store,long owner,int type,int state){jdbc.update("INSERT INTO `order` VALUES(?,?,?,0)",id,"TASK"+id,store);
@@ -40,6 +40,21 @@ class AssignedDeliveryTaskQueryTest {
     @Test void longIdsStayExactAndDeletedOrdersAreExcluded(){
         task(Long.MAX_VALUE,3,8,2,3);task(1,3,8,2,3);jdbc.update("UPDATE `order` SET deleted=1 WHERE id=1");
         var result=service.listAssignedTasks(8L,"PENDING",null);assertEquals(1,result.tasks().size());assertEquals("9223372036854775807",result.tasks().get(0).orderId());
+    }
+    @Test void timestampsAndNullReceiptRemainExact() {
+        task(1,3,8,2,3);
+        jdbc.update("UPDATE order_delivery SET delivery_at='2026-11-01 10:20:30',received_at=NULL WHERE order_id=1");
+        var row=service.listAssignedTasks(8L,"PENDING",null).tasks().get(0);
+        assertEquals("2026-11-01T10:20:30",row.deliveryAt());
+        assertNull(row.receivedAt());
+    }
+    @Test void currentStoreAndDeletedIdentityAreRecheckedOnEveryRead() {
+        task(1,3,8,2,3);task(2,4,8,2,3);
+        assertEquals("1",service.listAssignedTasks(8L,"PENDING",null).tasks().get(0).orderId());
+        actor.setStoreId(4L);
+        assertEquals("2",service.listAssignedTasks(8L,"PENDING",null).tasks().get(0).orderId());
+        actor.setDeleted(1);
+        assertThrows(IllegalArgumentException.class,()->service.listAssignedTasks(8L,"PENDING",null));
     }
     @Test void permissionMigrationAddsOnlyOneIndependentOperationWithoutRoleGrants() throws Exception {
         jdbc.execute("CREATE TABLE sys_menu(id BIGINT AUTO_INCREMENT PRIMARY KEY,parent_id BIGINT,name VARCHAR(50),permission VARCHAR(100),type INT,path VARCHAR(255),icon VARCHAR(50),sort_order INT,visible INT)");

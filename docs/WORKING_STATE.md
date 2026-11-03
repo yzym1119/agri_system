@@ -9,6 +9,8 @@
 
 ## 当前判断
 
+- **2026-11-03清单B3本人配送只读边界：**DeliveryTaskService原SQL移AssignedDeliveryTaskQuery基础设施唯一实现；保留当前真实身份、本店本人type2/status/deleted及原游标21探测，应用仍20页与字符串ID/时间输出，无联系人资金成本扩展。原查询加门店变更/删除身份及固定时间null共6项改前改后通过，完整后端907零失败错误跳过、136报告门禁通过。未改写入锁/数据源/已有库/部署/前端，非真机。详见docs/reviews/2026-11-03-本人配送任务只读边界.md；B3其他职责/B4仍继续。
+
 - **2026-11-03清单B2主代码依赖解除完成：**三个纯Java错误类型与日志脱敏工具原样移domain.common，应用infra依赖改test scope，显式JDBC/Redis/Flex/AOP。编译发现隐藏商品实现类强转，原updateForce纳入领域仓储并复用原SQL；同包日志工具引用同步。前两次编译失败已据实记录，第三次完整clean verify主编译及905项全过，136报告零失败错误跳过、独审通过。保留原错误码/消息/零null写入/脱敏/事务，测试继续用真实infra，不称完全脱框架。未改库/部署/前端。详见docs/reviews/2026-11-03-应用主代码基础设施依赖解除.md；B3 JDBC及B4整体继续。
 
 - **2026-11-03清单B2 POS持久请求端口：**新增domain PosSaleSubmissionRepository及Submission事实，原infra类唯一实现，应用协调器只改两import。程序比对除接口/Override/record归属外实现文本完全一致，原SQL/事务/锁序/取消屏障/同Flex不改。改前改后原POS五项通过，完整后端904零失败错误跳过、136报告门禁及独审通过；未改已有库/部署/前端，非新真机验收。B2仍两积分服务异常类型及pom依赖待处理，未全完。详见docs/reviews/2026-11-03-POS持久请求领域端口收口.md。
