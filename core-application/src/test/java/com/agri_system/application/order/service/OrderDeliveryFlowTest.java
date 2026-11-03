@@ -127,6 +127,7 @@ class OrderDeliveryFlowTest {
             return org.mockito.Mockito.RETURNS_DEFAULTS.answer(invocation);
         });
         ReflectionTestUtils.setField(orderService,"orderRepository",orderRepository);
+        ReflectionTestUtils.setField(orderService,"queryService",new OrderQueryService(orderRepository,itemRepository,paymentRepository,deliveryRepository,storeRepository,customerRepository,afterSalesRepository,paymentService));
         org.mockito.Mockito.lenient().when(orderRepository.findById(42L)).thenReturn(Optional.of(order));
         org.mockito.Mockito.lenient().when(orderRepository.findByIdForUpdate(42L)).thenReturn(Optional.of(order));
         org.mockito.Mockito.lenient().when(deliveryRepository.findByOrderId(42L)).thenReturn(Optional.of(delivery));
@@ -256,6 +257,7 @@ class OrderDeliveryFlowTest {
             return org.mockito.Answers.RETURNS_DEFAULTS.answer(invocation);
         });
         ReflectionTestUtils.setField(orderService,"itemRepository",repository);
+        ReflectionTestUtils.setField(ReflectionTestUtils.getField(orderService,"queryService"),"itemRepository",repository);
         var query=new com.agri_system.application.order.dto.query.OrderPageQuery();query.setPageNum(1);query.setPageSize(10);
         var row=orderService.queryOrderPage(query).getRecords().get(0);
         assertEquals(3,row.getItems().size());

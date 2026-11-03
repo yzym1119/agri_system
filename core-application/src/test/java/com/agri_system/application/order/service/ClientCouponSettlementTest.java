@@ -66,7 +66,7 @@ class ClientCouponSettlementTest {
                 mock(com.agri_system.application.credit.service.CreditApplicationService.class),products,
                 mock(com.agri_system.application.product.service.ProductPricingService.class),mock(com.agri_system.application.productpackage.service.PackagePricingService.class),
                 staff,mock(com.agri_system.domain.store.repository.StoreRepository.class),customers,
-                afterSales,afterItems,mock(org.springframework.context.ApplicationEventPublisher.class),mock(com.agri_system.domain.wallet.repository.WalletAuthCodeRepository.class),mock(PickupFulfillmentService.class),mock(ManualPriceAuditService.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class));
+                afterSales,afterItems,mock(org.springframework.context.ApplicationEventPublisher.class),mock(com.agri_system.domain.wallet.repository.WalletAuthCodeRepository.class),mock(PickupFulfillmentService.class),mock(ManualPriceAuditService.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null);
         when(intents.save(any())).thenAnswer(i->{OrderPaymentIntent intent=i.getArgument(0);intent.setId(70L);storedIntents.put(intent.getIntentNo(),intent);return intent;});
         when(intents.findByIntentNo(anyString())).thenAnswer(i->Optional.ofNullable(storedIntents.get(i.getArgument(0))));
         ReflectionTestUtils.setField(service,"clientPaymentConfirmEnabled",true);
