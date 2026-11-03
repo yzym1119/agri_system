@@ -89,6 +89,7 @@ class OrderRefundFlowTest {
 
     @org.junit.jupiter.api.BeforeEach
     void cashFundingResultForExistingReturnFlow() {
+        OrderRefundTestFixture.install(orderService);
         org.mockito.Mockito.lenient().when(paymentService.refund(any(),any(),any())).thenAnswer(i->new OrderPaymentService.RefundResult(i.getArgument(1),BigDecimal.ZERO));
         // 此组只验证订单编排；真实资金守恒与拒绝未知来源由RefundFundingConservationTest覆盖。
         org.mockito.Mockito.lenient().when(paymentService.previewRefund(any(),any())).thenAnswer(i->{

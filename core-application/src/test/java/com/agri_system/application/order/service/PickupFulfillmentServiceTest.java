@@ -170,7 +170,7 @@ class PickupFulfillmentServiceTest {
                 orderDomainService, paymentService, inventoryService, walletService, creditService,
                 productRepository, productPricingService, org.mockito.Mockito.mock(com.agri_system.application.productpackage.service.PackagePricingService.class), staffRepository, storeRepository, customerRepository,
                 afterSalesRepository, afterSalesItemRepository, eventPublisher, walletAuthCodeRepository,
-                fulfillmentService, manualPriceAuditService, org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null, null, null, null);
+                fulfillmentService, manualPriceAuditService, org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null, null, null, null, null);
     }
 
     @Test
