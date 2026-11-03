@@ -50,7 +50,7 @@ class RefundPreviewTest {
                 mock(com.agri_system.application.product.service.ProductPricingService.class),mock(com.agri_system.application.productpackage.service.PackagePricingService.class),
                 mock(com.agri_system.domain.store.repository.StaffRepository.class),mock(com.agri_system.domain.store.repository.StoreRepository.class),customers,
                 afterSales,afterItems,mock(org.springframework.context.ApplicationEventPublisher.class),mock(com.agri_system.domain.wallet.repository.WalletAuthCodeRepository.class),
-                mock(PickupFulfillmentService.class),mock(ManualPriceAuditService.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null);
+                mock(PickupFulfillmentService.class),mock(ManualPriceAuditService.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null);
     }
     private BigDecimal m(String s){return new BigDecimal(s).setScale(2);}
     private OrderRefundPreviewCommand request(String quantity){var c=new OrderRefundPreviewCommand();var i=new OrderRefundPreviewCommand.Item();i.setOrderItemId(1L);i.setQuantity(new BigDecimal(quantity));c.setItems(List.of(i));return c;}

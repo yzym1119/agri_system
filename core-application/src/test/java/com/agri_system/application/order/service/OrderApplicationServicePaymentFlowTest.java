@@ -863,6 +863,8 @@ class OrderApplicationServicePaymentFlowTest {
         var command = new com.agri_system.application.order.dto.command.OrderCreateCommand();
         command.setStoreId(3L); command.setOrderType(2);
         var item = cashPosCommand(false).getItems().get(0); item.setQuantity(new BigDecimal("0.1")); command.setItems(java.util.List.of(item));
+        ReflectionTestUtils.setField(orderService,"onlineOrderCreationService",new OnlineOrderCreationService(
+                orderRepository,itemRepository,deliveryRepository,orderDomainService,inventoryService,productRepository,productPricingService,storeRepository,customerRepository));
         var error = assertThrows(IllegalArgumentException.class, () -> orderService.createOrder(command, null));
         org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("整数")); verifyNoBusinessWrites();
     }
