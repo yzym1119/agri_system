@@ -3,13 +3,11 @@ package com.agri_system.application.order.service;
 import com.agri_system.domain.store.model.Staff;
 import com.agri_system.domain.store.repository.StaffRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.jdbc.core.JdbcTemplate;
+import com.agri_system.domain.order.query.PickupTaskQuery;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.ArrayList;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 
@@ -17,7 +15,7 @@ import java.util.Objects;
 @Service
 @RequiredArgsConstructor
 public class MobilePickupTaskService {
-    private final JdbcTemplate jdbc;
+    private final PickupTaskQuery taskQuery;
     private final StaffRepository staff;
     private final PickupFulfillmentService pickup;
 
@@ -31,16 +29,9 @@ public class MobilePickupTaskService {
         var actor=actor(employeeId);
         if (!List.of("PENDING","FULFILLED").contains(state)) throw new IllegalArgumentException("提货状态无效");
         if (after!=null && after<=0) throw new IllegalArgumentException("提货游标无效");
-        var args=new ArrayList<Object>();args.add(actor.getStoreId());args.add(state);
-        String cursor="";
-        if(after!=null){cursor=" AND r.id<?";args.add(after);}
-        var rows=jdbc.query("""
-                SELECT r.id,o.order_no,p.name,r.status,r.created_at,r.fulfilled_at
-                FROM order_pickup_request r JOIN `order` o ON o.id=r.order_id AND o.store_id=r.store_id
-                LEFT JOIN product p ON p.id=r.product_id
-                WHERE r.store_id=? AND r.status=? AND o.deleted=0
-                """+cursor+" ORDER BY r.id DESC LIMIT 21",(r,n)->new Task(Long.toString(r.getLong("id")),
-                r.getString("order_no"),r.getString("name"),r.getString("status"),time(r,"created_at"),time(r,"fulfilled_at")),args.toArray());
+        var rows=taskQuery.findTasks(actor.getStoreId(),state,after).stream()
+                .map(row->new Task(row.requestId().toString(),row.orderNo(),row.productName(),row.status(),
+                        time(row.createdAt()),time(row.fulfilledAt()))).toList();
         var page=List.copyOf(rows.subList(0,Math.min(rows.size(),20)));
         return new Tasks(actor.getStoreId().toString(),state,page,rows.size()>20?page.get(page.size()-1).requestId():null);
     }
@@ -78,7 +69,5 @@ public class MobilePickupTaskService {
             throw new IllegalArgumentException("需要当前有效门店员工身份");
         return actor;
     }
-    private static String time(ResultSet row,String name)throws SQLException {
-        var value=row.getTimestamp(name);return value==null?null:value.toLocalDateTime().toString();
-    }
+    private static String time(LocalDateTime value) { return value==null?null:value.toString(); }
 }

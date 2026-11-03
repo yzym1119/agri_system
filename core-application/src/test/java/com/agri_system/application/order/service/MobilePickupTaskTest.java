@@ -20,7 +20,7 @@ class MobilePickupTaskTest {
         jdbc.execute("CREATE TABLE product(id BIGINT PRIMARY KEY,name VARCHAR(100))");
         var staff=mock(StaffRepository.class);actor=new Staff();actor.setId(8L);actor.setStoreId(3L);actor.setStatus(1);
         when(staff.findIdentityById(8L)).thenReturn(Optional.of(actor));pickup=mock(PickupFulfillmentService.class);
-        service=new MobilePickupTaskService(jdbc,staff,pickup);
+        service=new MobilePickupTaskService(new com.agri_system.infrastructure.order.query.PickupTaskQueryImpl(jdbc),staff,pickup);
     }
     @AfterEach void cleanup(){jdbc.execute("DROP ALL OBJECTS");}
     void task(long id,long store,String status) {
@@ -33,6 +33,17 @@ class MobilePickupTaskTest {
         assertEquals("3",page.storeId());assertEquals(20,page.tasks().size());assertEquals("23",page.tasks().get(0).requestId());assertEquals("4",page.nextCursor());
         assertEquals(3,service.listTasks(8L,"PENDING",4L).tasks().size());assertEquals(1,service.listTasks(8L,"FULFILLED",null).tasks().size());
         verifyNoInteractions(pickup);actor.setStatus(2);assertThrows(IllegalArgumentException.class,()->service.listTasks(8L,"PENDING",null));
+    }
+    @Test void listPreservesExactIdsTimesAndRejectsDeletedOrMismatchedOrderStore() {
+        task(Long.MAX_VALUE,3,"PENDING");task(1,3,"PENDING");task(2,3,"PENDING");
+        jdbc.update("UPDATE `order` SET deleted=1 WHERE id=1");
+        jdbc.update("UPDATE `order` SET store_id=4 WHERE id=2");
+        jdbc.update("UPDATE order_pickup_request SET created_at='2026-11-01 10:20:30',fulfilled_at=NULL WHERE id=?",Long.MAX_VALUE);
+        var rows=service.listTasks(8L,"PENDING",null).tasks();assertEquals(1,rows.size());
+        assertEquals("9223372036854775807",rows.get(0).requestId());
+        assertEquals("2026-11-01T10:20:30",rows.get(0).createdAt());assertNull(rows.get(0).fulfilledAt());assertNull(rows.get(0).productName());
+        actor.setStoreId(4L);assertTrue(service.listTasks(8L,"PENDING",null).tasks().isEmpty());
+        actor.setDeleted(1);assertThrows(IllegalArgumentException.class,()->service.listTasks(8L,"PENDING",null));
     }
     PickupWorkItemVO ready(){
         var p=new PickupWorkItemVO();p.setStoreId(3L);p.setId(60L);p.setOrderId(50L);p.setOrderNo("ORDER50");p.setProductName("测试肥料");p.setStatus("PENDING");p.setCanFulfill(true);p.setConfirmationKey("a".repeat(64));
