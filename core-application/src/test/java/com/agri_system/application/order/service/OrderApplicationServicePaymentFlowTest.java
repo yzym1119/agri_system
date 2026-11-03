@@ -116,6 +116,7 @@ class OrderApplicationServicePaymentFlowTest {
 
     @org.junit.jupiter.api.BeforeEach
     void existingCustomerForPosWithWalletOrCredit() {
+        ClientPaymentTestFixture.install(orderService);
         var customer=new com.agri_system.domain.customer.model.Customer();customer.setId(12L);customer.setStatus(1);
         org.mockito.Mockito.lenient().when(customerRepository.findByIdWithLock(any())).thenAnswer(i->{var current=new com.agri_system.domain.customer.model.Customer();current.setId(i.getArgument(0));current.setStatus(1);return Optional.of(current);});
     }
@@ -162,7 +163,7 @@ class OrderApplicationServicePaymentFlowTest {
 
     @Test
     void confirmExternalPaymentFinalizesOrderWhenPreviewMatches() {
-        ReflectionTestUtils.setField(orderService, "clientPaymentConfirmEnabled", true);
+        ReflectionTestUtils.setField(ReflectionTestUtils.getField(orderService,"clientOrderPaymentService"), "clientPaymentConfirmEnabled", true);
         Order order = mockPendingClientOrder();
         OrderPaymentIntent intent = mockPendingIntent(order);
         OrderItem item = new OrderItem();
@@ -217,7 +218,7 @@ class OrderApplicationServicePaymentFlowTest {
 
     @Test
     void confirmExternalPaymentRejectsWhenExternalAmountChanged() {
-        ReflectionTestUtils.setField(orderService, "clientPaymentConfirmEnabled", true);
+        ReflectionTestUtils.setField(ReflectionTestUtils.getField(orderService,"clientOrderPaymentService"), "clientPaymentConfirmEnabled", true);
         Order order = mockPendingClientOrder();
         OrderPaymentIntent intent = mockPendingIntent(order);
         intent.setExternalAmount(new BigDecimal("39.99"));
@@ -239,7 +240,7 @@ class OrderApplicationServicePaymentFlowTest {
 
     @Test
     void confirmExternalPaymentReturnsWhenIntentAlreadyConfirmedWithSameTransaction() {
-        ReflectionTestUtils.setField(orderService, "clientPaymentConfirmEnabled", true);
+        ReflectionTestUtils.setField(ReflectionTestUtils.getField(orderService,"clientOrderPaymentService"), "clientPaymentConfirmEnabled", true);
         Order order = mockPendingClientOrder();
         order.setOrderStatus(3);
         OrderPaymentIntent intent = mockPendingIntent(order);
@@ -273,7 +274,7 @@ class OrderApplicationServicePaymentFlowTest {
 
     @Test
     void confirmExternalPaymentRejectsAnotherPathOrderBeforePaymentOrReplay() {
-        ReflectionTestUtils.setField(orderService, "clientPaymentConfirmEnabled", true);
+        ReflectionTestUtils.setField(ReflectionTestUtils.getField(orderService,"clientOrderPaymentService"), "clientPaymentConfirmEnabled", true);
         Order order = mockPendingClientOrder();
         OrderPaymentIntent intent = mockPendingIntent(order);
         intent.setStatus(2);
@@ -292,7 +293,7 @@ class OrderApplicationServicePaymentFlowTest {
 
     @Test
     void confirmExternalPaymentRequiresPathOrderEvenForAlreadyConfirmedIntent() {
-        ReflectionTestUtils.setField(orderService, "clientPaymentConfirmEnabled", true);
+        ReflectionTestUtils.setField(ReflectionTestUtils.getField(orderService,"clientOrderPaymentService"), "clientPaymentConfirmEnabled", true);
         Order order = mockPendingClientOrder();
         OrderPaymentIntent intent = mockPendingIntent(order);
         intent.setStatus(2);

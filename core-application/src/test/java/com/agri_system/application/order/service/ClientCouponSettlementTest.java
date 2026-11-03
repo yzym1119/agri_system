@@ -66,10 +66,11 @@ class ClientCouponSettlementTest {
                 mock(com.agri_system.application.credit.service.CreditApplicationService.class),products,
                 mock(com.agri_system.application.product.service.ProductPricingService.class),mock(com.agri_system.application.productpackage.service.PackagePricingService.class),
                 staff,mock(com.agri_system.domain.store.repository.StoreRepository.class),customers,
-                afterSales,afterItems,mock(org.springframework.context.ApplicationEventPublisher.class),mock(com.agri_system.domain.wallet.repository.WalletAuthCodeRepository.class),mock(PickupFulfillmentService.class),mock(ManualPriceAuditService.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null, null);
+                afterSales,afterItems,mock(org.springframework.context.ApplicationEventPublisher.class),mock(com.agri_system.domain.wallet.repository.WalletAuthCodeRepository.class),mock(PickupFulfillmentService.class),mock(ManualPriceAuditService.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class), null, null, null, null);
         when(intents.save(any())).thenAnswer(i->{OrderPaymentIntent intent=i.getArgument(0);intent.setId(70L);storedIntents.put(intent.getIntentNo(),intent);return intent;});
         when(intents.findByIntentNo(anyString())).thenAnswer(i->Optional.ofNullable(storedIntents.get(i.getArgument(0))));
-        ReflectionTestUtils.setField(service,"clientPaymentConfirmEnabled",true);
+        ClientPaymentTestFixture.install(service);
+        ReflectionTestUtils.setField(ReflectionTestUtils.getField(service,"clientOrderPaymentService"),"clientPaymentConfirmEnabled",true);
     }
     private BigDecimal m(String amount){return new BigDecimal(amount).setScale(2);}
     private OrderPayCommand command(boolean balance,boolean special){var command=new OrderPayCommand();command.setOrderId(1L);command.setCouponId(40L);command.setUseBalance(balance);command.setUseSpecialFund(special);return command;}
