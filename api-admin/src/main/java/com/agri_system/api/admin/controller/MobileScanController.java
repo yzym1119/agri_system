@@ -18,19 +18,19 @@ public class MobileScanController {
     private final MobileScanQueryService queries;
     public record ScanCommand(@NotBlank @Size(max=100) String code,@NotBlank String purpose) {}
     @PostMapping("/scan/resolve")
-    public MobileScanQueryService.Resolution resolve(@Valid @RequestBody ScanCommand command) {
+    public com.agri_system.domain.inventory.query.MobileInventoryQuery.Resolution resolve(@Valid @RequestBody ScanCommand command) {
         return queries.resolve(command.code(),command.purpose(),CurrentUser.staffId());
     }
     @GetMapping("/inventory/products")
-    public MobileScanQueryService.Matches search(@RequestParam String keyword,@RequestParam(defaultValue="1") int page) {
+    public com.agri_system.domain.inventory.query.MobileInventoryQuery.Matches search(@RequestParam String keyword,@RequestParam(defaultValue="1") int page) {
         return queries.searchProducts(keyword,page,CurrentUser.staffId());
     }
     @GetMapping("/locations/{locationId}/products")
-    public MobileScanQueryService.Matches location(@PathVariable Long locationId,@RequestParam(defaultValue="1") int page) {
+    public com.agri_system.domain.inventory.query.MobileInventoryQuery.Matches location(@PathVariable Long locationId,@RequestParam(defaultValue="1") int page) {
         return queries.locationProducts(locationId,page,CurrentUser.staffId());
     }
     @GetMapping("/inventory/{productId}")
-    public MobileScanQueryService.InventoryView inventory(@PathVariable Long productId,@RequestParam(required=false) Long batchId,
+    public com.agri_system.domain.inventory.query.MobileInventoryQuery.InventoryView inventory(@PathVariable Long productId,@RequestParam(required=false) Long batchId,
             @RequestParam(required=false) Long locationId,@RequestParam(defaultValue="1") int page) {
         return queries.inventory(productId,batchId,locationId,page,CurrentUser.staffId());
     }

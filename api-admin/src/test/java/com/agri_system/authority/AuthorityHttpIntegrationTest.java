@@ -310,7 +310,7 @@ class AuthorityHttpIntegrationTest {
         reject(call(token,"POST","/api/admin/mobile/scan/resolve",body));
         businessPermission(110,"inventory:view");
         when(mobileInventory.resolve("P1","INVENTORY_LOOKUP",4L)).thenReturn(
-                new com.agri_system.application.inventory.service.MobileScanQueryService.Resolution("1","UNKNOWN",List.of(),false));
+                new com.agri_system.domain.inventory.query.MobileInventoryQuery.Resolution("1","UNKNOWN",List.of(),false));
         assertEquals("UNKNOWN",call(token,"POST","/api/admin/mobile/scan/resolve",body).path("type").asText());
         org.mockito.Mockito.verify(mobileInventory).resolve("P1","INVENTORY_LOOKUP",4L);
         jdbc.update("DELETE FROM sys_role_menu WHERE role_id=4 AND menu_id=110");

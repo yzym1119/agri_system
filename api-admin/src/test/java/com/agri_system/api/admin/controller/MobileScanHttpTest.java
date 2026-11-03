@@ -14,7 +14,7 @@ class MobileScanHttpTest {
     @Test void onlyCurrentEmployeeIsPassedAndRawContractPreservesStringIds() throws Exception {
         var query=mock(MobileScanQueryService.class);
         var mvc=MockMvcBuilders.standaloneSetup(new MobileScanController(query)).setControllerAdvice(new GlobalExceptionHandler()).build();
-        when(query.resolve("P1","INVENTORY_LOOKUP",7L)).thenReturn(new MobileScanQueryService.Resolution("9223372036854775807","UNKNOWN",List.of(),false));
+        when(query.resolve("P1","INVENTORY_LOOKUP",7L)).thenReturn(new com.agri_system.domain.inventory.query.MobileInventoryQuery.Resolution("9223372036854775807","UNKNOWN",List.of(),false));
         try(var current=mockStatic(CurrentUser.class)) {
             current.when(CurrentUser::staffId).thenReturn(7L);
             mvc.perform(post("/api/admin/mobile/scan/resolve").contentType("application/json")

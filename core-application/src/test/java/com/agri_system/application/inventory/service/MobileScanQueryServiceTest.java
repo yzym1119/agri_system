@@ -23,7 +23,7 @@ class MobileScanQueryServiceTest {
         jdbc.execute("CREATE TABLE inventory_batch_balance(id BIGINT PRIMARY KEY,store_id BIGINT,product_id BIGINT,batch_id BIGINT,location_id BIGINT,base_quantity DECIMAL(20,8),reserved_base_quantity DECIMAL(20,8))");
         staff=mock(StaffRepository.class); var actor=new Staff();actor.setId(7L);actor.setStatus(1);actor.setStoreId(1L);
         when(staff.findIdentityById(7L)).thenReturn(Optional.of(actor));
-        service=new MobileScanQueryService(jdbc,staff);
+        service=new MobileScanQueryService(new com.agri_system.infrastructure.inventory.query.MobileInventoryQueryImpl(jdbc),staff);
         product(1,"P1","商品一","SAME"); product(2,"P2","商品二","SAME");
         jdbc.update("INSERT INTO inventory_location VALUES(1,1,'LOC','本店后仓',1),(2,2,'OTHER','外店秘密',1)");
         batch(10,1,1,"INTERNAL-REAL",12); batch(20,1,2,"INTERNAL-OTHER",20);
