@@ -1,6 +1,6 @@
 # 当前开发状态
 
-最后更新：2026-11-03
+最后更新：2026-11-04
 
 ## 用途
 
@@ -8,6 +8,8 @@
 不要把历史交付文档当成当前状态，历史资料仅用于追溯背景。
 
 ## 当前判断
+
+- **2026-11-04清单B3剩余JDBC职责核查收口：**只读核查应用层最后3个JdbcTemplate文件。JdbcAccessConfig为必要Flex同连接/隔离级别适配保留；InventoryLedgerService 13处为库存账本核心，全部写入入口统一先balances.lockStock经MyBatis锁inventory行，JDBC FOR UPDATE为同事务同锁行的再次获取，无双账双锁实证，保留现状证据驱动再收敛；PickupFulfillmentService两处只读（基准单位名、移动事实+售后处理批查）可提取但属提货证据链，留独立子项不顺手拆。应用层JDBC从8文件收敛到3（2保留+1待议）。同日确认钱包授权码子项3/3通过并补提交（a8e760b）、前端281/281及构建通过。无生产代码/SQL/事务/锁变更。详见docs/reviews/2026-11-04-B3剩余JDBC边界职责核查.md；下一步为D组业务决策项（专用金、渠道层、真实支付）与B4门面残余import清理等低优先项。
 
 - **2026-11-03清单B3钱包授权码边界：**发放INSERT/旧关联UPDATE原样归已有WalletAuthCodeRepository，应用服务不再JdbcTemplate，原核销/默认金额有效期/事务/日志隐私保持。原隐私两项移api-admin仍执行真实仓储/JDBC，新增混合JDBC与Mapper同Flex回滚基线；迁移前后三项及POS52过。完整921项零失败错误跳过、140报告门禁通过，无原库部署前端变动。剩余JDBC涉及提货/库存账/连接适配三文件，不机械删除；详见docs/reviews/2026-11-03-钱包授权码仓储边界.md。
 
