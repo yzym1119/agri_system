@@ -3,6 +3,7 @@ package com.agri_system.domain.wallet.repository;
 import com.agri_system.domain.wallet.model.WalletAuthCode;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Optional;
 
 /**
@@ -16,6 +17,13 @@ public interface WalletAuthCodeRepository {
      * 保存验证码
      */
     WalletAuthCode save(WalletAuthCode authCode);
+
+    /** 发放授权码：仅保存本次明确给出的绑定、金额和有效期，不覆盖既有记录。 */
+    void insertIssuedCode(Long customerId, Long orderId, String authCode, BigDecimal amount,
+                          LocalDateTime expireAt, LocalDateTime createdAt);
+
+    /** 旧兼容关联入口，只关联已核销且尚无订单的原记录，返回实际影响行数。 */
+    int associateConsumedCode(String authCode, Long orderId);
 
     /**
      * 根据客户ID和验证码查询（用于验证）

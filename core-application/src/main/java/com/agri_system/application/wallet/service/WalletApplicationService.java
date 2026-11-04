@@ -11,7 +11,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -31,7 +30,6 @@ public class WalletApplicationService {
     private final CustomerWalletRepository walletRepository;
     private final WalletTransactionRepository transactionRepository;
     private final WalletAuthCodeRepository walletAuthCodeRepository;
-    private final JdbcTemplate jdbcTemplate;
     
     private static final int AUTH_CODE_LENGTH = 6;
     private static final java.security.SecureRandom AUTH_CODE_RANDOM = new java.security.SecureRandom();
@@ -381,8 +379,7 @@ public class WalletApplicationService {
         String code = String.format(java.util.Locale.ROOT, "%0" + AUTH_CODE_LENGTH + "d", AUTH_CODE_RANDOM.nextInt(1_000_000));
         java.time.LocalDateTime now = java.time.LocalDateTime.now();
         java.time.LocalDateTime expireAt = now.plusMinutes(expireMinutes > 0 ? expireMinutes : 5);
-        String sql = "INSERT INTO wallet_auth_code(customer_id, order_id, auth_code, amount, status, expire_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)";
-        jdbcTemplate.update(sql, customerId, orderId, code, amount != null ? amount : java.math.BigDecimal.ZERO, 1, java.sql.Timestamp.valueOf(expireAt), java.sql.Timestamp.valueOf(now));
+        walletAuthCodeRepository.insertIssuedCode(customerId, orderId, code, amount != null ? amount : java.math.BigDecimal.ZERO, expireAt, now);
         logger.info("钱包授权码已生成，expireAt={}", expireAt);
         return code;
     }
@@ -403,8 +400,7 @@ public class WalletApplicationService {
     @Transactional(rollbackFor = Exception.class)
     public void associateAuthCodeWithOrder(String authCode, Long orderId) {
         if (authCode == null || orderId == null) return;
-        String sql = "UPDATE wallet_auth_code SET order_id = ? WHERE auth_code = ? AND status = 2 AND (order_id IS NULL OR order_id = '')";
-        int updated = jdbcTemplate.update(sql, orderId, authCode);
+        int updated = walletAuthCodeRepository.associateConsumedCode(authCode, orderId);
         if (updated > 0) {
             logger.info("钱包授权已关联订单，orderId={}", orderId);
         } else {

@@ -5,6 +5,8 @@ import com.agri_system.domain.wallet.repository.WalletAuthCodeRepository;
 import com.agri_system.infrastructure.wallet.mapper.WalletAuthCodeMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
+import org.springframework.jdbc.core.JdbcTemplate;
+import java.time.LocalDateTime;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -19,6 +21,7 @@ import java.util.Optional;
 public class WalletAuthCodeRepositoryImpl implements WalletAuthCodeRepository {
 
     private final WalletAuthCodeMapper mapper;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public WalletAuthCode save(WalletAuthCode authCode) {
@@ -28,6 +31,19 @@ public class WalletAuthCodeRepositoryImpl implements WalletAuthCodeRepository {
             mapper.update(authCode);
         }
         return authCode;
+    }
+
+    @Override
+    public void insertIssuedCode(Long customerId, Long orderId, String authCode, BigDecimal amount,
+                                 LocalDateTime expireAt, LocalDateTime createdAt) {
+        String sql = "INSERT INTO wallet_auth_code(customer_id, order_id, auth_code, amount, status, expire_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)";
+        jdbcTemplate.update(sql, customerId, orderId, authCode, amount, 1, java.sql.Timestamp.valueOf(expireAt), java.sql.Timestamp.valueOf(createdAt));
+    }
+
+    @Override
+    public int associateConsumedCode(String authCode, Long orderId) {
+        String sql = "UPDATE wallet_auth_code SET order_id = ? WHERE auth_code = ? AND status = 2 AND (order_id IS NULL OR order_id = '')";
+        return jdbcTemplate.update(sql, orderId, authCode);
     }
 
     @Override
