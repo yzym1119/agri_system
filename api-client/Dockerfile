@@ -9,6 +9,7 @@ COPY core-domain/pom.xml core-domain/pom.xml
 COPY core-application/pom.xml core-application/pom.xml
 COPY core-infrastructure/pom.xml core-infrastructure/pom.xml
 COPY api-client/pom.xml api-client/pom.xml
+COPY api-admin/pom.xml api-admin/pom.xml
 
 # 下载依赖
 RUN mvn dependency:go-offline -B
