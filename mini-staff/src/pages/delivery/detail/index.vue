@@ -46,7 +46,15 @@ async function readCurrent(){
   preview.value=answer;
   if(answer.status==='COMPLETED'){const cleared=!uncertain.value||clearAttempt();uncertain.value=!cleared;if(cleared)attemptedKey=null;message.value=cleared?'这项任务已签收，无需再次交货或确认。':'这项任务已签收，但本机核对记录未能清理，请联系店长；不要再次交货。';}
   else if(uncertain.value&&answer.confirmationKey!==attemptedKey)message.value='原签收结果尚未确认，任务内容已变化。请联系店长核对，不要再次交货。';
- }catch{if(visible&&ticket===generation){if(!staffAuth.current())uni.reLaunch({url:'/pages/login/index'});else message.value='任务读取未完成，可能已改派或权限发生变化。请重新查询或联系店长核对。';}}
+ }catch(failure){if(visible&&ticket===generation){
+  if(!staffAuth.current()){uni.reLaunch({url:'/pages/login/index'});return;}
+  // 改派/撤权是后端在写入前明确拒绝，必须与网络结果未知分开表述；冻结时仍不解除原待核对。
+  const denied=failure instanceof Error&&(failure.message==='BUSINESS_REJECTED'||failure.message==='FORBIDDEN');
+  message.value=denied
+   ?(uncertain.value?'这项任务已不属于你，可能已被改派。原签收结果仍需店长核对，请勿再次交货。'
+                   :'这项任务已不属于你，可能已被改派。请返回任务列表重新读取，不要继续交货。')
+   :'任务读取未完成，请重新查询或联系店长核对；原签收结果未确认时请勿再次交货。';
+ }}
  finally{if(ticket===generation)loading.value=false;}
 }
 function canConfirm(){
@@ -68,7 +76,8 @@ async function confirm(){
   const rejected=failure instanceof Error&&failure.message==='BUSINESS_REJECTED';
   uncertain.value=wasUnknown||!rejected||!clearAttempt();preview.value=null;
   if(!uncertain.value)attemptedKey=null;
-  message.value=uncertain.value?'签收结果待核对，请勿再次交货。先读取同一任务的状态。':'任务或物料已变化，请重新读取并逐项核对后再确认。';
+  message.value=uncertain.value?'签收结果待核对，请勿再次交货。先读取同一任务的状态。'
+   :'任务已变化，可能已被改派或物料不同；请重新读取并逐项核对后再确认。';
  }finally{if(ticket===generation){checkedItems.value=[];receiverConfirmed.value=false;busy.value=false;}}
 }
 async function showNavigation(){

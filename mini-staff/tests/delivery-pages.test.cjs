@@ -43,6 +43,23 @@ test('明确拒绝后必须重读并重新核对，未知之后的拒绝不能�
  const f=await fixture();f.p.hooks.load({orderId:'42'});await f.p.hooks.show();check(f);f.setConfirmation(()=>{throw Error('BUSINESS_REJECTED');});await f.p.state.confirm();
  assert.equal(f.p.state.preview.value,null);assert.equal(f.p.state.uncertain.value,false);await f.p.state.readCurrent();assert.equal(f.p.state.checkedItems.value.length,0);
 });
+test('改派后旧任务读取被明确拒绝，提示不再属于本人且保持冻结语义',async()=>{
+ const f=await fixture();f.p.hooks.load({orderId:'42'});await f.p.hooks.show();
+ for(const mode of ['BUSINESS_REJECTED','FORBIDDEN']){
+  f.setPreview(()=>{throw Error(mode);});await f.p.state.readCurrent();
+  assert.match(f.p.state.message.value,/改派/,mode);assert.equal(f.p.state.preview.value,null,mode);assert.equal(f.p.state.uncertain.value,false,mode);
+ }
+ check(f);await f.p.state.confirm();assert.equal(f.calls.confirm.length,0);
+});
+test('结果未知期间改派拒绝读取不能解冻、不能清记录、不能重发',async()=>{
+ const storage=new Map(),f=await unknown(storage);f.setPreview(()=>{throw Error('BUSINESS_REJECTED');});await f.p.state.readCurrent();
+ assert.equal(f.p.state.uncertain.value,true);assert.equal(f.storage.size,1);assert.match(f.p.state.message.value,/店长核对/);
+ assert.equal(f.p.state.preview.value,null);check(f);await f.p.state.confirm();assert.equal(f.calls.confirm.length,1);
+});
+test('改派后旧任务提交被明确拒绝，清理原记录并提示可能已改派',async()=>{
+ const f=await fixture();f.p.hooks.load({orderId:'42'});await f.p.hooks.show();check(f);f.setConfirmation(()=>{throw Error('BUSINESS_REJECTED');});await f.p.state.confirm();
+ assert.equal(f.p.state.uncertain.value,false);assert.equal(f.storage.size,0);assert.match(f.p.state.message.value,/改派/);
+});
 test('任务列表切状态使旧查询失效，没有权限不读取名单',async()=>{
  const f=await fixture('delivery/list');let resolve;f.setList(state=>state==='PENDING'?new Promise(done=>resolve=done):{storeId:'3',state,tasks:[],nextCursor:null});
  const first=f.p.hooks.show();await new Promise(r=>setTimeout(r,0));await f.p.state.chooseState('COMPLETED');resolve({storeId:'3',state:'PENDING',tasks:[{orderId:'42',orderNo:'OLD',status:'PENDING',deliveryAt:null,receivedAt:null}],nextCursor:null});await first;
