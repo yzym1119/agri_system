@@ -2,6 +2,7 @@ package com.agri_system.application.customer.dto;
 
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
@@ -19,6 +20,11 @@ public class GrantSpecialFundCommand {
     /** 客户ID */
     @NotNull(message = "客户ID不能为空")
     private Long customerId;
+
+    /** 发放请求标识：幂等键，同一标识重复提交只发放一次 */
+    @NotBlank(message = "发放请求标识不能为空")
+    @Size(max = 64, message = "发放请求标识不能超过64字符")
+    private String requestKey;
 
     /** 发放金额；单次上限由 WalletApplicationService 统一守卫，避免两处硬编码。 */
     @NotNull(message = "发放金额不能为空")

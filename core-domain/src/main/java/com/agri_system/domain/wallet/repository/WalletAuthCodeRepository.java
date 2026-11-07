@@ -44,6 +44,15 @@ public interface WalletAuthCodeRepository {
      * @return 更新影响的行数
      */
     int consumeAuthCode(Long customerId, String authCode, BigDecimal amount, Long orderId);
+
+    /**
+     * 统计客户自指定时间以来发放的验证码数量（发送频率限制）
+     *
+     * @param customerId 客户ID
+     * @param since 起始时间（含）
+     * @return 发放记录数
+     */
+    int countIssuedSince(Long customerId, LocalDateTime since);
 }
 
 

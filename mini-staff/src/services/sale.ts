@@ -16,9 +16,25 @@ export const readCatalog = async (epoch: number): Promise<CatalogProduct[]> => {
   return decodeCatalog(body);
 };
 
-export const quoteProduct = async (productId: string, unit: string, epoch: number): Promise<PriceQuote> => {
+/** 服务端关键词搜索（编码/名称/条码），商品超首页 200 条时仍可找到。 */
+export const searchCatalog = async (keyword: string, epoch: number): Promise<CatalogProduct[]> => {
   const body = await staffAuth.request({
-    url: '/api/admin/products/' + encodeURIComponent(productId) + '/price-quote?saleUnit=' + encodeURIComponent(unit),
+    url: '/api/admin/pos/catalog/products?pageNum=1&pageSize=50&keyword=' + encodeURIComponent(keyword),
+    method: 'GET',
+  }, envelope, epoch);
+  return decodeCatalog(body);
+};
+
+export const quoteProduct = async (
+  productId: string,
+  unit: string,
+  epoch: number,
+  customerId: string | null = null,
+): Promise<PriceQuote> => {
+  const customer = customerId ? '&customerId=' + encodeURIComponent(customerId) : '';
+  const body = await staffAuth.request({
+    url: '/api/admin/products/' + encodeURIComponent(productId)
+      + '/price-quote?saleUnit=' + encodeURIComponent(unit) + customer,
     method: 'GET',
   }, envelope, epoch);
   return decodeQuote(body, productId);

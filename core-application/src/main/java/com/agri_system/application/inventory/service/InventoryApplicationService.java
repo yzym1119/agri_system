@@ -15,6 +15,7 @@ import com.agri_system.application.inventory.dto.vo.InventoryLocationVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransferRecordVO;
 import com.agri_system.application.inventory.dto.vo.InventoryTransactionVO;
 import com.agri_system.application.inventory.exception.InventoryErrorCode;
+import com.agri_system.application.auth.util.CurrentUser;
 import com.agri_system.domain.after_sales.repository.AfterSalesRepository;
 import com.agri_system.domain.inventory.enums.InventoryTransactionType;
 import com.agri_system.domain.inventory.model.Inventory;
@@ -182,26 +183,62 @@ public class InventoryApplicationService {
 
     
     /**
+     * 门店写入归属强制：非管理员员工只能操作本店库存，防止通过请求体 storeId 跨店写库存。
+     * 管理员（ADMIN/SUPER_ADMIN）不受限；无登录上下文（内部调用、单元测试）保持原行为。
+     * 身份失效时交给鉴权层拒绝；已登录非管理员员工未分配门店时直接拒绝。
+     */
+    private void ensureStoreWritable(Long targetStoreId) {
+        if (targetStoreId == null) return;
+        Long staffId;
+        try {
+            staffId = CurrentUser.staffId();
+        } catch (RuntimeException noLoginContext) {
+            return;
+        }
+        if (staffId == null) return;
+        boolean admin;
+        try {
+            admin = CurrentUser.isAdmin();
+        } catch (RuntimeException identityMissing) {
+            return;
+        }
+        if (admin) return;
+        Long ownStoreId;
+        try {
+            ownStoreId = CurrentUser.storeId();
+        } catch (RuntimeException noStoreAssigned) {
+            throw new IllegalArgumentException(InventoryErrorCode.CROSS_STORE_FORBIDDEN
+                    + ": 当前员工未分配门店，禁止盘点/出入库/调拨操作");
+        }
+        if (!targetStoreId.equals(ownStoreId)) {
+            throw new IllegalArgumentException(InventoryErrorCode.CROSS_STORE_FORBIDDEN
+                    + ": 无权操作其他门店库存，本店=" + ownStoreId);
+        }
+    }
+
+    /**
      * 入库
-     * 
+     *
      * @param command 入库命令
      * @param createdBy 操作人ID
      * @return 批次ID
      */
     @Transactional(rollbackFor = Exception.class)
     public Long inbound(InventoryInCommand command, Long createdBy) {
+        ensureStoreWritable(command.getStoreId());
         return ledger.inbound(command, createdBy);
     }
-    
+
     /**
      * 出库（FIFO）
-     * 
+     *
      * @param command 出库命令
      * @param createdBy 操作人ID
      * @return 扣减的批次详情列表
      */
     @Transactional(rollbackFor = Exception.class)
     public List<BatchDetailVO> outbound(InventoryOutCommand command, Long createdBy) {
+        ensureStoreWritable(command.getStoreId());
         return ledger.outbound(command, createdBy);
     }
     
@@ -219,6 +256,7 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public InventoryDomainService.TransferDetail transfer(InventoryTransferCommand command, Long createdBy) {
+        ensureStoreWritable(command.getFromStoreId());
         if (Objects.equals(command.getFromStoreId(), command.getToStoreId())) {
             throw new IllegalArgumentException(InventoryErrorCode.TARGET_STORE_UNAVAILABLE + ": 调出门店和调入门店不能相同");
         }
@@ -403,6 +441,7 @@ public class InventoryApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void adjust(InventoryAdjustCommand command, Long createdBy) {
+        ensureStoreWritable(command.getStoreId());
         ledger.adjust(command, createdBy);
     }
     

@@ -24,16 +24,15 @@ public class WalletClientController {
     private final AuthService authService;
 
     @PostMapping("/send")
-    @Operation(summary = "生成并发送钱包验证码", description = "仅允许登录客户为自己申请，且绑定本次计划支付金额")
+    @Operation(summary = "生成并发送钱包验证码", description = "仅允许登录客户为自己申请，且绑定本次计划支付金额；验证码经可信渠道下发，接口不回显原码")
     public ResponseEntity<Map<String, Object>> send(@Valid @RequestBody WalletAuthCodeSendCommand command) {
         Long customerId = authService.getCurrentCustomerId();
-        String code = walletService.generateAndStoreWalletAuthCode(customerId, null, command.getAmount(), 5);
+        walletService.generateAndStoreWalletAuthCode(customerId, null, command.getAmount(), 5);
         Map<String, Object> resp = new HashMap<>();
         resp.put("status", "ok");
         resp.put("customerId", customerId);
         resp.put("amount", command.getAmount());
-        resp.put("authCode", code);
-        resp.put("message", "验证码已生成并记录（实际请通过微信/短信下发）");
+        resp.put("message", "验证码已生成，请查收（经可信渠道下发）");
         return ResponseEntity.ok(resp);
     }
 

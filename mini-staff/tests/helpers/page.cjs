@@ -17,7 +17,8 @@ function setupPage(page, auth, configured = true, extraImports = {}) {
     reLaunch: options => routes.push(options.url), navigateTo: options => routes.push(options.url),
     redirectTo: options=>routes.push(options.url),pageScrollTo: options=>scrolls.push(options.selector),
     setClipboardData:options=>{clipboard.push(options.data);options.success?.({errMsg:'ok'});},
-  }, require: name => { assert.ok(name in imports, name); return imports[name]; } }, { filename: file });
+  }, require: name => { assert.ok(name in imports, name); return imports[name]; },
+  setTimeout, clearTimeout, clearInterval }, { filename: file });
   return { state: mod.exports.default.setup({}, { expose() {} }), hooks, routes,scrolls,clipboard };
 }
 module.exports = { setupPage };

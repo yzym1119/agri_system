@@ -25,20 +25,34 @@ public class PosCatalogApplicationService {
     private final InventoryApplicationService inventory;
 
     public Page<ProductDetailVO> products(int number,int size) {
+        return products(number, size, null);
+    }
+
+    /** 服务端关键词搜索：命中编码/名称/条码，避免移动端一次性拉全量后本地过滤。 */
+    public Page<ProductDetailVO> products(int number,int size,String keyword) {
         validatePage(number,size);
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            var source=products.queryActiveByKeyword(keyword.trim(),number,size);
+            var result=new Page<ProductDetailVO>();result.setPageNumber(source.getPageNumber());
+            result.setPageSize(source.getPageSize());result.setTotalRow(source.getTotalRow());
+            result.setRecords(source.getRecords().stream().map(this::toCatalogProduct).toList());
+            return result;
+        }
         var query=new ProductQuery();query.setStatus(1);query.setPageNum(number);query.setPageSize(size);
         var source=products.queryProducts(query);
         var result=new Page<ProductDetailVO>();result.setPageNumber(source.getPageNumber());
         result.setPageSize(source.getPageSize());result.setTotalRow(source.getTotalRow());
-        result.setRecords(source.getRecords().stream().map(p->{
-            var sale=new ProductDetailVO();sale.setId(p.getId());sale.setCode(p.getCode());sale.setName(p.getName());
-            sale.setCategoryId(p.getCategoryId());sale.setSpecification(p.getSpecification());sale.setManufacturer(p.getManufacturer());
-            sale.setMainUnit(p.getMainUnit());sale.setBarcode(p.getBarcode());sale.setImageUrl(p.getImageUrl());
-            sale.setSuggestedRetailPrice(p.getSuggestedRetailPrice());sale.setPricingUnit(p.getPricingUnit());
-            sale.setBaseUnitName(p.getBaseUnitName());sale.setAllowFractionalBaseQuantity(p.getAllowFractionalBaseQuantity());
-            sale.setAllowSpecialFund(p.getAllowSpecialFund());sale.setUnits(p.getUnits());sale.setStatus(p.getStatus());
-            return sale;
-        }).toList());return result;
+        result.setRecords(source.getRecords().stream().map(this::toCatalogProduct).toList());return result;
+    }
+
+    private ProductDetailVO toCatalogProduct(ProductDetailVO p) {
+        var sale=new ProductDetailVO();sale.setId(p.getId());sale.setCode(p.getCode());sale.setName(p.getName());
+        sale.setCategoryId(p.getCategoryId());sale.setSpecification(p.getSpecification());sale.setManufacturer(p.getManufacturer());
+        sale.setMainUnit(p.getMainUnit());sale.setBarcode(p.getBarcode());sale.setImageUrl(p.getImageUrl());
+        sale.setSuggestedRetailPrice(p.getSuggestedRetailPrice());sale.setPricingUnit(p.getPricingUnit());
+        sale.setBaseUnitName(p.getBaseUnitName());sale.setAllowFractionalBaseQuantity(p.getAllowFractionalBaseQuantity());
+        sale.setAllowSpecialFund(p.getAllowSpecialFund());sale.setUnits(p.getUnits());sale.setStatus(p.getStatus());
+        return sale;
     }
 
     public List<CategoryTreeVO> categories() {return products.getCategoryTree();}

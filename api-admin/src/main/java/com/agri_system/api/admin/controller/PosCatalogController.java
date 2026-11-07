@@ -14,8 +14,9 @@ import java.util.Map;
 public class PosCatalogController {
     private final PosCatalogApplicationService catalog;
     @GetMapping("/products")
-    public ResponseEntity<Map<String,Object>> products(@RequestParam(defaultValue="1") int pageNum,@RequestParam(defaultValue="1000") int pageSize) {
-        return result(catalog.products(pageNum,pageSize));
+    public ResponseEntity<Map<String,Object>> products(@RequestParam(defaultValue="1") int pageNum,@RequestParam(defaultValue="1000") int pageSize,
+                                                       @RequestParam(required=false) String keyword) {
+        return result(catalog.products(pageNum,pageSize,keyword));
     }
     @GetMapping("/categories")
     public ResponseEntity<Map<String,Object>> categories() {return result(catalog.categories());}

@@ -40,6 +40,8 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile.backend
+      args:
+        MODULE: api-admin
     container_name: agri-backend
     restart: always
     environment:
@@ -71,6 +73,44 @@ services:
       timeout: 5s
       retries: 3
 
+  # 客户端服务（小程序/客户自助）：客户订单、客户钱包、客户登录
+  client:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.backend
+      args:
+        MODULE: api-client
+    container_name: agri-client
+    restart: always
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-agri_system}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://admin.yourdomain.com}
+      ALIYUN_OSS_AK: ${ALIYUN_OSS_AK}
+      ALIYUN_OSS_SK: ${ALIYUN_OSS_SK}
+      ALIYUN_OSS_BUCKET: ${ALIYUN_OSS_BUCKET}
+      WECHAT_APP_ID: ${WECHAT_APP_ID}
+      WECHAT_APP_SECRET: ${WECHAT_APP_SECRET}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - agri-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
   nginx:
     build:
       context: .
@@ -85,6 +125,8 @@ services:
       - ./deploy/ssl:/etc/nginx/ssl:ro
     depends_on:
       backend:
+        condition: service_healthy
+      client:
         condition: service_healthy
     networks:
       - agri-network

@@ -92,10 +92,16 @@ class SpecialFundGrantValidationTest {
             bad.setRemark("x".repeat(501));
             assertThat(fieldNames(validator.validate(bad))).contains("amount", "remark");
 
+            GrantSpecialFundCommand noKey = new GrantSpecialFundCommand();
+            noKey.setCustomerId(9L);
+            noKey.setAmount(new BigDecimal("1.00"));
+            assertThat(fieldNames(validator.validate(noKey))).contains("requestKey");
+
             GrantSpecialFundCommand good = new GrantSpecialFundCommand();
             good.setCustomerId(9L);
             good.setAmount(new BigDecimal("1.00"));
             good.setRemark("正常备注");
+            good.setRequestKey("rk-1");
             assertThat(validator.validate(good)).isEmpty();
         }
     }

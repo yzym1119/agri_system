@@ -13,11 +13,15 @@ async function fixture(permissions = ['pos:order:create']) {
     data: req.url.endsWith('/login') ? { tokenName: 'Authorization', tokenValue: 'test', userInfo: user } : user }));
   await auth.login('test', 'pass');
   let catalog = [product], priceQuote = quote, submit = async () => ({ status: 'COMPLETED', orderId: '900' }), restore = null;
-  const calls = { catalog: 0, quote: [], submit: [] };
+  const calls = { catalog: 0, search: [], quote: [], submit: [] };
   const p = setupPage('sale', auth, true, {
     '../../services/sale': {
       readCatalog: async () => { calls.catalog++; return catalog; },
-      quoteProduct: async (id, unit) => { calls.quote.push({ id, unit }); return typeof priceQuote === 'function' ? priceQuote() : priceQuote; },
+      searchCatalog: async (kw) => {
+        calls.search.push(kw);
+        return catalog.filter(item => item.name.includes(kw) || item.code.includes(kw));
+      },
+      quoteProduct: async (id, unit, epoch, customerId) => { calls.quote.push({ id, unit, customerId: customerId ?? null }); return typeof priceQuote === 'function' ? priceQuote() : priceQuote; },
       submitSale: async (lines, epoch, options) => { calls.submit.push({ lines, epoch, options }); return submit(); },
     },
     '../../services/pos-recovery': { posRecovery: { restore: () => restore } },
@@ -39,10 +43,17 @@ test('按后端报价加入商品，展示小计但不把金额提交给后端',
   const f = await fixture(); await f.p.hooks.show();
   assert.equal(f.calls.catalog, 1);
   assert.equal(f.p.state.filtered.value.length, 1);
-  f.p.state.keyword.value = '不存在的商品'; assert.equal(f.p.state.filtered.value.length, 0);
-  f.p.state.keyword.value = 'P001'; assert.equal(f.p.state.filtered.value.length, 1);
+  f.p.state.keyword.value = '不存在的商品';
+  await new Promise(r => setTimeout(r, 350)); // 防抖后走服务端搜索
+  assert.equal(f.calls.search.length, 1);
+  assert.equal(f.p.state.filtered.value.length, 0);
+  f.p.state.keyword.value = 'P001';
+  await new Promise(r => setTimeout(r, 350));
+  assert.equal(f.calls.search.length, 2);
+  assert.equal(f.p.state.filtered.value.length, 1);
+  f.p.state.keyword.value = ''; assert.equal(f.p.state.filtered.value.length, 1); // 清空回到完整目录
   f.p.state.choose(product); f.p.state.quantity.value = '2'; await f.p.state.addLine();
-  assert.deepEqual(f.calls.quote, [{ id: '11', unit: '袋' }]);
+  assert.deepEqual(f.calls.quote, [{ id: '11', unit: '袋', customerId: null }]);
   assert.equal(f.p.state.lines.value.length, 1);
   assert.equal(f.p.state.totalCents.value, 2468);
   await f.p.state.checkout();
@@ -104,6 +115,7 @@ test('完整结算与配送选项原样传给服务层，本页仍不带金额',
   const f = await fixture(); await f.p.hooks.show();
   f.p.state.choose(product); await f.p.state.addLine();
   f.p.state.paymentType.value = 6; f.p.state.customerId.value = '77';
+  await new Promise(r => setImmediate(r)); // 客户变更触发全量重报价
   f.p.state.deliveryType.value = 2; f.p.state.receiverName.value = '张三';
   f.p.state.receiverPhone.value = '13800000000'; f.p.state.receiverAddress.value = '测试地址';
   f.p.state.remark.value = '备注';
@@ -114,6 +126,23 @@ test('完整结算与配送选项原样传给服务层，本页仍不带金额',
   assert.equal(options.deliveryType, 2); assert.equal(options.receiverName, '张三');
   assert.equal(options.receiverAddress, '测试地址'); assert.equal(options.remark, '备注');
   assert.ok(!('amount' in options) && !('totalCents' in options));
+});
+
+test('客户变更后购物车全部明细按新客户重取报价指纹', async () => {
+  const f = await fixture(); await f.p.hooks.show();
+  f.p.state.choose(product); await f.p.state.addLine();
+  f.p.state.choose({ ...product, id: '12', code: 'P002', name: '尿素' }); await f.p.state.addLine();
+  const retailCount = f.calls.quote.length;
+  f.setQuote({ ...quote, suggestedUnitPrice: '9.90' }); // 模拟 VIP 会员价
+  f.p.state.customerId.value = '77';
+  await new Promise(r => setImmediate(r));
+  assert.equal(f.calls.quote.length, retailCount + 2, '每条购物车明细都重取一次报价');
+  assert.ok(f.calls.quote.slice(retailCount).every(c => c.customerId === '77'));
+  assert.equal(f.p.state.lines.value[0].quotedUnitPrice, '9.90');
+  assert.equal(f.p.state.lines.value[1].quotedUnitPrice, '9.90');
+  await f.p.state.checkout();
+  assert.equal(f.calls.submit.length, 1, '重报价完成后可直接结算，无价格冲突');
+  assert.equal(f.calls.submit[0].lines[0].quotedUnitPrice, '9.90');
 });
 
 test('旧会话与隐藏后的异步响应不污染当前页面', async () => {

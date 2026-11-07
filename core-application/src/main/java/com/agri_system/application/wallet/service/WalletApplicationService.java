@@ -33,6 +33,8 @@ public class WalletApplicationService {
     
     private static final int AUTH_CODE_LENGTH = 6;
     private static final java.security.SecureRandom AUTH_CODE_RANDOM = new java.security.SecureRandom();
+    /** 同一客户两次验证码发放的最小间隔（秒），发送频率限制 */
+    private static final long AUTH_CODE_SEND_INTERVAL_SECONDS = 60;
 
     /** 手动发放专用金的单次上限（元）；防误操作与无限增发，可按经营需要调整。 */
     private static final BigDecimal MAX_SINGLE_SPECIAL_FUND_GRANT = new BigDecimal("5000.00");
@@ -382,18 +384,22 @@ public class WalletApplicationService {
     }
 
     /**
-     * 生成并保存钱包验证码（用于小程序请求发送给客户）
+     * 生成并保存钱包验证码（由可信渠道下发，接口层不得回显原码）
      *
      * @param customerId 客户ID
      * @param orderId    关联订单ID（可选）
      * @param amount     支付金额（可选，存为参考）
      * @param expireMinutes 过期分钟
-     * @return 生成的6位验证码（注意：测试环境返回，生产可改为不直接返回）
+     * @return 生成的6位验证码（仅供可信发送渠道使用，禁止放入任何 API 响应）
      */
     @Transactional(rollbackFor = Exception.class)
     public String generateAndStoreWalletAuthCode(Long customerId, Long orderId, java.math.BigDecimal amount, int expireMinutes) {
-        String code = String.format(java.util.Locale.ROOT, "%0" + AUTH_CODE_LENGTH + "d", AUTH_CODE_RANDOM.nextInt(1_000_000));
         java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        if (walletAuthCodeRepository.countIssuedSince(customerId, now.minusSeconds(AUTH_CODE_SEND_INTERVAL_SECONDS)) > 0) {
+            throw new IllegalStateException("wallet-4001: 验证码发送过于频繁，请"
+                    + AUTH_CODE_SEND_INTERVAL_SECONDS + "秒后再试");
+        }
+        String code = String.format(java.util.Locale.ROOT, "%0" + AUTH_CODE_LENGTH + "d", AUTH_CODE_RANDOM.nextInt(1_000_000));
         java.time.LocalDateTime expireAt = now.plusMinutes(expireMinutes > 0 ? expireMinutes : 5);
         walletAuthCodeRepository.insertIssuedCode(customerId, orderId, code, amount != null ? amount : java.math.BigDecimal.ZERO, expireAt, now);
         logger.info("钱包授权码已生成，expireAt={}", expireAt);

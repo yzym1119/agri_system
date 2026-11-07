@@ -60,6 +60,13 @@ public class WalletAuthCodeRepositoryImpl implements WalletAuthCodeRepository {
     public int consumeAuthCode(Long customerId, String authCode, BigDecimal amount, Long orderId) {
         return mapper.consumeAuthCode(customerId, authCode, amount, orderId);
     }
+
+    @Override
+    public int countIssuedSince(Long customerId, LocalDateTime since) {
+        String sql = "SELECT COUNT(*) FROM wallet_auth_code WHERE customer_id = ? AND created_at >= ?";
+        Integer count = jdbcTemplate.queryForObject(sql, Integer.class, customerId, java.sql.Timestamp.valueOf(since));
+        return count != null ? count : 0;
+    }
 }
 
 

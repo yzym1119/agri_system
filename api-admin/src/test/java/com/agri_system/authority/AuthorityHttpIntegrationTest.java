@@ -358,7 +358,7 @@ class AuthorityHttpIntegrationTest {
 
     @Test void 最小收银可读专用目录但不能读管理商品和门店档案() throws Exception {
         businessPermission(101,"pos:order:create");
-        when(posCatalog.products(1,1000)).thenReturn(new com.mybatisflex.core.paginate.Page<>());
+        when(posCatalog.products(1,1000,null)).thenReturn(new com.mybatisflex.core.paginate.Page<>());
         when(posCatalog.categories()).thenReturn(List.of());
         String token=login(4);
         assertEquals(200,call(token,"GET","/api/admin/pos/catalog/products",null).path("code").asInt());

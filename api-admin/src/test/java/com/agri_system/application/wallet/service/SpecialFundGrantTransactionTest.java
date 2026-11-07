@@ -18,6 +18,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -59,12 +60,17 @@ class SpecialFundGrantTransactionTest {
                 .thenThrow(new IllegalStateException("台账写入失败"));
 
         var walletService = new WalletApplicationService(walletRepository, transactionRepository, null);
-        var grantService = new SpecialFundGrantService(walletService, benefitLogRepository);
+        com.agri_system.domain.customer.repository.SpecialFundGrantRequestRepository grantRequestRepository =
+                mock(com.agri_system.domain.customer.repository.SpecialFundGrantRequestRepository.class);
+        when(grantRequestRepository.find(eq("rk-tx"), eq(true))).thenReturn(Optional.of(
+                new com.agri_system.domain.customer.repository.SpecialFundGrantRequestRepository.GrantRequest(
+                        "rk-tx", 9L, new BigDecimal("50.00"), null, "PENDING")));
+        var grantService = new SpecialFundGrantService(walletService, benefitLogRepository, grantRequestRepository);
         var tx = new org.springframework.transaction.support.TransactionTemplate(
                 new com.mybatisflex.spring.FlexTransactionManager());
 
         assertThrows(IllegalStateException.class, () -> tx.execute(status -> {
-            grantService.grant(9L, new BigDecimal("50.00"), 7L, "活动补发");
+            grantService.grant(9L, new BigDecimal("50.00"), 7L, "活动补发", "rk-tx");
             return null;
         }));
         assertEquals(new BigDecimal("10.00"), jdbc.queryForObject(

@@ -282,11 +282,13 @@ public class CustomerAdminController {
         command.setCreatedBy(staffId);
         
         // 余额与权益台账由应用服务在同一事务写入，避免台账失败导致钱账不一致。
+        // requestKey 提供持久请求幂等：同一标识重复提交只发放一次。
         BigDecimal balance = specialFundGrantService.grant(
                 command.getCustomerId(),
                 command.getAmount(),
                 command.getCreatedBy(),
-                command.getRemark()
+                command.getRemark(),
+                command.getRequestKey()
         );
         
         Map<String, Object> result = new HashMap<>();

@@ -52,6 +52,9 @@ public interface ProductRepository {
                           java.time.LocalDateTime createdStartTime, java.time.LocalDateTime createdEndTime,
                           int pageNum, int pageSize);
 
+    /** 在架商品（status=1）按关键词模糊匹配编码/名称/条码的分页查询（POS 收银服务端搜索）。 */
+    Page<Product> findActiveByKeyword(String keyword, int pageNum, int pageSize);
+
     /**
      * 根据分类ID查询商品数量
      */

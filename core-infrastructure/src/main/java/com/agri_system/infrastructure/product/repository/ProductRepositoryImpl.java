@@ -141,7 +141,20 @@ public class ProductRepositoryImpl implements ProductRepository {
         }
         
         queryWrapper.orderBy("created_at DESC");
-        
+
+        return productMapper.paginate(pageNum, pageSize, queryWrapper);
+    }
+
+    @Override
+    public Page<Product> findActiveByKeyword(String keyword, int pageNum, int pageSize) {
+        String trimmed = keyword == null ? "" : keyword.trim();
+        QueryWrapper queryWrapper = QueryWrapper.create()
+                .where("status = ?", 1);
+        if (!trimmed.isEmpty()) {
+            String like = "%" + trimmed + "%";
+            queryWrapper.and("(code LIKE ? OR name LIKE ? OR COALESCE(barcode,'') LIKE ?)", like, like, like);
+        }
+        queryWrapper.orderBy("created_at DESC");
         return productMapper.paginate(pageNum, pageSize, queryWrapper);
     }
     

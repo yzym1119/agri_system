@@ -49,13 +49,16 @@ class SpecialFundGrantHttpTest {
     void malformedAmountsAreRejectedBeforeAnyWalletWrite() throws Exception {
         Fixture f = fixture();
         for (String body : new String[]{
-                "{\"amount\":1.00}",                       // 缺 customerId
-                "{\"customerId\":9}",                      // 缺 amount
-                "{\"customerId\":9,\"amount\":0}",         // 非正数
-                "{\"customerId\":9,\"amount\":-1.00}",
-                "{\"customerId\":9,\"amount\":0.001}",     // 超两位小数
-                "{\"customerId\":9,\"amount\":1.005}",
-                "{\"customerId\":9,\"amount\":1.00,\"remark\":\"" + "x".repeat(501) + "\"}"}) {
+                "{\"amount\":1.00,\"requestKey\":\"rk-1\"}",                       // 缺 customerId
+                "{\"customerId\":9,\"requestKey\":\"rk-1\"}",                            // 缺 amount
+                "{\"customerId\":9,\"amount\":0,\"requestKey\":\"rk-1\"}",               // 非正数
+                "{\"customerId\":9,\"amount\":-1.00,\"requestKey\":\"rk-1\"}",
+                "{\"customerId\":9,\"amount\":0.001,\"requestKey\":\"rk-1\"}",           // 超两位小数
+                "{\"customerId\":9,\"amount\":1.005,\"requestKey\":\"rk-1\"}",
+                "{\"customerId\":9,\"amount\":1.00,\"requestKey\":\"rk-1\",\"remark\":\"" + "x".repeat(501) + "\"}",
+                "{\"customerId\":9,\"amount\":1.00}",                                    // 缺 requestKey（幂等键必填）
+                "{\"customerId\":9,\"amount\":1.00,\"requestKey\":\"\"}",
+                "{\"customerId\":9,\"amount\":1.00,\"requestKey\":\"" + "x".repeat(65) + "\"}"}) {
             f.mvc().perform(post(URL).contentType(MediaType.APPLICATION_JSON).content(body))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.code").value(10001));
@@ -66,12 +69,12 @@ class SpecialFundGrantHttpTest {
     @Test
     void overLimitAmountIsRejectedByServiceGuardBeforeAnyWrite() throws Exception {
         Fixture f = fixture();
-        when(f.grant().grant(anyLong(), any(BigDecimal.class), any(), any()))
+        when(f.grant().grant(anyLong(), any(BigDecimal.class), any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("发放金额必须大于0、最多两位小数，且单次不超过5000.00元"));
         try (var stp = mockStatic(StpUtil.class)) {
             stp.when(StpUtil::getLoginIdAsString).thenReturn("STAFF_7");
             f.mvc().perform(post(URL).contentType(MediaType.APPLICATION_JSON)
-                            .content("{\"customerId\":9,\"amount\":5000.01}"))
+                            .content("{\"customerId\":9,\"amount\":5000.01,\"requestKey\":\"rk-1\"}"))
                     .andExpect(jsonPath("$.code").value(10001))
                     .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("5000.00")));
         }
@@ -81,18 +84,18 @@ class SpecialFundGrantHttpTest {
     @Test
     void validGrantDelegatesToSingleTransactionalServiceWithRealStaffIdentity() throws Exception {
         Fixture f = fixture();
-        when(f.grant().grant(eq(9L), any(BigDecimal.class), eq(7L), eq("活动补发")))
+        when(f.grant().grant(eq(9L), any(BigDecimal.class), eq(7L), eq("活动补发"), eq("rk-1")))
                 .thenReturn(new BigDecimal("100.00"));
         try (var stp = mockStatic(StpUtil.class)) {
             stp.when(StpUtil::getLoginIdAsString).thenReturn("STAFF_7");
             f.mvc().perform(post(URL).contentType(MediaType.APPLICATION_JSON)
-                            .content("{\"customerId\":9,\"amount\":100.00,\"remark\":\"活动补发\",\"createdBy\":999}"))
+                            .content("{\"customerId\":9,\"amount\":100.00,\"remark\":\"活动补发\",\"createdBy\":999,\"requestKey\":\"rk-1\"}"))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.success").value(true))
                     .andExpect(jsonPath("$.balance").value(100.00));
         }
         verify(f.grant()).grant(eq(9L), argThat(a -> a.compareTo(new BigDecimal("100.00")) == 0),
-                eq(7L), eq("活动补发"));
+                eq(7L), eq("活动补发"), eq("rk-1"));
         verifyNoInteractions(f.wallet(), f.benefitLog()); // Controller 不再直接写钱包或台账
     }
 }

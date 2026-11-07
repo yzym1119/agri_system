@@ -343,7 +343,36 @@ public class ProductApplicationService {
         voPage.setPageSize(productPage.getPageSize());
         voPage.setTotalRow(productPage.getTotalRow());
         voPage.setRecords(voList);
-        
+
+        return voPage;
+    }
+
+    /**
+     * 在架商品按关键词模糊分页（编码/名称/条码），供 POS 收银服务端搜索。
+     */
+    public Page<ProductDetailVO> queryActiveByKeyword(String keyword, int pageNum, int pageSize) {
+        if (keyword == null || keyword.trim().isEmpty()) {
+            throw new IllegalArgumentException("搜索关键词不能为空");
+        }
+        Page<Product> productPage = productRepository.findActiveByKeyword(keyword.trim(), pageNum, pageSize);
+        List<ProductDetailVO> voList = productPage.getRecords().stream()
+                .map(this::convertToDetailVO)
+                .collect(Collectors.toList());
+        voList.forEach(vo -> {
+            vo.setStrategyCount(0);
+            enrichUnitFields(vo, vo.getId());
+        });
+        voList.forEach(vo -> {
+            if (vo.getCategoryId() != null) {
+                categoryRepository.findById(vo.getCategoryId())
+                        .ifPresent(category -> vo.setCategoryName(category.getName()));
+            }
+        });
+        Page<ProductDetailVO> voPage = new Page<>();
+        voPage.setPageNumber(productPage.getPageNumber());
+        voPage.setPageSize(productPage.getPageSize());
+        voPage.setTotalRow(productPage.getTotalRow());
+        voPage.setRecords(voList);
         return voPage;
     }
     

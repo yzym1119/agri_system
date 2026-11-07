@@ -1,24 +1,27 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { onShow, onHide } from '@dcloudio/uni-app';
 import { staffAuth } from '../../services/auth';
-import { readCatalog, quoteProduct, submitSale } from '../../services/sale';
+import { readCatalog, searchCatalog, quoteProduct, submitSale } from '../../services/sale';
 import { posRecovery } from '../../services/pos-recovery';
 import { lineCents, type CatalogProduct, type SaleLine } from '@agri/mobile-contracts/sale';
 
 const products = ref<CatalogProduct[]>([]), lines = ref<SaleLine[]>([]), keyword = ref('');
+const searchResults = ref<CatalogProduct[]>([]);
+const searching = ref(false);
 const selected = ref<CatalogProduct | null>(null), quantity = ref('1');
 const paymentType = ref<1 | 6>(1), customerId = ref(''), deliveryType = ref<1 | 2>(1);
 const receiverName = ref(''), receiverPhone = ref(''), receiverAddress = ref(''), remark = ref('');
 const loading = ref(true), busy = ref(false), allowed = ref(false), blocked = ref(false);
 const message = ref(''), orderId = ref(''), epoch = ref(-1);
 let generation = 0, visible = false;
+/** 购物车现有明细的报价所依据的客户编号；客户变更后必须重新拉取全部报价。 */
+let quotedUnderCustomer = '';
+const requoting = ref(false);
 const cents = (value: number) => (value / 100).toFixed(2);
 const totalCents = computed(() => lines.value.reduce((sum, line) => sum + lineCents(line), 0));
-const filtered = computed(() => {
-  const key = keyword.value.trim().toLowerCase();
-  return key ? products.value.filter(p => p.name.toLowerCase().includes(key) || p.code.toLowerCase().includes(key)) : products.value;
-});
+/** 有关键词时展示服务端搜索结果，无关键词时展示完整目录首页。 */
+const filtered = computed(() => (keyword.value.trim() ? searchResults.value : products.value));
 const current = (ticket = generation) => visible && allowed.value && ticket === generation && staffAuth.current()?.epoch === epoch.value;
 
 async function reload() {
@@ -35,11 +38,37 @@ async function reload() {
   } finally { if (ticket === generation) loading.value = false; }
 }
 
+/** 服务端搜索（防抖）；商品超过目录首页 200 条时仍可通过编码/名称/条码找到。 */
+let searchSeq = 0, searchTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleSearch() {
+  if (searchTimer) clearTimeout(searchTimer);
+  const query = keyword.value.trim();
+  if (!query) { searchResults.value = []; searchSeq++; searching.value = false;
+    if (!products.value.length) message.value = ''; return; }
+  searchTimer = setTimeout(() => { void runSearch(query); }, 300);
+}
+async function runSearch(query: string) {
+  if (!current() || busy.value) return;
+  const seq = ++searchSeq;
+  searching.value = true;
+  try {
+    const list = await searchCatalog(query, epoch.value);
+    if (!current() || seq !== searchSeq) return;
+    searchResults.value = list;
+    if (!list.length) message.value = '没有匹配的商品，可尝试编码、名称或条码搜索。';
+  } catch {
+    if (current() && seq === searchSeq) message.value = '商品搜索失败，请检查网络后重试。';
+  } finally { if (seq === searchSeq) searching.value = false; }
+}
+watch(keyword, () => { if (current()) scheduleSearch(); });
+
 onShow(async () => {
   visible = true; const ticket = ++generation;
   loading.value = true; busy.value = false; allowed.value = false; blocked.value = false;
-  products.value = []; lines.value = []; selected.value = null; keyword.value = '';
+  products.value = []; searchResults.value = []; lines.value = []; selected.value = null; keyword.value = '';
+  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; } searchSeq++; searching.value = false;
   paymentType.value = 1; customerId.value = ''; deliveryType.value = 1;
+  quotedUnderCustomer = ''; requoting.value = false;
   receiverName.value = ''; receiverPhone.value = ''; receiverAddress.value = ''; remark.value = '';
   message.value = ''; orderId.value = '';
   try {
@@ -55,7 +84,8 @@ onShow(async () => {
   } catch { if (visible && ticket === generation) uni.reLaunch({ url: '/pages/login/index' }); }
   finally { if (ticket === generation) loading.value = false; }
 });
-onHide(() => { visible = false; generation++; allowed.value = false; });
+onHide(() => { visible = false; generation++; allowed.value = false;
+  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; } searchSeq++; searching.value = false; });
 
 function choose(product: CatalogProduct) {
   if (!current() || busy.value) return;
@@ -72,16 +102,39 @@ async function addLine() {
   }
   busy.value = true; message.value = '';
   try {
-    // 单价只取后端报价指纹，前端不推算、不兜底。
-    const quote = await quoteProduct(product.id, product.mainUnit, epoch.value);
+    // 单价只取后端报价指纹（含当前客户上下文），前端不推算、不兜底。
+    const quote = await quoteProduct(product.id, product.mainUnit, epoch.value, customerId.value.trim() || null);
     if (!current()) return;
     if (quote.saleUnit !== product.mainUnit) { message.value = '报价单位与商品主单位不一致，请重新进入本页。'; return; }
     lines.value = [...lines.value, { productId: product.id, name: product.name,
       unit: product.mainUnit, quantity: quantity.value, quotedUnitPrice: quote.suggestedUnitPrice }];
     selected.value = null; quantity.value = '1';
+    quotedUnderCustomer = customerId.value.trim();
   } catch { if (current()) message.value = '后端报价失败，已停止加入；请检查网络后重试。'; }
   finally { busy.value = false; }
 }
+
+/** 客户变更时按新客户上下文重新获取购物车全部报价，避免结算时后端重定价冲突。 */
+async function requoteAllLines() {
+  const customer = customerId.value.trim();
+  quotedUnderCustomer = customer;
+  if (!lines.value.length || !current() || busy.value || requoting.value) return;
+  requoting.value = true; message.value = '';
+  try {
+    const updated: SaleLine[] = [];
+    for (const line of lines.value) {
+      const quote = await quoteProduct(line.productId, line.unit, epoch.value, customer || null);
+      if (!current()) return;
+      if (quote.saleUnit !== line.unit) throw new Error('UNIT_MISMATCH');
+      updated.push({ ...line, quotedUnitPrice: quote.suggestedUnitPrice });
+    }
+    lines.value = updated;
+    message.value = '客户已变更，购物车单价已按后端最新报价更新；结算金额以后端确认为准。';
+  } catch {
+    if (current()) message.value = '客户变更后重新报价失败，请检查网络后重试，或移除商品后再结算。';
+  } finally { requoting.value = false; }
+}
+watch(customerId, () => { if (current()) void requoteAllLines(); });
 function removeLine(index: number) {
   if (!current() || busy.value) return;
   lines.value = lines.value.filter((_, i) => i !== index); message.value = '';
@@ -110,6 +163,8 @@ function validateOptions(): boolean {
 }
 async function checkout() {
   if (!current() || busy.value || blocked.value || !lines.value.length) return;
+  if (requoting.value) { message.value = '正在按最新客户重新报价，请稍候再结算。'; return; }
+  if (customerId.value.trim() !== quotedUnderCustomer) { void requoteAllLines(); return; }
   if (!validateOptions()) return;
   busy.value = true; message.value = ''; orderId.value = '';
   try {

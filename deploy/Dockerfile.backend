@@ -1,5 +1,7 @@
 # Backend Dockerfile - Multi-stage build
+# 通过 --build-arg MODULE 选择要打包的服务：api-admin（管理端，默认）或 api-client（客户端）
 FROM maven:3.9-eclipse-temurin-17 AS build
+ARG MODULE=api-admin
 WORKDIR /app
 COPY pom.xml .
 COPY api-admin/pom.xml api-admin/
@@ -9,10 +11,11 @@ COPY core-application/pom.xml core-application/
 COPY api-client/pom.xml api-client/
 RUN mvn dependency:go-offline -B
 COPY . .
-RUN mvn package -pl api-admin -am -DskipTests -B
+RUN mvn package -pl ${MODULE} -am -DskipTests -B
 
 FROM eclipse-temurin:17-jre-alpine
+ARG MODULE=api-admin
 WORKDIR /app
-COPY --from=build /app/api-admin/target/api-admin-*.jar app.jar
+COPY --from=build /app/${MODULE}/target/${MODULE}-*.jar app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-XX:+UseG1GC", "-Xms256m", "-Xmx512m", "-jar", "app.jar"]

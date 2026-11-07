@@ -21,6 +21,9 @@ public class InventoryErrorCode {
     
     /** 并发冲突，请稍后重试（锁失败） */
     public static final String CONCURRENT_CONFLICT = "inventory-2005";
+
+    /** 跨店库存写入被拒绝（员工只能操作本店） */
+    public static final String CROSS_STORE_FORBIDDEN = "inventory-2006";
     
     private InventoryErrorCode() {
         // 工具类，禁止实例化
