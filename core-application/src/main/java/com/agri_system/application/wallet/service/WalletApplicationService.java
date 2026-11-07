@@ -35,7 +35,7 @@ public class WalletApplicationService {
     private static final java.security.SecureRandom AUTH_CODE_RANDOM = new java.security.SecureRandom();
 
     /** 手动发放专用金的单次上限（元）；防误操作与无限增发，可按经营需要调整。 */
-    private static final BigDecimal MAX_SINGLE_SPECIAL_FUND_GRANT = new BigDecimal("10000.00");
+    private static final BigDecimal MAX_SINGLE_SPECIAL_FUND_GRANT = new BigDecimal("5000.00");
     
     /**
      * 扣减本金余额

@@ -65,13 +65,13 @@ class SpecialFundGrantHttpTest {
         Fixture f = fixture();
         // 服务层防线用真实实现语义模拟：超上限直接抛业务异常
         when(f.wallet().addSpecialFund(anyLong(), any(BigDecimal.class), anyString(), isNull(), any(), any()))
-                .thenThrow(new IllegalArgumentException("发放金额必须大于0、最多两位小数，且单次不超过10000.00元"));
+                .thenThrow(new IllegalArgumentException("发放金额必须大于0、最多两位小数，且单次不超过5000.00元"));
         try (var stp = mockStatic(StpUtil.class)) {
             stp.when(StpUtil::getLoginIdAsString).thenReturn("STAFF_7");
             f.mvc().perform(post(URL).contentType(MediaType.APPLICATION_JSON)
-                            .content("{\"customerId\":9,\"amount\":10000.01}"))
+                            .content("{\"customerId\":9,\"amount\":5000.01}"))
                     .andExpect(jsonPath("$.code").value(10001))
-                    .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("10000.00")));
+                    .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("5000.00")));
         }
         verifyNoInteractions(f.benefitLog());
     }

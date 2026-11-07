@@ -41,7 +41,8 @@ class SpecialFundGrantValidationTest {
         WalletApplicationService service = service();
         List<BigDecimal> invalid = List.of(
                 new BigDecimal("0"), new BigDecimal("-1.00"), new BigDecimal("0.001"),
-                new BigDecimal("1.005"), new BigDecimal("10000.01"), new BigDecimal("999999999.99"));
+                new BigDecimal("1.005"), new BigDecimal("5000.01"), new BigDecimal("10000.01"),
+                new BigDecimal("999999999.99"));
         assertThatThrownBy(() -> service.addSpecialFund(null, BigDecimal.ONE, "MANUAL_GRANT", null, 7L, null))
                 .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("客户ID");
         assertThatThrownBy(() -> service.addSpecialFund(9L, null, "MANUAL_GRANT", null, 7L, null))
@@ -60,19 +61,19 @@ class SpecialFundGrantValidationTest {
         when(walletRepository.save(any(CustomerWallet.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(transactionRepository.save(any(WalletTransaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-        BigDecimal result = service().addSpecialFund(9L, new BigDecimal("10000.00"),
+        BigDecimal result = service().addSpecialFund(9L, new BigDecimal("5000.00"),
                 "MANUAL_GRANT", null, 7L, "活动补发");
 
-        assertThat(result).isEqualByComparingTo("10000.00");
+        assertThat(result).isEqualByComparingTo("5000.00");
         verify(walletRepository, times(2)).save(any(CustomerWallet.class));
         var captor = org.mockito.ArgumentCaptor.forClass(WalletTransaction.class);
         verify(transactionRepository).save(captor.capture());
         WalletTransaction transaction = captor.getValue();
         assertThat(transaction.getWalletType()).isEqualTo(2);
         assertThat(transaction.getTransactionType()).isEqualTo(4);
-        assertThat(transaction.getAmount()).isEqualByComparingTo("10000.00");
+        assertThat(transaction.getAmount()).isEqualByComparingTo("5000.00");
         assertThat(transaction.getBalanceBefore()).isEqualByComparingTo("0");
-        assertThat(transaction.getBalanceAfter()).isEqualByComparingTo("10000.00");
+        assertThat(transaction.getBalanceAfter()).isEqualByComparingTo("5000.00");
         assertThat(transaction.getReferenceType()).isEqualTo("MANUAL_GRANT");
         assertThat(transaction.getRemark()).isEqualTo("活动补发");
     }
