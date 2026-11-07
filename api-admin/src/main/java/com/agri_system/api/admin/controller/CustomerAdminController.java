@@ -6,6 +6,7 @@ import com.agri_system.application.customer.dto.*;
 import com.agri_system.application.customer.dto.query.*;
 import com.agri_system.application.customer.dto.vo.*;
 import com.agri_system.application.customer.service.CustomerApplicationService;
+import com.agri_system.application.customer.service.SpecialFundGrantService;
 import com.agri_system.application.customer.service.WalletRechargeService;
 import com.agri_system.application.wallet.service.WalletApplicationService;
 import com.agri_system.domain.coupon.model.CustomerCoupon;
@@ -41,6 +42,7 @@ public class CustomerAdminController {
     private final CustomerApplicationService customerService;
     private final WalletRechargeService rechargeService;
     private final WalletApplicationService walletService;
+    private final SpecialFundGrantService specialFundGrantService;
     private final CouponTemplateRepository couponTemplateRepository;
     private final CustomerCouponRepository couponRepository;
     private final CustomerDomainService customerDomainService;
@@ -279,24 +281,13 @@ public class CustomerAdminController {
         }
         command.setCreatedBy(staffId);
         
-        BigDecimal balance = walletService.addSpecialFund(
-                command.getCustomerId(), 
+        // 余额与权益台账由应用服务在同一事务写入，避免台账失败导致钱账不一致。
+        BigDecimal balance = specialFundGrantService.grant(
+                command.getCustomerId(),
                 command.getAmount(),
-                "MANUAL_GRANT",
-                null,
                 command.getCreatedBy(),
                 command.getRemark()
         );
-        
-        // 记录权益流水
-        CustomerBenefitLog benefitLog = new CustomerBenefitLog();
-        benefitLog.setCustomerId(command.getCustomerId());
-        benefitLog.setSourceType(3); // 3-手动发放
-        benefitLog.setBenefitContent("专用金¥" + command.getAmount());
-        benefitLog.setAssociatedId(null);
-        benefitLog.setCreatedBy(staffId);
-        benefitLog.setCreatedAt(java.time.LocalDateTime.now());
-        benefitLogRepository.save(benefitLog);
         
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
