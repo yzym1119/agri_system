@@ -18,7 +18,7 @@ async function fixture(permissions = ['pos:order:create']) {
     '../../services/sale': {
       readCatalog: async () => { calls.catalog++; return catalog; },
       quoteProduct: async (id, unit) => { calls.quote.push({ id, unit }); return typeof priceQuote === 'function' ? priceQuote() : priceQuote; },
-      submitSale: async (lines, epoch) => { calls.submit.push({ lines, epoch }); return submit(); },
+      submitSale: async (lines, epoch, options) => { calls.submit.push({ lines, epoch, options }); return submit(); },
     },
     '../../services/pos-recovery': { posRecovery: { restore: () => restore } },
     '@agri/mobile-contracts/sale': sale,
@@ -89,6 +89,31 @@ test('存在未核对的原请求时禁止新开单', async () => {
   assert.equal(f.calls.catalog, 0);
   await f.p.state.checkout(); assert.equal(f.calls.submit.length, 0);
   assert.match(f.p.state.message.value, /上次收银/);
+});
+
+test('赊销缺客户、门店配送缺收货信息都阻止提交', async () => {
+  const f = await fixture(); await f.p.hooks.show();
+  f.p.state.choose(product); await f.p.state.addLine();
+  f.p.state.paymentType.value = 6; await f.p.state.checkout();
+  assert.equal(f.calls.submit.length, 0); assert.match(f.p.state.message.value, /客户编号/);
+  f.p.state.paymentType.value = 1; f.p.state.deliveryType.value = 2; await f.p.state.checkout();
+  assert.equal(f.calls.submit.length, 0); assert.match(f.p.state.message.value, /收货/);
+});
+
+test('完整结算与配送选项原样传给服务层，本页仍不带金额', async () => {
+  const f = await fixture(); await f.p.hooks.show();
+  f.p.state.choose(product); await f.p.state.addLine();
+  f.p.state.paymentType.value = 6; f.p.state.customerId.value = '77';
+  f.p.state.deliveryType.value = 2; f.p.state.receiverName.value = '张三';
+  f.p.state.receiverPhone.value = '13800000000'; f.p.state.receiverAddress.value = '测试地址';
+  f.p.state.remark.value = '备注';
+  await f.p.state.checkout();
+  assert.equal(f.calls.submit.length, 1);
+  const options = f.calls.submit[0].options;
+  assert.equal(options.paymentType, 6); assert.equal(options.customerId, '77');
+  assert.equal(options.deliveryType, 2); assert.equal(options.receiverName, '张三');
+  assert.equal(options.receiverAddress, '测试地址'); assert.equal(options.remark, '备注');
+  assert.ok(!('amount' in options) && !('totalCents' in options));
 });
 
 test('旧会话与隐藏后的异步响应不污染当前页面', async () => {

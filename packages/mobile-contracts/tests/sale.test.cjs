@@ -50,6 +50,29 @@ test('本机摘要只保留可核对事实，提交命令不含任何成交金�
   assert.throws(() => sale.buildSaleCommand('k', { ...actor, staffId: '0' }, [line]), /UNAUTHORIZED/);
 });
 
+test('第二阶段：赊销必须有客户、配送必须有完整收货信息，命令只带白名单字段', () => {
+  assert.deepEqual(sale.resolveSaleOptions().paymentType, 1);
+  assert.throws(() => sale.resolveSaleOptions({ paymentType: 6 }), /CUSTOMER_REQUIRED/);
+  assert.throws(() => sale.resolveSaleOptions({ paymentType: 4 }), /PAYMENT_INVALID/);
+  assert.throws(() => sale.resolveSaleOptions({ customerId: '0' }), /CUSTOMER_INVALID/);
+  assert.throws(() => sale.resolveSaleOptions({ deliveryType: 2 }), /RECEIVER_REQUIRED/);
+  assert.throws(() => sale.resolveSaleOptions({ deliveryType: 3 }), /DELIVERY_INVALID/);
+  assert.throws(() => sale.resolveSaleOptions({ remark: 'x'.repeat(201) }), /REMARK_INVALID/);
+  const options = sale.resolveSaleOptions({ paymentType: 6, customerId: '77', deliveryType: 2,
+    receiverName: '张三', receiverPhone: '13800000000', receiverAddress: '测试地址', remark: '备注' });
+  const summary = sale.toSaleSummary([line], options);
+  assert.equal(summary.paymentMethod, 6); assert.equal(summary.customerId, '77');
+  const command = sale.buildSaleCommand('k', actor, [line], options);
+  assert.equal(command.paymentType, 6); assert.equal(command.customerId, '77');
+  assert.equal(command.deliveryType, 2); assert.equal(command.receiverName, '张三');
+  assert.equal(command.receiverPhone, '13800000000'); assert.equal(command.receiverAddress, '测试地址');
+  assert.equal(command.remark, '备注');
+  assert.ok(!('amount' in command) && !('payments' in command)
+    && !('discountAmount' in command) && !('receiveAmount' in command));
+  assert.throws(() => sale.buildSaleCommand('k', actor, [line], { paymentType: 6 }), /CUSTOMER_REQUIRED/);
+  assert.throws(() => sale.buildSaleCommand('k', actor, [line], { deliveryType: 2 }), /RECEIVER_REQUIRED/);
+});
+
 test('订单号守卫只接受可规范化为正长整型的裸值', () => {
   assert.equal(sale.isOrderId(900), true);
   assert.equal(sale.isOrderId('900'), true);
