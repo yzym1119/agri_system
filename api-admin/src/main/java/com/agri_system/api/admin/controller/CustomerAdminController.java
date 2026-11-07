@@ -303,6 +303,17 @@ public class CustomerAdminController {
     @Operation(summary = "手动调账", description = "调整客户本金余额")
     @SaCheckPermission("customer:balance:grant")
     public ResponseEntity<Map<String, Object>> grantBalance(@Valid @RequestBody GrantBalanceCommand command) {
+        // 操作人一律取当前登录员工，禁止客户端指定审计归属
+        String loginId = StpUtil.getLoginIdAsString();
+        Long staffId = null;
+        if (loginId != null && loginId.startsWith("STAFF_")) {
+            try {
+                staffId = Long.parseLong(loginId.substring("STAFF_".length()));
+            } catch (NumberFormatException e) {
+                // 忽略解析错误
+            }
+        }
+        command.setCreatedBy(staffId);
         BigDecimal balance;
         if (command.getAmount().compareTo(BigDecimal.ZERO) > 0) {
             // 增加

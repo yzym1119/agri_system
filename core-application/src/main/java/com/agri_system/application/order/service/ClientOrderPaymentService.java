@@ -85,7 +85,9 @@ public class ClientOrderPaymentService {
 
     /**
      * 生成外部支付发起信息（小程序）
+     * 旧意图失效与新意图落库必须同事务，避免出现旧意图已不可用、新意图未创建的中间态。
      */
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public OrderExternalPaymentIntentVO createExternalPaymentIntent(OrderPayCommand command, Long customerId) {
         Order order = loadPendingCustomerOrder(command.getOrderId(), customerId);
         OrderPayPreviewVO preview = buildClientPaymentPreview(order, command);

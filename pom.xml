@@ -93,6 +93,20 @@
                 </configuration>
             </plugin>
             <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <version>4.8.6.6</version>
+                <configuration>
+                    <effort>Max</effort>
+                    <!-- Medium 309 项以 EI_EXPOSE_REP/2 构造注入与 VO List 透传噪声为主，
+                         作为技术债跟踪（docs/reviews/2026-11-07-外部评审核实与修复计划.md），
+                         CI 仅对高置信度缺陷设卡。 -->
+                    <threshold>High</threshold>
+                    <excludeFilterFile>${maven.multiModuleProjectDirectory}/config/spotbugs-exclude.xml</excludeFilterFile>
+                    <failOnError>true</failOnError>
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>

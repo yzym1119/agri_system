@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SpotBugs 精确豁免清单：每一条都必须写明理由，禁止大面积豁免。
+-->
+<FindBugsFilter xmlns="https://github.com/spotbugs/filter" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                xsi:schemaLocation="https://github.com/spotbugs/filter https://raw.githubusercontent.com/spotbugs/spotbugs/master/etc/findbugsFilter.xsd">
+
+    <!-- Spring 单例组件向静态持有者注入仓库，供静态工具方法（CurrentUser.staffId 等）读取；
+         该类仅在启动期由 Spring 容器赋值一次，属刻意设计。 -->
+    <Match>
+        <Class name="com.agri_system.application.auth.util.CurrentUser"/>
+        <Bug pattern="ST_WRITE_TO_STATIC_FROM_INSTANCE_METHOD"/>
+    </Match>
+
+    <!-- 订单详情对可选商品字段做反射增强，找不到 getter/取值失败时按设计静默降级（非错误路径）。 -->
+    <Match>
+        <Class name="~com\.agri_system\.application\.order\.service\.OrderQueryService(\$[0-9]+)?"/>
+        <Bug pattern="DE_MIGHT_IGNORE"/>
+    </Match>
+</FindBugsFilter>
