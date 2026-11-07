@@ -2,8 +2,6 @@ package com.agri_system.infrastructure.storage.repository;
 
 import com.agri_system.domain.storage.FileStorageRepository;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -15,12 +13,9 @@ import java.nio.file.StandardCopyOption;
 /**
  * 本地文件存储（开发环境 fallback）
  *
- * 当阿里云 OSS 未配置密钥时自动启用。
- * 文件保存在系统临时目录下的 agri-uploads/ 子目录中。
+ * 由 AliyunOssConfig 在未配置 OSS 时注册，文件保存在系统临时目录下的 agri-uploads/ 子目录中。
  */
 @Slf4j
-@Component
-@ConditionalOnMissingBean(name = "aliyunOssFileStorageRepository")
 public class LocalFileStorageRepository implements FileStorageRepository {
 
     private static final String UPLOAD_DIR = "agri-uploads";
