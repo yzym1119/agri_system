@@ -37,8 +37,9 @@ npm --prefix mini-staff run build:mp-weixin      # 产物 dist/build/mp-weixin�
 **该文件是构建产物、不在 git 跟踪内**，改它不会污染源码；每次重新构建后需要再改一次
 （或把测试号写进开发者工具的项目设置，由工具持久化）。
 
-本机后端当前实例端口见启动日志 `Tomcat started on port ...`（Spring Boot 未配置固定端口，
-每次启动会变）。要固定端口请这样启动，并同步改 `.env.local`：
+本机后端当前**固定为 8080**（`.env.local` 已写 `http://127.0.0.1:8080`）。
+不要使用随机端口：曾出现 Electron 进程抢占 IPv4 同端口导致 HTTP 请求被别的服务应答的冲突。
+启动命令（端口固定，避开冲突）：
 
 ```bash
 cd /Users/yzym/project/agri_system
