@@ -153,7 +153,7 @@ class InventoryRiskServiceTest {
                 null,
                 new com.agri_system.application.order.service.PosOrderCreationService(orderRepository, itemRepository, paymentRepository, deliveryRepository, orderDomainService, paymentService, inventoryService, walletService, creditService, productRepository, productPricingService, org.mockito.Mockito.mock(com.agri_system.application.productpackage.service.PackagePricingService.class), staffRepository, customerRepository, eventPublisher, walletAuthCodeRepository, new PickupFulfillmentService(allocationRepository, pickupRequestRepository, locationRepository, receiptBatchRepository,
                         orderRepository, itemRepository, productRepository, afterSalesRepository,
-                        org.mockito.Mockito.mock(org.springframework.jdbc.core.JdbcTemplate.class),staffRepository), manualPriceAuditService),
+                        org.mockito.Mockito.mock(com.agri_system.domain.order.query.PickupEvidenceQuery.class),staffRepository), manualPriceAuditService),
                 null,
                 null,
                 null);

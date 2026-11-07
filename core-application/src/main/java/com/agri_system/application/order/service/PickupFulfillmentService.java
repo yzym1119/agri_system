@@ -14,6 +14,7 @@ import com.agri_system.domain.order.repository.OrderItemBatchAllocationRepositor
 import com.agri_system.domain.order.repository.OrderItemRepository;
 import com.agri_system.domain.order.repository.OrderPickupRequestRepository;
 import com.agri_system.domain.order.repository.OrderRepository;
+import com.agri_system.domain.order.query.PickupEvidenceQuery;
 import com.agri_system.domain.product.model.Product;
 import com.agri_system.domain.product.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
@@ -43,7 +44,7 @@ public class PickupFulfillmentService {
     private final ProductRepository productRepository;
 
     private final com.agri_system.domain.after_sales.repository.AfterSalesRepository afterSalesRepository;
-    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private final PickupEvidenceQuery pickupEvidence;
     private final com.agri_system.domain.store.repository.StaffRepository staffRepository;
 
     /** 货架无货或选择库房取货时创建后仓拣货请求。 */
@@ -174,9 +175,7 @@ public class PickupFulfillmentService {
             InventoryReceiptBatch batch = batchesById.get(allocation.getBatchId());
             line.setInternalReceiptBatchNo(batch == null ? null : batch.getInternalReceiptBatchNo());
             if (batch != null && batch.getBaseUnitId() != null) {
-                var names = jdbc.queryForList("SELECT unit_name FROM product_unit WHERE id=? AND product_id=? AND is_base_unit=1",
-                        String.class, batch.getBaseUnitId(), batch.getProductId());
-                line.setBaseUnitName(names.size() == 1 ? names.get(0) : null);
+                line.setBaseUnitName(pickupEvidence.findBaseUnitName(batch.getBaseUnitId(), batch.getProductId()));
             }
             line.setLocationId(allocation.getLocationId());
             InventoryLocation actualLocation = locationsById.get(allocation.getLocationId());
@@ -305,18 +304,8 @@ public class PickupFulfillmentService {
         if (allocations.isEmpty()) return new RemainingEvidence(Map.of(), Set.of());
         List<Long> sourceIds = allocations.stream().map(OrderItemBatchAllocation::getSourceMovementId).filter(java.util.Objects::nonNull).distinct().toList();
         List<Long> allocationIds = allocations.stream().map(OrderItemBatchAllocation::getId).toList();
-        String saleSlots = sourceIds.isEmpty() ? "NULL" : String.join(",", java.util.Collections.nCopies(sourceIds.size(), "?"));
-        String returnSlots = String.join(",", java.util.Collections.nCopies(allocationIds.size(), "?"));
-        List<Object> args = new java.util.ArrayList<>(sourceIds);args.addAll(allocationIds);
         // 售后能力与移动事实一次批查，避免工作项逐行回查。
-        List<Map<String, Object>> movements = jdbc.queryForList("""
-                SELECT m.*, CASE WHEN m.reference_type='ORDER' AND EXISTS
-                  (SELECT 1 FROM after_sales af WHERE af.order_id=m.reference_id AND af.status IN (10,40))
-                  THEN 1 ELSE 0 END AS processing_after_sales
-                FROM inventory_movement m WHERE m.id IN (%s)
-                  OR (m.movement_type='RETURN' AND m.reference_type='SALE_ALLOCATION'
-                      AND m.reference_id IN (%s) AND m.base_quantity > 0)
-                """.formatted(saleSlots, returnSlots), args.toArray());
+        List<Map<String, Object>> movements = pickupEvidence.findMovements(sourceIds, allocationIds);
         Map<Long, Map<String, Object>> byId = new java.util.HashMap<>();
         Set<Long> processing = new java.util.HashSet<>();
         for (Map<String, Object> movement : movements) {

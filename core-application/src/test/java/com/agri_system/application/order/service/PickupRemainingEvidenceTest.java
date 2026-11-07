@@ -2,6 +2,7 @@ package com.agri_system.application.order.service;
 
 import com.agri_system.application.order.dto.command.PickupFulfillmentCommand;
 import com.agri_system.domain.after_sales.repository.AfterSalesRepository;
+import com.agri_system.infrastructure.order.query.PickupEvidenceQueryImpl;
 import com.agri_system.domain.inventory.repository.InventoryLocationRepository;
 import com.agri_system.domain.inventory.repository.InventoryReceiptBatchRepository;
 import com.agri_system.domain.order.model.*;
@@ -46,9 +47,10 @@ class PickupRemainingEvidenceTest {
         var colleague = new com.agri_system.domain.store.model.Staff();
         colleague.setId(8L); colleague.setStoreId(3L); colleague.setStatus(1);
         lenient().when(staff.findIdentityById(8L)).thenReturn(Optional.of(colleague));
+        // 真实 H2 SQL 仍由唯一查询实现执行，改前/改后的证据链断言口径不变。
         service = new PickupFulfillmentService(allocations, requests, mock(InventoryLocationRepository.class),
                 mock(InventoryReceiptBatchRepository.class), orders, mock(OrderItemRepository.class),
-                mock(ProductRepository.class), afterSales, jdbc,staff);
+                mock(ProductRepository.class), afterSales, new PickupEvidenceQueryImpl(jdbc),staff);
         request = new OrderPickupRequest(); request.setId(60L);request.setOrderId(50L);request.setOrderItemId(90L);
         request.setStoreId(3L);request.setProductId(99L);request.setRequestedBaseQuantity(new BigDecimal("2"));request.setStatus("PENDING");
         order = new Order();order.setId(50L);order.setStoreId(3L);order.setOrderStatus(9);

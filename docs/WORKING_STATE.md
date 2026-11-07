@@ -1,6 +1,6 @@
 # 当前开发状态
 
-最后更新：2026-11-04
+最后更新：2026-11-07
 
 ## 用途
 
@@ -8,6 +8,8 @@
 不要把历史交付文档当成当前状态，历史资料仅用于追溯背景。
 
 ## 当前判断
+
+- **2026-11-07清单B3提货证据查询收口：**按11-04核查记录的前置条件，把`PickupFulfillmentService`两处只读SQL（基准单位名、原SALE/同分配正RETURN移动事实+处理中售后派生列）提取为domain `PickupEvidenceQuery`与infra唯一实现；应用服务改注入端口，删除JdbcTemplate字段与局部SQL拼装。SQL text block、单位名SQL、IN占位符及参数顺序程序化比对逐字一致；服务全文反向还原4处预期改动后与HEAD完全一致，业务规则/订单锁/READ_COMMITTED/交付资格与剩余量算法零改动。改前46项、改后原有46项+新增真实H2基线4项全绿；完整Java17 clean verify含真实MySQL与权限套141报告925项零失败错误跳过、报告门禁通过；前端未改281/281。不新增表/字段/迁移，不改库存写入锁事务、部署与前端。应用层JdbcTemplate从8个涉及文件收敛到2个（InventoryLedgerService库存账本核心、JdbcAccessConfig必要连接适配，均为11-04确认保留），B3无待办代码边界。同日已把11-04的两个提交推送master（3702bc7..7d43de9）。详见docs/reviews/2026-11-07-提货证据查询边界收口.md；下一步为B1证据驱动评估（不机械替换）与D组业务决策项（专用金D1、渠道层D2、真实支付D4、远端CI A2）。
 
 - **2026-11-04清单B3剩余JDBC职责核查收口：**只读核查应用层最后3个JdbcTemplate文件。JdbcAccessConfig为必要Flex同连接/隔离级别适配保留；InventoryLedgerService 13处为库存账本核心，全部写入入口统一先balances.lockStock经MyBatis锁inventory行，JDBC FOR UPDATE为同事务同锁行的再次获取，无双账双锁实证，保留现状证据驱动再收敛；PickupFulfillmentService两处只读（基准单位名、移动事实+售后处理批查）可提取但属提货证据链，留独立子项不顺手拆。应用层JDBC从8文件收敛到3（2保留+1待议）。同日确认钱包授权码子项3/3通过并补提交（a8e760b）、前端281/281及构建通过。无生产代码/SQL/事务/锁变更。详见docs/reviews/2026-11-04-B3剩余JDBC边界职责核查.md；下一步为D组业务决策项（专用金、渠道层、真实支付）与B4门面残余import清理等低优先项。
 

@@ -126,7 +126,7 @@ class PickupFulfillmentServiceTest {
     @Mock
     private AfterSalesRepository afterSalesRepository;
     @Mock
-    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private com.agri_system.domain.order.query.PickupEvidenceQuery pickupEvidence;
     @Mock
     private AfterSalesItemRepository afterSalesItemRepository;
     @Mock
@@ -159,12 +159,12 @@ class PickupFulfillmentServiceTest {
         pickupRequestRepository = new InMemoryPickupRequestRepository();
         fulfillmentService = new PickupFulfillmentService(
                 allocationRepository, pickupRequestRepository, locationRepository, receiptBatchRepository,
-                orderRepository, itemRepository, productRepository, afterSalesRepository, jdbc,staffRepository);
+                orderRepository, itemRepository, productRepository, afterSalesRepository, pickupEvidence,staffRepository);
         var actor=new Staff();actor.setId(STAFF_ID);actor.setStoreId(STORE_ID);actor.setStatus(1);
         org.mockito.Mockito.lenient().when(staffRepository.findIdentityById(STAFF_ID)).thenReturn(Optional.of(actor));
         org.mockito.Mockito.lenient().when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
-        org.mockito.Mockito.lenient().when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.any(Object[].class))).thenAnswer(invocation -> saleMovementRows());
+        org.mockito.Mockito.lenient().when(pickupEvidence.findMovements(org.mockito.ArgumentMatchers.anyList(),
+                org.mockito.ArgumentMatchers.anyList())).thenAnswer(invocation -> saleMovementRows());
         orderService = new OrderApplicationService(
                 null,
                 null,
@@ -185,8 +185,8 @@ class PickupFulfillmentServiceTest {
         com.agri_system.domain.after_sales.model.AfterSales finished = new com.agri_system.domain.after_sales.model.AfterSales();
         finished.setStatus(50);
         org.mockito.Mockito.lenient().when(afterSalesRepository.findByOrderId(ORDER_ID)).thenReturn(List.of(finished));
-        org.mockito.Mockito.lenient().when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.any(Object[].class))).thenReturn(List.of(
+        org.mockito.Mockito.lenient().when(pickupEvidence.findMovements(org.mockito.ArgumentMatchers.anyList(),
+                org.mockito.ArgumentMatchers.anyList())).thenReturn(List.of(
                 saleMovement(allocations.get(0)), saleMovement(allocations.get(1)),
                 returnMovement(allocations.get(0), BigDecimal.ONE)));
         List<OrderItemBatchAllocation> result = fulfillmentService.fulfill(requestId,
@@ -486,7 +486,7 @@ class PickupFulfillmentServiceTest {
         org.mockito.Mockito.lenient().when(itemRepository.findByIdForUpdate(ITEM_ID)).thenReturn(Optional.of(orderItem()));
         org.mockito.Mockito.lenient().when(orderRepository.findByIdForUpdate(ORDER_ID)).thenReturn(Optional.of(order()));
         when(orderRepository.findByIds(Collections.singleton(ORDER_ID))).thenReturn(List.of(order()));
-        when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(Object[].class)))
+        when(pickupEvidence.findMovements(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.anyList()))
                 .thenReturn(List.of(saleMovement(assigned.get(0)), saleMovement(assigned.get(1)),
                         returnMovement(assigned.get(0), new BigDecimal("5"))));
         PickupWorkItemVO item = fulfillmentService.listPickupRequests(STORE_ID,"PENDING").get(0);
@@ -522,7 +522,7 @@ class PickupFulfillmentServiceTest {
     void returnedSaleCannotBeHandedOverEvenWhenOrderAndAfterSalesReadShowOldState() {
         Long request = prepareSoldRequest();
         OrderItemBatchAllocation a = allocationRepository.findByOrderItemId(ITEM_ID).get(0);
-        when(jdbc.queryForList(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(Object[].class)))
+        when(pickupEvidence.findMovements(org.mockito.ArgumentMatchers.anyList(), org.mockito.ArgumentMatchers.anyList()))
                 .thenReturn(List.of(saleMovement(a), returnMovement(a, a.getAllocatedBaseQuantity())));
         assertThrows(IllegalStateException.class, () -> fulfillmentService.fulfill(request, confirmedBatch(BATCH_ID, BACKROOM_LOCATION_ID), STAFF_ID));
         assertPending(request);
