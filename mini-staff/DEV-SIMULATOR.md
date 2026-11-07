@@ -16,18 +16,35 @@
 
 ## 一、构建并配置测试号
 
+先跑自动验证（任何改动后都建议先跑）：
+
 ```bash
-npm --prefix packages/mobile-contracts ci --ignore-scripts
-npm --prefix mini-staff ci --ignore-scripts
-npm --prefix mini-staff test              # 页面自动测试
+npm --prefix packages/mobile-contracts test
+npm --prefix mini-staff test
 npm --prefix mini-staff run type-check
-npm --prefix mini-staff run build:mp-weixin
 ```
 
-构建产物 `mini-staff/dist/build/mp-weixin/project.config.json` 会带 `appid: "touristappid"`。
+**联调本机/服务器 HTTP 必须用 dev 构建**——`services/auth.ts` 只在 `import.meta.env.DEV` 下
+允许 localhost / 内网 HTTP，生产构建只接受 HTTPS 源站：
+
+```bash
+npm --prefix mini-staff run dev:mp-weixin        # 产物 dist/dev/mp-weixin，连本机/内网 HTTP
+npm --prefix mini-staff run build:mp-weixin      # 产物 dist/build/mp-weixin，仅 HTTPS 正式源站
+```
+
+构建产物的 `project.config.json` 会带 `appid: "touristappid"`。
 导入开发者工具前，把该文件的 `appid` 改成测试号 `wxa4ce54aa69b2c3fc`。
 **该文件是构建产物、不在 git 跟踪内**，改它不会污染源码；每次重新构建后需要再改一次
 （或把测试号写进开发者工具的项目设置，由工具持久化）。
+
+本机后端当前实例端口见启动日志 `Tomcat started on port ...`（Spring Boot 未配置固定端口，
+每次启动会变）。要固定端口请这样启动，并同步改 `.env.local`：
+
+```bash
+cd /Users/yzym/project/agri_system
+set -a && source .env && set +a
+SERVER_PORT=8080 JAVA_HOME=/opt/homebrew/opt/openjdk@17 ./mvnw -B -q -pl api-admin spring-boot:run
+```
 
 ## 二、配置后端地址
 
@@ -54,7 +71,8 @@ VITE_API_BASE_URL=http://<服务器IP>:<端口>
 ## 三、导入与联调
 
 ```bash
-"/Applications/wechatwebdevtools.app/Contents/MacOS/cli" open --project /Users/yzym/project/agri_system/mini-staff/dist/build/mp-weixin
+"/Applications/wechatwebdevtools.app/Contents/MacOS/cli" open --project /Users/yzym/project/agri_system/mini-staff/dist/dev/mp-weixin
+# 若连 HTTPS 正式源站，改为 dist/build/mp-weixin
 ```
 
 模拟器里可完整开发/联调：

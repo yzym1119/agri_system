@@ -7,6 +7,8 @@ const canRecover = ref(false),canQueryInventory=ref(false),canReceive=ref(false)
 let epoch = 0;
 const openDeviceCheck = () => uni.navigateTo({ url: '/pages/device-check/index' });
 const openRecovery = () => uni.navigateTo({ url:'/pages/recovery/index' });
+const openSale = () => uni.navigateTo({ url: '/pages/sale/index' });
+const canSale = ref(false);
 const openInventory = () => uni.navigateTo({ url:'/pages/scan/index' });
 const openReceiving = () => uni.navigateTo({url:'/pages/receipt/list/index'});
 const openDelivery = () => uni.navigateTo({url:'/pages/delivery/list/index'});
@@ -15,7 +17,7 @@ const openPickup=()=>uni.navigateTo({url:'/pages/pickup/list/index'});
 onShow(async () => {
   const current = ++epoch;
   checking.value = true; error.value = ''; name.value = ''; store.value = '';
-  canRecover.value = false;canQueryInventory.value=false;canReceive.value=false;canDeliver.value=false;
+  canRecover.value = false;canSale.value=false;canQueryInventory.value=false;canReceive.value=false;canDeliver.value=false;
   canPickup.value=false;
   try {
     await staffAuth.refresh();
@@ -24,6 +26,7 @@ onShow(async () => {
     if (!actor) throw Error('UNAUTHORIZED');
     name.value = actor.name; store.value = actor.storeId;
     canRecover.value = actor.permissions.includes('*') || actor.permissions.includes('pos:order:create');
+    canSale.value = canRecover.value;
     canQueryInventory.value=actor.permissions.includes('*')||actor.permissions.includes('inventory:view');
     canReceive.value=actor.permissions.includes('*')||actor.permissions.includes('purchase:inbound');
     canDeliver.value=actor.permissions.includes('*')||actor.permissions.includes('order:delivery:assigned');
@@ -54,6 +57,7 @@ async function logout() {
       <button v-if="canPickup" class="primary" @click="openPickup">库房提货任务</button>
       <button v-if="canQueryInventory" class="primary" @click="openInventory">扫码 / 搜索查货</button>
       <button class="primary" @click="openDeviceCheck">检查手机设备</button>
+      <button v-if="canSale" class="primary" @click="openSale">移动开单（按后端报价）</button>
       <button v-if="canRecover" @click="openRecovery">核对上次收银</button>
       <button @click="logout">退出登录</button>
     </template>

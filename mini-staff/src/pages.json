@@ -49,6 +49,12 @@
       }
     },
     {
+      "path": "pages/sale/index",
+      "style": {
+        "navigationBarTitleText": "移动开单"
+      }
+    },
+    {
       "path": "pages/recovery/index",
       "style": {
         "navigationBarTitleText": "核对上次收银"
