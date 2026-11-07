@@ -42,6 +42,8 @@ class InventoryCrossStoreBoundaryTest {
     @Mock private InventoryTransferOrderDetailRepository transferOrderDetailRepository;
     @Mock private StoreRepository storeRepository;
     @Mock private ProductRepository productRepository;
+    @Mock private com.agri_system.domain.inventory.repository.InventoryLocationRepository locationRepository;
+    @Mock private com.agri_system.domain.inventory.repository.InventoryReceiptBatchRepository receiptBatchRepository;
     @InjectMocks private InventoryApplicationService service;
 
     private static final Long OWN_STORE = 3L;
@@ -113,5 +115,61 @@ class InventoryCrossStoreBoundaryTest {
         loginStaff(null, true);
         service.adjust(adjust(OTHER_STORE), 8L);
         verify(ledger).adjust(any(InventoryAdjustCommand.class), eq(8L));
+    }
+
+    @Test void 员工身份失效时库存写操作一律拒绝failClosed() {
+        // 已登录员工但身份读取失败（被禁用/删除/角色数据异常）→ 不再静默放行
+        currentMock = mockStatic(CurrentUser.class);
+        currentMock.when(CurrentUser::staffId).thenReturn(8L);
+        currentMock.when(CurrentUser::isAdmin).thenThrow(
+                cn.dev33.satoken.exception.NotLoginException.newInstance(
+                        "STAFF", cn.dev33.satoken.exception.NotLoginException.KICK_OUT, "员工登录已失效", null));
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> service.adjust(adjust(OWN_STORE), 8L));
+        assertTrue(failure.getMessage().contains("inventory-2006"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("身份已失效"), failure.getMessage());
+        verifyNoInteractions(ledger);
+    }
+
+    @Test void 普通员工跨店创建货位被拒绝() {
+        loginStaff(OWN_STORE, false);
+        var command = new com.agri_system.application.inventory.dto.command.InventoryLocationCommand();
+        command.setStoreId(OTHER_STORE);
+        command.setLocationType("STORE_BACKROOM");
+        command.setName("跨店货位");
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> service.createLocation(command));
+        assertTrue(failure.getMessage().contains("inventory-2006"));
+        verifyNoInteractions(locationRepository);
+    }
+
+    @Test void 普通员工移动其他门店批次的货位被拒绝() {
+        loginStaff(OWN_STORE, false);
+        var batch = new com.agri_system.domain.inventory.model.InventoryReceiptBatch();
+        batch.setId(77L); batch.setStoreId(OTHER_STORE); batch.setProductId(5L);
+        when(receiptBatchRepository.findById(77L)).thenReturn(Optional.of(batch));
+        var command = new com.agri_system.application.inventory.dto.command.InventoryMoveCommand();
+        command.setBatchId(77L); command.setPurpose("INVENTORY");
+        command.setOriginalUnit("袋"); command.setOriginalQuantity(new BigDecimal("1"));
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> service.move(command, 8L));
+        assertTrue(failure.getMessage().contains("inventory-2006"));
+        verifyNoInteractions(ledger);
+    }
+
+    @Test void 普通员工本店批次货位移动放行到台账() {
+        loginStaff(OWN_STORE, false);
+        var batch = new com.agri_system.domain.inventory.model.InventoryReceiptBatch();
+        batch.setId(77L); batch.setStoreId(OWN_STORE); batch.setProductId(5L);
+        when(receiptBatchRepository.findById(77L)).thenReturn(Optional.of(batch));
+        // purpose 校验在权限之后：手工移动只允许 INVENTORY/TRANSFER 之外的用途会被拒，
+        // 这里用 CHECK 检查权限通过后的行为；用途非法同样会被拒，但错误码不同。
+        var command = new com.agri_system.application.inventory.dto.command.InventoryMoveCommand();
+        command.setBatchId(77L); command.setPurpose("SALE");
+        command.setOriginalUnit("袋"); command.setOriginalQuantity(new BigDecimal("1"));
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> service.move(command, 8L));
+        // 到达用途校验说明门店归属检查已放行（错误消息不是跨店拒绝）
+        assertFalse(failure.getMessage().contains("inventory-2006"), failure.getMessage());
     }
 }

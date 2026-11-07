@@ -76,6 +76,30 @@ class SpecialFundGrantServiceTest {
     }
 
     @Test
+    void replayWithDifferentCustomerIsRejected() {
+        when(grantRequestRepository.find(eq("rk-1"), eq(true))).thenReturn(Optional.of(
+                new SpecialFundGrantRequestRepository.GrantRequest("rk-1", 9L, new BigDecimal("100.00"),
+                        new BigDecimal("110.00"), "COMPLETED")));
+
+        assertThatThrownBy(() -> service().grant(88L, new BigDecimal("100.00"), 7L, null, "rk-1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("已被占用");
+        verifyNoInteractions(walletService, benefitLogRepository);
+    }
+
+    @Test
+    void replayWithDifferentAmountIsRejected() {
+        when(grantRequestRepository.find(eq("rk-1"), eq(true))).thenReturn(Optional.of(
+                new SpecialFundGrantRequestRepository.GrantRequest("rk-1", 9L, new BigDecimal("100.00"),
+                        new BigDecimal("110.00"), "COMPLETED")));
+
+        assertThatThrownBy(() -> service().grant(9L, new BigDecimal("500.00"), 7L, null, "rk-1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("已被占用");
+        verifyNoInteractions(walletService, benefitLogRepository);
+    }
+
+    @Test
     void missingOrOversizedRequestKeyIsRejected() {
         assertThatThrownBy(() -> service().grant(9L, new BigDecimal("100.00"), 7L, null, " "))
                 .isInstanceOf(IllegalArgumentException.class);

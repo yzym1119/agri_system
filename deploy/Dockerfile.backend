@@ -15,6 +15,9 @@ RUN mvn package -pl ${MODULE} -am -DskipTests -B
 
 FROM eclipse-temurin:17-jre-alpine
 ARG MODULE=api-admin
+# eclipse-temurin alpine 变体不含 curl（仅 busybox wget），
+# Compose 健康检查依赖 curl，必须显式安装，否则容器会持续被判定不健康。
+RUN apk add --no-cache curl
 WORKDIR /app
 COPY --from=build /app/${MODULE}/target/${MODULE}-*.jar app.jar
 EXPOSE 8080

@@ -14,8 +14,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
-
 /**
  * 客户认证控制器
  * 
@@ -49,19 +47,8 @@ public class AuthClientController {
         return ResponseEntity.ok().build();
     }
 
-    /**
-     * 开发环境客户登录（仅在未配置微信appId时可用）
-     */
-    @PostMapping("/login/dev")
-    @Operation(summary = "开发环境登录", description = "仅限开发/测试环境，通过手机号直接登录客户")
-    public ResponseEntity<?> devLogin(@RequestBody Map<String, String> body) {
-        String phone = body.get("phone");
-        if (phone == null || phone.isBlank()) {
-            return ResponseEntity.badRequest().body(Map.of("code", 10001, "message", "phone不能为空"));
-        }
-        LoginResultVO result = authService.devClientLogin(phone);
-        return ResponseEntity.ok(result);
-    }
+    // 开发环境登录已拆分到 DevClientLoginController，
+    // 通过 auth.dev-login.enabled=true 显式启用，生产环境不注册该 Bean。
 }
 
 

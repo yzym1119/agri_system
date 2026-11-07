@@ -68,7 +68,7 @@ onShow(async () => {
   products.value = []; searchResults.value = []; lines.value = []; selected.value = null; keyword.value = '';
   if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; } searchSeq++; searching.value = false;
   paymentType.value = 1; customerId.value = ''; deliveryType.value = 1;
-  quotedUnderCustomer = ''; requoting.value = false;
+  quotedUnderCustomer = ''; requoting.value = false; requoteSeq++;
   receiverName.value = ''; receiverPhone.value = ''; receiverAddress.value = ''; remark.value = '';
   message.value = ''; orderId.value = '';
   try {
@@ -114,25 +114,31 @@ async function addLine() {
   finally { busy.value = false; }
 }
 
-/** 客户变更时按新客户上下文重新获取购物车全部报价，避免结算时后端重定价冲突。 */
+/** 客户变更时按新客户上下文重新获取购物车全部报价，避免结算时后端重定价冲突。
+ *  请求序号防竞争：慢请求的结果在新请求发起后一律丢弃，quotedUnderCustomer 指纹只在成功后提交。 */
+let requoteSeq = 0;
 async function requoteAllLines() {
+  const seq = ++requoteSeq;
   const customer = customerId.value.trim();
-  quotedUnderCustomer = customer;
-  if (!lines.value.length || !current() || busy.value || requoting.value) return;
+  if (!lines.value.length || !current()) return;
   requoting.value = true; message.value = '';
   try {
     const updated: SaleLine[] = [];
     for (const line of lines.value) {
       const quote = await quoteProduct(line.productId, line.unit, epoch.value, customer || null);
+      if (seq !== requoteSeq) return; // 期间客户再次变更，本次结果作废
       if (!current()) return;
       if (quote.saleUnit !== line.unit) throw new Error('UNIT_MISMATCH');
       updated.push({ ...line, quotedUnitPrice: quote.suggestedUnitPrice });
     }
     lines.value = updated;
+    quotedUnderCustomer = customer; // 全部报价成功后才提交指纹，失败不得伪装成已按新客户报价
     message.value = '客户已变更，购物车单价已按后端最新报价更新；结算金额以后端确认为准。';
   } catch {
-    if (current()) message.value = '客户变更后重新报价失败，请检查网络后重试，或移除商品后再结算。';
-  } finally { requoting.value = false; }
+    if (current() && seq === requoteSeq) message.value = '客户变更后重新报价失败，请检查网络后重试，或移除商品后再结算。';
+  } finally {
+    if (seq === requoteSeq) requoting.value = false;
+  }
 }
 watch(customerId, () => { if (current()) void requoteAllLines(); });
 function removeLine(index: number) {

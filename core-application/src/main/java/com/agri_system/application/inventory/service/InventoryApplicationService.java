@@ -91,6 +91,8 @@ public class InventoryApplicationService {
 
     @Transactional(rollbackFor = Exception.class)
     public Long createLocation(InventoryLocationCommand command) {
+        // 货位创建同样受门店归属约束：普通员工只能在本店建货位
+        ensureStoreWritable(command.getStoreId());
         InventoryLocation.LocationType type;
         try {
             type = InventoryLocation.LocationType.valueOf(command.getLocationType().trim());
@@ -148,6 +150,8 @@ public class InventoryApplicationService {
     public InventoryMovement move(InventoryMoveCommand command, Long createdBy) {
         InventoryReceiptBatch batch = receiptBatchRepository.findById(command.getBatchId())
                 .orElseThrow(() -> new IllegalArgumentException("收货批次不存在"));
+        // 货位移动归属批次所在门店：普通员工只能移动本店批次的货位
+        ensureStoreWritable(batch.getStoreId());
         BatchBalanceService.MovementPurpose purpose;
         try {
             purpose = BatchBalanceService.MovementPurpose.valueOf(command.getPurpose().trim());
@@ -185,7 +189,8 @@ public class InventoryApplicationService {
     /**
      * 门店写入归属强制：非管理员员工只能操作本店库存，防止通过请求体 storeId 跨店写库存。
      * 管理员（ADMIN/SUPER_ADMIN）不受限；无登录上下文（内部调用、单元测试）保持原行为。
-     * 身份失效时交给鉴权层拒绝；已登录非管理员员工未分配门店时直接拒绝。
+     * 身份已登录但失效（员工被禁用/删除、会话身份不完整）时一律拒绝（fail-closed），
+     * 已登录非管理员员工未分配门店时同样直接拒绝。
      */
     private void ensureStoreWritable(Long targetStoreId) {
         if (targetStoreId == null) return;
@@ -200,7 +205,9 @@ public class InventoryApplicationService {
         try {
             admin = CurrentUser.isAdmin();
         } catch (RuntimeException identityMissing) {
-            return;
+            // 已登录员工但身份失效（禁用/删除/角色读取失败）→ fail-closed，绝不放行
+            throw new IllegalArgumentException(InventoryErrorCode.CROSS_STORE_FORBIDDEN
+                    + ": 员工身份已失效，禁止盘点/出入库/调拨等库存写操作");
         }
         if (admin) return;
         Long ownStoreId;

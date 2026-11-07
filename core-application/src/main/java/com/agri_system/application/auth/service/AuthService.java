@@ -50,6 +50,10 @@ public class AuthService {
     @Value("${wechat.app-id:}")
     private String wechatAppId;
 
+    /** 开发登录显式开关（默认关闭）；生产环境绝不开启，与 DevClientLoginController 的注册条件保持一致。 */
+    @Value("${auth.dev-login.enabled:false}")
+    private boolean devLoginEnabled;
+
     private static final int MAX_LOGIN_ATTEMPTS = 5;
     private static final long LOGIN_LOCK_MINUTES = 15;
     
@@ -181,10 +185,14 @@ public class AuthService {
     }
 
     /**
-     * 开发环境客户登录（仅限开发/测试，生产环境不开放）
+     * 开发环境客户登录（仅限开发/测试，须显式配置 auth.dev-login.enabled=true）
      * 通过手机号直接登录，绕过微信认证
      */
     public LoginResultVO devClientLogin(String phone) {
+        if (!devLoginEnabled) {
+            // 防御性兜底：即使误注册了端点，配置未显式开启也直接拒绝。
+            throw new IllegalStateException("开发登录未启用：需显式配置 auth.dev-login.enabled=true");
+        }
         if (wechatAppId != null && !wechatAppId.isEmpty()) {
             throw new IllegalStateException("开发登录仅在未配置微信appId时可用");
         }

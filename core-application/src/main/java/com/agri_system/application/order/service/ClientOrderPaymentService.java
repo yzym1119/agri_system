@@ -20,7 +20,10 @@ import com.agri_system.domain.order.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -39,8 +42,20 @@ public class ClientOrderPaymentService {
     private final OrderPaymentService paymentService;
     private final InventoryApplicationService inventoryService;
     private final CustomerRepository customerRepository;
+    private final PlatformTransactionManager transactionManager;
     @Value("${payment.client-confirm.enabled:false}")
     private boolean clientPaymentConfirmEnabled;
+
+    /** 过期标记专用独立事务：外层确认事务随后抛异常回滚，但「意图已过期」的事实必须持久保留。 */
+    private void markIntentExpiredInNewTransaction(OrderPaymentIntent intent) {
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        template.executeWithoutResult(status -> {
+            intent.setStatus(3);
+            intent.setUpdatedAt(LocalDateTime.now());
+            paymentIntentRepository.save(intent);
+        });
+    }
 
     @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public OrderPayPreviewVO payOrder(OrderPayCommand command, Long customerId) {
@@ -223,9 +238,9 @@ public class ClientOrderPaymentService {
             throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 支付意图已被其他流水确认");
         }
         if (intent.getExpireAt() != null && intent.getExpireAt().isBefore(LocalDateTime.now())) {
-            intent.setStatus(3);
-            intent.setUpdatedAt(LocalDateTime.now());
-            paymentIntentRepository.save(intent);
+            // 独立事务持久化过期标记：外层事务随后回滚也不丢「该意图已过期」的审计事实；
+            // findByIntentNo 无行锁，REQUIRES_NEW 挂起外层事务写同一行不会自阻塞。
+            markIntentExpiredInNewTransaction(intent);
             throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 支付意图已过期，请重新发起支付");
         }
 

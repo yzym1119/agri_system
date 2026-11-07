@@ -13,13 +13,20 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class WalletAuthCodePrivacyTest {
+    /** 测试直接 new 服务，@Value 不生效（boolean 默认 false=渠道禁用）；显式打开开关以测生成路径。 */
+    private static WalletApplicationService service(com.agri_system.domain.wallet.repository.WalletAuthCodeRepository authCodeRepository) {
+        var service = new WalletApplicationService(null,null,authCodeRepository);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "authCodeChannelEnabled", true);
+        return service;
+    }
+
     @Test void 生成码正确保存绑定但日志不含原码() {
         var jdbc = new JdbcTemplate(new DriverManagerDataSource("jdbc:h2:mem:wallet_code_" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", ""));
         jdbc.execute("CREATE TABLE wallet_auth_code(customer_id BIGINT,order_id BIGINT,auth_code VARCHAR(6),amount DECIMAL(18,2),status INT,expire_at TIMESTAMP,created_at TIMESTAMP)");
         var logger = (Logger) LoggerFactory.getLogger(WalletApplicationService.class);
         var events = new ListAppender<ILoggingEvent>(); events.start(); logger.addAppender(events);
         try {
-            var service = new WalletApplicationService(null,null,new com.agri_system.infrastructure.wallet.repository.WalletAuthCodeRepositoryImpl(null,jdbc));
+            var service = service(new com.agri_system.infrastructure.wallet.repository.WalletAuthCodeRepositoryImpl(null,jdbc));
             String code = service.generateAndStoreWalletAuthCode(11L,22L,new BigDecimal("25.50"),5);
             assertTrue(code.matches("[0-9]{6}"));
             var row = jdbc.queryForMap("SELECT * FROM wallet_auth_code");
@@ -45,6 +52,21 @@ class WalletAuthCodePrivacyTest {
             assertFalse(events.list.stream().anyMatch(e->e.getFormattedMessage().contains("735129")),"关联日志不得输出原授权码");
         } finally { logger.detachAppender(events); events.stop(); }
     }
+    @Test void 渠道未接入时验证码生成被禁用() {
+        var jdbc = new JdbcTemplate(new DriverManagerDataSource("jdbc:h2:mem:wallet_code_off_" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", ""));
+        jdbc.execute("CREATE TABLE wallet_auth_code(customer_id BIGINT,order_id BIGINT,auth_code VARCHAR(6),amount DECIMAL(18,2),status INT,expire_at TIMESTAMP,created_at TIMESTAMP)");
+        try {
+            // 模拟生产默认配置：不显式开启 wallet.auth-code.channel.enabled → 开关为 false
+            var service = new WalletApplicationService(null,null,
+                    new com.agri_system.infrastructure.wallet.repository.WalletAuthCodeRepositoryImpl(null,jdbc));
+            IllegalStateException failure = assertThrows(IllegalStateException.class,
+                    () -> service.generateAndStoreWalletAuthCode(11L,22L,new BigDecimal("25.50"),5));
+            assertTrue(failure.getMessage().contains("wallet-4003"), failure.getMessage());
+            assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM wallet_auth_code", Integer.class),
+                    "渠道禁用时不得生成任何验证码");
+        } finally { jdbc.execute("SHUTDOWN"); }
+    }
+
     @Test void 授权码发放与原Mapper核销及伴随写入同Flex回滚() {
         var source=new org.h2.jdbcx.JdbcDataSource();
         source.setURL("jdbc:h2:mem:wallet_tx_"+UUID.randomUUID()+";MODE=MySQL;DB_CLOSE_DELAY=-1");
@@ -59,7 +81,7 @@ class WalletAuthCodePrivacyTest {
         var mapper=new org.mybatis.spring.SqlSessionTemplate(new com.mybatisflex.core.mybatis.FlexSqlSessionFactoryBuilder().build(config))
                 .getMapper(com.agri_system.infrastructure.wallet.mapper.WalletAuthCodeMapper.class);
         var repository=new com.agri_system.infrastructure.wallet.repository.WalletAuthCodeRepositoryImpl(mapper,jdbc);
-        var service=new WalletApplicationService(null,null,repository);
+        var service=service(repository);
         var tx=new org.springframework.transaction.support.TransactionTemplate(new com.mybatisflex.spring.FlexTransactionManager());
         try {
             assertThrows(IllegalStateException.class,()->tx.execute(status->{

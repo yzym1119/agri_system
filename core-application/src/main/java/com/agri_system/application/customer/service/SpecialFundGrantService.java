@@ -35,7 +35,9 @@ public class SpecialFundGrantService {
         var existing = grantRequestRepository.find(requestKey, true)
                 .orElseThrow(() -> new IllegalStateException("专用金发放请求占位失败"));
         if (existing.completed()) {
-            // 幂等重放：请求已成功发放过，返回已记录的发放后余额，不二次加钱。
+            // 幂等重放前严格核对原始请求参数：客户与金额必须与原请求完全一致，
+            // 防止同一 request_key 下把客户 A 的结果误报为客户 B 发放成功。
+            requireSameRequest(existing, customerId, amount);
             return existing.balanceAfter();
         }
         BigDecimal balance = walletService.addSpecialFund(customerId, amount,
@@ -50,5 +52,17 @@ public class SpecialFundGrantService {
         benefitLogRepository.save(log);
         grantRequestRepository.complete(requestKey, balance);
         return balance;
+    }
+
+    /** 重放守卫：请求键相同但客户或金额不同 → 拒绝，绝不重放他人结果。 */
+    private void requireSameRequest(SpecialFundGrantRequestRepository.GrantRequest existing,
+                                    Long customerId, BigDecimal amount) {
+        if (existing.customerId() == null || !existing.customerId().equals(customerId)
+                || existing.amount() == null || amount == null
+                || existing.amount().compareTo(amount) != 0) {
+            throw new IllegalArgumentException("专用金发放请求标识已被占用：原请求(客户=" + existing.customerId()
+                    + ",金额=" + existing.amount() + ")与本次(客户=" + customerId + ",金额=" + amount
+                    + ")不一致，请更换 requestKey 重新发起");
+        }
     }
 }

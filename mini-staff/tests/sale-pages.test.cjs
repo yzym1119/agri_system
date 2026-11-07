@@ -152,3 +152,37 @@ test('旧会话与隐藏后的异步响应不污染当前页面', async () => {
   assert.equal(fresh.calls.catalog, 1);
   assert.equal(f.p.state.allowed.value, false);
 });
+
+test('客户连续变更时慢的旧重报价结果被丢弃，指纹只在成功后提交', async () => {
+  const f = await fixture(); await f.p.hooks.show();
+  f.p.state.choose(product); await f.p.state.addLine();
+  assert.equal(f.p.state.lines.value[0].quotedUnitPrice, '12.34');
+  const resolvers = [];
+  f.setQuote(() => new Promise(res => resolvers.push(res)));
+  f.p.state.customerId.value = '77'; // 第一次重报价（挂起）
+  await new Promise(r => setImmediate(r));
+  f.p.state.customerId.value = '88'; // 期间再次变更，第二次重报价
+  await new Promise(r => setImmediate(r));
+  assert.equal(f.calls.quote.length, 3); // 首报价 + 两次重报价各一行
+  resolvers[0]({ ...quote, suggestedUnitPrice: '5.00' }); // 慢的旧请求后到
+  await new Promise(r => setImmediate(r));
+  assert.equal(f.p.state.lines.value[0].quotedUnitPrice, '12.34', '旧请求结果必须丢弃');
+  resolvers[1]({ ...quote, suggestedUnitPrice: '9.90' }); // 最新请求成功
+  await new Promise(r => setImmediate(r));
+  assert.equal(f.p.state.lines.value[0].quotedUnitPrice, '9.90', '按最新客户上下文提交报价');
+  await f.p.state.checkout(); // 指纹一致，可直接结算
+  assert.equal(f.calls.submit.length, 1);
+  assert.equal(f.calls.submit[0].options.customerId, '88');
+});
+
+test('重报价失败后指纹不得伪装成新客户，结算会触发重新报价', async () => {
+  const f = await fixture(); await f.p.hooks.show();
+  f.p.state.choose(product); await f.p.state.addLine();
+  f.setQuote(() => { throw Error('QUOTE_FAILED'); });
+  f.p.state.customerId.value = '77';
+  await new Promise(r => setImmediate(r));
+  assert.match(f.p.state.message.value, /重新报价失败/);
+  await f.p.state.checkout(); // 指纹仍是旧客户 → 结算被转为重新触发重报价而不是提交
+  assert.equal(f.calls.submit.length, 0, '重报价失败时不得直接结算');
+  assert.equal(f.calls.quote.length, 3, 'checkout 检测到指纹不一致会再次触发重报价');
+});

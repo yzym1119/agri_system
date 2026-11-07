@@ -9,6 +9,7 @@ import com.agri_system.domain.wallet.repository.WalletTransactionRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -383,6 +384,10 @@ public class WalletApplicationService {
         return record.getExpireAt() != null && record.getExpireAt().isAfter(LocalDateTime.now());
     }
 
+    /** 验证码可信发送渠道显式开关（默认关闭）：SMS/微信模板消息接入并配置前，钱包授权流程整体禁用。 */
+    @Value("${wallet.auth-code.channel.enabled:false}")
+    private boolean authCodeChannelEnabled;
+
     /**
      * 生成并保存钱包验证码（由可信渠道下发，接口层不得回显原码）
      *
@@ -394,6 +399,11 @@ public class WalletApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public String generateAndStoreWalletAuthCode(Long customerId, Long orderId, java.math.BigDecimal amount, int expireMinutes) {
+        if (!authCodeChannelEnabled) {
+            // 评审 P1：验证码没有任何可信发送渠道时不得静默生成，否则用户永远收不到码，
+            // 授权流程形同虚设；也杜绝"接口声称已发送"的误导。
+            throw new IllegalStateException("wallet-4003: 验证码发送渠道未接入，钱包授权功能未启用");
+        }
         java.time.LocalDateTime now = java.time.LocalDateTime.now();
         if (walletAuthCodeRepository.countIssuedSince(customerId, now.minusSeconds(AUTH_CODE_SEND_INTERVAL_SECONDS)) > 0) {
             throw new IllegalStateException("wallet-4001: 验证码发送过于频繁，请"

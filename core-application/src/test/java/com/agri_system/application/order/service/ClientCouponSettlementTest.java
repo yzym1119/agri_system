@@ -66,7 +66,8 @@ class ClientCouponSettlementTest {
                 null,
                 null,
                 null,
-                new com.agri_system.application.order.service.ClientOrderPaymentService(orders, items, payments, intents, deliveries, funding, inventory, customers),
+                new com.agri_system.application.order.service.ClientOrderPaymentService(orders, items, payments, intents, deliveries, funding, inventory, customers,
+                        mock(org.springframework.transaction.PlatformTransactionManager.class)),
                 new com.agri_system.application.order.service.OrderFulfillmentService(orders, deliveries, staff, afterSales, mock(org.springframework.context.ApplicationEventPublisher.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class)),
                 null);
         when(intents.save(any())).thenAnswer(i->{OrderPaymentIntent intent=i.getArgument(0);intent.setId(70L);storedIntents.put(intent.getIntentNo(),intent);return intent;});
