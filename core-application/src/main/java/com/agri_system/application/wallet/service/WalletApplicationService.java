@@ -33,6 +33,9 @@ public class WalletApplicationService {
     
     private static final int AUTH_CODE_LENGTH = 6;
     private static final java.security.SecureRandom AUTH_CODE_RANDOM = new java.security.SecureRandom();
+
+    /** 手动发放专用金的单次上限（元）；防误操作与无限增发，可按经营需要调整。 */
+    private static final BigDecimal MAX_SINGLE_SPECIAL_FUND_GRANT = new BigDecimal("10000.00");
     
     /**
      * 扣减本金余额
@@ -319,6 +322,7 @@ public class WalletApplicationService {
     @Transactional(rollbackFor = Exception.class)
     public BigDecimal addSpecialFund(Long customerId, BigDecimal amount,
                                      String referenceType, Long referenceId, Long createdBy, String remark) {
+        validateManualGrant(customerId, amount);
         CustomerWallet wallet = walletRepository.findByCustomerIdAndWalletTypeWithLock(customerId, 2)
                 .orElseGet(() -> {
                     CustomerWallet newWallet = new CustomerWallet();
@@ -341,6 +345,18 @@ public class WalletApplicationService {
         return wallet.getBalance();
     }
     
+    /** 手动发放的金额防线：必须在任何钱包/流水写入之前拒绝非法金额与无限增发。 */
+    private static void validateManualGrant(Long customerId, BigDecimal amount) {
+        if (customerId == null) {
+            throw new IllegalArgumentException("客户ID不能为空");
+        }
+        if (amount == null || amount.signum() <= 0 || amount.scale() > 2
+                || amount.compareTo(MAX_SINGLE_SPECIAL_FUND_GRANT) > 0) {
+            throw new IllegalArgumentException("发放金额必须大于0、最多两位小数，且单次不超过"
+                    + MAX_SINGLE_SPECIAL_FUND_GRANT.toPlainString() + "元");
+        }
+    }
+
     /**
      * 校验钱包验证码（简化实现，实际应该调用验证码服务）
      * 
