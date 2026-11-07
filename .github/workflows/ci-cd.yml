@@ -14,7 +14,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: read
+      packages: write
+
     services:
       mysql:
         image: mysql:8.2
