@@ -10,31 +10,30 @@ export type CatalogProduct = {
 export type PriceQuote = {
   quoteId: string; productId: string; saleUnit: string; suggestedUnitPrice: string;
 };
+/** 收银选客户投影：只含开单与配送所需字段，不含余额/欠款等资金档案。 */
+export type PosCustomer = {
+  id: string; code: string; name: string; phone: string;
+  address: string | null; type: number; vipLevel: number | null; vipActive: boolean;
+};
 export type SaleLine = {
   productId: string; name: string; unit: string; quantity: string; quotedUnitPrice: string;
 };
-/** 第一版只开放现金与赊销；余额/混合支付需要钱包验证码与支付明细，留待后续阶段。 */
+/** 员工端只开放现金与当场交货/门店配送；赊销、余额、微信、支付宝、混合支付与改价留在后台收银台。 */
 export type SaleOptions = {
-  paymentType: 1 | 6; customerId: string | null; deliveryType: 1 | 2;
-  receiverName: string | null; receiverPhone: string | null; receiverAddress: string | null;
-  remark: string | null;
+  paymentType: 1; customerId: string | null; deliveryType: 1 | 2; remark: string | null;
 };
 export const defaultSaleOptions: SaleOptions = {
-  paymentType: 1, customerId: null, deliveryType: 1,
-  receiverName: null, receiverPhone: null, receiverAddress: null, remark: null,
+  paymentType: 1, customerId: null, deliveryType: 1, remark: null,
 };
 
 /** 与后端 PosOrderInputPolicy 同口径的输入校验；不定价、不核销、不改钱货。 */
 export function resolveSaleOptions(partial: Partial<SaleOptions> = {}): SaleOptions {
   const options: SaleOptions = { ...defaultSaleOptions, ...partial };
-  if (options.paymentType !== 1 && options.paymentType !== 6) throw new Error('PAYMENT_INVALID');
-  if (options.paymentType === 6 && !isPositiveLongId(options.customerId)) throw new Error('CUSTOMER_REQUIRED');
+  if (options.paymentType !== 1) throw new Error('PAYMENT_INVALID');
   if (options.customerId !== null && !isPositiveLongId(options.customerId)) throw new Error('CUSTOMER_INVALID');
   if (options.deliveryType !== 1 && options.deliveryType !== 2) throw new Error('DELIVERY_INVALID');
-  if (options.deliveryType === 2 && (!text(options.receiverName, 100) || !text(options.receiverPhone, 50)
-    || !text(options.receiverAddress, 500))) throw new Error('RECEIVER_REQUIRED');
-  if (options.deliveryType === 1 && (options.receiverName !== null || options.receiverPhone !== null
-    || options.receiverAddress !== null)) throw new Error('RECEIVER_UNEXPECTED');
+  // 门店配送不再手抄收货信息：必须选中客户，收货人/电话/地址由后端按客户档案带出。
+  if (options.deliveryType === 2 && options.customerId === null) throw new Error('CUSTOMER_REQUIRED');
   if (options.remark !== null && !text(options.remark, 200)) throw new Error('REMARK_INVALID');
   return options;
 }
@@ -86,6 +85,28 @@ export function decodeQuote(envelope: unknown, productId: string): PriceQuote {
     suggestedUnitPrice: String(data.suggestedUnitPrice) };
 }
 
+/** 客户检索与目录同一套 {code:"200",data:{records}} 包装。 */
+export function decodeCustomers(envelope: unknown): PosCustomer[] {
+  if (!isCatalogEnvelope(envelope)) throw new Error('CUSTOMER_INVALID');
+  const rows = pageRecords(envelope.data);
+  if (rows.length > 50) throw new Error('CUSTOMER_INVALID');
+  return rows.map(row => {
+    if (!object(row)) throw new Error('CUSTOMER_INVALID');
+    const id = normalizeLongId(row.id);
+    if (!id || !text(row.name, 100) || !text(row.phone, 20)) throw new Error('CUSTOMER_INVALID');
+    if (row.address !== null && row.address !== undefined && typeof row.address !== 'string') {
+      throw new Error('CUSTOMER_INVALID');
+    }
+    return {
+      id, code: text(row.code, 50) ? row.code : '', name: row.name, phone: row.phone,
+      address: text(row.address, 500) ? row.address.trim() : null,
+      type: typeof row.type === 'number' ? row.type : 1,
+      vipLevel: typeof row.vipLevel === 'number' ? row.vipLevel : null,
+      vipActive: row.vipActive === true,
+    };
+  });
+}
+
 /** 金额一律按整数分解析；只用于本机恢复摘要与展示，不参与成交金额计算。 */
 export function toCents(value: string): number {
   if (!price(value)) throw new Error('PRICE_INVALID');
@@ -117,7 +138,8 @@ export function toSaleSummary(lines: SaleLine[], options: SaleOptions = defaultS
     customerId: options.customerId, lines: parsed };
 }
 
-/** 提交命令不含金额字段：成交价由后端按 quotedUnitPrice 重新报价并核对。 */
+/** 提交命令不含金额字段：成交价由后端按 quotedUnitPrice 重新报价并核对。
+ *  也不含收货人信息：门店配送由后端按 customerId 读客户档案带出，员工端不抄地址。 */
 export function buildSaleCommand(requestKey: string, actor: RecoveryActor, lines: SaleLine[],
                                  options: SaleOptions = defaultSaleOptions): Record<string, unknown> {
   if (!isPositiveLongId(actor.staffId) || !isPositiveLongId(actor.storeId)) throw new Error('UNAUTHORIZED');
@@ -126,8 +148,7 @@ export function buildSaleCommand(requestKey: string, actor: RecoveryActor, lines
     requestKey, storeId: actor.storeId, staffId: actor.staffId,
     paymentType: options.paymentType, customerId: options.customerId,
     deliveryType: options.deliveryType,
-    receiverName: options.receiverName, receiverPhone: options.receiverPhone,
-    receiverAddress: options.receiverAddress, remark: options.remark,
+    receiverName: null, receiverPhone: null, receiverAddress: null, remark: options.remark,
     items: lines.map(line => ({
       productId: line.productId, itemType: 1, quantity: line.quantity,
       unit: line.unit, quotedUnitPrice: line.quotedUnitPrice,

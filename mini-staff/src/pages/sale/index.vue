@@ -2,28 +2,55 @@
 import { ref, computed, watch } from 'vue';
 import { onShow, onHide } from '@dcloudio/uni-app';
 import { staffAuth } from '../../services/auth';
-import { readCatalog, searchCatalog, quoteProduct, submitSale } from '../../services/sale';
-import { posRecovery } from '../../services/pos-recovery';
-import { lineCents, type CatalogProduct, type SaleLine } from '@agri/mobile-contracts/sale';
+import { readCatalog, searchCatalog, readStock, searchCustomers, quoteProduct, submitSale } from '../../services/sale';
+import { posRecovery, readPOSResult } from '../../services/pos-recovery';
+import { lineCents, type CatalogProduct, type PosCustomer, type SaleLine } from '@agri/mobile-contracts/sale';
 import { money } from '../../utils/money';
 
-const products = ref<CatalogProduct[]>([]), lines = ref<SaleLine[]>([]), keyword = ref('');
-const searchResults = ref<CatalogProduct[]>([]);
-const searching = ref(false);
+const products = ref<CatalogProduct[]>([]), keyword = ref('');
+const searchResults = ref<CatalogProduct[]>([]), searching = ref(false);
+/** 本店库存只作参考展示：是否可卖以后端出库时的可用量为准。 */
+const stock = ref<Record<string, { quantity: string; unit: string }>>({});
+const lines = ref<SaleLine[]>([]);
 const selected = ref<CatalogProduct | null>(null), quantity = ref('1');
-const paymentType = ref<1 | 6>(1), customerId = ref(''), deliveryType = ref<1 | 2>(1);
-const receiverName = ref(''), receiverPhone = ref(''), receiverAddress = ref(''), remark = ref('');
+/** 客户档案是唯一来源：选了客户才带会员价，配送时收货信息也取自这里。 */
+const customer = ref<PosCustomer | null>(null);
+const customerOpen = ref(false), customerKeyword = ref(''), customerResults = ref<PosCustomer[]>([]);
+const customerLoading = ref(false), customerSearchSeq = ref(0);
+const deliveryType = ref<1 | 2>(1), remark = ref('');
 const loading = ref(true), busy = ref(false), allowed = ref(false), blocked = ref(false);
 const message = ref(''), orderId = ref(''), epoch = ref(-1);
 let generation = 0, visible = false;
 /** 购物车现有明细的报价所依据的客户编号；客户变更后必须重新拉取全部报价。 */
 let quotedUnderCustomer = '';
 const requoting = ref(false);
+
 const cents = (value: number) => (value / 100).toFixed(2);
 const totalCents = computed(() => lines.value.reduce((sum, line) => sum + lineCents(line), 0));
+const customerId = computed(() => (customer.value ? customer.value.id : ''));
 /** 有关键词时展示服务端搜索结果，无关键词时展示完整目录首页。 */
 const filtered = computed(() => (keyword.value.trim() ? searchResults.value : products.value));
+/** 门店配送的收货信息一律来自客户档案；缺项时就地说明，不让人手抄。 */
+const receiverProblem = computed(() => {
+  if (deliveryType.value !== 2) return '';
+  if (!customer.value) return '门店配送需要先选客户，收货人、电话与地址由客户档案带出。';
+  if (!customer.value.phone.trim()) return '该客户档案缺少手机号，请先在后台补全，或改为当场交货。';
+  if (!customer.value.address) return '该客户档案缺少地址，请先在后台补全，或改为当场交货。';
+  return '';
+});
 const current = (ticket = generation) => visible && allowed.value && ticket === generation && staffAuth.current()?.epoch === epoch.value;
+
+function stockText(product: CatalogProduct): string {
+  const row = stock.value[product.id];
+  if (!row) return '无库存记录';
+  const qty = Number(row.quantity);
+  const text = Number.isFinite(qty) ? qty.toFixed(qty % 1 === 0 ? 0 : 2) : row.quantity;
+  return '库存 ' + text + (row.unit ? ' ' + row.unit : '');
+}
+const outOfStock = (product: CatalogProduct) => {
+  const row = stock.value[product.id];
+  return !!row && Number(row.quantity) <= 0;
+};
 
 async function reload() {
   if (!current() || busy.value) return;
@@ -37,6 +64,11 @@ async function reload() {
   } catch {
     if (current(ticket)) message.value = '商品目录读取失败，请重新进入本页或检查网络。';
   } finally { if (ticket === generation) loading.value = false; }
+  // 库存读失败不阻断开单：出库时后端会按实际可用量拒绝，页面只做展示。
+  try {
+    const rows = await readStock(epoch.value);
+    if (current(ticket)) stock.value = rows;
+  } catch { /* 库存仅参考 */ }
 }
 
 /** 服务端搜索（防抖）；商品超过目录首页 200 条时仍可通过编码/名称/条码找到。 */
@@ -63,14 +95,56 @@ async function runSearch(query: string) {
 }
 watch(keyword, () => { if (current()) scheduleSearch(); });
 
+/* ---------- 客户选择 ---------- */
+async function loadCustomers(query: string) {
+  if (!current()) return;
+  const seq = ++customerSearchSeq.value;
+  customerLoading.value = true;
+  try {
+    const list = await searchCustomers(query, epoch.value);
+    if (!current() || seq !== customerSearchSeq.value) return;
+    customerResults.value = list;
+  } catch {
+    if (current() && seq === customerSearchSeq.value) customerResults.value = [];
+  } finally { if (seq === customerSearchSeq.value) customerLoading.value = false; }
+}
+let customerTimer: ReturnType<typeof setTimeout> | null = null;
+function openCustomers() {
+  if (!current() || busy.value) return;
+  customerOpen.value = true;
+  if (customerTimer) { clearTimeout(customerTimer); customerTimer = null; }
+  customerKeyword.value = '';
+  void loadCustomers('');
+}
+function closeCustomers() { customerOpen.value = false; customerKeyword.value = ''; }
+function scheduleCustomerSearch() {
+  if (customerTimer) clearTimeout(customerTimer);
+  customerTimer = setTimeout(() => { void loadCustomers(customerKeyword.value); }, 300);
+}
+function pickCustomer(item: PosCustomer) {
+  if (!current()) return;
+  customer.value = item;
+  closeCustomers();
+  message.value = '';
+}
+function pickWalkIn() {
+  if (!current()) return;
+  customer.value = null;
+  closeCustomers();
+  message.value = '';
+}
+
 onShow(async () => {
   visible = true; const ticket = ++generation;
   loading.value = true; busy.value = false; allowed.value = false; blocked.value = false;
-  products.value = []; searchResults.value = []; lines.value = []; selected.value = null; keyword.value = '';
+  products.value = []; searchResults.value = []; stock.value = {}; lines.value = [];
+  selected.value = null; keyword.value = '';
   if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; } searchSeq++; searching.value = false;
-  paymentType.value = 1; customerId.value = ''; deliveryType.value = 1;
+  customer.value = null; customerOpen.value = false; customerKeyword.value = ''; customerResults.value = [];
+  customerSearchSeq.value++;
+  deliveryType.value = 1;
   quotedUnderCustomer = ''; requoting.value = false; requoteSeq++;
-  receiverName.value = ''; receiverPhone.value = ''; receiverAddress.value = ''; remark.value = '';
+  remark.value = '';
   message.value = ''; orderId.value = '';
   try {
     await staffAuth.refresh(); if (!visible || ticket !== generation) return;
@@ -85,16 +159,28 @@ onShow(async () => {
   } catch { if (visible && ticket === generation) uni.reLaunch({ url: '/pages/login/index' }); }
   finally { if (ticket === generation) loading.value = false; }
 });
-onHide(() => { visible = false; generation++; allowed.value = false;
-  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; } searchSeq++; searching.value = false; });
+onHide(() => { visible = false; generation++; allowed.value = false; customerOpen.value = false;
+  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; } searchSeq++; searching.value = false;
+  if (customerTimer) { clearTimeout(customerTimer); customerTimer = null; } customerSearchSeq.value++; });
 
+/* ---------- 商品选择与加入 ---------- */
 function choose(product: CatalogProduct) {
   if (!current() || busy.value) return;
   selected.value = product; quantity.value = '1'; message.value = '';
 }
+function closeAdd() { selected.value = null; quantity.value = '1'; }
 function validQuantity(product: CatalogProduct | null, value: string): boolean {
   if (!product || !/^(0|[1-9]\d*)(\.\d{1,4})?$/.test(value) || value.length > 24 || Number(value) <= 0) return false;
   return product.allowFractionalBaseQuantity || /^\d+$/.test(value);
+}
+/** 步进只在整数量级做加减：计量单位仍可手输小数，避免步进把小数位抹掉。 */
+function stepQuantity(delta: number) {
+  const product = selected.value;
+  if (!product) return;
+  const step = product.allowFractionalBaseQuantity ? 0.5 : 1;
+  const base = Number(quantity.value);
+  const next = Number.isFinite(base) ? base + delta * step : 1;
+  quantity.value = next > 0 ? String(Math.round(next * 10000) / 10000) : String(step);
 }
 async function addLine() {
   const product = selected.value;
@@ -127,20 +213,20 @@ async function addLine() {
 let requoteSeq = 0;
 async function requoteAllLines() {
   const seq = ++requoteSeq;
-  const customer = customerId.value.trim();
+  const currentCustomer = customerId.value.trim();
   if (!lines.value.length || !current()) return;
   requoting.value = true; message.value = '';
   try {
     const updated: SaleLine[] = [];
     for (const line of lines.value) {
-      const quote = await quoteProduct(line.productId, line.unit, epoch.value, customer || null);
+      const quote = await quoteProduct(line.productId, line.unit, epoch.value, currentCustomer || null);
       if (seq !== requoteSeq) return; // 期间客户再次变更，本次结果作废
       if (!current()) return;
       if (quote.saleUnit !== line.unit) throw new Error('UNIT_MISMATCH');
       updated.push({ ...line, quotedUnitPrice: quote.suggestedUnitPrice });
     }
     lines.value = updated;
-    quotedUnderCustomer = customer; // 全部报价成功后才提交指纹，失败不得伪装成已按新客户报价
+    quotedUnderCustomer = currentCustomer; // 全部报价成功后才提交指纹，失败不得伪装成已按新客户报价
     message.value = '客户已变更，购物车单价已按后端最新报价更新；结算金额以后端确认为准。';
   } catch {
     if (current() && seq === requoteSeq) message.value = '客户变更后重新报价失败，请检查网络后重试，或移除商品后再结算。';
@@ -154,25 +240,15 @@ function removeLine(index: number) {
   lines.value = lines.value.filter((_, i) => i !== index); message.value = '';
 }
 function saleOptions() {
-  const id = customerId.value.trim();
   return {
-    paymentType: paymentType.value,
-    customerId: id ? id : null,
+    paymentType: 1 as const,
+    customerId: customerId.value.trim() || null,
     deliveryType: deliveryType.value,
-    receiverName: deliveryType.value === 2 ? receiverName.value.trim() || null : null,
-    receiverPhone: deliveryType.value === 2 ? receiverPhone.value.trim() || null : null,
-    receiverAddress: deliveryType.value === 2 ? receiverAddress.value.trim() || null : null,
     remark: remark.value.trim() || null,
   };
 }
 function validateOptions(): boolean {
-  const options = saleOptions();
-  if (options.paymentType === 6 && !options.customerId) {
-    message.value = '赊销必须填写客户编号，请向店长核对后填写。'; return false;
-  }
-  if (options.deliveryType === 2 && (!options.receiverName || !options.receiverPhone || !options.receiverAddress)) {
-    message.value = '门店配送必须填写收货人、收货电话和完整地址。'; return false;
-  }
+  if (receiverProblem.value) { message.value = receiverProblem.value; return false; }
   return true;
 }
 async function checkout() {
@@ -185,8 +261,13 @@ async function checkout() {
     const result = await submitSale(lines.value, epoch.value, saleOptions());
     if (!current()) return;
     if (result.status === 'COMPLETED' && result.orderId) {
-      orderId.value = result.orderId; lines.value = []; products.value = [];
+      orderId.value = result.orderId; lines.value = [];
       message.value = '开单完成，收款与库存由后端一次写入。';
+      // 后端已回执订单号，本机原请求不再有"是否已成交"的疑问：向后端核对该请求确为这笔订单后清掉，
+      // 否则下一单会被"上次收银结果尚未核对"挡住，而员工其实刚看到成功。
+      try { await posRecovery.finishCompleted(result.orderId, true, readPOSResult); }
+      catch { /* 核对失败时保留原请求，下次进入仍按待核对处理 */ }
+      await reload();
     } else {
       message.value = '开单结果待核对，请勿重复收款。请到「核对上次收银」用原请求核对。';
       uni.navigateTo({ url: '/pages/recovery/index' });
@@ -215,38 +296,43 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
   <button hover-class="btn-hover" hover-stay-time="60" v-if="blocked" class="btn btn-primary" @click="openRecovery">核对上次收银</button>
 
   <template v-if="!loading && allowed && !blocked">
+   <!-- 客户：开单上下文，决定会员价与配送收货信息 -->
+   <view hover-class="tap-hover" hover-stay-time="80" class="card card-tight cust-bar" @click="openCustomers">
+    <view class="cust-icon"><AppIcon name="user" :size="18" /></view>
+    <view class="grow">
+     <view class="row">
+      <text class="t-sub">{{ customer ? customer.name : '散客（未选客户）' }}</text>
+      <text v-if="customer && customer.vipActive" class="chip chip-primary chip-sm ml8">会员</text>
+     </view>
+     <text class="t-cap">{{ customer ? customer.phone + ' · ' + (customer.address || '档案无地址') : '按零售价结算；选客户可享会员价，配送也用它带出收货信息' }}</text>
+    </view>
+    <text class="chip chip-line chip-sm">切换</text>
+   </view>
+
    <view class="search-wrap block">
     <AppIcon name="search" :size="16" class="search-ic" />
-    <input v-model="keyword" class="input input-search" placeholder="按商品名称或编码搜索" placeholder-style="color:#9aa6b2" />
+    <input v-model="keyword" class="input input-search" placeholder="按商品名称、编码或条码搜索" placeholder-style="color:#9aa6b2" />
    </view>
 
    <view class="section section-first">
-    <view class="section-head"><text class="section-title">选择商品</text><text class="section-note">{{ searching ? '搜索中…' : filtered.length + ' 个' }}</text></view>
+    <view class="section-head"><text class="section-title">选择商品</text><text class="section-note">{{ searching ? '搜索中…' : filtered.length + ' 个 · 来自后台商品档案' }}</text></view>
    </view>
 
    <view v-if="filtered.length" class="card card-flat">
     <view hover-class="tap-hover" hover-stay-time="80" v-for="(product, index) in filtered" :key="product.id" class="list-item row-between" :class="{ 'list-item-last': index === filtered.length - 1 }" @click="choose(product)">
      <view class="grow">
       <text class="t-sub">{{ product.name }}</text>
-      <text class="t-cap">{{ product.code }} · 主单位 {{ product.mainUnit }}</text>
+      <view class="row mt4">
+       <text class="t-cap">{{ product.code }}</text>
+       <text class="t-cap ml8" :class="{ 't-warn': outOfStock(product) }">· {{ stockText(product) }}</text>
+      </view>
      </view>
      <view class="price-box">
       <text class="t-money t-primary">¥{{ money(product.suggestedRetailPrice) }}</text>
+      <text class="t-cap">/{{ product.baseUnitName }}</text>
       <AppIcon name="chevron" :size="12" class="chev" />
      </view>
     </view>
-   </view>
-
-   <view v-if="selected" class="card">
-    <view class="row-between">
-     <text class="t-sub grow">{{ selected.name }}</text>
-     <text class="chip chip-sm chip-primary">{{ selected.mainUnit }}</text>
-    </view>
-    <view class="field">
-     <text class="field-label">数量（{{ selected.mainUnit }}）{{ selected.allowFractionalBaseQuantity ? '，最多四位小数' : '，仅整数' }}</text>
-     <input v-model="quantity" class="input" inputmode="decimal" />
-    </view>
-    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary btn-sm mt8" :disabled="busy" @click="addLine">按后端报价加入</button>
    </view>
 
    <view class="section">
@@ -255,7 +341,7 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
 
    <view v-if="!lines.length" class="card empty">
     <view class="empty-icon"><AppIcon name="bag" :size="22" /></view>
-    <text class="empty-text">还没有商品。先在上方搜索并加入，价格由后端报价。</text>
+    <text class="empty-text">还没有商品。点上方商品选数量加入，单价由后端报价。</text>
    </view>
 
    <view v-for="(line, index) in lines" :key="line.productId + ':' + index" class="card card-tight">
@@ -278,16 +364,12 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
    </view>
 
    <view class="section"><text class="section-title">结算方式</text></view>
-   <view class="card">
-    <view class="row">
-     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm grow mr8" :class="paymentType === 1 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="paymentType = 1">现金</button>
-     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm grow" :class="paymentType === 6 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="paymentType = 6">赊销（挂账）</button>
+   <view class="card card-tight">
+    <view class="row-between">
+     <view class="row"><AppIcon name="check" :size="16" class="t-primary mr8" /><text class="t-sub">现金</text></view>
+     <text class="chip chip-primary chip-sm">本次可用</text>
     </view>
-    <view class="field">
-     <text class="field-label">客户编号{{ paymentType === 6 ? '（赊销必填）' : '（现金可留空）' }}</text>
-     <input v-model="customerId" class="input" inputmode="numeric" placeholder="填写客户编号" placeholder-style="color:#9aa6b2" />
-    </view>
-    <text class="t-cap mt4">会员价与赊销归属由后端按真实客户判断，本页不传会员等级、不计算金额。</text>
+    <text class="t-cap mt8">移动端只支持现金收款；赊销挂账、会员余额/专用金、优惠券、微信/支付宝与人工改价请在后台收银台办理。</text>
    </view>
 
    <view class="section"><text class="section-title">交货方式</text></view>
@@ -296,20 +378,33 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
      <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm grow mr8" :class="deliveryType === 1 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="deliveryType = 1">当场交货</button>
      <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm grow" :class="deliveryType === 2 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="deliveryType = 2">门店配送</button>
     </view>
-    <template v-if="deliveryType === 2">
-     <view class="field">
-      <text class="field-label">收货人</text>
-      <input v-model="receiverName" class="input" placeholder="填写收货人" placeholder-style="color:#9aa6b2" />
+
+    <view v-if="deliveryType === 2" class="mt12">
+     <template v-if="customer">
+      <view class="row-between">
+       <text class="t-cap">收货信息（取自客户档案，不手填）</text>
+       <text hover-class="tap-hover" hover-stay-time="80" class="chip chip-line chip-sm" @click="openCustomers">更换客户</text>
+      </view>
+      <view class="mt8">
+       <view class="kv"><text class="kv-key">收货人</text><text class="kv-val">{{ customer.name }}</text></view>
+       <view class="kv"><text class="kv-key">电话</text><text class="kv-val">{{ customer.phone }}</text></view>
+       <view class="kv"><text class="kv-key">地址</text><text class="kv-val">{{ customer.address || '档案未填' }}</text></view>
+      </view>
+      <view v-if="receiverProblem" class="alert alert-danger mt8">
+       <AppIcon name="alert" :size="16" class="alert-icon" />
+       <text>{{ receiverProblem }}</text>
+      </view>
+     </template>
+     <view v-else class="alert alert-danger">
+      <AppIcon name="alert" :size="16" class="alert-icon" />
+      <view class="grow">
+       <text class="t-strong">配送需要先选客户</text>
+       <text class="t-meta">收货人、电话与地址从客户档案带出，不再手工填写。</text>
+      </view>
      </view>
-     <view class="field">
-      <text class="field-label">收货电话</text>
-      <input v-model="receiverPhone" class="input" inputmode="tel" placeholder="填写收货电话" placeholder-style="color:#9aa6b2" />
-     </view>
-     <view class="field">
-      <text class="field-label">完整收货地址</text>
-      <input v-model="receiverAddress" class="input" placeholder="填写完整收货地址" placeholder-style="color:#9aa6b2" />
-     </view>
-    </template>
+     <button v-if="!customer" hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm mt8" :disabled="busy" @click="openCustomers">选择客户</button>
+    </view>
+
     <view class="field">
      <text class="field-label">整单备注（可选，最多 200 字）</text>
      <input v-model="remark" class="input" placeholder="可留空" placeholder-style="color:#9aa6b2" />
@@ -334,12 +429,79 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
    <view class="dock-inner">
     <view class="dock-row">
      <view class="grow">
-      <text class="dock-label">展示合计</text>
+      <text class="dock-label">{{ deliveryType === 2 ? '配送 · 合计' : '合计' }}</text>
       <text class="dock-amount">¥{{ cents(totalCents) }}</text>
      </view>
      <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary dock-btn" :disabled="busy || !lines.length" :loading="busy" @click="checkout">提交开单</button>
     </view>
    </view>
   </view>
+
+  <!-- 选客户面板：后台客户档案检索，选中即成为本次开单上下文 -->
+  <template v-if="customerOpen">
+   <view class="mask" @click="closeCustomers"></view>
+   <view class="sheet">
+    <view class="sheet-head">
+     <text class="sheet-title">选择客户</text>
+     <view hover-class="tap-hover" hover-stay-time="80" class="sheet-close" @click="closeCustomers"><AppIcon name="close" :size="16" /></view>
+    </view>
+    <view class="search-wrap">
+     <AppIcon name="search" :size="16" class="search-ic" />
+     <input v-model="customerKeyword" class="input input-search" placeholder="姓名、手机号或客户编码" placeholder-style="color:#9aa6b2" @input="scheduleCustomerSearch" />
+    </view>
+    <view class="sheet-body">
+     <scroll-view scroll-y class="sheet-list">
+      <view v-if="customerLoading" class="row mt12"><view class="spinner spinner-primary"></view><text class="t-meta">正在读取客户档案…</text></view>
+      <view v-else-if="!customerResults.length" class="empty">
+       <view class="empty-icon"><AppIcon name="user" :size="22" /></view>
+       <text class="empty-text">{{ customerKeyword.trim() ? '没有匹配的客户，换个姓名或手机号再试。' : '后台还没有客户档案，可直接按散客开单。' }}</text>
+      </view>
+      <view v-else>
+       <view hover-class="tap-hover" hover-stay-time="80" v-for="(item, index) in customerResults" :key="item.id" class="cust-row" :class="{ 'cust-row-last': index === customerResults.length - 1 }" @click="pickCustomer(item)">
+        <view class="grow">
+         <view class="row">
+          <text class="t-sub">{{ item.name }}</text>
+          <text v-if="item.vipActive" class="chip chip-primary chip-sm ml8">会员</text>
+         </view>
+         <text class="t-cap">{{ item.phone }}{{ item.code ? ' · ' + item.code : '' }}</text>
+         <text class="t-cap">{{ item.address || '档案无地址，配送前需在后台补全' }}</text>
+        </view>
+        <AppIcon name="chevron" :size="12" class="chev" />
+       </view>
+      </view>
+     </scroll-view>
+    </view>
+    <view class="sheet-foot">
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm" :disabled="busy" @click="pickWalkIn">不选客户，按散客开单</button>
+    </view>
+   </view>
+  </template>
+
+  <!-- 数量面板：选商品后先确认数量，再加入购物车 -->
+  <template v-if="selected">
+   <view class="mask" @click="closeAdd"></view>
+   <view class="sheet">
+    <view class="sheet-head">
+     <view class="grow">
+      <text class="sheet-title">{{ selected.name }}</text>
+      <text class="t-cap">{{ selected.code }} · 参考价 ¥{{ money(selected.suggestedRetailPrice) }}/{{ selected.baseUnitName }}</text>
+     </view>
+     <view hover-class="tap-hover" hover-stay-time="80" class="sheet-close" @click="closeAdd"><AppIcon name="close" :size="16" /></view>
+    </view>
+    <view class="qty-line">
+     <view hover-class="tap-hover" hover-stay-time="80" class="qty-btn" @click="stepQuantity(-1)">−</view>
+     <input v-model="quantity" class="qty-input" inputmode="decimal" />
+     <view hover-class="tap-hover" hover-stay-time="80" class="qty-btn" @click="stepQuantity(1)">+</view>
+    </view>
+    <view class="row-between mt8">
+     <text class="t-cap">{{ selected.mainUnit }} · {{ selected.allowFractionalBaseQuantity ? '可填四位小数' : '仅整数' }} · {{ stockText(selected) }}</text>
+     <text v-if="outOfStock(selected)" class="chip chip-warn chip-sm">本店无可用库存</text>
+    </view>
+    <text class="t-cap mt8">加入时按后端实时报价，结算金额以后端为准。</text>
+    <view class="sheet-foot">
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy || !validQuantity(selected, quantity)" @click="addLine">加入本次商品</button>
+    </view>
+   </view>
+  </template>
  </view>
 </template>

@@ -84,6 +84,10 @@
 .ai--plus .s1 { left: calc(50% - 1px); top: 16%; width: 2px; height: 68%; background: currentColor; }
 .ai--plus .s2 { left: 16%; top: calc(50% - 1px); width: 68%; height: 2px; background: currentColor; }
 
+/* 关闭：面板收起 */
+.ai--close .s1 { left: 18%; top: calc(50% - 1px); width: 64%; height: 2px; background: currentColor; transform: rotate(45deg); }
+.ai--close .s2 { left: 18%; top: calc(50% - 1px); width: 64%; height: 2px; background: currentColor; transform: rotate(-45deg); }
+
 /* 门店 */
 .ai--store .s1 { left: 6%; top: 16%; width: 88%; height: 16%; border: 1.6px solid currentColor; border-radius: 4px; }
 .ai--store .s2 { left: 16%; top: 32%; width: 68%; height: 56%; border: 1.6px solid currentColor; border-top: 0; border-radius: 0 0 4px 4px; }

@@ -53,6 +53,9 @@
 - 工作台：`tiles` `tile` `tile-box` `tile-icon` `tile-icon-accent` `tile-name` `tile-desc`
 - 底部栏：`dock` `dock-inner` `dock-row` `dock-label` `dock-amount` `dock-btn`
 - 明细：`kv` `kv-key` `kv-val`；勾选 `check-row` `check-box` `check-card` `qty` `addr`；登录品牌块 `brand` `brand-mark` `brand-title` `brand-desc` `foot`
+- 底部面板（选客户、改数量）：`mask`（半透明遮罩，点击关闭）+ `sheet`（从底部滑入的白色面板）+ `sheet-head` `sheet-title` `sheet-close` + `sheet-list`（可滚动主体）+ `sheet-foot`（底部固定操作，含「不选客户」这类逃生项）
+- 收银选客户：`cust-bar`（顶部客户卡，未选时为「散客」）+ `cust-icon` + 结果行 `cust-row` / `cust-row-last`（姓名 + 编码 + 手机号 + 地址摘要，会员 `chip` 只在有效期内显示）
+- 数量步进：`qty-line` `qty-btn`（`-` / `+`，触控面 ≥44px）`qty-input`，与旧 `qty` 类不混用（`qty` 用于列表内只读数量）
 
 ## 图标
 
@@ -63,7 +66,7 @@
 ```
 
 - 结构：根 `.ai` + 三个绝对定位的 `.s1/.s2/.s3` + 伪元素，全部用 `currentColor` 描边，颜色跟随父级 `color`。
-- 现有 18 个：`scan` `doc` `box` `truck` `bag` `search` `user` `check` `alert` `chevron` `clock` `phone` `copy` `pin` `device` `logout` `plus` `store`。新增图标加在 `styles/icons.css`，并在本文件登记。
+- 现有 19 个：`scan` `doc` `box` `truck` `bag` `search` `user` `check` `alert` `chevron` `clock` `phone` `copy` `pin` `device` `logout` `plus` `store` `close`。新增图标加在 `styles/icons.css`，并在本文件登记。
 - 尺寸只用 16 / 18 / 20 / 22px；图标不单独承载语义，旁边必须有文字或 `aria` 等价标签。
 - 图标与文字的间距用 `.mr8` / `.ml8`，不写行内 margin。
 
@@ -91,6 +94,7 @@
 **动效**：只做短促的入场与按压，不做循环动画、不做滚动视差。
 
 - 页面入场 `agri-page-in` 只有 opacity，**不加 `transform`**：`.page` 内含 `position: fixed` 的底部栏，父级一旦有 transform，fixed 会退化成相对父级定位，底部栏就不再吸附屏幕（实测确认过）。
+- 底部面板 `.mask` / `.sheet` 同样依赖 `position: fixed`，因此**不要放进任何带 `transform` 的容器**（包括带 `agri-page-in` 的 `.page`）；面板直接挂在页面根节点下，靠 `agri-fade-in`（遮罩 160ms）/ `agri-sheet-in`（面板 220ms 上滑）入场。
 - 底部栏 `agri-dock-in` 上滑 220ms；宫格 `agri-rise` 220ms。转场时长统一 ≤ 220ms，避免和微信原生导航转场叠加发飘。
 - 提交中的按钮用 `spinner` 与文案并排，不只换文字，否则按钮宽度会跳。
 - 动效只表达「内容就位」与「已按下」，不承担状态说明；状态必须另有文字或色块。
@@ -118,7 +122,7 @@
   ```
   `preview.css` 里关掉了入场动画（`animation: none`），否则截图会截到淡入中间帧、整墙发灰。
 
-- 页面测试（`npm test`，90 项）只断言 `state.*`，不断言文案与模板结构，因此重排版面不会破坏逻辑回归；但改类名后必须跑一次 `npm run build:mp-weixin`，确认产物 `app.wxss` 仍含 `--c-primary` / `ai--*` / `dock`。
+- 页面测试（`npm test`，94 项）只断言 `state.*`，不断言文案与模板结构，因此重排版面不会破坏逻辑回归；但改类名后必须跑一次 `npm run build:mp-weixin`，确认产物 `app.wxss` 仍含 `--c-primary` / `ai--*` / `dock` / `sheet`。
 
 - **真实模拟器验收**（静态稿看不出的问题只能在这里发现：原生组件样式隔离、`position: fixed` 是否吸附、按压态、点击热区）：
   ```bash

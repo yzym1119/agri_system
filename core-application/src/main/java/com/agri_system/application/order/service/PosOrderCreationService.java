@@ -11,6 +11,7 @@ import com.agri_system.application.product.dto.vo.PriceQuote;
 import com.agri_system.application.product.service.ProductPricingService;
 import com.agri_system.application.wallet.service.WalletApplicationService;
 import com.agri_system.domain.wallet.repository.WalletAuthCodeRepository;
+import com.agri_system.domain.customer.model.Customer;
 import com.agri_system.domain.customer.repository.CustomerRepository;
 import com.agri_system.domain.order.enums.OrderMainPaymentMethod;
 import com.agri_system.domain.order.enums.PaymentMethod;
@@ -69,6 +70,7 @@ public class PosOrderCreationService {
 
     @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public Long createPOSOrder(POSOrderCreateCommand command, Long createdBy) {
+        // 不查库就能拒绝的输入错误先拒：非法履约方式、只填一半的收货信息。
         int deliveryType = validatePosDelivery(command);
         validatePosPayments(command);
         Long operatorStaffId = createdBy != null ? createdBy : command.getStaffId();
@@ -88,8 +90,12 @@ public class PosOrderCreationService {
         }
 
         // 先锁客户，随后才写订单外键及库存；与还款/退货的客户→账户→库存顺序一致。
-        if(command.getCustomerId()!=null) customerRepository.findByIdWithLock(command.getCustomerId())
+        Customer customer = null;
+        if(command.getCustomerId()!=null) customer = customerRepository.findByIdWithLock(command.getCustomerId())
                 .orElseThrow(()->new IllegalArgumentException("订单客户不存在"));
+
+        // 履约校验放在客户锁定之后：配送但未填收货信息时按客户档案带出，缺项在任何写事实之前拒绝。
+        if (deliveryType == 2) fillPosDeliveryFromCustomer(command, customer);
 
         BigDecimal manualDiscount = command.getDiscountAmount();
         if (manualDiscount != null && (manualDiscount.signum() < 0 || manualDiscount.scale() > 2)) {
@@ -522,6 +528,10 @@ public class PosOrderCreationService {
 
     private int validatePosDelivery(POSOrderCreateCommand command) {
         return PosOrderInputPolicy.validatePosDelivery(command);
+    }
+
+    private void fillPosDeliveryFromCustomer(POSOrderCreateCommand command, Customer customer) {
+        PosOrderInputPolicy.fillPosDeliveryFromCustomer(command, customer);
     }
 
     private void savePaymentRecords(Order order, POSOrderCreateCommand command, Long createdBy) {

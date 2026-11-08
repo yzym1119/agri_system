@@ -20,6 +20,13 @@ public class PosCatalogController {
     }
     @GetMapping("/categories")
     public ResponseEntity<Map<String,Object>> categories() {return result(catalog.categories());}
+    /** 收银选客户：只读投影，权限与开单一致；不返回余额、欠款等资金档案。 */
+    @GetMapping("/customers")
+    public ResponseEntity<Map<String,Object>> customers(@RequestParam(required=false) String keyword,
+                                                        @RequestParam(defaultValue="20") int limit) {
+        var rows=catalog.customers(keyword,limit);
+        return result(Map.of("records",rows,"totalRow",rows.size()));
+    }
     @GetMapping("/packages")
     public ResponseEntity<Map<String,Object>> packages(@RequestParam(required=false) Long storeId,@RequestParam(defaultValue="1") int pageNum,@RequestParam(defaultValue="1000") int pageSize) {
         return result(catalog.packages(storeId,pageNum,pageSize));

@@ -5,6 +5,8 @@ import com.agri_system.application.inventory.service.InventoryApplicationService
 import com.agri_system.application.product.dto.vo.ProductDetailVO;
 import com.agri_system.application.product.service.ProductApplicationService;
 import com.agri_system.application.productpackage.service.ProductPackageApplicationService;
+import com.agri_system.domain.customer.model.Customer;
+import com.agri_system.domain.customer.repository.CustomerRepository;
 import com.mybatisflex.core.paginate.Page;
 import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
@@ -17,7 +19,8 @@ class PosCatalogApplicationServiceTest {
     final ProductApplicationService products=mock(ProductApplicationService.class);
     final ProductPackageApplicationService packages=mock(ProductPackageApplicationService.class);
     final InventoryApplicationService inventory=mock(InventoryApplicationService.class);
-    final PosCatalogApplicationService service=new PosCatalogApplicationService(products,packages,inventory);
+    final CustomerRepository customers=mock(CustomerRepository.class);
+    final PosCatalogApplicationService service=new PosCatalogApplicationService(products,packages,inventory,customers);
 
     @Test void catalogExcludesDisabledProductsAndNeverExposesPurchaseCost() {
         var enabled=new ProductDetailVO(); enabled.setId(1L); enabled.setStatus(1); enabled.setName("正常商品");
@@ -74,5 +77,21 @@ class PosCatalogApplicationServiceTest {
             assertThrows(IllegalArgumentException.class,()->service.inventory(1L,1,100));
             verifyNoInteractions(inventory);
         }
+    }
+
+    @Test void posCustomerSearchOnlyCarriesOrderContextAndRealVipValidity() {
+        Customer vip=new Customer();
+        vip.setId(9101L); vip.setCode("C001"); vip.setName("张三"); vip.setPhone("13900000001");
+        vip.setAddress("联调地址1号"); vip.setType(2); vip.setVipLevel(1); vip.setStatus(1);
+        vip.setVipEndDate(java.time.LocalDate.now().plusDays(10));
+        when(customers.findActiveByKeyword("张",20)).thenReturn(List.of(vip));
+        var rows=service.customers("张",20);
+        assertEquals(1,rows.size());
+        assertEquals("张三",rows.get(0).name());
+        assertEquals("13900000001",rows.get(0).phone());
+        assertEquals("联调地址1号",rows.get(0).address());
+        assertTrue(rows.get(0).vipActive(),"会员有效期按真实到期日判定");
+        vip.setVipEndDate(java.time.LocalDate.now().minusDays(1));
+        assertFalse(service.customers("张",20).get(0).vipActive(),"过期会员不得报成会员价");
     }
 }

@@ -95,6 +95,20 @@ public class CustomerRepositoryImpl implements CustomerRepository {
         Customer customer = mapper.selectOneByQuery(query);
         return Optional.ofNullable(customer);
     }
+
+    @Override
+    public List<Customer> findActiveByKeyword(String keyword, int limit) {
+        String trimmed = keyword == null ? "" : keyword.trim();
+        QueryWrapper query = QueryWrapper.create()
+                .where("deleted = 0")
+                .and("status = ?", 1);
+        if (!trimmed.isEmpty()) {
+            String like = "%" + trimmed + "%";
+            query.and("(name LIKE ? OR code LIKE ? OR phone LIKE ?)", like, like, like);
+        }
+        query.orderBy("created_at DESC").limit(Math.max(1, Math.min(limit, 50)));
+        return mapper.selectListByQuery(query);
+    }
     
     @Override
     public void logicDelete(Long id) {

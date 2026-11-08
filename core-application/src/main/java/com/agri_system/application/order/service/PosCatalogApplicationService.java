@@ -3,6 +3,7 @@ package com.agri_system.application.order.service;
 import com.agri_system.application.auth.util.CurrentUser;
 import com.agri_system.application.inventory.dto.query.InventoryQuery;
 import com.agri_system.application.inventory.service.InventoryApplicationService;
+import com.agri_system.application.order.dto.vo.PosCustomerVO;
 import com.agri_system.application.product.dto.query.ProductQuery;
 import com.agri_system.application.product.dto.vo.CategoryTreeVO;
 import com.agri_system.application.product.dto.vo.ProductDetailVO;
@@ -10,6 +11,7 @@ import com.agri_system.application.product.service.ProductApplicationService;
 import com.agri_system.application.productpackage.dto.query.ProductPackageQuery;
 import com.agri_system.application.productpackage.dto.vo.ProductPackageDetailVO;
 import com.agri_system.application.productpackage.service.ProductPackageApplicationService;
+import com.agri_system.domain.customer.repository.CustomerRepository;
 import com.agri_system.domain.inventory.vo.InventoryPageVO;
 import com.mybatisflex.core.paginate.Page;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +25,7 @@ public class PosCatalogApplicationService {
     private final ProductApplicationService products;
     private final ProductPackageApplicationService packages;
     private final InventoryApplicationService inventory;
+    private final CustomerRepository customerRepository;
 
     public Page<ProductDetailVO> products(int number,int size) {
         return products(number, size, null);
@@ -56,6 +59,13 @@ public class PosCatalogApplicationService {
     }
 
     public List<CategoryTreeVO> categories() {return products.getCategoryTree();}
+
+    /** 收银选客户：按姓名/编码/手机号模糊匹配正常客户，只返回开单与配送所需字段。 */
+    public List<PosCustomerVO> customers(String keyword,int limit) {
+        return customerRepository.findActiveByKeyword(keyword,limit).stream().map(c->new PosCustomerVO(
+                c.getId(),c.getCode(),c.getName(),c.getPhone(),c.getAddress(),
+                c.getType(),c.getVipLevel(),c.isVip()&&!c.isVipExpired())).toList();
+    }
 
     public Page<ProductPackageDetailVO> packages(Long storeId,int number,int size) {
         validatePage(number,size);var query=new ProductPackageQuery();query.setStatus(1);

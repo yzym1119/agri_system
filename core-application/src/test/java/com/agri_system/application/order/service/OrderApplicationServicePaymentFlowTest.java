@@ -831,6 +831,55 @@ class OrderApplicationServicePaymentFlowTest {
         verifyNoBusinessWrites();
     }
 
+    /** 员工端只选客户、不抄地址：三项收货信息为空时由客户档案带出，并原样落到订单上。 */
+    @Test void posDeliveryBringsReceiverOutOfCustomerArchiveWhenCashierSendsNone() {
+        stubCashPosOrderPersistence();
+        var customer=new com.agri_system.domain.customer.model.Customer();
+        customer.setId(12L);customer.setStatus(1);customer.setName("李四");
+        customer.setPhone("13900000000");customer.setAddress("西街9号");
+        when(customerRepository.findByIdWithLock(12L)).thenReturn(Optional.of(customer));
+        var command=cashPosCommand(false);
+        command.setDeliveryType(2);command.setCustomerId(12L);
+
+        orderService.createPOSOrder(command,8L);
+
+        var orders=ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository,org.mockito.Mockito.atLeastOnce()).save(orders.capture());
+        assertEquals("李四",orders.getValue().getReceiverName());
+        assertEquals("13900000000",orders.getValue().getReceiverPhone());
+        assertEquals("西街9号",orders.getValue().getReceiverAddress());
+        assertEquals(4,orders.getValue().getOrderStatus());
+        assertEquals(12L,orders.getValue().getCustomerId());
+    }
+
+    /** 档案本身缺电话/地址时不能"带出一个残缺收货信息"，配送单宁可不建。 */
+    @Test void posDeliveryRejectsIncompleteCustomerArchiveBeforeAnyBusinessWrites() {
+        when(staffRepository.findById(8L)).thenReturn(Optional.of(staffAtStore(3L)));
+        var command=cashPosCommand(false);
+        command.setDeliveryType(2);command.setCustomerId(12L); // 客户档案由 beforeEach 提供，只有 id 与状态
+
+        var error=assertThrows(IllegalArgumentException.class,()->orderService.createPOSOrder(command,8L));
+
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("补全"));
+        verifyNoBusinessWrites();
+    }
+
+    /** 停用客户不允许再开配送单，避免把货配到已停用的档案上。 */
+    @Test void posDeliveryRejectsDisabledCustomerArchiveBeforeAnyBusinessWrites() {
+        when(staffRepository.findById(8L)).thenReturn(Optional.of(staffAtStore(3L)));
+        var customer=new com.agri_system.domain.customer.model.Customer();
+        customer.setId(12L);customer.setStatus(2);customer.setName("李四");
+        customer.setPhone("13900000000");customer.setAddress("西街9号");
+        when(customerRepository.findByIdWithLock(12L)).thenReturn(Optional.of(customer));
+        var command=cashPosCommand(false);
+        command.setDeliveryType(2);command.setCustomerId(12L);
+
+        var error=assertThrows(IllegalArgumentException.class,()->orderService.createPOSOrder(command,8L));
+
+        org.junit.jupiter.api.Assertions.assertTrue(error.getMessage().contains("停用"));
+        verifyNoBusinessWrites();
+    }
+
     @Test void posDeliveryCreatesWaitingDeliveryWhileSettlingSaleExactlyOnce() throws Exception {
         stubCashPosOrderPersistence();
         orderService.createPOSOrder(deliveryPosCommand(true),8L);
@@ -930,6 +979,13 @@ class OrderApplicationServicePaymentFlowTest {
         item.setWarehousePickup(warehousePickup);
         command.setItems(Collections.singletonList(item));
         return command;
+    }
+
+    private Staff staffAtStore(Long storeId) {
+        Staff staff = new Staff();
+        staff.setId(8L);
+        staff.setStoreId(storeId);
+        return staff;
     }
 
     private void stubCashPosOrderPersistence() {

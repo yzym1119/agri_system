@@ -65,6 +65,15 @@ public interface CustomerRepository {
      * @return 客户
      */
     Optional<Customer> findByPhone(String phone);
+
+    /**
+     * 按姓名/编码/手机号关键字查询正常状态客户（收银选客户用，按创建时间倒序）
+     *
+     * @param keyword 关键字，为空时返回最近的客户
+     * @param limit   最多返回条数
+     * @return 客户列表
+     */
+    java.util.List<Customer> findActiveByKeyword(String keyword, int limit);
     
     /**
      * 逻辑删除客户
