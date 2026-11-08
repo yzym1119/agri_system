@@ -12,8 +12,8 @@ async function fixture(permissions = ['pos:order:create']) {
   const auth = createStaffAuth(async req => ({ statusCode: 200,
     data: req.url.endsWith('/login') ? { tokenName: 'Authorization', tokenValue: 'test', userInfo: user } : user }));
   await auth.login('test', 'pass');
-  let catalog = [product], priceQuote = quote, submit = async () => ({ status: 'COMPLETED', orderId: '900' }), restore = null;
-  const calls = { catalog: 0, search: [], quote: [], submit: [] };
+  let catalog = [product], priceQuote = quote, submit = async () => ({ status: 'COMPLETED', orderId: '900' }), restore = null, customerSearch = async () => [];
+  const calls = { catalog: 0, search: [], quote: [], submit: [], customers: [] };
   const p = setupPage('sale', auth, true, {
     '../../services/sale': {
       readCatalog: async () => { calls.catalog++; return catalog; },
@@ -24,11 +24,12 @@ async function fixture(permissions = ['pos:order:create']) {
       quoteProduct: async (id, unit, epoch, customerId) => { calls.quote.push({ id, unit, customerId: customerId ?? null }); return typeof priceQuote === 'function' ? priceQuote() : priceQuote; },
       submitSale: async (lines, epoch, options) => { calls.submit.push({ lines, epoch, options }); return submit(); },
     },
+    '../../services/customers': { searchSaleCustomers: async (keyword) => { calls.customers.push(keyword); return customerSearch(keyword); } },
     '../../services/pos-recovery': { posRecovery: { restore: () => restore } },
     '@agri/mobile-contracts/sale': sale,
   });
   return { p, auth, calls, setCatalog: v => catalog = v, setQuote: v => priceQuote = v,
-    setSubmit: v => submit = v, setRestore: v => restore = v, setUser: v => Object.assign(user, v) };
+    setCustomerSearch: v => customerSearch = v, setSubmit: v => submit = v, setRestore: v => restore = v, setUser: v => Object.assign(user, v) };
 }
 
 test('无收银权限不读取目录，也不开放开单', async () => {
@@ -127,7 +128,7 @@ test('赊销缺客户、门店配送缺收货信息都阻止提交', async () =>
   const f = await fixture(); await f.p.hooks.show();
   f.p.state.choose(product); await f.p.state.addLine();
   f.p.state.paymentType.value = 6; await f.p.state.checkout();
-  assert.equal(f.calls.submit.length, 0); assert.match(f.p.state.message.value, /客户编号/);
+  assert.equal(f.calls.submit.length, 0); assert.match(f.p.state.message.value, /选择客户/);
   f.p.state.paymentType.value = 1; f.p.state.deliveryType.value = 2; await f.p.state.checkout();
   assert.equal(f.calls.submit.length, 0); assert.match(f.p.state.message.value, /收货/);
 });
@@ -206,4 +207,57 @@ test('重报价失败后指纹不得伪装成新客户，结算会触发重新�
   await f.p.state.checkout(); // 指纹仍是旧客户 → 结算被转为重新触发重报价而不是提交
   assert.equal(f.calls.submit.length, 0, '重报价失败时不得直接结算');
   assert.equal(f.calls.quote.length, 3, 'checkout 检测到指纹不一致会再次触发重报价');
+});
+
+
+test('客户查询仅在有权限且主动查找时请求，选中后按真实客户报价开单', async()=>{
+ const f=await fixture(['pos:order:create','customer:query']);await f.p.hooks.show();
+ assert.equal(f.calls.customers.length,0);
+ f.setCustomerSearch(async()=>[{id:'77',name:'验收客户',phone:'13800000000'}]);
+ f.p.state.customerKeyword.value='验收';await f.p.state.findCustomers();
+ f.p.state.selectCustomer({id:'88',name:'伪造选择',phone:''});assert.equal(f.p.state.customerId.value,'');
+ f.p.state.selectCustomer(f.p.state.customerResults.value[0]);assert.equal(f.p.state.customerId.value,'77');
+ f.p.state.choose(product);await f.p.state.addLine();f.p.state.openSettlement();assert.equal(f.p.state.stage.value,'settlement');
+ f.p.state.paymentType.value=6;await f.p.state.checkout();assert.equal(f.calls.submit[0].options.customerId,'77');
+});
+test('无客户查询权限不请求，晚到的旧关键词或隐藏页面结果不得选客',async()=>{
+ const no=await fixture();await no.p.hooks.show();no.p.state.customerKeyword.value='验收';await no.p.state.findCustomers();assert.equal(no.calls.customers.length,0);
+ const f=await fixture(['pos:order:create','customer:query']);await f.p.hooks.show();
+ let finish;f.setCustomerSearch(()=>new Promise(resolve=>{finish=resolve;}));
+ f.p.state.customerKeyword.value='旧客户';const pending=f.p.state.findCustomers();
+ f.p.state.customerKeyword.value='新客户';finish([{id:'77',name:'旧客户',phone:''}]);await pending;
+ assert.equal(f.p.state.customerResults.value.length,0);assert.equal(f.p.state.customerId.value,'');
+ const hidden=f.p.state.findCustomers();f.p.hooks.hide();finish([{id:'77',name:'旧客户',phone:''}]);await hidden;
+ assert.equal(f.p.state.customerResults.value.length,0);
+});
+test('客户查询失败清除旧结果，取消客户后重新按散客报价',async()=>{
+ const f=await fixture(['pos:order:create','customer:query']);await f.p.hooks.show();
+ f.setCustomerSearch(async()=>[{id:'77',name:'客户',phone:''}]);f.p.state.customerKeyword.value='客户';await f.p.state.findCustomers();
+ f.p.state.selectCustomer(f.p.state.customerResults.value[0]);f.p.state.choose(product);await f.p.state.addLine();
+ f.p.state.clearCustomer();await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.state.customerId.value,'');assert.equal(f.calls.quote.at(-1).customerId,null);
+ f.setCustomerSearch(async()=>{throw Error('offline');});await f.p.state.findCustomers();
+ assert.equal(f.p.state.customerResults.value.length,0);assert.match(f.p.state.customerMessage.value,/未完成/);
+});
+
+test('客户重报价期间不能增删购物清单，慢响应不能覆盖员工的新修改',async()=>{
+ const f=await fixture();await f.p.hooks.show();f.p.state.choose(product);await f.p.state.addLine();
+ let finish;f.setQuote(()=>new Promise(resolve=>{finish=resolve;}));
+ f.p.state.customerId.value='77';await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.state.requoting.value,true);
+ f.p.state.removeLine(0);f.p.state.choose(product);await f.p.state.addLine();
+ assert.equal(f.p.state.lines.value.length,1);assert.equal(f.p.state.selected.value,null);
+ finish(quote);await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.state.lines.value.length,1);assert.equal(f.p.state.requoting.value,false);
+});
+
+test('换客户重报价失败后加入商品，必须先完成旧行重报价，不能用新行掩盖旧价',async()=>{
+ const f=await fixture();await f.p.hooks.show();f.p.state.choose(product);await f.p.state.addLine();
+ f.setQuote(()=>{throw Error('offline');});f.p.state.customerId.value='77';await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.state.lines.value[0].quotedUnitPrice,'12.34');
+ f.setQuote({...quote,suggestedUnitPrice:'10.00'});f.p.state.choose(product);await f.p.state.addLine();
+ assert.equal(f.p.state.lines.value.length,1);assert.equal(f.p.state.lines.value[0].quotedUnitPrice,'10.00');
+ await f.p.state.addLine();assert.equal(f.p.state.lines.value.length,2);
+ assert.ok(f.p.state.lines.value.every(line=>line.quotedUnitPrice==='10.00'));
+ await f.p.state.checkout();assert.equal(f.calls.submit[0].options.customerId,'77');
 });
