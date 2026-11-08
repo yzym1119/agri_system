@@ -118,7 +118,7 @@ async function logout() {
 .section-title { display:block; font-size:17px; font-weight:600; line-height:1.5; }
 .text-button { margin:0; padding:0 4px; min-width:60px; background:transparent; color:#1d5d73; font-size:14px; }
 .feature-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-.feature-card { text-align:left; margin:0; padding:18px 16px; background:#fff; border:1px solid #e5e7eb; line-height:1.5; }
+.feature-card { display:block; text-align:left; margin:0; padding:18px 16px; background:#fff; border:1px solid #e5e7eb; line-height:1.5; }
 .feature-mark { display:flex; width:36px; height:36px; justify-content:center; align-items:center; border-radius:10px; color:#1d5d73; background:#eaf1f4; font-weight:600; margin-bottom:14px; }
 .feature-title { display:block; font-size:17px; font-weight:600; color:#1f2937; }
 .feature-hint { display:block; color:#4b5563; font-size:13px; margin-top:6px; line-height:1.65; }

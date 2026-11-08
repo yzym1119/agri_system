@@ -4,7 +4,7 @@ export default {};
 <style>
 @import "./styles/tools.css";
 page { background:#f5f6f8; color:#1f2937; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; font-size:16px; line-height:1.6; }
-button { font:inherit; min-height:48px; border-radius:10px; box-sizing:border-box; }
+button { display:flex; align-items:center; justify-content:center; font:inherit; min-height:48px; border-radius:10px; box-sizing:border-box; }
 button::after { border:0; }
 button[disabled] { opacity:.55; }
 .staff-page { padding:20px 16px calc(24px + env(safe-area-inset-bottom)); max-width:600px; margin:0 auto; box-sizing:border-box; }

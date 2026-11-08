@@ -57,6 +57,18 @@ function clearCustomer() {
 function openSettlement() {
   if (!current() || busy.value || requoting.value || blocked.value || !lines.value.length) return;
   stage.value = 'settlement'; selected.value = null;
+  scrollToStageStart('settlement');
+}
+function openGoods() {
+  if (!current() || busy.value || requoting.value || blocked.value) return;
+  stage.value = 'goods';
+  scrollToStageStart('goods');
+}
+function scrollToStageStart(target: 'goods' | 'settlement') {
+  const ticket = generation;
+  void nextTick(() => {
+    if (current(ticket) && stage.value === target) uni.pageScrollTo({ selector: '#sale-start', duration: 0 });
+  });
 }
 async function reload() {
   if (!current() || busy.value) return;
@@ -244,7 +256,7 @@ const openRecovery = () => uni.navigateTo({ url: '/pages/recovery/index' });
 const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
 </script>
 <template>
- <view class="staff-page sale-page">
+ <view id="sale-start" class="staff-page sale-page">
   <view class="page-heading"><text class="eyebrow">门店销售</text><text class="title">{{ orderId ? '开单完成' : stage === 'goods' ? '这次卖什么？' : '核对客户与结算' }}</text><text class="intro">{{ stage === 'goods' ? '找到商品，确认数量，再核对收款与交货。' : '先核对商品和客户，再确认本次收款或挂账。' }}</text></view>
   <text v-if="loading" class="intro">正在读取本店商品…</text>
   <template v-if="!loading && allowed">
@@ -263,7 +275,7 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
      <view class="staff-panel basket-summary"><text class="subtitle">本次已选 {{ lines.length }} 项</text><text class="total">¥{{ cents(totalCents) }}</text><text class="muted">按当前报价核对，实际成交以后端确认为准。</text><button class="staff-primary" :disabled="busy || !lines.length" @click="openSettlement">核对清单与结算 ›</button></view>
     </template>
     <template v-else>
-     <view class="section-head"><text class="subtitle">商品清单 · {{ lines.length }} 项</text><button class="text-button" :disabled="busy || requoting" @click="stage='goods'">继续选购</button></view>
+     <view class="section-head"><text class="subtitle">商品清单 · {{ lines.length }} 项</text><button class="text-button" :disabled="busy || requoting" @click="openGoods">继续选购</button></view>
      <view class="staff-panel basket-list"><view v-for="(line,index) in lines" :key="line.productId+':'+index" class="basket-row"><view><text class="row-name">{{ line.name }}</text><text class="muted">{{ line.quantity }} {{ line.unit }} × ¥{{ line.quotedUnitPrice }}</text><text class="line-price">¥{{ cents(lineCents(line)) }}</text></view><button class="text-button" :disabled="busy || requoting" @click="removeLine(index)">移除</button></view><text v-if="!lines.length" class="intro">清单已清空，请继续选购商品。</text></view>
      <view class="staff-panel section-panel"><text class="subtitle">销售给谁</text>
       <view v-if="chosenCustomer" class="selected-customer"><text class="row-name">{{ chosenCustomer.name }}</text><text class="intro">{{ chosenCustomer.phone || '未登记手机号' }}</text><button class="text-button" :disabled="busy || requoting" @click="clearCustomer">取消选择，改为散客</button></view>

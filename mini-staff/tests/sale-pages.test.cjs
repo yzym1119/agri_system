@@ -261,3 +261,16 @@ test('换客户重报价失败后加入商品，必须先完成旧行重报价�
  assert.ok(f.p.state.lines.value.every(line=>line.quotedUnitPrice==='10.00'));
  await f.p.state.checkout();assert.equal(f.calls.submit[0].options.customerId,'77');
 });
+
+
+test('切换开单步骤回到核对起点，隐藏后的延迟定位不得滚动其他页面', async () => {
+ const f=await fixture();await f.p.hooks.show();f.p.state.choose(product);await f.p.state.addLine();
+ await new Promise(r=>setImmediate(r));f.p.scrolls.length=0;
+ f.p.state.openSettlement();await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.state.stage.value,'settlement');assert.equal(f.p.scrolls.at(-1),'#sale-start');
+ f.p.state.openGoods();await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.state.stage.value,'goods');assert.equal(f.p.scrolls.at(-1),'#sale-start');
+ f.p.scrolls.length=0;f.p.state.openSettlement();f.p.hooks.hide();await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.scrolls.length,0);
+ assert.equal(f.calls.submit.length,0);
+});
