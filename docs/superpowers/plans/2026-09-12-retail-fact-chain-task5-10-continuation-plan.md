@@ -1,3 +1,5 @@
+> 文档状态：历史阶段设计/计划，非当前全量事实；按文件日期和提交阅读。被覆盖部分以[统一文档中心](../../current/README.md)为准；未覆盖且仍有效的规则须对照当前代码确认，不直接执行旧迁移/模式切换。
+
 # 零售事实链续作路线图：Task5–10 范围拆解与验收基线（2026-09-12）
 
 > **定位**：本文是 codex 原计划 `docs/superpowers/plans/2026-09-06-retail-unit-batch-cost-price-plan.md`（Task1–10）与审查报告 `docs/superpowers/specs/2026-09-06-retail-unit-batch-cost-price-review.md` 的**续作补充**，不重复原 plan 的逐步骤，只回答一个问题：**从「Task4 遗留已修复并合并」的当前基线出发，如何安全走到可灰度上线。**

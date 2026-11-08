@@ -1,0 +1,11 @@
+{
+  "PRODUCT.md": "01-产品定位与三端职责.md",
+  "DESIGN.md": "04-后台界面规范.md",
+  "mini-staff/DESIGN.md": "05-员工端界面规范.md",
+  "ddl/README.md": "08-数据库现行说明.md",
+  "docs/WORKING_STATE.md": "02-当前开发状态.md",
+  "docs/superpowers/specs/2026-11-08-后台管理端设计与三端协同基线.md": "03-后台管理与三端协同设计.md",
+  "docs/superpowers/specs/2026-11-08-员工端小程序详细设计与实施手册.md": "06-员工端设计与实施手册.md",
+  "docs/superpowers/specs/2026-11-08-客户端小程序详细设计与实施手册.md": "07-客户端设计与实施手册.md",
+  "docs/superpowers/specs/2026-11-08-双端小程序文档盘点与一致性基线.md": "09-历史设计盘点与差异.md"
+}
