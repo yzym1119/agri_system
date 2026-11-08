@@ -38,7 +38,7 @@ public class SaTokenConfigure implements WebMvcConfigurer {
                     .notMatch("/swagger-ui/**")  // 放行Swagger
                     .notMatch("/api-docs/**")  // 放行API文档
                     .notMatch("/error")  // 放行错误页面
-                    .notMatch("/health")  // 放行健康检查（监控探针/负载均衡）
+                    .notMatch("/health/**")  // 放行健康检查（/health 存活、/health/ready 就绪；监控探针/负载均衡）
                     .notMatch(r -> {
                         // 放行 OPTIONS 预检请求（CORS）
                         ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
