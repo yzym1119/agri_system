@@ -472,6 +472,8 @@ public class ClientOrderPaymentService {
                 intent.getCouponId(),
                 intent.getExternalPaymentType()
         );
+        validateAmountSnapshot(intent, preview.getCouponAmount(), preview.getBalanceAmount(),
+                preview.getSpecialFundAmount(), preview.getExternalAmount());
         if (preview.getExternalAmount().compareTo(intent.getExternalAmount()) != 0) {
             throw new IllegalArgumentException(OrderErrorCode.PAYMENT_AMOUNT_MISMATCH + ": 支付意图金额已变化，请重新发起支付");
         }
@@ -495,6 +497,9 @@ public class ClientOrderPaymentService {
         if(actualExternal.compareTo(intent.getExternalAmount())!=0) {
             throw new IllegalArgumentException(OrderErrorCode.PAYMENT_AMOUNT_MISMATCH+": 实际外部收款与支付意图不一致");
         }
+        validateAmountSnapshot(intent, amountOf(executed, PaymentMethod.COUPON),
+                amountOf(executed, PaymentMethod.BALANCE), amountOf(executed, PaymentMethod.SPECIAL_FUND),
+                actualExternal);
         finalizeClientOrderPayment(order, finalOperatorId);
 
         intent.setStatus(2);
@@ -502,6 +507,23 @@ public class ClientOrderPaymentService {
         intent.setConfirmedAt(externalPaidAt != null ? externalPaidAt : LocalDateTime.now());
         intent.setUpdatedAt(LocalDateTime.now());
         paymentIntentRepository.save(intent);
+    }
+
+    /** 确认前及实际资金执行后均核对原拆分；历史默认零快照不得猜配内部资金。 */
+    private void validateAmountSnapshot(OrderPaymentIntent intent, BigDecimal coupon, BigDecimal balance,
+                                        BigDecimal specialFund, BigDecimal external) {
+        if (nonNull(coupon).compareTo(nonNull(intent.getCouponAmount())) != 0
+                || nonNull(balance).compareTo(nonNull(intent.getBalanceAmount())) != 0
+                || nonNull(specialFund).compareTo(nonNull(intent.getSpecialFundAmount())) != 0
+                || nonNull(external).compareTo(nonNull(intent.getExternalAmount())) != 0) {
+            throw new IllegalArgumentException(OrderErrorCode.PAYMENT_AMOUNT_MISMATCH
+                    + ": 支付资金拆分与原意图不一致，请核对原支付记录");
+        }
+    }
+
+    private BigDecimal amountOf(List<OrderPayment> payments, PaymentMethod method) {
+        return payments.stream().filter(payment -> Integer.valueOf(method.getCode()).equals(payment.getPaymentType()))
+                .map(OrderPayment::getAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
     private String generatePaymentIntentNo(Long orderId) {

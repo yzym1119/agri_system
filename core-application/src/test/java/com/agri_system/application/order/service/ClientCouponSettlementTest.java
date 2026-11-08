@@ -208,6 +208,29 @@ class ClientCouponSettlementTest {
         assertThrows(IllegalArgumentException.class,()->service.confirmExternalPayment(confirm,10L));
         assertTrue(sources.isEmpty());assertTrue(savedOrders.isEmpty());
     }
+    @Test void unchangedExternalAmountCannotHideChangedCouponAndWalletSnapshot() {
+        when(wallet.getBalance(10L)).thenReturn(m("20"));
+        var intent=service.createExternalPaymentIntent(command(true,false),10L);
+        coupon.setAmount(m("40"));
+        when(wallet.getBalance(10L)).thenReturn(m("10"));
+        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(1L);
+        confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("snapshot-drift");
+        assertThrows(IllegalArgumentException.class,()->service.confirmExternalPayment(confirm,10L));
+        assertTrue(sources.isEmpty());assertTrue(savedOrders.isEmpty());
+        verify(wallet,never()).deductBalance(any(),any(),any(),any(),any(),any());
+        verify(coupons,never()).save(any());verifyNoInteractions(inventory);
+    }
+    @Test void historicalZeroSnapshotCannotConfirmAnInternalFundingSplit() {
+        when(wallet.getBalance(10L)).thenReturn(m("20"));
+        var intent=service.createExternalPaymentIntent(command(true,false),10L);
+        var stored=storedIntents.get(intent.getIntentNo());
+        stored.setCouponAmount(m("0"));stored.setBalanceAmount(m("0"));stored.setSpecialFundAmount(m("0"));
+        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(1L);
+        confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("legacy-snapshot");
+        assertThrows(IllegalArgumentException.class,()->service.confirmExternalPayment(confirm,10L));
+        assertTrue(sources.isEmpty());assertTrue(savedOrders.isEmpty());
+        verify(coupons,never()).save(any());verifyNoInteractions(inventory);
+    }
     @Test void changedCouponRejectsOldExternalIntentBeforeAnyCouponWalletOrOrderWrite() {
         var request=command(false,false);var intent=service.createExternalPaymentIntent(request,10L);coupon.setAmount(m("40"));
         var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("old-wechat-70");
