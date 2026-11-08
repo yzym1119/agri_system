@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 const { parse, compileScript } = require('@vue/compiler-sfc');
-function setupPage(page, auth, configured = true, extraImports = {}) {
+function setupPage(page, auth, configured = true, extraImports = {}, platform = {}) {
   const file = path.join(__dirname, '../../src/pages',page,'index.vue');
   const { descriptor } = parse(fs.readFileSync(file, 'utf8'));
   const compiled = compileScript(descriptor, { id: page });
@@ -14,6 +14,7 @@ function setupPage(page, auth, configured = true, extraImports = {}) {
     onShow: cb => hooks.show = cb, onHide: cb => hooks.hide = cb, onLoad: cb => hooks.load = cb,
   }, '../../services/auth': { staffAuth: auth, serviceConfigured: configured }, ...extraImports };
   vm.runInNewContext(js, { module: mod, exports: mod.exports, Error, uni: {
+    ...platform,
     reLaunch: options => routes.push(options.url), navigateTo: options => routes.push(options.url),
     redirectTo: options=>routes.push(options.url),pageScrollTo: options=>scrolls.push(options.selector),
     setClipboardData:options=>{clipboard.push(options.data);options.success?.({errMsg:'ok'});},

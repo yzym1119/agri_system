@@ -29,26 +29,27 @@ async function login() {
 }
 </script>
 <template>
-  <view class="page">
-    <text class="title">员工登录</text>
-    <text class="intro">使用门店已有员工账号。没有账号时请联系老板，不要使用客户微信身份代替。</text>
-    <text v-if="!serviceConfigured" class="notice">服务地址尚未配置，请先联系管理员。设备检查仍可使用。</text>
-    <label>员工编码或手机号<input v-model="account" :disabled="busy" maxlength="64" placeholder="输入员工编码或手机号" placeholder-style="color:#626f7e" /></label>
-    <label>密码<input v-model="password" :disabled="busy" password maxlength="128" placeholder="输入密码" placeholder-style="color:#626f7e" @confirm="login" /></label>
-    <text v-if="error" class="error" role="alert">{{ error }}</text>
-    <button class="primary" :loading="busy" :disabled="busy || !serviceConfigured || !account.trim() || !password" @click="login">登录</button>
-    <button :disabled="busy" @click="openDeviceCheck">先检查这台手机</button>
-    <text class="intro">本机不保存密码。重新打开小程序后需再次登录。</text>
+  <view class="staff-page login-page">
+    <view class="brand"><text class="brand-mark">农</text><view><text class="brand-name">农资门店</text><text class="staff-muted">员工工作台</text></view></view>
+    <view class="welcome"><text class="title">把门店工作，带在身边</text><text class="intro">开单、查货、收货与配送，登录后按你的岗位展示。</text></view>
+    <view class="staff-panel login-panel">
+      <text class="panel-title">登录员工账号</text>
+      <text v-if="!serviceConfigured" class="notice">服务暂未配置，请联系管理员。你仍可以检查手机设备。</text>
+      <label>员工编码或手机号<input v-model="account" :disabled="busy" maxlength="64" placeholder="请输入员工编码或手机号" placeholder-style="color:#626f7e" /></label>
+      <label>密码<input v-model="password" :disabled="busy" password maxlength="128" placeholder="请输入登录密码" placeholder-style="color:#626f7e" @confirm="login" /></label>
+      <text v-if="error" class="staff-error" role="alert">{{ error }}</text>
+      <button class="staff-primary login-button" :loading="busy" :disabled="busy || !serviceConfigured || !account.trim() || !password" @click="login">{{ busy ? '正在登录…' : '登录工作台' }}</button>
+      <text class="staff-muted">没有账号或忘记密码？请联系老板核对员工资料。</text>
+    </view>
+    <view class="login-footer"><button :disabled="busy" class="device-button" @click="openDeviceCheck">检查这台手机 ›</button><text class="staff-muted">仅供门店员工使用 · 本机不保存密码</text></view>
   </view>
 </template>
 <style scoped>
-.page { padding:32px 20px; max-width:560px; margin:auto; }
-.title { display:block; font-size:26px; font-weight:600; margin-bottom:12px; }
-.intro,.notice { display:block; line-height:1.7; color:#4b5563; margin:12px 0; }
-.notice { padding:16px; background:#fff; border:1px solid #e5e7eb; border-radius:8px; }
-label { display:block; margin-top:24px; }
-input { margin-top:8px; min-height:48px; padding:0 12px; border:1px solid #626f7e; background:#fff; border-radius:8px; }
-button { margin:20px 0; color:#1d5d73; background:#fff; border:1px solid #1d5d73; }
-.primary { background:#1d5d73; color:#fff; }
-.error { display:block; color:#a12925; margin:16px 0; line-height:1.7; }
+.login-page { padding-top:40px; }
+.brand { display:flex; align-items:center; gap:12px; }.brand-mark { display:flex; align-items:center; justify-content:center; width:48px; height:48px; background:#1d5d73; color:#fff; font-weight:600; font-size:24px; border-radius:14px; }.brand-name { font-weight:600; font-size:18px; }
+.welcome { padding:36px 0 24px; }.title { display:block; font-size:26px; font-weight:650; line-height:1.45; letter-spacing:-.3px; }.intro { display:block; margin-top:12px; color:#4b5563; font-size:15px; line-height:1.7; }
+.login-panel { padding:24px 20px; }.panel-title { display:block; font-size:18px; font-weight:600; margin-bottom:24px; }
+label { display:block; margin-top:20px; font-size:14px; font-weight:550; }input { margin-top:8px; min-height:48px; padding:0 12px; border:1px solid #a8b2bc; background:#fff; border-radius:8px; font-size:16px; }
+.login-button { margin:28px 0 16px; }.notice { display:block; padding:12px; border:1px solid #e5e7eb; background:#f5f6f8; color:#4b5563; line-height:1.65; font-size:14px; }
+.login-footer { text-align:center; padding:16px 0; }.device-button { background:transparent; color:#1d5d73; font-size:14px; }
 </style>
