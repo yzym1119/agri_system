@@ -80,3 +80,9 @@ test('扫码查货响应401清会话时回到登录，隐藏后的旧失败不�
  const hidden=await fixture();await hidden.p.hooks.show();let fail;hidden.setAnswer(()=>new Promise((_,reject)=>fail=reject));hidden.p.state.code.value='P1';const pending=hidden.p.state.resolveManual();
  hidden.p.hooks.hide();fail(Error('UNAUTHORIZED'));await pending;assert.equal(hidden.p.routes.length,0);
 });
+test('查货方式切换清除旧候选，旧对象不能导航，也不猜测另一种查询',async()=>{
+ const f=await fixture();await f.p.hooks.show();f.p.state.code.value='P1';await f.p.state.resolveManual();
+ const old=f.p.state.matches.value[0];f.p.state.switchLookup('search');
+ assert.equal(f.p.state.matches.value.length,0);f.p.state.choose(old);assert.equal(f.p.routes.length,0);
+ assert.equal(f.calls.resolve,1);assert.equal(f.calls.search,0);
+});

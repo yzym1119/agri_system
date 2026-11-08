@@ -10,6 +10,11 @@ const matches=ref<InventoryMatch[]>([]),hasMore=ref(false),page=ref(1),locationN
 let generation=0,actorEpoch=-1,visible=false,locationId:string|undefined,lastSearch='';
 let mode:'scan'|'search'|'location'='scan';
 const current=(ticket=generation)=>visible&&allowed.value&&ticket===generation&&staffAuth.current()?.epoch===actorEpoch;
+const lookupMode=ref<'search'|'code'>('search');
+function switchLookup(value:'search'|'code'){
+ if(!current()||busy.value)return;
+ lookupMode.value=value;clearResults();page.value=1;locationName.value='';locationId=undefined;message.value='';
+}
 function clearResults(){matches.value=[];hasMore.value=false;}
 onShow(async()=>{
   visible=true;const ticket=++generation;loading.value=true;allowed.value=false;busy.value=false;clearResults();message.value='';locationName.value='';locationId=undefined;
@@ -80,38 +85,14 @@ function choose(match:InventoryMatch){
 const kind=(match:InventoryMatch)=>match.type==='SKU'?'商品':match.type==='LOCATION'?'货位':'内部收货批次';
 </script>
 <template>
-  <view class="page">
-    <text class="title">扫码查货</text>
-    <text class="intro">查商品、收货批次或货位。这里只查询，不会出入库。</text>
-    <text v-if="loading" class="intro">正在核对当前员工和门店…</text>
-    <template v-else-if="allowed">
-      <button class="primary" :disabled="busy" :loading="busy" @click="scan">扫描条码 / 内部标签</button>
-      <view class="panel">
-        <text class="label">手输完整编码</text>
-        <input v-model="code" maxlength="100" :disabled="busy" placeholder="商品编码、条码、内部批次或货位码" confirm-type="search" @confirm="resolveManual" />
-        <button :disabled="busy" @click="resolveManual">识别编码</button>
-        <text class="label">找不到编码？按商品搜索</text>
-        <input v-model="keyword" maxlength="100" :disabled="busy" placeholder="输入商品名称或编码" confirm-type="search" @confirm="search" />
-        <button :disabled="busy" @click="search">搜索商品</button>
-      </view>
-      <text v-if="locationName" class="subtitle">{{ locationName }} · 有库存的商品</text>
-      <text v-if="message" class="intro" role="status">{{ message }}</text>
-      <view v-for="match in matches" :key="match.type+':'+match.id+':'+match.unitId" class="panel">
-        <text class="badge">{{ kind(match) }}{{ match.enabled ? '' : ' · 已停用' }}</text>
-        <text class="subtitle">{{ match.name }}</text>
-        <text class="code">{{ match.code }}</text>
-        <text v-if="match.unitName" class="intro">识别单位：{{ match.unitName }}</text>
-        <text v-if="match.type === 'SKU'" class="hint">商品码不能证明具体批次或有效期。</text>
-        <button :disabled="busy" @click="choose(match)">{{ match.type === 'LOCATION' ? '查看这个货位的商品' : '核对并查看库存' }}</button>
-      </view>
-      <text v-if="hasMore && mode === 'scan'" class="intro">匹配项较多，请核对标签，或输入更具体的商品名称搜索。</text>
-      <view v-if="mode !== 'scan' && (page > 1 || hasMore)" class="pagination">
-        <button :disabled="busy || page === 1" @click="previous">上一页</button><text>第 {{ page }} 页</text><button :disabled="busy || !hasMore" @click="next">下一页</button>
-      </view>
-    </template>
-    <text v-else-if="message" class="intro" role="status">{{ message }}</text>
-  </view>
+ <view class="staff-page staff-tools"><view class="page-heading"><text class="eyebrow">门店库存</text><text class="title">找商品，查库存</text><text class="intro">扫描标签或输入名称，核对本店批次与存放位置。</text></view><text v-if="loading" class="intro">正在核对当前员工和门店…</text>
+  <template v-else-if="allowed"><view class="staff-panel scan-entry"><text class="subtitle">手边有条码？</text><text class="intro">支持商品条码、内部批次标签或货位码。</text><button class="staff-primary" :disabled="busy" :loading="busy" @click="scan">打开相机扫码</button></view>
+   <view class="filters"><button :class="lookupMode==='search'?'filter active':'filter'" :disabled="busy" @click="switchLookup('search')">按名称找货</button><button :class="lookupMode==='code'?'filter active':'filter'" :disabled="busy" @click="switchLookup('code')">手输完整编码</button></view>
+   <view class="search-box" v-if="lookupMode==='search'"><input v-model="keyword" maxlength="100" :disabled="busy" placeholder="输入商品名称或编码" placeholder-style="color:#626f7e" confirm-type="search" @confirm="search" /><button class="text-button" :disabled="busy" @click="search">查找</button></view>
+   <view class="search-box" v-else><input v-model="code" maxlength="100" :disabled="busy" placeholder="商品、批次或货位的完整编码" placeholder-style="color:#626f7e" confirm-type="search" @confirm="resolveManual" /><button class="text-button" :disabled="busy" @click="resolveManual">识别</button></view>
+   <text v-if="locationName" class="subtitle">{{ locationName }} · 有库存商品</text><text v-if="message" class="notice" role="status">{{ message }}</text>
+   <view v-for="match in matches" :key="match.type+':'+match.id+':'+match.unitId" class="staff-panel match-card"><text class="badge">{{ kind(match) }}{{ match.enabled ? '' : ' · 已停用' }}</text><text class="subtitle">{{ match.name }}</text><text class="code">{{ match.code }}</text><text v-if="match.unitName" class="intro">标签单位 {{ match.unitName }}</text><text v-if="match.type==='SKU'" class="hint">商品码用于找货，具体批次和有效期请继续核对。</text><button class="staff-secondary" :disabled="busy" @click="choose(match)">{{ match.type==='LOCATION'?'查看货位商品 ›':'查看库存与批次 ›' }}</button></view>
+   <text v-if="hasMore && mode==='scan'" class="intro">匹配较多，请核对标签或输入更具体的名称。</text><view v-if="mode!=='scan' && (page>1 || hasMore)" class="pagination"><button class="staff-secondary" :disabled="busy || page===1" @click="previous">上一页</button><text>第 {{ page }} 页</text><button class="staff-secondary" :disabled="busy || !hasMore" @click="next">下一页</button></view>
+  </template><text v-else-if="message" class="notice" role="status">{{ message }}</text>
+ </view>
 </template>
-<style scoped>
-.page{padding:24px 20px;max-width:600px;margin:auto}.title{display:block;font-size:24px;font-weight:600}.intro,.hint{display:block;color:#4b5563;line-height:1.7;margin:12px 0}.hint{font-size:14px}.panel{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0}.label,.subtitle{display:block;font-weight:600;line-height:1.6;margin:12px 0}.subtitle{font-size:20px}.badge{color:#1d5d73}.code{display:block;overflow-wrap:anywhere;line-height:1.7}input{box-sizing:border-box;width:100%;height:48px;padding:0 12px;background:#f5f6f8;border:1px solid #d1d5db;border-radius:6px;font-size:16px}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73}.primary{color:#fff;background:#1d5d73}.pagination{display:flex;gap:12px;align-items:center;justify-content:space-between}
-</style>

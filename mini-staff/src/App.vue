@@ -2,6 +2,7 @@
 export default {};
 </script>
 <style>
+@import "./styles/tools.css";
 page { background:#f5f6f8; color:#1f2937; font-family:system-ui,-apple-system,"PingFang SC",sans-serif; font-size:16px; line-height:1.6; }
 button { font:inherit; min-height:48px; border-radius:10px; box-sizing:border-box; }
 button::after { border:0; }

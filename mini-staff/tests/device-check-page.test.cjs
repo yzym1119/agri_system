@@ -11,7 +11,7 @@ function page(createRequestKey){
 test('安全请求号失败应区分接口缺失、调用失败与数据异常，且不显示原始错误',async()=>{
  for(const [code,text] of [['RANDOM_UNAVAILABLE','未提供安全随机能力'],['RANDOM_FAILED','安全随机调用未完成'],['RANDOM_INVALID','安全随机返回数据异常'],['OTHER','检查未通过'],['toString','检查未通过'],['constructor','检查未通过'],['__proto__','检查未通过']]){
   const p=page(async()=>{throw Error(code)});p.hooks.show();await p.state.check('random');
-  assert.match(p.state.message.value,new RegExp(text));assert.match(p.state.message.value,/暂不开放业务提交/);assert.ok(!p.state.message.value.includes(code));
+  assert.match(p.state.message.value,new RegExp(text));assert.match(p.state.message.value,/先完成设备核对/);assert.ok(!p.state.message.value.includes(code));
  }
 });
 test('设备检查旧失败不能覆盖重新显示后的新视图',async()=>{

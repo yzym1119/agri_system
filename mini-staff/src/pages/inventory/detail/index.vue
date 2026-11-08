@@ -33,42 +33,17 @@ async function load(page:number){
     }
   }finally{if(ticket===generation)loading.value=false;}
 }
+const quantityLabel=(v:string)=>v.includes('.')?v.replace(/0+$/,'').replace(/\.$/,''):v;
 const retry=()=>load(1);
 const back=()=>uni.navigateBack();
 </script>
 <template>
-  <view class="page">
-    <text class="title">库存详情</text>
-    <text v-if="loading" class="intro">正在读取本店最新库存…</text>
-    <template v-else-if="allowed && inventory">
-      <view class="panel">
-        <text class="subtitle">{{ inventory.productName }}{{ inventory.productEnabled ? '' : ' · 已停用' }}</text>
-        <text class="code">商品编码 {{ inventory.productCode }}</text>
-        <text class="intro">{{ target?.batchId || target?.locationId ? '当前选中范围' : '当前门店' }} · 按 {{ inventory.mainUnitName }} 统计</text>
-        <text class="amount">{{ inventory.quantity === null ? '单位资料待核对' : inventory.quantity + ' ' + inventory.mainUnitName }}</text>
-        <text class="intro">未占用：{{ inventory.unreservedQuantity === null ? '待核对' : inventory.unreservedQuantity + ' ' + inventory.mainUnitName }}</text>
-        <text class="hint">未占用数量仅扣除已占用库存，不代表可以直接销售。有效期和业务限制仍须核对。</text>
-      </view>
-      <text class="subtitle">批次与存放位置</text>
-      <text v-if="inventory.totalRows === 0" class="intro">当前范围没有正库存记录。</text>
-      <view v-for="row in inventory.rows" :key="row.batchId+':'+row.locationId" class="panel">
-        <text class="subtitle">{{ row.locationName ?? '货位资料待核对' }}{{ row.locationEnabled ? '' : ' · 货位不可用' }}</text>
-        <text class="intro">现存 {{ row.baseQuantity }} {{ row.baseUnitName ?? '单位待核对' }} · 未占用 {{ row.unreservedBaseQuantity }} {{ row.baseUnitName ?? '单位待核对' }}</text>
-        <text v-if="row.supplierBatchNo" class="code">厂家批号：{{ row.supplierBatchNo }}</text>
-        <text class="code">内部批次：{{ row.internalBatchNo ?? '待核对' }}</text>
-        <text class="intro">生产日期：{{ row.productionDate ?? '未知' }}<br />有效期至：{{ row.expiryDate ?? '未知，请查看实物标签' }}</text>
-        <text class="hint">原批次收货：{{ row.originalQuantity ?? '待核对' }} {{ row.originalUnitName ?? '单位待核对' }}（整批，不是本货位剩余量）</text>
-      </view>
-      <view v-if="inventory.totalRows > 30" class="pagination">
-        <button :disabled="loading || inventory.page === 1" @click="load(inventory.page-1)">上一页</button><text>第 {{ inventory.page }} 页</text><button :disabled="loading || inventory.page*30 >= inventory.totalRows" @click="load(inventory.page+1)">下一页</button>
-      </view>
-      <button :disabled="loading" @click="retry">刷新最新库存</button>
-    </template>
-    <text v-if="message" class="intro" role="status">{{ message }}</text>
-    <button v-if="message && allowed && target" :disabled="loading" @click="retry">重新读取</button>
-    <button @click="back">返回查货</button>
-  </view>
+ <view class="staff-page staff-tools"><view class="page-heading"><text class="eyebrow">门店库存</text><text class="title">库存与存放位置</text></view><text v-if="loading" class="intro">正在读取本店最新库存…</text>
+  <template v-else-if="allowed && inventory"><view class="staff-panel inventory-summary"><text class="subtitle">{{ inventory.productName }}{{ inventory.productEnabled?'':' · 已停用' }}</text><text class="code">{{ inventory.productCode }}</text><text class="muted">{{ target?.batchId || target?.locationId ? '当前选中范围' : '当前门店' }} · 主单位库存</text><text class="stock-amount">{{ inventory.quantity===null?'单位资料待核对':quantityLabel(inventory.quantity)+' '+inventory.mainUnitName }}</text><text class="intro">未占用 {{ inventory.unreservedQuantity===null?'待核对':quantityLabel(inventory.unreservedQuantity)+' '+inventory.mainUnitName }}</text><text class="hint">未占用量仅扣除库存占用，销售前仍需核对有效期和业务限制。</text></view>
+   <view class="section-head"><text class="subtitle">批次与货位</text></view><view v-if="inventory.totalRows===0" class="staff-panel"><text class="intro">当前范围没有正库存记录。</text></view>
+   <view v-for="row in inventory.rows" :key="row.batchId+':'+row.locationId" class="staff-panel stock-card"><text class="subtitle">{{ row.locationName ?? '货位资料待核对' }}{{ row.locationEnabled?'':' · 货位不可用' }}</text><view class="stock-row"><view><text class="muted">货位现存</text><text class="row-amount">{{ quantityLabel(row.baseQuantity) }} {{ row.baseUnitName ?? '单位待核对' }}</text></view><view><text class="muted">未占用</text><text class="row-amount">{{ quantityLabel(row.unreservedBaseQuantity) }} {{ row.baseUnitName ?? '单位待核对' }}</text></view></view>
+    <view class="batch-facts"><text class="code">内部批次 {{ row.internalBatchNo ?? '待核对' }}</text><text v-if="row.supplierBatchNo" class="code">厂家批号 {{ row.supplierBatchNo }}</text><text class="intro">生产日期 {{ row.productionDate ?? '未知' }}<br />有效期至 {{ row.expiryDate ?? '未知，请核对实物' }}</text><text class="hint">原批收货 {{ row.originalQuantity ?? '待核对' }} {{ row.originalUnitName ?? '单位待核对' }}（整批原数量，不是此货位余量）</text></view>
+   </view><view v-if="inventory.totalRows>30" class="pagination"><button class="staff-secondary" :disabled="loading || inventory.page===1" @click="load(inventory.page-1)">上一页</button><text>第 {{ inventory.page }} 页</text><button class="staff-secondary" :disabled="loading || inventory.page*30>=inventory.totalRows" @click="load(inventory.page+1)">下一页</button></view><button class="staff-secondary" :disabled="loading" @click="retry">刷新库存</button>
+  </template><text v-if="message" class="notice" role="status">{{ message }}</text><button v-if="message && allowed && target" class="staff-secondary" :disabled="loading" @click="retry">重新读取</button><button class="back-button" @click="back">返回查货</button>
+ </view>
 </template>
-<style scoped>
-.page{padding:24px 20px;max-width:600px;margin:auto}.title{display:block;font-size:24px;font-weight:600}.intro,.hint{display:block;color:#4b5563;line-height:1.7;margin:12px 0}.hint{font-size:14px}.panel{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0}.subtitle{display:block;font-size:20px;font-weight:600;line-height:1.6}.amount{display:block;color:#1d5d73;font-size:28px;font-weight:600;line-height:1.6}.code{display:block;overflow-wrap:anywhere;line-height:1.7}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73}.pagination{display:flex;gap:12px;align-items:center;justify-content:space-between}
-</style>
