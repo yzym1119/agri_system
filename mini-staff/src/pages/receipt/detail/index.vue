@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { onLoad,onShow,onHide } from '@dcloudio/uni-app';
 import { buildReceiptSnapshot,receiptMultiply,type ReceivingDetail,type ReceivingItem,type ReceiptSnapshot,type PendingReceipt,type ReceiptResult } from '@agri/mobile-contracts/receipt';
 import { isPositiveLongId } from '@agri/mobile-contracts/ids';
@@ -11,6 +11,9 @@ type LineDraft={purchaseOrderItemId:string;included:boolean;remark:string;batche
 const detail=ref<ReceivingDetail|null>(null),drafts=ref<LineDraft[]>([]),preview=ref<ReceiptSnapshot|null>(null),pending=ref<PendingReceipt|null>(null),result=ref<ReceiptResult|null>(null);
 const allowed=ref(false),loading=ref(true),busy=ref(false),confirmed=ref(false),finished=ref(false),message=ref(''),remark=ref(''),exceptionReason=ref('');
 const scanInput=ref(''),scanMessage=ref(''),scanMatches=ref<ReceivingItem[]>([]),locatedLine=ref('');
+const activeLine=ref(''),reviewError=ref('');
+const includedCount=computed(()=>drafts.value.filter(line=>line.included).length);
+function toggleLine(line:LineDraft){if(!editable()||!drafts.value.includes(line))return;activeLine.value=activeLine.value===line.purchaseOrderItemId?'':line.purchaseOrderItemId;}
 let orderId:string|null=null,generation=0,actorEpoch=-1,visible=false,batchSequence=0;
 type DraftOwner={staffId:string;storeId:string;orderId:string};
 let loadedOwner:DraftOwner|null=null,savedDraft:(DraftOwner&{lines:LineDraft[];remark:string;exceptionReason:string})|null=null;
@@ -22,7 +25,7 @@ onLoad(options=>{orderId=isPositiveLongId(options?.orderId)?options.orderId:null
 onShow(async()=>{
  cacheDraft();loadedOwner=null;
  visible=true;const ticket=++generation;allowed.value=false;loading.value=true;busy.value=false;confirmed.value=false;finished.value=false;
- detail.value=null;drafts.value=[];preview.value=null;pending.value=null;result.value=null;message.value='';remark.value='';exceptionReason.value='';scanInput.value='';scanMessage.value='';scanMatches.value=[];locatedLine.value='';
+ activeLine.value='';reviewError.value='';detail.value=null;drafts.value=[];preview.value=null;pending.value=null;result.value=null;message.value='';remark.value='';exceptionReason.value='';scanInput.value='';scanMessage.value='';scanMatches.value=[];locatedLine.value='';
  try{
   await staffAuth.refresh();if(!visible||ticket!==generation)return;
   const actor=staffAuth.current();if(!actor)throw Error('UNAUTHORIZED');actorEpoch=actor.epoch;
@@ -35,6 +38,7 @@ onShow(async()=>{
   const loaded=await readReceivingDetail(orderId,actorEpoch);if(!current(ticket))return;
   detail.value=loaded;const cached=savedDraft;
   drafts.value=loaded.items.map(item=>cached?.lines.find(l=>l.purchaseOrderItemId===item.id)??{purchaseOrderItemId:item.id,included:item.remainingBaseQuantity!=='0',remark:'',batches:[newBatch(item.orderedUnit)]});
+  activeLine.value=drafts.value.find(line=>line.included)?.purchaseOrderItemId??drafts.value[0]?.purchaseOrderItemId??'';
   loadedOwner={staffId:actor.staffId,storeId:actor.storeId,orderId:loaded.id};
   if(cached){remark.value=cached.remark;exceptionReason.value=cached.exceptionReason;message.value='已恢复尚未提交的输入；采购资料已重新读取，请重新核对本次数量、进价和日期。';}
   savedDraft=null;
@@ -46,7 +50,7 @@ onShow(async()=>{
   catch{allowed.value=false;message.value='本机收货记录读取异常，暂停新的收货，请联系老板核对，不要清除数据。';}
  }finally{if(visible&&ticket===generation&&staffAuth.current()?.epoch===actorEpoch)loading.value=false;}
 });
-onHide(()=>{cacheDraft();loadedOwner=null;visible=false;generation++;allowed.value=false;detail.value=null;drafts.value=[];preview.value=null;pending.value=null;result.value=null;confirmed.value=false;remark.value='';exceptionReason.value='';scanInput.value='';scanMessage.value='';scanMatches.value=[];locatedLine.value='';});
+onHide(()=>{reviewError.value='';cacheDraft();loadedOwner=null;visible=false;generation++;allowed.value=false;detail.value=null;drafts.value=[];preview.value=null;pending.value=null;result.value=null;confirmed.value=false;remark.value='';exceptionReason.value='';scanInput.value='';scanMessage.value='';scanMatches.value=[];locatedLine.value='';});
 function locateCode(value:string){
  if(!editable()||!detail.value)return;scanMatches.value=[];locatedLine.value='';const code=value.trim();
  if(!code||code.length>100){scanMessage.value='请输入完整商品编码或条码。';return;}
@@ -60,7 +64,7 @@ async function scanProduct(){
  }catch{if(current(ticket))scanMessage.value='暂时无法扫码，可手输编码定位。';}finally{if(ticket===generation)busy.value=false;}
 }
 function chooseLine(item:ReceivingItem){
- if(!editable()||!scanMatches.value.includes(item))return;locatedLine.value=item.id;const ticket=generation;
+ if(!editable()||!scanMatches.value.includes(item))return;activeLine.value=item.id;locatedLine.value=item.id;const ticket=generation;
  uni.pageScrollTo({selector:'#receipt-line-'+item.id,duration:150,fail:()=>{if(current(ticket))scanMessage.value='已标出 '+item.productName+'，请在下方核对采购行。';}});
 }
 function newBatch(unit:string):BatchDraft{return {clientId:++batchSequence,originalUnit:unit,originalQuantity:'',originalUnitCost:'',supplierBatchNo:'',productionDate:'',expiryDate:'',unknownDates:false};}
@@ -75,13 +79,13 @@ function hint(item:ReceivingItem,batch:BatchDraft){try{const unit=item.units.fin
  const base=receiptMultiply(batch.originalQuantity,unit.baseQuantityPerUnit);return batch.originalQuantity+' '+unit.name+' = '+base+' '+item.baseUnitName;
  }catch{return '请填写普通数字，不使用科学计数法。';}}
 function review(){
- if(!editable()||!detail.value)return;message.value='';
+ if(!editable()||!detail.value)return;message.value='';reviewError.value='';
  try{preview.value=buildReceiptSnapshot(detail.value,drafts.value.filter(l=>l.included),{remark:remark.value,exceptionReason:exceptionReason.value});}
  catch(failure){preview.value=null;const code=failure instanceof Error?failure.message:'';
   message.value=code==='OVER_RECEIPT_REASON_REQUIRED'?'本次各批合计超过这条采购明细的待收数量，请先填写超收说明，或更正数量后重新核对。'
    :code==='QUANTITY_GRANULARITY'?'换算到最小单位后必须是完整数量，请核对箱内件数和实收数量。'
    :code==='DATE_CONFIRMATION_REQUIRED'?'请核对生产日期和有效期；两者都不知道时，明确勾选“日期未知”。'
-   :'请核对各批实际数量、每单位进价及单位；数量和进价须大于0，最多12位整数、8位有效小数。至少选择一条本次收货商品。';}
+   :'请核对各批实际数量、每单位进价及单位；数量和进价须大于0，最多12位整数、8位有效小数。至少选择一条本次收货商品。';reviewError.value=message.value;}
 }
 async function submit(){
  if(!editable()||!preview.value)return;const ticket=generation,snapshot=preview.value;busy.value=true;message.value='';confirmed.value=false;
@@ -105,51 +109,55 @@ async function act(kind:'read'|'retry'|'finish'){
 const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
 </script>
 <template>
- <view class="page">
-  <text class="title">登记本次到货</text>
+ <view class="staff-page receipt-detail">
+  <view class="page-heading"><text class="eyebrow">采购入库</text><text class="title">{{ pending ? '核对原收货' : preview ? '确认本次到货' : finished ? '本次核对已结束' : '登记本次到货' }}</text><text class="intro">{{ pending ? '保持原请求，先核对结果，再继续收货。' : preview ? '确认数量、进价和日期后，本次商品将入库。' : '按商品逐项填写，按实际批次分别登记。' }}</text></view>
   <text v-if="loading" class="intro">正在核对当前员工、采购单和本机记录…</text>
   <template v-else-if="allowed && pending">
-   <view class="panel"><text class="subtitle">原收货待核对</text><text class="code">采购单 {{ pending.snapshot.orderNo }}</text><text class="code">请求号 {{ pending.requestKey }}</text><text class="intro">不能修改这笔内容或重新登记。同号重试不会建立另一笔收货。</text></view>
-   <view v-for="line in pending.snapshot.lines" :key="line.purchaseOrderItemId" class="panel"><text class="subtitle">{{ line.productName }}</text><view v-for="(batch,index) in line.batches" :key="index" class="batch"><text>第 {{ index+1 }} 批 · {{ batch.originalQuantity }} {{ batch.originalUnit }} = {{ batch.baseQuantity }} {{ line.baseUnitName }}</text><text class="intro">实际进价 ¥{{ batch.originalUnitCost }} / {{ batch.originalUnit }}</text><text class="intro">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text></view></view>
-   <button class="primary" :disabled="busy" :loading="busy" @click="act('read')">核对原收货结果</button>
-   <view v-if="result?.status==='COMPLETED'" class="panel"><text class="subtitle">原收货已完成</text><text class="code">收货单 {{ result.receiptNo }}</text><view v-for="line in result.lines" :key="line.purchaseOrderItemId"><text v-for="batch in line.batches" :key="batch.id" class="code">内部批次：{{ batch.internalBatchNo }}</text></view><checkbox-group @change="confirmed=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="confirmed" :disabled="busy" />我已核对原收货单和批次</label></checkbox-group><button :disabled="busy || !confirmed" @click="act('finish')">结束已完成收货</button></view>
-   <view v-else class="panel"><text class="intro">查询不到不代表未入库。仅在确需继续时，按原内容、原请求号重试；不能换号。</text><checkbox-group @change="confirmed=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="confirmed" :disabled="busy" />我已核对，按原内容重试</label></checkbox-group><button :disabled="busy || !confirmed" @click="act('retry')">同原内容重试</button></view>
+   <view class="staff-panel section-panel"><text class="subtitle">原收货待核对</text><text class="code">采购单 {{ pending.snapshot.orderNo }}</text><text class="code">请求号 {{ pending.requestKey }}</text><text class="intro">不能修改这笔内容或重新登记。同号重试不会建立另一笔收货。</text></view>
+   <view v-for="line in pending.snapshot.lines" :key="line.purchaseOrderItemId" class="staff-panel section-panel"><text class="subtitle">{{ line.productName }}</text><view v-for="(batch,index) in line.batches" :key="index" class="batch"><text>第 {{ index+1 }} 批 · {{ batch.originalQuantity }} {{ batch.originalUnit }} = {{ batch.baseQuantity }} {{ line.baseUnitName }}</text><text class="intro">实际进价 ¥{{ batch.originalUnitCost }} / {{ batch.originalUnit }}</text><text class="intro">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text></view></view>
+   <button class="staff-primary" :disabled="busy" :loading="busy" @click="act('read')">核对原收货结果</button>
+   <view v-if="result?.status==='COMPLETED'" class="staff-panel section-panel"><text class="subtitle">原收货已完成</text><text class="code">收货单 {{ result.receiptNo }}</text><view v-for="line in result.lines" :key="line.purchaseOrderItemId"><text v-for="batch in line.batches" :key="batch.id" class="code">内部批次：{{ batch.internalBatchNo }}</text></view><checkbox-group @change="confirmed=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="confirmed" :disabled="busy" />我已核对原收货单和批次</label></checkbox-group><button :disabled="busy || !confirmed" @click="act('finish')">结束已完成收货</button></view>
+   <view v-else class="staff-panel section-panel"><text class="intro">查询不到不代表未入库。仅在确需继续时，按原内容、原请求号重试；不能换号。</text><checkbox-group @change="confirmed=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="confirmed" :disabled="busy" />我已核对，按原内容重试</label></checkbox-group><button :disabled="busy || !confirmed" @click="act('retry')">同原内容重试</button></view>
   </template>
   <template v-else-if="allowed && preview">
    <text class="subtitle">确认本次实际收货</text><text class="code">{{ preview.orderNo }}</text>
-   <view v-for="line in preview.lines" :key="line.purchaseOrderItemId" class="panel"><text class="subtitle">{{ line.productName }}</text><view v-for="(batch,index) in line.batches" :key="index" class="batch"><text>第 {{ index+1 }} 批：{{ batch.originalQuantity }} {{ batch.originalUnit }} = {{ batch.baseQuantity }} {{ line.baseUnitName }}</text><text class="intro">¥{{ batch.originalUnitCost }} / {{ batch.originalUnit }} · 本批 ¥{{ receiptMultiply(batch.originalQuantity,batch.originalUnitCost) }}</text><text class="code">厂家批号：{{ batch.supplierBatchNo ?? '未提供' }}</text><text class="intro">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text></view></view>
+   <view v-for="line in preview.lines" :key="line.purchaseOrderItemId" class="staff-panel section-panel"><text class="subtitle">{{ line.productName }}</text><view v-for="(batch,index) in line.batches" :key="index" class="batch"><text>第 {{ index+1 }} 批：{{ batch.originalQuantity }} {{ batch.originalUnit }} = {{ batch.baseQuantity }} {{ line.baseUnitName }}</text><text class="intro">¥{{ batch.originalUnitCost }} / {{ batch.originalUnit }} · 本批 ¥{{ receiptMultiply(batch.originalQuantity,batch.originalUnitCost) }}</text><text class="code">厂家批号：{{ batch.supplierBatchNo ?? '未提供' }}</text><text class="intro">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text></view></view>
    <text v-if="preview.exceptionReason" class="intro">超收说明：{{ preview.exceptionReason }}</text><text v-if="preview.remark" class="intro">备注：{{ preview.remark }}</text>
-   <button class="primary" :disabled="busy" :loading="busy" @click="submit">确认本次入库</button><button :disabled="busy" @click="preview=null">返回修改</button>
+   <button class="staff-primary" :disabled="busy" :loading="busy" @click="submit">确认本次入库</button><button :disabled="busy" @click="preview=null">返回修改</button>
   </template>
   <template v-else-if="allowed && detail && !finished">
-   <text class="subtitle">{{ detail.orderNo }}</text><text class="intro">{{ detail.supplierName ?? '供应商待核对' }} · 按实际到货填写，不照搬采购总量。</text>
-   <view class="panel"><button :disabled="busy" @click="scanProduct">扫描商品，定位采购行</button><input v-model="scanInput" :disabled="busy" maxlength="100" placeholder="也可手输商品编码或条码" @input="scanMatches=[];scanMessage=''" /><button :disabled="busy" @click="locateCode(scanInput)">识别并定位</button><text class="hint">这里只定位本采购单商品，不代填数量或进价，也不作为收货批次证据。</text><text v-if="scanMessage" class="intro" role="status">{{ scanMessage }}</text><button v-for="item in scanMatches" :key="item.id" :disabled="busy" @click="chooseLine(item)">{{ item.productName }} · 原采购 {{ item.orderedQuantity }} {{ item.orderedUnit }} · 定位这行</button></view>
-   <view v-for="line in drafts" :id="'receipt-line-'+line.purchaseOrderItemId" :key="line.purchaseOrderItemId" class="panel" :class="{located:locatedLine===line.purchaseOrderItemId}">
+   <view class="staff-panel order-summary"><text class="supplier">{{ detail.supplierName ?? '供应商待核对' }}</text><text class="code">采购单 {{ detail.orderNo }}</text><text class="intro">按实际到货填写，不照搬采购总量。已选择 {{ includedCount }} / {{ drafts.length }} 种商品。</text></view>
+   <view class="steps"><text class="step-active">1 填写到货</text><text>›</text><text>2 核对入库</text></view>
+   <view class="staff-panel section-panel"><button :disabled="busy" @click="scanProduct">扫描商品，定位采购行</button><input placeholder-style="color:#626f7e" v-model="scanInput" :disabled="busy" maxlength="100" placeholder="也可手输商品编码或条码" @input="scanMatches=[];scanMessage=''" /><button :disabled="busy" @click="locateCode(scanInput)">识别并定位</button><text class="hint">这里只定位本采购单商品，不代填数量或进价，也不作为收货批次证据。</text><text v-if="scanMessage" class="intro" role="status">{{ scanMessage }}</text><button v-for="item in scanMatches" :key="item.id" :disabled="busy" @click="chooseLine(item)">{{ item.productName }} · 原采购 {{ item.orderedQuantity }} {{ item.orderedUnit }} · 定位这行</button></view>
+   <view v-for="line in drafts" :id="'receipt-line-'+line.purchaseOrderItemId" :key="line.purchaseOrderItemId" class="staff-panel section-panel" :class="{located:locatedLine===line.purchaseOrderItemId}">
     <template v-if="itemFor(line)">
      <text class="subtitle">{{ itemFor(line)!.productName }}</text><text class="intro">采购 {{ itemFor(line)!.orderedQuantity }} {{ itemFor(line)!.orderedUnit }} · 已收 {{ itemFor(line)!.receivedBaseQuantity }} {{ itemFor(line)!.baseUnitName }} · 待收 {{ itemFor(line)!.remainingBaseQuantity }} {{ itemFor(line)!.baseUnitName }}</text>
      <checkbox-group @change="line.included=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="line.included" :disabled="busy" />本次收这个商品</label></checkbox-group>
+     <button class="expand-button" :disabled="busy" @click="toggleLine(line)">{{ activeLine===line.purchaseOrderItemId ? '收起填写内容 ↑' : (line.included ? '填写本次到货 ↓' : '查看这条商品 ↓') }}</button>
+     <view v-if="activeLine===line.purchaseOrderItemId">
      <template v-if="line.included">
       <view v-for="(batch,index) in line.batches" :key="batch.clientId" class="batch">
-       <text class="label">第 {{ index+1 }} 批实际到货</text>
+       <text class="label">批次 {{ index+1 }} · 实物到货</text>
        <text class="label">收货单位</text><picker :range="itemFor(line)!.units.map(u=>u.name)" :disabled="busy" @change="changeUnit(line,batch,Number($event.detail.value))"><view class="picker">{{ batch.originalUnit }} · 点击选择</view></picker>
-       <text class="label">数量（{{ batch.originalUnit }}）</text><input v-model="batch.originalQuantity" type="digit" :disabled="busy" maxlength="32" placeholder="填写本批实际数量" /><text class="hint">{{ hint(itemFor(line)!,batch) }}</text>
-       <text class="label">实际进价（元 / {{ batch.originalUnit }}）</text><input v-model="batch.originalUnitCost" type="digit" :disabled="busy" maxlength="32" placeholder="必须填写，不自动沿用其他批次进价" />
-       <text class="label">厂家批号（可空）</text><input v-model="batch.supplierBatchNo" :disabled="busy" maxlength="100" placeholder="查看包装实物标签" />
-       <text class="label">生产日期</text><picker mode="date" :value="batch.productionDate" :disabled="busy" @change="batch.productionDate=$event.detail.value;batch.unknownDates=false"><view class="picker">{{ batch.productionDate || '点击填写，确实未知可留空' }}</view></picker><button v-if="batch.productionDate" class="quiet" @click="batch.productionDate=''">清除生产日期</button>
-       <text class="label">有效期至</text><picker mode="date" :value="batch.expiryDate" :disabled="busy" @change="batch.expiryDate=$event.detail.value;batch.unknownDates=false"><view class="picker">{{ batch.expiryDate || '点击填写，确实未知可留空' }}</view></picker><button v-if="batch.expiryDate" class="quiet" @click="batch.expiryDate=''">清除有效期</button>
+       <text class="label">数量（{{ batch.originalUnit }}）</text><input placeholder-style="color:#626f7e" v-model="batch.originalQuantity" type="digit" :disabled="busy" maxlength="32" placeholder="填写本批实际数量" /><text class="hint">{{ hint(itemFor(line)!,batch) }}</text>
+       <text class="label">实际进价（元 / {{ batch.originalUnit }}）</text><input placeholder-style="color:#626f7e" v-model="batch.originalUnitCost" type="digit" :disabled="busy" maxlength="32" placeholder="必须填写，不自动沿用其他批次进价" />
+       <text class="label">厂家批号（可空）</text><input placeholder-style="color:#626f7e" v-model="batch.supplierBatchNo" :disabled="busy" maxlength="100" placeholder="查看包装实物标签" />
+       <text class="label">生产日期</text><picker mode="date" :value="batch.productionDate" :disabled="busy" @change="batch.productionDate=$event.detail.value;batch.unknownDates=false"><view class="picker">{{ batch.productionDate || '选择生产日期，可留空' }}</view></picker><button v-if="batch.productionDate" class="text-button" @click="batch.productionDate=''">清除生产日期</button>
+       <text class="label">有效期至</text><picker mode="date" :value="batch.expiryDate" :disabled="busy" @change="batch.expiryDate=$event.detail.value;batch.unknownDates=false"><view class="picker">{{ batch.expiryDate || '选择有效期，可留空' }}</view></picker><button v-if="batch.expiryDate" class="text-button" @click="batch.expiryDate=''">清除有效期</button>
        <checkbox-group v-if="!batch.productionDate && !batch.expiryDate" @change="batch.unknownDates=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="batch.unknownDates" :disabled="busy" />已查看实物，两项日期都未知</label></checkbox-group>
        <button v-if="line.batches.length>1" :disabled="busy" @click="removeBatch(line,batch)">移除这批</button>
       </view>
-      <button :disabled="busy || line.batches.length>=50" @click="addBatch(line)">增加另一个实际批次</button>
+      <button class="staff-secondary" :disabled="busy || line.batches.length>=50" @click="addBatch(line)">＋ 另一个实际批次</button>
      </template>
+     </view>
     </template>
    </view>
-   <view class="panel"><text class="label">超收说明（超过原采购量时必填）</text><textarea v-model="exceptionReason" :disabled="busy" maxlength="500" placeholder="例如供应商实发数量超出原采购量" /><text class="label">本次收货备注（可空）</text><textarea v-model="remark" :disabled="busy" maxlength="500" /></view>
-   <button class="primary" :disabled="busy" @click="review">核对本次收货摘要</button>
+   <view class="staff-panel section-panel"><text class="label">超收说明（超过原采购量时必填）</text><textarea placeholder-style="color:#626f7e" v-model="exceptionReason" :disabled="busy" maxlength="500" placeholder="例如供应商实发数量超出原采购量" /><text class="label">本次收货备注（可空）</text><textarea placeholder-style="color:#626f7e" v-model="remark" :disabled="busy" maxlength="500" /></view>
+   <view class="review-bar"><text v-if="reviewError" class="review-error" role="alert">{{ reviewError }}</text><view class="review-bar-actions"><view><text class="bar-title">本次选择 {{ includedCount }} 种商品</text><text class="hint">核对后才会提交入库</text></view><button class="staff-primary" :disabled="busy || !includedCount" @click="review">核对收货 ›</button></view></view>
   </template>
   <text v-if="message" class="intro" role="status">{{ message }}</text><button :disabled="busy" @click="back">返回待收采购单</button>
  </view>
 </template>
 <style scoped>
-.page{padding:24px 20px;max-width:600px;margin:auto}.title{display:block;font-size:24px;font-weight:600}.subtitle{display:block;font-size:20px;font-weight:600;line-height:1.6}.intro,.hint{display:block;color:#4b5563;line-height:1.7;margin:12px 0}.hint{font-size:14px}.panel{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0}.located{border-color:#1d5d73}.batch{border-top:1px solid #e5e7eb;margin-top:20px;padding-top:16px}.label{display:block;font-weight:600;line-height:1.7;margin:16px 0 8px}.code{display:block;line-height:1.7;word-break:break-all}.picker,input,textarea{box-sizing:border-box;width:100%;min-height:48px;padding:12px;background:#f5f6f8;border:1px solid #d1d5db;border-radius:6px;font-size:16px;line-height:1.5}textarea{height:100px}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73}.primary{color:#fff;background:#1d5d73}.quiet{font-size:14px}label{display:block;line-height:1.7;margin:16px 0}
+.receipt-detail{padding-bottom:calc(220px + env(safe-area-inset-bottom))}.page-heading{padding:12px 0 20px}.eyebrow{display:block;color:#1d5d73;font-size:13px;font-weight:600;margin-bottom:10px}.title{display:block;font-size:25px;font-weight:650;line-height:1.45}.subtitle{display:block;font-size:17px;font-weight:600;line-height:1.6;overflow-wrap:anywhere}.supplier{display:block;font-size:19px;font-weight:600}.intro,.hint{display:block;color:#4b5563;line-height:1.7;margin:12px 0;font-size:14px}.hint{font-size:13px}.section-panel{margin:16px 0}.located{border:2px solid #1d5d73}.batch{background:#f5f6f8;border-radius:10px;margin-top:16px;padding:16px}.label{display:block;font-weight:550;font-size:14px;line-height:1.7;margin:16px 0 8px}.batch>.label:first-child{margin-top:0}.code{display:block;line-height:1.7;font-size:13px;overflow-wrap:anywhere;color:#4b5563}.picker,input,textarea{box-sizing:border-box;width:100%;min-height:48px;padding:12px;background:#fff;border:1px solid #a8b2bc;border-radius:8px;font-size:16px;line-height:1.5}textarea{height:100px}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73;font-size:15px}.staff-primary{color:#fff;background:#1d5d73;border:0}.text-button,.expand-button{font-size:14px;background:transparent;color:#1d5d73;border:0;padding:0 4px;text-align:left}.expand-button{width:100%;margin:8px 0 0}label{display:block;font-size:14px;line-height:1.7;margin:16px 0}.steps{display:flex;gap:12px;font-size:14px;color:#626f7e;margin:20px 0}.step-active{color:#1d5d73;font-weight:600}.review-bar{position:fixed;left:0;right:0;bottom:0;max-width:600px;margin:0 auto;box-sizing:border-box;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:#fff;border-top:1px solid #e5e7eb;z-index:10;display:block}.review-bar-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}.review-error{display:block;font-size:13px;line-height:1.6;color:#a12925;margin-bottom:10px}.review-bar button{margin:0;flex-shrink:0}.review-bar .hint{margin:0}.bar-title{display:block;font-size:15px;font-weight:550}
 </style>
