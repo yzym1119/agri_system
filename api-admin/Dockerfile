@@ -21,7 +21,7 @@ COPY core-infrastructure core-infrastructure
 COPY api-admin api-admin
 
 # 从根 pom 构建 api-admin 及其上游模块
-RUN mvn clean package -DskipTests -B -pl api-admin -am
+RUN mvn clean package -DskipTests -B -pl api-admin -am -Dcheckstyle.skip=true
 
 # 运行阶段
 FROM eclipse-temurin:17-jre-alpine

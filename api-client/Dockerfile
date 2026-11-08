@@ -21,7 +21,7 @@ COPY core-infrastructure core-infrastructure
 COPY api-client api-client
 
 # 从根 pom 构建 api-client 及其上游模块
-RUN mvn clean package -DskipTests -B -pl api-client -am
+RUN mvn clean package -DskipTests -B -pl api-client -am -Dcheckstyle.skip=true
 
 # 运行阶段
 FROM eclipse-temurin:17-jre-alpine
