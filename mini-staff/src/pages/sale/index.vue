@@ -455,6 +455,7 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
       <view v-else-if="!customerResults.length" class="empty">
        <view class="empty-icon"><AppIcon name="user" :size="22" /></view>
        <text class="empty-text">{{ customerKeyword.trim() ? '没有匹配的客户，换个姓名或手机号再试。' : '后台还没有客户档案，可直接按散客开单。' }}</text>
+       <text class="t-cap mt4">客户档案由后台维护；需要门店配送请先让后台建档，散客开单只支持当场交货。</text>
       </view>
       <view v-else>
        <view hover-class="tap-hover" hover-stay-time="80" v-for="(item, index) in customerResults" :key="item.id" class="cust-row" :class="{ 'cust-row-last': index === customerResults.length - 1 }" @click="pickCustomer(item)">
