@@ -201,57 +201,144 @@ const openRecovery = () => uni.navigateTo({ url: '/pages/recovery/index' });
 const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
 </script>
 <template>
- <view class="page">
-  <text class="title">移动开单</text>
-  <text v-if="loading" class="intro">正在读取本店商品…</text>
-  <template v-if="!loading && allowed">
-   <view v-if="blocked" class="notice"><text>上次收银结果尚未核对，不能新开单。</text><button @click="openRecovery">核对上次收银</button></view>
-   <template v-else>
-    <input v-model="keyword" class="search" placeholder="按商品名称或编码搜索" />
-    <text class="subtitle">选择商品</text>
-    <view v-for="product in filtered" :key="product.id" class="panel" @click="choose(product)">
-     <text class="subtitle">{{ product.name }}</text>
-     <text class="intro">{{ product.code }} · 主单位 {{ product.mainUnit }} · 目录价 ¥{{ product.suggestedRetailPrice }}</text>
+ <view class="page" :class="{ 'page-dock': !loading && allowed && !blocked }">
+  <text v-if="loading" class="card t-meta">正在读取本店商品…</text>
+
+  <view v-if="blocked" class="alert alert-danger">
+   <AppIcon name="alert" :size="16" class="alert-icon" />
+   <view class="grow">
+    <text class="t-strong">上次收银结果尚未核对</text>
+    <text class="t-meta">核对完成前不能新开单，避免重复成交。</text>
+   </view>
+  </view>
+  <button v-if="blocked" class="btn btn-primary" @click="openRecovery">核对上次收银</button>
+
+  <template v-if="!loading && allowed && !blocked">
+   <view class="search-wrap block">
+    <AppIcon name="search" :size="16" class="search-ic" />
+    <input v-model="keyword" class="input input-search" placeholder="按商品名称或编码搜索" placeholder-style="color:#9aa6b2" />
+   </view>
+
+   <view class="section section-first">
+    <view class="section-head"><text class="section-title">选择商品</text><text class="section-note">{{ searching ? '搜索中…' : filtered.length + ' 个' }}</text></view>
+   </view>
+
+   <view v-if="filtered.length" class="card card-flat">
+    <view v-for="(product, index) in filtered" :key="product.id" class="list-item row-between" :class="{ 'list-item-last': index === filtered.length - 1 }" @click="choose(product)">
+     <view class="grow">
+      <text class="t-sub">{{ product.name }}</text>
+      <text class="t-cap">{{ product.code }} · 主单位 {{ product.mainUnit }}</text>
+     </view>
+     <view class="price-box">
+      <text class="t-money t-primary">¥{{ product.suggestedRetailPrice }}</text>
+      <AppIcon name="chevron" :size="12" class="chev" />
+     </view>
     </view>
-    <view v-if="selected" class="panel">
-     <text class="subtitle">{{ selected.name }}</text>
-     <text class="intro">数量（{{ selected.mainUnit }}）{{ selected.allowFractionalBaseQuantity ? '，最多四位小数' : '，仅整数' }}</text>
-     <input v-model="quantity" class="search" inputmode="decimal" />
-     <button :disabled="busy" @click="addLine">按后端报价加入</button>
+   </view>
+
+   <view v-if="selected" class="card">
+    <view class="row-between">
+     <text class="t-sub grow">{{ selected.name }}</text>
+     <text class="chip chip-sm chip-primary">{{ selected.mainUnit }}</text>
     </view>
-    <text class="subtitle">本次商品</text>
-    <view v-for="(line, index) in lines" :key="line.productId + ':' + index" class="panel item">
-     <view><text class="subtitle">{{ line.name }}</text><text class="intro">{{ line.quantity }} {{ line.unit }} · 后端单价 ¥{{ line.quotedUnitPrice }} · 展示小计 ¥{{ cents(lineCents(line)) }}</text></view>
-     <button :disabled="busy" @click="removeLine(index)">移除</button>
+    <view class="field">
+     <text class="field-label">数量（{{ selected.mainUnit }}）{{ selected.allowFractionalBaseQuantity ? '，最多四位小数' : '，仅整数' }}</text>
+     <input v-model="quantity" class="input" inputmode="decimal" />
     </view>
-    <view class="panel"><text class="intro">展示合计 ¥{{ cents(totalCents) }}，仅作核对；成交金额以后端结算为准，本页不计算价格。</text></view>
-    <view class="panel">
-     <text class="subtitle">结算方式（本版仅现金 / 赊销）</text>
-     <button :class="paymentType===1?'primary':''" :disabled="busy" @click="paymentType=1">现金</button>
-     <button :class="paymentType===6?'primary':''" :disabled="busy" @click="paymentType=6">赊销（挂账）</button>
-     <input v-model="customerId" class="search" inputmode="numeric" placeholder="客户编号：赊销必填，现金可留空" />
-     <text class="intro">会员价与赊销归属由后端按真实客户判断，本页不传会员等级、不计算金额。</text>
+    <button class="btn btn-primary btn-sm mt8" :disabled="busy" @click="addLine">按后端报价加入</button>
+   </view>
+
+   <view class="section">
+    <view class="section-head"><text class="section-title">本次商品</text><text class="section-note">{{ lines.length }} 项</text></view>
+   </view>
+
+   <view v-if="!lines.length" class="card empty">
+    <view class="empty-icon"><AppIcon name="bag" :size="22" /></view>
+    <text class="empty-text">还没有商品。先在上方搜索并加入，价格由后端报价。</text>
+   </view>
+
+   <view v-for="(line, index) in lines" :key="line.productId + ':' + index" class="card card-tight">
+    <view class="row-between">
+     <text class="t-sub grow">{{ line.name }}</text>
+     <button class="btn btn-danger-quiet btn-sm btn-auto" :disabled="busy" @click="removeLine(index)">移除</button>
     </view>
-    <view class="panel">
-     <text class="subtitle">交货方式</text>
-     <button :class="deliveryType===1?'primary':''" :disabled="busy" @click="deliveryType=1">当场交货</button>
-     <button :class="deliveryType===2?'primary':''" :disabled="busy" @click="deliveryType=2">门店配送</button>
-     <template v-if="deliveryType===2">
-      <input v-model="receiverName" class="search" placeholder="收货人" />
-      <input v-model="receiverPhone" class="search" inputmode="tel" placeholder="收货电话" />
-      <input v-model="receiverAddress" class="search" placeholder="完整收货地址" />
-     </template>
-     <input v-model="remark" class="search" placeholder="整单备注（可选，最多200字）" />
+    <view class="row-between mt4">
+     <text class="t-meta">{{ line.quantity }} {{ line.unit }} · 单价 ¥{{ line.quotedUnitPrice }}</text>
+     <text class="t-money">¥{{ cents(lineCents(line)) }}</text>
     </view>
-    <button class="primary" :disabled="busy || !lines.length" :loading="busy" @click="checkout">提交开单</button>
-   </template>
+   </view>
+
+   <view v-if="lines.length" class="card card-tight">
+    <view class="row-between">
+     <text class="t-meta">展示合计 {{ requoting ? '· 重新报价中' : '' }}</text>
+     <text class="t-money">¥{{ cents(totalCents) }}</text>
+    </view>
+    <text class="t-cap mt4">仅作核对；成交金额以后端结算为准，本页不计算价格。</text>
+   </view>
+
+   <view class="section"><text class="section-title">结算方式</text></view>
+   <view class="card">
+    <view class="row">
+     <button class="btn btn-sm grow mr8" :class="paymentType === 1 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="paymentType = 1">现金</button>
+     <button class="btn btn-sm grow" :class="paymentType === 6 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="paymentType = 6">赊销（挂账）</button>
+    </view>
+    <view class="field">
+     <text class="field-label">客户编号{{ paymentType === 6 ? '（赊销必填）' : '（现金可留空）' }}</text>
+     <input v-model="customerId" class="input" inputmode="numeric" placeholder="填写客户编号" placeholder-style="color:#9aa6b2" />
+    </view>
+    <text class="t-cap mt4">会员价与赊销归属由后端按真实客户判断，本页不传会员等级、不计算金额。</text>
+   </view>
+
+   <view class="section"><text class="section-title">交货方式</text></view>
+   <view class="card">
+    <view class="row">
+     <button class="btn btn-sm grow mr8" :class="deliveryType === 1 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="deliveryType = 1">当场交货</button>
+     <button class="btn btn-sm grow" :class="deliveryType === 2 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="deliveryType = 2">门店配送</button>
+    </view>
+    <template v-if="deliveryType === 2">
+     <view class="field">
+      <text class="field-label">收货人</text>
+      <input v-model="receiverName" class="input" placeholder="填写收货人" placeholder-style="color:#9aa6b2" />
+     </view>
+     <view class="field">
+      <text class="field-label">收货电话</text>
+      <input v-model="receiverPhone" class="input" inputmode="tel" placeholder="填写收货电话" placeholder-style="color:#9aa6b2" />
+     </view>
+     <view class="field">
+      <text class="field-label">完整收货地址</text>
+      <input v-model="receiverAddress" class="input" placeholder="填写完整收货地址" placeholder-style="color:#9aa6b2" />
+     </view>
+    </template>
+    <view class="field">
+     <text class="field-label">整单备注（可选，最多 200 字）</text>
+     <input v-model="remark" class="input" placeholder="可留空" placeholder-style="color:#9aa6b2" />
+    </view>
+   </view>
+
+   <view v-if="orderId" class="card card-ok">
+    <view class="row"><AppIcon name="check" :size="18" class="t-ok mr8" /><text class="t-sub">开单完成</text></view>
+    <text class="t-code mt4">订单号 {{ orderId }}</text>
+   </view>
   </template>
-  <text v-if="message" class="intro" role="status">{{ message }}</text>
-  <view v-if="orderId" class="panel"><text class="subtitle">订单号 {{ orderId }}</text></view>
-  <button :disabled="busy" @click="reload">重新读取商品</button>
-  <button :disabled="busy" @click="back">返回工作台</button>
+
+  <view v-if="message" class="alert alert-info mt8" role="status">
+   <AppIcon name="alert" :size="16" class="alert-icon" />
+   <text>{{ message }}</text>
+  </view>
+
+  <button class="btn btn-quiet mt8" :disabled="busy" @click="reload">重新读取商品</button>
+  <button class="btn btn-quiet" :disabled="busy" @click="back">返回工作台</button>
+
+  <view v-if="!loading && allowed && !blocked" class="dock">
+   <view class="dock-inner">
+    <view class="dock-row">
+     <view class="grow">
+      <text class="dock-label">展示合计</text>
+      <text class="dock-amount">¥{{ cents(totalCents) }}</text>
+     </view>
+     <button class="btn btn-primary dock-btn" :disabled="busy || !lines.length" :loading="busy" @click="checkout">提交开单</button>
+    </view>
+   </view>
+  </view>
  </view>
 </template>
-<style scoped>
-.page{padding:24px 20px;max-width:600px;margin:auto}.title{display:block;font-size:24px;font-weight:600}.subtitle{display:block;font-size:20px;font-weight:600;line-height:1.6;word-break:break-all}.intro{display:block;color:#4b5563;line-height:1.7;margin:12px 0}.panel{display:block;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0}.notice{background:#fff;border:1px solid #c8ac80;border-radius:10px;padding:20px;margin:20px 0}.search{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin:12px 0}.item{display:flex;align-items:center;justify-content:space-between;gap:12px}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73}.primary{color:#fff;background:#1d5d73}
-</style>

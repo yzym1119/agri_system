@@ -482,3 +482,20 @@
 - 评审点 1（/pay 无幂等键）：维持现状并记录限制。重复提交不会二次扣款（订单行锁 + isCompletedClientPayment），但「余额贡献为 0 时无法从支付明细反推当时是否勾选余额」，只能保证同参数重放返回原成功，无法证明参数逐项相同；要彻底解决需为内部支付引入请求号表，属独立改造。
 
 验证：core-application 681 项（0 失败/0 错误、4 项既有跳过）；core-infrastructure 迁移测试已放开到 V141；api-client ClientHttpBoundaryTest 47 项；全模块 compile 通过、Checkstyle 0 违规（含新移出基线的三个文件）。未连真实 MySQL 执行迁移，V141 需在 dev 与目标库各自执行一次。
+
+## 2026-11-08 员工端小程序 UI/UX 重设计
+
+先确认事实：`mini-staff` 已在 master（随 ecb38b4 之前的历史提交进入），本轮基于 master 新建分支 `feat/mini-staff-ui-redesign`，未在支付修复分支上叠加 UI 改动。
+
+范围：只改 `mini-staff` 的样式与模板，页面 `<script setup>` 的业务逻辑、服务调用、requestKey/意图三态/权限判断零改动，后端、契约包、DDL、数据未动。
+
+- 新增设计系统单一来源：`src/styles/app.css`（令牌 + 布局/文本/卡片/按钮/表单/标签/底部栏等全局类）、`src/styles/icons.css`（18 个纯 CSS 线性图标），由 `App.vue` 的 `@import` 注入全局，`page{}` 上定义 CSS 变量，页面通过 `var(--c-xxx)` 引用，禁止页面写死色值。
+- 新增 `components/AppIcon/AppIcon.vue`（easycom 自动注册），根 `.ai` + `.s1/.s2/.s3` + 伪元素，`currentColor` 跟随父级颜色，尺寸由 `size` prop 控制。
+- 13 个页面全部重排：登录（品牌块 + 卡片表单）、工作台（深色身份卡 + 六宫格入口 + 权限空态）、查货/库存详情（主数字 + 键值行）、采购收货列表与登记（三态 pending/preview/edit + 底部 dock）、本人配送列表与签收（收货人卡 + 复制/导航图标按钮 + 勾选卡）、库房提货、移动开单（紧凑商品行 + 购物车 + 合计 dock）、设备检查、收银核对。页面 `<style scoped>` 基本清空，旧类名（title/intro/panel/primary/notice/subtitle/hint/code/label/pagination/filters）零残留。
+- `pages.json` 导航标题精简（如「采购收货登记」→「收货登记」），导航底色改 `#f5f6f8` 与页面同色。
+- 规范文档：`mini-staff/DESIGN.md`（令牌表、间距规则、组件类清单、图标用法、原生组件样式隔离约束、交互约定）；根 `DESIGN.md` 增补指向，要求两端新增颜色同时登记。
+- 设计稿：`mini-staff/design/preview.html` + `preview.css` + `preview.png`，8 屏静态墙引用同一份 `app.css`，`?only=N&zoom=2` 可单屏放大复核。
+
+验证：`npm test` 87/87 通过（页面测试只断言 `state.*`，不断言文案与模板结构，故重排不影响回归）；`vue-tsc --noEmit` 0 错误；`build:mp-weixin` DONE，产物 `app.wxss` 含 `--c-primary`/`ai--*`/`dock`，页面 json 生成 `usingComponents: app-icon`。仅用无头 Chrome 复核静态视觉，**未经微信模拟器点击与真机验收**（缺正式 AppID 与 HTTPS）；样式类改动后若再动 wxss 能力边界（组合器、原生组件内部样式），需重新在模拟器确认。
+
+未做：功能新增、E5/E6 后续页面、深浅色主题切换、图标资源替换为矢量字体或图片。

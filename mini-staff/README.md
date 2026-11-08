@@ -4,6 +4,8 @@
 
 当前已含E0设备验证、E1登录/原收银核对、E2只读扫码查货、E3分次收货/原请求核对及E4本人配送部分工程，非完整员工业务端。用户明确尚未申请AppID，先完成工程和自动测试；真机验收后续单列。AppID由实际账号持有人配置，绝不填写AppSecret。
 
+界面规范见`DESIGN.md`：色板与字号令牌定义在`src/styles/app.css`的`page{}`上，图标为`components/AppIcon`纯CSS线性图标；页面只用全局类，`<style scoped>`只处理自身布局。静态设计稿为`design/preview.html`（8屏，`?only=N&zoom=2`单屏放大）。
+
 ```bash
 npm --prefix packages/mobile-contracts ci --ignore-scripts
 npm --prefix packages/mobile-contracts test

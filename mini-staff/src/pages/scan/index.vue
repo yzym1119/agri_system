@@ -81,37 +81,60 @@ const kind=(match:InventoryMatch)=>match.type==='SKU'?'商品':match.type==='LOC
 </script>
 <template>
   <view class="page">
-    <text class="title">扫码查货</text>
-    <text class="intro">查商品、收货批次或货位。这里只查询，不会出入库。</text>
-    <text v-if="loading" class="intro">正在核对当前员工和门店…</text>
+    <text v-if="loading" class="card t-meta">正在核对当前员工和门店…</text>
     <template v-else-if="allowed">
-      <button class="primary" :disabled="busy" :loading="busy" @click="scan">扫描条码 / 内部标签</button>
-      <view class="panel">
-        <text class="label">手输完整编码</text>
-        <input v-model="code" maxlength="100" :disabled="busy" placeholder="商品编码、条码、内部批次或货位码" confirm-type="search" @confirm="resolveManual" />
-        <button :disabled="busy" @click="resolveManual">识别编码</button>
-        <text class="label">找不到编码？按商品搜索</text>
-        <input v-model="keyword" maxlength="100" :disabled="busy" placeholder="输入商品名称或编码" confirm-type="search" @confirm="search" />
-        <button :disabled="busy" @click="search">搜索商品</button>
+      <view class="card">
+        <button class="btn btn-primary" :disabled="busy" :loading="busy" @click="scan"><AppIcon name="scan" :size="18" class="mr8" />扫描条码 / 内部标签</button>
+        <view class="field">
+          <text class="field-label">手输完整编码</text>
+          <view class="row">
+            <input v-model="code" class="input grow" maxlength="100" :disabled="busy" placeholder="编码、条码或货位码" placeholder-style="color:#9aa6b2" confirm-type="search" @confirm="resolveManual" />
+            <button class="btn btn-sm btn-auto ml8" :disabled="busy" @click="resolveManual">识别</button>
+          </view>
+        </view>
+        <view class="field">
+          <text class="field-label">找不到编码？按名称搜索</text>
+          <view class="row">
+            <input v-model="keyword" class="input grow" maxlength="100" :disabled="busy" placeholder="商品名称或编码" placeholder-style="color:#9aa6b2" confirm-type="search" @confirm="search" />
+            <button class="btn btn-sm btn-auto ml8" :disabled="busy" @click="search">搜索</button>
+          </view>
+        </view>
       </view>
-      <text v-if="locationName" class="subtitle">{{ locationName }} · 有库存的商品</text>
-      <text v-if="message" class="intro" role="status">{{ message }}</text>
-      <view v-for="match in matches" :key="match.type+':'+match.id+':'+match.unitId" class="panel">
-        <text class="badge">{{ kind(match) }}{{ match.enabled ? '' : ' · 已停用' }}</text>
-        <text class="subtitle">{{ match.name }}</text>
-        <text class="code">{{ match.code }}</text>
-        <text v-if="match.unitName" class="intro">识别单位：{{ match.unitName }}</text>
-        <text v-if="match.type === 'SKU'" class="hint">商品码不能证明具体批次或有效期。</text>
-        <button :disabled="busy" @click="choose(match)">{{ match.type === 'LOCATION' ? '查看这个货位的商品' : '核对并查看库存' }}</button>
+
+      <view v-if="locationName" class="section">
+        <view class="section-head"><text class="section-title">{{ locationName }}</text><text class="section-note">有库存的商品</text></view>
       </view>
-      <text v-if="hasMore && mode === 'scan'" class="intro">匹配项较多，请核对标签，或输入更具体的商品名称搜索。</text>
-      <view v-if="mode !== 'scan' && (page > 1 || hasMore)" class="pagination">
-        <button :disabled="busy || page === 1" @click="previous">上一页</button><text>第 {{ page }} 页</text><button :disabled="busy || !hasMore" @click="next">下一页</button>
+
+      <view v-if="message" class="alert alert-info" role="status">
+        <AppIcon name="alert" :size="16" class="alert-icon" />
+        <text>{{ message }}</text>
+      </view>
+
+      <view v-for="match in matches" :key="match.type + ':' + match.id + ':' + match.unitId" class="card tap" @click="choose(match)">
+        <view class="row-between">
+          <text class="t-sub grow">{{ match.name }}</text>
+          <text class="chip chip-sm" :class="match.enabled ? 'chip-line' : 'chip-warn'">{{ kind(match) }}{{ match.enabled ? '' : ' · 已停用' }}</text>
+        </view>
+        <text class="t-code mt4">{{ match.code }}</text>
+        <view class="row-between mt8">
+          <text class="t-cap">{{ match.unitName ? '识别单位：' + match.unitName : '按主单位查看' }}</text>
+          <text class="t-cap t-primary">{{ match.type === 'LOCATION' ? '查看货位' : '查看库存' }} ›</text>
+        </view>
+        <text v-if="match.type === 'SKU'" class="t-cap mt4">商品码不能证明具体批次或有效期。</text>
+        <text v-if="!match.enabled" class="t-cap t-warn mt4">已停用，仅作查询参考。</text>
+      </view>
+
+      <text v-if="hasMore && mode === 'scan'" class="t-cap mt8">匹配项较多，请核对标签，或输入更具体的商品名称搜索。</text>
+
+      <view v-if="mode !== 'scan' && (page > 1 || hasMore)" class="row-between mt8">
+        <button class="btn btn-sm btn-auto" :disabled="busy || page === 1" @click="previous">上一页</button>
+        <text class="t-meta">第 {{ page }} 页</text>
+        <button class="btn btn-sm btn-auto" :disabled="busy || !hasMore" @click="next">下一页</button>
       </view>
     </template>
-    <text v-else-if="message" class="intro" role="status">{{ message }}</text>
+    <view v-else-if="message" class="alert alert-info" role="status">
+      <AppIcon name="alert" :size="16" class="alert-icon" />
+      <text>{{ message }}</text>
+    </view>
   </view>
 </template>
-<style scoped>
-.page{padding:24px 20px;max-width:600px;margin:auto}.title{display:block;font-size:24px;font-weight:600}.intro,.hint{display:block;color:#4b5563;line-height:1.7;margin:12px 0}.hint{font-size:14px}.panel{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0}.label,.subtitle{display:block;font-weight:600;line-height:1.6;margin:12px 0}.subtitle{font-size:20px}.badge{color:#1d5d73}.code{display:block;overflow-wrap:anywhere;line-height:1.7}input{box-sizing:border-box;width:100%;height:48px;padding:0 12px;background:#f5f6f8;border:1px solid #d1d5db;border-radius:6px;font-size:16px}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73}.primary{color:#fff;background:#1d5d73}.pagination{display:flex;gap:12px;align-items:center;justify-content:space-between}
-</style>

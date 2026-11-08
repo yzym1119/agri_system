@@ -1,0 +1,33 @@
+/* 仅供设计预览：把 375px 手机框里的静态 HTML 与小程序共用同一套 app.css / icons.css。 */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  padding: 28px;
+  background: #eceff3;
+  color: #1f2937;
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", system-ui, sans-serif;
+}
+.wall { display: flex; flex-wrap: wrap; gap: 26px 24px; align-items: flex-start; }
+.item { width: 375px; }
+.caption { margin: 8px 2px 0; font-size: 13px; color: #5b6873; }
+.caption b { color: #1d5d73; font-weight: 600; }
+.phone {
+  width: 375px;
+  background: #f5f6f8;
+  border: 1px solid #dfe4ea;
+  border-radius: 26px;
+  overflow: hidden;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, .12);
+}
+.status { height: 24px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: #3c4a55; }
+.nav { position: relative; height: 44px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 600; }
+.nav .back { position: absolute; left: 16px; width: 9px; height: 9px; border-left: 2px solid #1f2937; border-bottom: 2px solid #1f2937; transform: rotate(45deg); }
+.screen { position: relative; height: 744px; overflow: hidden; }
+.screen page { display: block; }
+.screen .dock { position: absolute; }
+text { display: inline; }
+button { font: inherit; border: 0; padding: 0; background: none; }
+input { font: inherit; }
+input[type="checkbox"] { width: 16px; height: 16px; }
+.search-wrap .ai { position: absolute; left: 12px; top: 50%; margin-top: -8px; color: #9aa6b2; }
+.empty-icon .ai { color: #9aa6b2; }

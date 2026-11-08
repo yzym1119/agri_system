@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>员工端小程序 · 界面重设计预览</title>
+<link rel="stylesheet" href="../src/styles/app.css" />
+<link rel="stylesheet" href="../src/styles/icons.css" />
+<link rel="stylesheet" href="./preview.css" />
+</head>
+<body>
+<div class="wall">
+
+  <!-- 登录 -->
+  <div class="item">
+    <div class="phone">
+      <div class="status"><span>9:41</span><span>●●● ⚡</span></div>
+      <div class="nav">员工登录</div>
+      <div class="screen">
+        <page class="page login">
+          <div class="brand">
+            <div class="brand-mark"><i class="ic" data-icon="store" data-size="26"></i></div>
+            <text class="brand-title">门店工作台</text>
+            <text class="brand-desc">使用门店员工账号登录，不使用客户微信身份</text>
+          </div>
+          <div class="card">
+            <div class="field field-first">
+              <text class="field-label">员工编码或手机号</text>
+              <input class="input" value="1001" />
+            </div>
+            <div class="field">
+              <text class="field-label">密码</text>
+              <input class="input" type="password" value="password" />
+            </div>
+            <div class="error-line">
+              <i class="ic" data-icon="alert" data-size="14" data-class="mr4 t-danger"></i>
+              <text>未能登录，请核对账号密码及员工状态。</text>
+            </div>
+          </div>
+          <button class="btn btn-primary">登录</button>
+          <button class="btn btn-quiet btn-gap">先检查这台手机</button>
+          <text class="foot">密码不在本机保存，下次打开需重新登录。没有账号请联系老板。</text>
+        </page>
+      </div>
+    </div>
+    <div class="caption"><b>登录</b>　去掉重复标题与长说明，错误提示贴近表单，设备检查降为次要入口</div>
+  </div>
+
+  <!-- 工作台 -->
+  <div class="item">
+    <div class="phone">
+      <div class="status"><span>9:41</span><span>●●● ⚡</span></div>
+      <div class="nav">工作台</div>
+      <div class="screen">
+        <page class="page">
+          <div class="card-hero">
+            <div class="row">
+              <div class="hero-avatar"><i class="ic" data-icon="store" data-size="22"></i></div>
+              <div class="grow">
+                <text class="hero-name">陈磊</text>
+                <text class="hero-meta">门店 012</text>
+              </div>
+              <button class="hero-exit">退出</button>
+            </div>
+          </div>
+          <div class="section section-first">
+            <div class="section-head"><text class="section-title">常用业务</text><text class="section-note">按权限显示</text></div>
+          </div>
+          <div class="tiles">
+            <div class="tile"><div class="tile-box">
+              <div class="tile-icon tile-icon-accent"><i class="ic" data-icon="bag" data-size="20"></i></div>
+              <text class="tile-name">移动开单</text><text class="tile-desc">扫码加购，后端报价</text>
+            </div></div>
+            <div class="tile"><div class="tile-box">
+              <div class="tile-icon"><i class="ic" data-icon="doc" data-size="20"></i></div>
+              <text class="tile-name">采购收货</text><text class="tile-desc">按实际到货登记</text>
+            </div></div>
+            <div class="tile"><div class="tile-box">
+              <div class="tile-icon"><i class="ic" data-icon="scan" data-size="20"></i></div>
+              <text class="tile-name">扫码查货</text><text class="tile-desc">条码、批次、货位</text>
+            </div></div>
+            <div class="tile"><div class="tile-box">
+              <div class="tile-icon"><i class="ic" data-icon="box" data-size="20"></i></div>
+              <text class="tile-name">库房提货</text><text class="tile-desc">按原批次核对交付</text>
+            </div></div>
+            <div class="tile"><div class="tile-box">
+              <div class="tile-icon"><i class="ic" data-icon="truck" data-size="20"></i></div>
+              <text class="tile-name">配送任务</text><text class="tile-desc">本人任务与签收</text>
+            </div></div>
+            <div class="tile"><div class="tile-box">
+              <div class="tile-icon"><i class="ic" data-icon="clock" data-size="20"></i></div>
+              <text class="tile-name">收银核对</text><text class="tile-desc">结果未定时先核对</text>
+            </div></div>
+          </div>
+          <div class="section"><text class="section-title">本机</text></div>
+          <div class="card card-flat">
+            <div class="list-item list-item-last row-between">
+              <div class="row">
+                <i class="ic" data-icon="device" data-size="20" data-class="t-primary"></i>
+                <div class="ml10"><text class="t-sub">检查这台手机</text><text class="t-cap">扫码、录音、存储与网络</text></div>
+              </div>
+              <i class="ic" data-icon="chevron" data-size="14" data-class="chev"></i>
+            </div>
+          </div>
+        </page>
+      </div>
+    </div>
+    <div class="caption"><b>工作台</b>　六个同权重按钮改为图标宫格，权限外的入口不渲染，设备与退出降级</div>
+  </div>
+
+  <!-- 查货 -->
+  <div class="item">
+    <div class="phone">
+      <div class="status"><span>9:41</span><span>●●● ⚡</span></div>
+      <div class="nav"><span class="back"></span>查货</div>
+      <div class="screen">
+        <page class="page">
+          <div class="card">
+            <button class="btn btn-primary"><i class="ic" data-icon="scan" data-size="18" data-class="mr8"></i>扫描条码 / 内部标签</button>
+            <div class="field">
+              <text class="field-label">手输完整编码</text>
+              <div class="row">
+                <input class="input grow" placeholder="编码、条码或货位码" />
+                <button class="btn btn-sm btn-auto ml8">识别</button>
+              </div>
+            </div>
+            <div class="field">
+              <text class="field-label">找不到编码？按名称搜索</text>
+              <div class="row">
+                <input class="input grow" placeholder="商品名称或编码" />
+                <button class="btn btn-sm btn-auto ml8">搜索</button>
+              </div>
+            </div>
+          </div>
+          <div class="alert alert-info">
+            <i class="ic" data-icon="alert" data-size="16" data-class="alert-icon"></i>
+            <text>已识别，请核对下方资料后查看库存。</text>
+          </div>
+          <div class="card tap">
+            <div class="row-between">
+              <text class="t-sub grow">复合肥 15-15-15 40kg</text>
+              <text class="chip chip-sm chip-line">商品</text>
+            </div>
+            <text class="t-code mt4">6901234567890</text>
+            <div class="row-between mt8">
+              <text class="t-cap">识别单位：袋</text>
+              <text class="t-cap t-primary">查看库存 ›</text>
+            </div>
+            <text class="t-cap mt4">商品码不能证明具体批次或有效期。</text>
+          </div>
+          <div class="card tap">
+            <div class="row-between">
+              <text class="t-sub grow">复合肥 15-15-15 40kg</text>
+              <text class="chip chip-sm chip-line">内部收货批次</text>
+            </div>
+            <text class="t-code mt4">RCV-20261101-0007</text>
+            <div class="row-between mt8">
+              <text class="t-cap">按主单位查看</text>
+              <text class="t-cap t-primary">查看库存 ›</text>
+            </div>
+          </div>
+        </page>
+      </div>
+    </div>
+    <div class="caption"><b>查货</b>　三种入口收进一张搜索卡，结果改为可点整卡 + 类型标签</div>
+  </div>
+
+  <!-- 库存详情 -->
+  <div class="item">
+    <div class="phone">
+      <div class="status"><span>9:41</span><span>●●● ⚡</span></div>
+      <div class="nav"><span class="back"></span>库存详情</div>
+      <div class="screen">
+        <page class="page">
+          <div class="card">
+            <div class="row-between">
+              <div class="grow">
+                <text class="t-title">复合肥 15-15-15 40kg</text>
+                <text class="t-code mt4">6901234567890</text>
+              </div>
+              <text class="chip chip-sm chip-primary">在售</text>
+            </div>
+            <div class="divider"></div>
+            <text class="t-cap">本店合计 · 按 袋 统计</text>
+            <text class="t-num mt4">128 袋</text>
+            <div class="kv mt8"><text class="kv-key">未占用</text><text class="kv-val">96 袋</text></div>
+            <text class="t-cap mt8">未占用只扣除已占用库存，不代表可以直接销售；有效期与业务限制仍须核对。</text>
+          </div>
+          <div class="section">
+            <div class="section-head"><text class="section-title">批次与货位</text><text class="section-note">2 条</text></div>
+          </div>
+          <div class="card">
+            <div class="row-between">
+              <text class="t-sub grow">A 区 3 号架</text>
+            </div>
+            <div class="row mt12">
+              <div class="grow"><text class="t-cap">现存</text><text class="t-strong mt4">80 袋</text></div>
+              <div class="grow"><text class="t-cap">未占用</text><text class="t-strong mt4">60 袋</text></div>
+            </div>
+            <div class="divider"></div>
+            <div class="kv"><text class="kv-key">内部批次</text><text class="kv-val">RCV-20261101-0007</text></div>
+            <div class="kv"><text class="kv-key">厂家批号</text><text class="kv-val">S20261015A</text></div>
+            <div class="kv"><text class="kv-key">生产日期</text><text class="kv-val">2026-10-15</text></div>
+            <div class="kv"><text class="kv-key">有效期至</text><text class="kv-val">2028-10-14</text></div>
+            <text class="t-cap mt8">原批次收货 100 袋（整批，不是本货位剩余量）</text>
+          </div>
+          <div class="card">
+            <div class="row-between">
+              <text class="t-sub grow">B 区 1 号架</text>
+              <text class="chip chip-sm chip-warn">货位不可用</text>
+            </div>
+            <div class="row mt12">
+              <div class="grow"><text class="t-cap">现存</text><text class="t-strong mt4">48 袋</text></div>
+              <div class="grow"><text class="t-cap">未占用</text><text class="t-strong mt4">36 袋</text></div>
+            </div>
+          </div>
+        </page>
+      </div>
+    </div>
+    <div class="caption"><b>库存详情</b>　数量做成主数字，批次事实用键值行对齐，「整批≠剩余」保留为脚注</div>
+  </div>
+
+  <!-- 移动开单 -->
+  <div class="item">
+    <div class="phone">
+      <div class="status"><span>9:41</span><span>●●● ⚡</span></div>
+      <div class="nav"><span class="back"></span>移动开单</div>
+      <div class="screen">
+        <page class="page page-dock">
+          <div class="search-wrap block">
+            <i class="ic" data-icon="search" data-size="16" data-class="search-ic"></i>
+            <input class="input input-search" placeholder="按商品名称或编码搜索" />
+          </div>
+          <div class="section section-first">
+            <div class="section-head"><text class="section-title">选择商品</text><text class="section-note">3 个</text></div>
+          </div>
+          <div class="card card-flat">
+            <div class="list-item row-between">
+              <div class="grow"><text class="t-sub">复合肥 15-15-15 40kg</text><text class="t-cap">F001 · 主单位 袋</text></div>
+              <div class="price-box"><text class="t-money t-primary">¥128.00</text><i class="ic" data-icon="chevron" data-size="12" data-class="chev"></i></div>
+            </div>
+            <div class="list-item row-between">
+              <div class="grow"><text class="t-sub">尿素 46% 50kg</text><text class="t-cap">F002 · 主单位 袋</text></div>
+              <div class="price-box"><text class="t-money t-primary">¥115.00</text><i class="ic" data-icon="chevron" data-size="12" data-class="chev"></i></div>
+            </div>
+            <div class="list-item list-item-last row-between">
+              <div class="grow"><text class="t-sub">玉米种子 郑单958</text><text class="t-cap">S011 · 主单位 袋</text></div>
+              <div class="price-box"><text class="t-money t-primary">¥45.00</text><i class="ic" data-icon="chevron" data-size="12" data-class="chev"></i></div>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-head"><text class="section-title">本次商品</text><text class="section-note">2 项</text></div>
+          </div>
+          <div class="card card-tight">
+            <div class="row-between">
+              <text class="t-sub grow">复合肥 15-15-15 40kg</text>
+              <button class="btn btn-danger-quiet btn-sm btn-auto">移除</button>
+            </div>
+            <div class="row-between mt4">
+              <text class="t-meta">8 袋 · 单价 ¥128.00</text>
+              <text class="t-money">¥1024.00</text>
+            </div>
+          </div>
+          <div class="card card-tight">
+            <div class="row-between">
+              <text class="t-sub grow">尿素 46% 50kg</text>
+              <button class="btn btn-danger-quiet btn-sm btn-auto">移除</button>
+            </div>
+            <div class="row-between mt4">
+              <text class="t-meta">2 袋 · 单价 ¥115.00</text>
+              <text class="t-money">¥230.00</text>
+            </div>
+          </div>
+          <div class="card card-tight">
+            <div class="row-between">
+              <text class="t-meta">展示合计</text>
+              <text class="t-money">¥1254.00</text>
+            </div>
+            <text class="t-cap mt4">仅作核对；成交金额以后端结算为准，本页不计算价格。</text>
+          </div>
+          <div class="section"><text class="section-title">结算方式</text></div>
+          <div class="card">
+            <div class="row">
+              <button class="btn btn-sm grow mr8 btn-primary">现金</button>
+              <button class="btn btn-sm grow btn-ghost">赊销（挂账）</button>
+            </div>
+            <div class="field">
+              <text class="field-label">客户编号（现金可留空）</text>
+              <input class="input" placeholder="填写客户编号" />
+            </div>
+            <text class="t-cap mt4">会员价与赊销归属由后端按真实客户判断，本页不传会员等级、不计算金额。</text>
+          </div>
+        </page>
+        <div class="dock">
+          <div class="dock-inner">
+            <div class="dock-row">
+              <div class="grow"><text class="dock-label">展示合计</text><text class="dock-amount">¥1254.00</text></div>
+              <button class="btn btn-primary dock-btn">提交开单</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="caption"><b>移动开单</b>　商品表改为紧凑列表，购物车与合计固定在底部，结算/交货用同一组切换按钮</div>
+  </div>
+
+  <!-- 采购收货 -->
+  <div class="item">
+    <div class="phone">
+      <div class="status"><span>9:41</span><span>●●● ⚡</span></div>
+      <div class="nav"><span class="back"></span>采购收货</div>
+      <div class="screen">
+        <page class="page">
+          <div class="alert">
+            <i class="ic" data-icon="alert" data-size="16" data-class="alert-icon"></i>
+            <div class="grow">
+              <text class="t-strong">有 1 笔收货结果待核对</text>
+              <text class="t-meta">采购单 PO20261106003 · 点此先核对</text>
+            </div>
+            <i class="ic" data-icon="chevron" data-size="14" data-class="chev"></i>
+          </div>
+          <div class="row block">
+            <div class="grow search-wrap">
+              <i class="ic" data-icon="search" data-size="16" data-class="search-ic"></i>
+              <input class="input input-search" placeholder="采购单号，留空看全部" />
+            </div>
+            <button class="btn btn-sm btn-auto ml8">查询</button>
+          </div>
+          <div class="card tap">
+            <div class="row-between">
+              <text class="t-sub grow">PO20261107001</text>
+              <i class="ic" data-icon="chevron" data-size="14" data-class="chev"></i>
+            </div>
+            <div class="row-between mt4">
+              <text class="t-meta">金穗农资有限公司</text>
+              <text class="t-cap t-primary">先核对上次收货</text>
+            </div>
+          </div>
+          <div class="card tap">
+            <div class="row-between">
+              <text class="t-sub grow">PO20261107002</text>
+              <i class="ic" data-icon="chevron" data-size="14" data-class="chev"></i>
+            </div>
+            <div class="row-between mt4">
+              <text class="t-meta">供应商名称待核对</text>
+              <text class="t-cap t-primary">先核对上次收货</text>
+            </div>
+          </div>
+          <div class="row-between mt4">
+            <button class="btn btn-sm btn-auto">上一页</button>
+            <text class="t-meta">第 1 页</text>
+            <button class="btn btn-sm btn-auto">下一页</button>
+          </div>
+        </page>
+      </div>
+    </div>
+    <div class="caption"><b>采购收货</b>　待核对警示置顶，列表项整卡可点，分页收成三格</div>
+  </div>
+
+  <!-- 收货登记 -->
+  <div class="item">
+    <div class="phone">
+      <div class="status"><span>9:41</span><span>●●● ⚡</span></div>
+      <div class="nav"><span class="back"></span>收货登记</div>
+      <div class="screen">
+        <page class="page page-dock">
+          <div class="card card-tight">
+            <div class="row-between">
+              <div class="grow">
+                <text class="t-title">PO20261107001</text>
+                <text class="t-meta mt4">金穗农资有限公司</text>
+              </div>
+              <text class="chip chip-sm chip-primary">按实到登记</text>
+            </div>
+          </div>
+          <div class="card">
+            <div class="row">
+              <button class="btn btn-primary btn-sm grow mr8"><i class="ic" data-icon="scan" data-size="16" data-class="mr4"></i>扫描商品</button>
+              <button class="btn btn-ghost btn-sm grow">识别编码</button>
+            </div>
+            <input class="input mt8" placeholder="也可手输商品编码或条码" />
+            <text class="t-cap mt8">只定位本采购单商品，不代填数量或进价，也不作为收货批次证据。</text>
+          </div>
+          <div class="card">
+            <div class="row-between">
+              <text class="t-sub grow">复合肥 15-15-15 40kg</text>
+              <text class="chip chip-sm chip-primary">本次收</text>
+            </div>
+            <div class="kv mt8"><text class="kv-key">采购</text><text class="kv-val">100 袋</text></div>
+            <div class="kv"><text class="kv-key">已收</text><text class="kv-val">0 袋</text></div>
+            <div class="kv"><text class="kv-key">待收</text><text class="kv-val t-primary t-strong">100 袋</text></div>
+            <div class="check-row"><input type="checkbox" class="check-box" checked /><text>本次收这个商品</text></div>
+            <div class="batch-box">
+              <div class="row-between"><text class="t-strong">第 1 批</text></div>
+              <div class="field">
+                <text class="field-label">收货单位</text>
+                <div class="picker"><text class="picker-value">袋</text><i class="ic" data-icon="chevron" data-size="12" data-class="chev"></i></div>
+              </div>
+              <div class="field">
+                <text class="field-label">数量（袋）</text>
+                <input class="input" value="60" />
+                <text class="t-cap mt4">60 袋 = 60 袋（基准单位：袋）</text>
+              </div>
+              <div class="field">
+                <text class="field-label">实际进价（元 / 袋）</text>
+                <input class="input" value="112.5" />
+              </div>
+            </div>
+          </div>
+        </page>
+        <div class="dock">
+          <div class="dock-inner"><button class="btn btn-primary">核对本次收货摘要</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="caption"><b>收货登记</b>　单行卡片内含采购/已收/待收对照，批次字段分组，核对动作固定在底部</div>
+  </div>
+
+  <!-- 配送核对 -->
+  <div class="item">
+    <div class="phone">
+      <div class="status"><span>9:41</span><span>●●● ⚡</span></div>
+      <div class="nav"><span class="back"></span>配送核对</div>
+      <div class="screen">
+        <page class="page page-dock">
+          <div class="card card-tight">
+            <div class="row-between">
+              <text class="t-title grow">SO20261107008</text>
+              <text class="chip chip-warn">待交付</text>
+            </div>
+          </div>
+          <div class="section section-first"><text class="section-title">收货人</text></div>
+          <div class="card">
+            <div class="row-between">
+              <div class="grow">
+                <text class="t-sub">王建国</text>
+                <text class="t-meta mt4">138****6621</text>
+              </div>
+              <i class="ic" data-icon="pin" data-size="18" data-class="t-primary"></i>
+            </div>
+            <div class="addr mt12"><text class="t-body">城关镇 建设路 18 号 农资仓库 后院</text></div>
+            <div class="row mt12">
+              <button class="icon-btn grow mr8"><i class="ic" data-icon="pin" data-size="18"></i><text class="icon-btn-label">导航</text></button>
+              <button class="icon-btn grow"><i class="ic" data-icon="copy" data-size="18"></i><text class="icon-btn-label">复制地址</text></button>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-head"><text class="section-title">本次待交商品</text><text class="section-note">已核 1/2</text></div>
+          </div>
+          <div class="card check-card">
+            <input type="checkbox" class="check-box" checked />
+            <div class="grow"><text class="t-sub">复合肥 15-15-15 40kg</text><text class="qty">20 袋</text></div>
+          </div>
+          <div class="card check-card">
+            <input type="checkbox" class="check-box" />
+            <div class="grow"><text class="t-sub">尿素 46% 50kg</text><text class="qty">5 袋</text></div>
+          </div>
+          <div class="card">
+            <div class="check-row"><input type="checkbox" class="check-box" /><text>已核对收货人，商品已实际交给客户</text></div>
+            <text class="t-cap">只记录本任务签收，不再次扣库存或收款。</text>
+          </div>
+        </page>
+        <div class="dock">
+          <div class="dock-inner"><button class="btn btn-primary">确认已实际交付</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="caption"><b>配送核对</b>　收货人卡加导航/复制图标按钮，物料逐项勾选，未满足条件时确认按钮保持不可用</div>
+  </div>
+
+</div>
+
+<script>
+  var zoomMatch = /zoom=(\d+)/.exec(location.search);
+  if (zoomMatch) document.body.style.zoom = zoomMatch[1];
+  var onlyMatch = /only=(\d+)/.exec(location.search);
+  if (onlyMatch) {
+    document.querySelectorAll('.item').forEach(function (el, i) {
+      if (i !== Number(onlyMatch[1])) el.remove();
+    });
+  }
+  document.querySelectorAll('[data-icon]').forEach(function (el) {
+    var name = el.getAttribute('data-icon');
+    var size = el.getAttribute('data-size') || '20';
+    var extra = el.getAttribute('data-class') || '';
+    el.className = ('ai ai--' + name + ' ' + extra).trim();
+    el.style.width = size + 'px';
+    el.style.height = size + 'px';
+    el.innerHTML = '<i class="s1"></i><i class="s2"></i><i class="s3"></i>';
+  });
+</script>
+</body>
+</html>

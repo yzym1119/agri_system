@@ -39,3 +39,5 @@ POS紧凑卡片保留小图、规格、库存、价格；客户和结算区固�
 ## 实现位置
 
 令牌：admin-web/src/styles/variables.scss；公共样式：admin-web/src/styles/index.scss。页面局部样式只处理自身布局，不再建立另一套主题。
+
+员工端小程序沿用同一品牌色与字号档位，因 wxss 能力与触控场景差异单独成文：mini-staff/DESIGN.md。两端新增颜色须同时登记，不各造主题。

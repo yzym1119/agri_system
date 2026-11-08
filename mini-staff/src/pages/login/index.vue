@@ -29,26 +29,39 @@ async function login() {
 }
 </script>
 <template>
-  <view class="page">
-    <text class="title">员工登录</text>
-    <text class="intro">使用门店已有员工账号。没有账号时请联系老板，不要使用客户微信身份代替。</text>
-    <text v-if="!serviceConfigured" class="notice">服务地址尚未配置，请先联系管理员。设备检查仍可使用。</text>
-    <label>员工编码或手机号<input v-model="account" :disabled="busy" maxlength="64" placeholder="输入员工编码或手机号" placeholder-style="color:#626f7e" /></label>
-    <label>密码<input v-model="password" :disabled="busy" password maxlength="128" placeholder="输入密码" placeholder-style="color:#626f7e" @confirm="login" /></label>
-    <text v-if="error" class="error" role="alert">{{ error }}</text>
-    <button class="primary" :loading="busy" :disabled="busy || !serviceConfigured || !account.trim() || !password" @click="login">登录</button>
-    <button :disabled="busy" @click="openDeviceCheck">先检查这台手机</button>
-    <text class="intro">本机不保存密码。重新打开小程序后需再次登录。</text>
+  <view class="page login">
+    <view class="brand">
+      <view class="brand-mark"><AppIcon name="store" :size="28" /></view>
+      <text class="brand-title">门店工作台</text>
+      <text class="brand-desc">使用门店员工账号登录，不使用客户微信身份</text>
+    </view>
+
+    <view v-if="!serviceConfigured" class="alert alert-danger">
+      <AppIcon name="alert" :size="16" class="alert-icon" />
+      <text>服务地址尚未配置，暂时无法登录；设备检查仍可使用。</text>
+    </view>
+
+    <view class="card">
+      <view class="field field-first">
+        <text class="field-label">员工编码或手机号</text>
+        <input v-model="account" class="input" :disabled="busy" maxlength="64" placeholder="输入员工编码或手机号" placeholder-style="color:#9aa6b2" />
+      </view>
+      <view class="field">
+        <text class="field-label">密码</text>
+        <input v-model="password" class="input" :disabled="busy" password maxlength="128" placeholder="输入密码" placeholder-style="color:#9aa6b2" @confirm="login" />
+      </view>
+      <view v-if="error" class="error-line">
+        <AppIcon name="alert" :size="14" class="mr4 t-danger" />
+        <text>{{ error }}</text>
+      </view>
+    </view>
+
+    <button class="btn btn-primary" :loading="busy" :disabled="busy || !serviceConfigured || !account.trim() || !password" @click="login">登录</button>
+    <button class="btn btn-quiet btn-gap" :disabled="busy" @click="openDeviceCheck">先检查这台手机</button>
+    <text class="foot">密码不在本机保存，下次打开需重新登录。没有账号请联系老板。</text>
   </view>
 </template>
 <style scoped>
-.page { padding:32px 20px; max-width:560px; margin:auto; }
-.title { display:block; font-size:26px; font-weight:600; margin-bottom:12px; }
-.intro,.notice { display:block; line-height:1.7; color:#4b5563; margin:12px 0; }
-.notice { padding:16px; background:#fff; border:1px solid #e5e7eb; border-radius:8px; }
-label { display:block; margin-top:24px; }
-input { margin-top:8px; min-height:48px; padding:0 12px; border:1px solid #626f7e; background:#fff; border-radius:8px; }
-button { margin:20px 0; color:#1d5d73; background:#fff; border:1px solid #1d5d73; }
-.primary { background:#1d5d73; color:#fff; }
-.error { display:block; color:#a12925; margin:16px 0; line-height:1.7; }
+.login { padding-top: 24px; }
+.error-line { display: flex; align-items: flex-start; margin-top: 12px; font-size: 13px; color: #a12925; line-height: 1.6; }
 </style>

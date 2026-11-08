@@ -92,23 +92,87 @@ function copyAddress(){
 const back=()=>uni.redirectTo({url:'/pages/delivery/list/index'});
 </script>
 <template>
- <view class="page"><text class="title">核对配送交付</text><text v-if="loading" class="intro">正在读取本人任务的最新信息…</text>
-  <view v-if="uncertain" class="notice"><text>上次签收结果待核对，请勿再次交货。</text></view>
+ <view class="page" :class="{ 'page-dock': !loading && preview && preview.canConfirm }">
+  <text v-if="loading" class="card t-meta">正在读取任务最新信息…</text>
+
+  <view v-if="uncertain" class="alert alert-danger">
+   <AppIcon name="alert" :size="16" class="alert-icon" />
+   <view class="grow"><text class="t-strong">上次签收结果待核对</text><text class="t-meta">核对完成前请勿再次交货。</text></view>
+  </view>
+
   <template v-if="!loading && allowed && preview">
-   <text class="subtitle">{{ preview.orderNo }}</text>
-   <template v-if="preview.status==='COMPLETED'"><view class="panel"><text class="subtitle">已签收</text><text class="intro">{{ preview.receivedAt?.replace('T',' ')??'签收时间未记录' }}</text><text class="intro">历史确认不按后续退货后的余额反推交付数量。</text></view></template>
-   <template v-else-if="preview.canConfirm">
-    <view class="panel"><text class="subtitle">收货人</text><text class="intro">{{ preview.receiverName }} · {{ preview.receiverPhone }}</text><text class="address">{{ preview.receiverAddress }}</text><button :disabled="busy" @click="showNavigation">查看导航方式</button><button :disabled="busy" @click="copyAddress">复制完整地址</button></view>
-    <text class="subtitle">本次待交商品</text>
-    <checkbox-group @change="checkedItems=$event.detail.value"><label v-for="item in preview.items" :key="deliveryItemKey(item)" class="panel item"><checkbox :value="deliveryItemKey(item)" :checked="checkedItems.includes(deliveryItemKey(item))" :disabled="busy" /><view><text class="subtitle">{{ item.productName }}</text><text class="quantity">{{ item.quantity }} {{ item.unit }}</text></view></label></checkbox-group>
-    <view class="panel"><checkbox-group @change="receiverConfirmed=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="receiverConfirmed" :disabled="busy" />已核对收货人，且以上商品已实际交给客户</label></checkbox-group><text class="intro">本操作只记录这项任务的签收，不会再次扣库存或收款。</text><button class="primary" :disabled="!canConfirm()" :loading="busy" @click="confirm">确认已实际交付</button></view>
+   <view class="card card-tight">
+    <view class="row-between">
+     <text class="t-title grow">{{ preview.orderNo }}</text>
+     <text class="chip" :class="preview.status === 'COMPLETED' ? 'chip-ok' : 'chip-warn'">{{ preview.status === 'COMPLETED' ? '已签收' : '待交付' }}</text>
+    </view>
+   </view>
+
+   <template v-if="preview.status === 'COMPLETED'">
+    <view class="card card-ok">
+     <view class="row"><AppIcon name="check" :size="18" class="t-ok mr8" /><text class="t-sub">已签收</text></view>
+     <text class="t-meta mt4">{{ preview.receivedAt?.replace('T', ' ') ?? '签收时间未记录' }}</text>
+     <text class="t-cap mt8">历史确认不按后续退货后的余额反推交付数量。</text>
+    </view>
    </template>
-   <view v-else class="notice"><text>{{ preview.blockReason }}</text></view>
+
+   <template v-else-if="preview.canConfirm">
+    <view class="section section-first"><text class="section-title">收货人</text></view>
+    <view class="card">
+     <view class="row-between">
+      <view class="grow">
+       <text class="t-sub">{{ preview.receiverName }}</text>
+       <text class="t-meta mt4">{{ preview.receiverPhone }}</text>
+      </view>
+      <AppIcon name="pin" :size="18" class="t-primary" />
+     </view>
+     <view class="addr mt12"><text class="t-body">{{ preview.receiverAddress }}</text></view>
+     <view class="row mt12">
+      <button class="icon-btn grow mr8" :disabled="busy" @click="showNavigation"><AppIcon name="pin" :size="18" /><text class="icon-btn-label">导航</text></button>
+      <button class="icon-btn grow" :disabled="busy" @click="copyAddress"><AppIcon name="copy" :size="18" /><text class="icon-btn-label">复制地址</text></button>
+     </view>
+    </view>
+
+    <view class="section">
+     <view class="section-head"><text class="section-title">本次待交商品</text><text class="section-note">已核 {{ checkedItems.length }}/{{ preview.items.length }}</text></view>
+    </view>
+    <checkbox-group @change="checkedItems = $event.detail.value">
+     <label v-for="item in preview.items" :key="deliveryItemKey(item)" class="card check-card">
+      <checkbox class="check-box" :value="deliveryItemKey(item)" :checked="checkedItems.includes(deliveryItemKey(item))" :disabled="busy" />
+      <view class="grow">
+       <text class="t-sub">{{ item.productName }}</text>
+       <text class="qty">{{ item.quantity }} {{ item.unit }}</text>
+      </view>
+     </label>
+    </checkbox-group>
+
+    <view class="card">
+     <checkbox-group @change="receiverConfirmed = $event.detail.value.includes('yes')">
+      <label class="check-row"><checkbox class="check-box" value="yes" :checked="receiverConfirmed" :disabled="busy" /><text>已核对收货人，商品已实际交给客户</text></label>
+     </checkbox-group>
+     <text class="t-cap">只记录本任务签收，不再次扣库存或收款。</text>
+    </view>
+   </template>
+
+   <view v-else class="alert">
+    <AppIcon name="alert" :size="16" class="alert-icon" />
+    <text>{{ preview.blockReason }}</text>
+   </view>
   </template>
-  <view v-if="result" class="panel"><text class="subtitle">签收已完成</text><text class="intro">{{ result.receivedAt?.replace('T',' ')??'签收时间未记录' }}</text></view>
-  <text v-if="message" class="intro" role="status">{{ message }}</text><button v-if="allowed && orderId" :disabled="busy || loading" @click="readCurrent">{{ uncertain?'核对本任务签收结果':'重新读取任务' }}</button><button :disabled="busy" @click="back">返回我的配送任务</button>
+
+  <view v-if="result" class="card card-ok">
+   <view class="row"><AppIcon name="check" :size="18" class="t-ok mr8" /><text class="t-sub">签收已完成</text></view>
+   <text class="t-meta mt4">{{ result.receivedAt?.replace('T', ' ') ?? '签收时间未记录' }}</text>
+  </view>
+
+  <text v-if="message" class="t-body mt8" role="status">{{ message }}</text>
+  <button v-if="allowed && orderId" class="btn btn-ghost btn-gap" :disabled="busy || loading" @click="readCurrent">{{ uncertain ? '核对本任务签收结果' : '重新读取任务' }}</button>
+  <button class="btn btn-quiet" :disabled="busy" @click="back">返回配送任务</button>
+
+  <view v-if="!loading && preview && preview.canConfirm" class="dock">
+   <view class="dock-inner">
+    <button class="btn btn-primary" :disabled="!canConfirm()" :loading="busy" @click="confirm">确认已实际交付</button>
+   </view>
+  </view>
  </view>
 </template>
-<style scoped>
-.page{padding:24px 20px;max-width:600px;margin:auto}.title{display:block;font-size:24px;font-weight:600}.subtitle{display:block;font-size:20px;font-weight:600;line-height:1.6;word-break:break-all}.intro{display:block;color:#4b5563;line-height:1.7;margin:12px 0}.panel{display:block;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0}.notice{background:#fff;border:1px solid #c8ac80;border-radius:10px;padding:20px;margin:20px 0;line-height:1.7}.address{display:block;line-height:1.8;word-break:break-all}.quantity{display:block;font-size:24px;color:#1d5d73;margin-top:8px}.item{display:flex;align-items:flex-start;gap:12px}label{line-height:1.8}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73}.primary{color:#fff;background:#1d5d73}
-</style>

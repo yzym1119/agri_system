@@ -116,54 +116,69 @@ const recordingText = computed(() => ({
 </script>
 <template>
   <view class="page">
-    <text class="title">先检查这台手机</text>
-    <text class="intro">在门店实际使用的手机上验证。当前仅做设备检查，不收款、不改库存。</text>
-    <view class="checks">
-      <button class="primary" :disabled="busy || recordingBusy" @click="check('scan')">扫描商品或批次标签</button>
-      <button :disabled="busy || recordingBusy" @click="check('storage')">检查本机记录</button>
-      <button :disabled="busy || recordingBusy" @click="check('random')">检查安全请求号</button>
-    </view>
-    <view class="result"><text>{{ busy ? '正在检查，请稍候…' : message }}</text></view>
-    <view class="section">
-      <text class="heading">录一段并试听</text>
-      <text class="intro">{{ recordingText }}</text>
-      <button class="primary" :disabled="busy || recordingBusy" @click="startRecording">开始录音（最长10秒）</button>
-      <button :disabled="!['STARTING', 'RECORDING'].includes(recording.phase)" @click="recorder?.stop()">停止录音</button>
-      <view class="actions">
-        <button :disabled="!recording.clip" @click="play">试听</button>
-        <button :disabled="!recording.clip" @click="clearRecording">清除</button>
+    <text class="t-body block">在门店实际使用的手机上验证。只做设备检查，不收款、不改库存。</text>
+
+    <view class="section section-first"><text class="section-title">基础能力</text></view>
+    <view class="card card-flat">
+      <view class="list-item row-between">
+        <view class="row"><AppIcon name="scan" :size="20" class="t-primary" /><text class="t-sub ml10">扫码</text></view>
+        <button class="btn btn-sm btn-auto" :disabled="busy || recordingBusy" @click="check('scan')">检查</button>
+      </view>
+      <view class="list-item row-between">
+        <view class="row"><AppIcon name="box" :size="20" class="t-primary" /><text class="t-sub ml10">本机记录</text></view>
+        <button class="btn btn-sm btn-auto" :disabled="busy || recordingBusy" @click="check('storage')">检查</button>
+      </view>
+      <view class="list-item list-item-last row-between">
+        <view class="row"><AppIcon name="check" :size="20" class="t-primary" /><text class="t-sub ml10">安全请求号</text></view>
+        <button class="btn btn-sm btn-auto" :disabled="busy || recordingBusy" @click="check('random')">检查</button>
       </view>
     </view>
-    <view class="section">
-      <text class="heading">网络与前后台</text>
-      <text class="intro">{{ network }}</text>
-      <button @click="refreshNetwork">重新读取网络状态</button>
-      <text class="hint">切断网络、恢复网络，再切到后台返回，观察状态是否更新。这里没有向后台发送请求，不能据此判定弱网业务恢复通过。</text>
+
+    <view class="alert alert-info mt12">
+      <AppIcon name="alert" :size="16" class="alert-icon" />
+      <text>{{ busy ? '正在检查，请稍候…' : message }}</text>
     </view>
-    <view class="section">
-      <text class="heading">目的地导航</text>
-      <label>测试目的地地址<input v-model="address" maxlength="200" placeholder="填写实际测试地址" /></label>
-      <text class="hint">有已核对的GCJ02坐标时再填写两项；不读取手机定位，也不猜测地址坐标。</text>
-      <label>纬度（可不填）<input v-model="latitude" maxlength="24" placeholder="GCJ02纬度" /></label>
-      <label>经度（可不填）<input v-model="longitude" maxlength="24" placeholder="GCJ02经度" /></label>
-      <button :disabled="busy || recordingBusy || !address.trim()" @click="check('navigation')">检查目的地</button>
+
+    <view class="section"><text class="section-title">录音与试听</text></view>
+    <view class="card">
+      <text class="t-meta">{{ recordingText }}</text>
+      <view class="row mt12">
+        <button class="btn btn-primary btn-sm grow mr8" :disabled="busy || recordingBusy" @click="startRecording">开始录音</button>
+        <button class="btn btn-ghost btn-sm grow" :disabled="!['STARTING', 'RECORDING'].includes(recording.phase)" @click="recorder?.stop()">停止</button>
+      </view>
+      <view class="row mt8">
+        <button class="btn btn-ghost btn-sm grow mr8" :disabled="!recording.clip" @click="play">试听</button>
+        <button class="btn btn-ghost btn-sm grow" :disabled="!recording.clip" @click="clearRecording">清除</button>
+      </view>
     </view>
-    <text class="hint">请分别记录安卓和 iPhone 的结果。编译成功不代表真机或业务验收通过。</text>
+
+    <view class="section"><text class="section-title">网络</text></view>
+    <view class="card">
+      <text class="t-body">{{ network }}</text>
+      <button class="btn btn-ghost btn-sm mt8" @click="refreshNetwork">重新读取网络状态</button>
+      <text class="t-cap mt8">切断并恢复网络、切后台再返回，观察状态是否更新。这里不向后台发请求，不能据此判定弱网业务恢复通过。</text>
+    </view>
+
+    <view class="section"><text class="section-title">目的地导航</text></view>
+    <view class="card">
+      <view class="field field-first">
+        <text class="field-label">测试目的地地址</text>
+        <input v-model="address" class="input" maxlength="200" placeholder="填写实际测试地址" placeholder-style="color:#9aa6b2" />
+      </view>
+      <text class="t-cap mt8">有已核对的 GCJ02 坐标时再填两项；不读取手机定位，也不猜测地址坐标。</text>
+      <view class="row mt12">
+        <view class="grow mr8">
+          <text class="field-label">纬度（可不填）</text>
+          <input v-model="latitude" class="input" maxlength="24" placeholder="GCJ02 纬度" placeholder-style="color:#9aa6b2" />
+        </view>
+        <view class="grow">
+          <text class="field-label">经度（可不填）</text>
+          <input v-model="longitude" class="input" maxlength="24" placeholder="GCJ02 经度" placeholder-style="color:#9aa6b2" />
+        </view>
+      </view>
+      <button class="btn btn-ghost btn-sm mt12" :disabled="busy || recordingBusy || !address.trim()" @click="check('navigation')">检查目的地</button>
+    </view>
+
+    <text class="t-cap mt12">请分别记录安卓和 iPhone 的结果。编译成功不代表真机或业务验收通过。</text>
   </view>
 </template>
-<style scoped>
-.page { padding:24px 20px; padding-bottom:calc(24px + env(safe-area-inset-bottom)); max-width:600px; margin:auto; }
-.title { display:block; font-size:24px; font-weight:600; margin-bottom:12px; }
-.heading { display:block; font-size:20px; font-weight:600; margin-bottom:12px; }
-.intro,.hint { display:block; color:#4b5563; line-height:1.7; }
-.checks { display:flex; flex-direction:column; gap:12px; margin:28px 0 20px; }
-button { width:100%; background:#fff; color:#1d5d73; border:1px solid #1d5d73; margin:12px 0; }
-button.primary { background:#1d5d73; color:#fff; }
-button[disabled] { opacity:.55; }
-.result { background:#fff; padding:20px; border:1px solid #e5e7eb; border-radius:10px; line-height:1.7; overflow-wrap:anywhere; }
-.section { margin-top:28px; border-top:1px solid #e5e7eb; padding-top:24px; }
-.hint { margin:12px 0; }
-.actions { display:flex; gap:12px; }
-label { display:block; margin-top:16px; }
-input { margin-top:8px; background:#fff; border:1px solid #626f7e; border-radius:8px; min-height:48px; padding:0 12px; }
-</style>

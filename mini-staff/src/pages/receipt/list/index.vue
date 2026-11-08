@@ -35,18 +35,48 @@ const search=()=>load(1,keyword.value.trim());
 function open(id:string){if(!current()||loading.value)return;uni.navigateTo({url:'/pages/receipt/detail/index?orderId='+encodeURIComponent(pending.value?.snapshot.purchaseOrderId??id)});}
 </script>
 <template>
- <view class="page">
-  <text class="title">采购收货</text><text class="intro">按本次实际到货登记，确认后增加本店库存。</text>
-  <text v-if="loading" class="intro">正在读取待收采购单…</text>
-  <template v-else-if="allowed">
-   <view v-if="pending" class="panel"><text class="subtitle">先核对上次收货</text><text class="code">采购单：{{ pending.snapshot.orderNo }}</text><text class="intro">本机还有原收货待核对，请先处理这笔。</text><button class="primary" @click="open(pending.snapshot.purchaseOrderId)">核对原收货</button></view>
-   <view class="panel"><text class="label">采购单号</text><input v-model="keyword" maxlength="100" placeholder="输入单号，也可以留空查看全部" confirm-type="search" @confirm="search" /><button :disabled="loading" @click="search">查询待收采购单</button></view>
-   <view v-for="order in orders" :key="order.id" class="panel"><text class="subtitle">{{ order.orderNo }}</text><text class="intro">{{ order.supplierName ?? '供应商名称待核对' }}</text><button @click="open(order.id)">{{ pending ? '先核对上次收货' : '核对并登记到货' }}</button></view>
-   <view v-if="page>1 || hasMore" class="pagination"><button :disabled="loading || page===1" @click="load(page-1)">上一页</button><text>第 {{ page }} 页</text><button :disabled="loading || !hasMore" @click="load(page+1)">下一页</button></view>
-  </template>
-  <text v-if="message" class="intro" role="status">{{ message }}</text>
- </view>
+  <view class="page">
+    <view v-if="pending" class="alert" @click="open(pending.snapshot.purchaseOrderId)">
+      <AppIcon name="alert" :size="16" class="alert-icon" />
+      <view class="grow">
+        <text class="t-strong">有 1 笔收货结果待核对</text>
+        <text class="t-meta">采购单 {{ pending.snapshot.orderNo }} · 点此先核对</text>
+      </view>
+      <AppIcon name="chevron" :size="14" class="chev" />
+    </view>
+
+    <text v-if="loading" class="card t-meta">正在读取待收采购单…</text>
+    <template v-else-if="allowed">
+      <view class="row block">
+        <view class="grow search-wrap">
+          <AppIcon name="search" :size="16" class="search-ic" />
+          <input v-model="keyword" class="input input-search" maxlength="100" placeholder="采购单号，留空看全部" confirm-type="search" @confirm="search" />
+        </view>
+        <button class="btn btn-sm btn-auto ml8" :disabled="loading" @click="search">查询</button>
+      </view>
+
+      <view v-for="order in orders" :key="order.id" class="card tap" @click="open(order.id)">
+        <view class="row-between">
+          <text class="t-sub grow">{{ order.orderNo }}</text>
+          <AppIcon name="chevron" :size="14" class="chev" />
+        </view>
+        <view class="row-between mt4">
+          <text class="t-meta">{{ order.supplierName ?? '供应商名称待核对' }}</text>
+          <text class="t-cap t-primary">{{ pending ? '先核对上次收货' : '登记本次到货' }}</text>
+        </view>
+      </view>
+
+      <view v-if="!orders.length" class="card empty">
+        <view class="empty-icon"><AppIcon name="doc" :size="22" /></view>
+        <text class="empty-text">{{ message || '当前没有待收货采购单。' }}</text>
+      </view>
+
+      <view v-if="page > 1 || hasMore" class="row-between mt4">
+        <button class="btn btn-sm btn-auto" :disabled="loading || page === 1" @click="load(page - 1)">上一页</button>
+        <text class="t-meta">第 {{ page }} 页</text>
+        <button class="btn btn-sm btn-auto" :disabled="loading || !hasMore" @click="load(page + 1)">下一页</button>
+      </view>
+    </template>
+    <text v-if="message && orders.length" class="t-cap" role="status">{{ message }}</text>
+  </view>
 </template>
-<style scoped>
-.page{padding:24px 20px;max-width:600px;margin:auto}.title{display:block;font-size:24px;font-weight:600}.intro{display:block;color:#4b5563;line-height:1.7;margin:12px 0}.panel{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0}.subtitle{display:block;font-size:20px;font-weight:600;line-height:1.6}.label,.code{display:block;line-height:1.7;word-break:break-all}input{box-sizing:border-box;width:100%;height:48px;padding:0 12px;background:#f5f6f8;border:1px solid #d1d5db;border-radius:6px;font-size:16px}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73}.primary{color:#fff;background:#1d5d73}.pagination{display:flex;gap:12px;align-items:center;justify-content:space-between}
-</style>

@@ -105,51 +105,193 @@ async function act(kind:'read'|'retry'|'finish'){
 const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
 </script>
 <template>
- <view class="page">
-  <text class="title">登记本次到货</text>
-  <text v-if="loading" class="intro">正在核对当前员工、采购单和本机记录…</text>
+ <view class="page" :class="{ 'page-dock': allowed && (preview || (!pending && detail && !finished)) }">
+  <text v-if="loading" class="card t-meta">正在核对员工、采购单和本机记录…</text>
+
   <template v-else-if="allowed && pending">
-   <view class="panel"><text class="subtitle">原收货待核对</text><text class="code">采购单 {{ pending.snapshot.orderNo }}</text><text class="code">请求号 {{ pending.requestKey }}</text><text class="intro">不能修改这笔内容或重新登记。同号重试不会建立另一笔收货。</text></view>
-   <view v-for="line in pending.snapshot.lines" :key="line.purchaseOrderItemId" class="panel"><text class="subtitle">{{ line.productName }}</text><view v-for="(batch,index) in line.batches" :key="index" class="batch"><text>第 {{ index+1 }} 批 · {{ batch.originalQuantity }} {{ batch.originalUnit }} = {{ batch.baseQuantity }} {{ line.baseUnitName }}</text><text class="intro">实际进价 ¥{{ batch.originalUnitCost }} / {{ batch.originalUnit }}</text><text class="intro">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text></view></view>
-   <button class="primary" :disabled="busy" :loading="busy" @click="act('read')">核对原收货结果</button>
-   <view v-if="result?.status==='COMPLETED'" class="panel"><text class="subtitle">原收货已完成</text><text class="code">收货单 {{ result.receiptNo }}</text><view v-for="line in result.lines" :key="line.purchaseOrderItemId"><text v-for="batch in line.batches" :key="batch.id" class="code">内部批次：{{ batch.internalBatchNo }}</text></view><checkbox-group @change="confirmed=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="confirmed" :disabled="busy" />我已核对原收货单和批次</label></checkbox-group><button :disabled="busy || !confirmed" @click="act('finish')">结束已完成收货</button></view>
-   <view v-else class="panel"><text class="intro">查询不到不代表未入库。仅在确需继续时，按原内容、原请求号重试；不能换号。</text><checkbox-group @change="confirmed=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="confirmed" :disabled="busy" />我已核对，按原内容重试</label></checkbox-group><button :disabled="busy || !confirmed" @click="act('retry')">同原内容重试</button></view>
+   <view class="alert alert-danger">
+    <AppIcon name="alert" :size="16" class="alert-icon" />
+    <view class="grow">
+     <text class="t-strong">这笔收货结果待核对</text>
+     <text class="t-meta">不能修改或重新登记；同号重试不会建立另一笔收货。</text>
+    </view>
+   </view>
+
+   <view class="card card-tight">
+    <text class="t-sub">采购单 {{ pending.snapshot.orderNo }}</text>
+    <text class="t-code mt4">请求号 {{ pending.requestKey }}</text>
+   </view>
+
+   <view v-for="line in pending.snapshot.lines" :key="line.purchaseOrderItemId" class="card">
+    <text class="t-sub">{{ line.productName }}</text>
+    <view v-for="(batch, index) in line.batches" :key="index" class="batch-box">
+     <view class="row-between">
+      <text class="t-meta">第 {{ index + 1 }} 批</text>
+      <text class="t-strong">{{ batch.originalQuantity }} {{ batch.originalUnit }}</text>
+     </view>
+     <text class="t-code">= {{ batch.baseQuantity }} {{ line.baseUnitName }} · ¥{{ batch.originalUnitCost }}/{{ batch.originalUnit }}</text>
+     <text class="t-cap">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text>
+    </view>
+   </view>
+
+   <button class="btn btn-primary" :disabled="busy" :loading="busy" @click="act('read')">核对原收货结果</button>
+
+   <view v-if="result?.status === 'COMPLETED'" class="card card-ok mt12">
+    <view class="row"><AppIcon name="check" :size="18" class="t-ok mr8" /><text class="t-sub">原收货已完成</text></view>
+    <text class="t-code mt4">收货单 {{ result.receiptNo }}</text>
+    <view v-for="line in result.lines" :key="line.purchaseOrderItemId">
+     <text v-for="batch in line.batches" :key="batch.id" class="t-code">内部批次 {{ batch.internalBatchNo }}</text>
+    </view>
+    <checkbox-group @change="confirmed = $event.detail.value.includes('yes')">
+     <label class="check-row"><checkbox class="check-box" value="yes" :checked="confirmed" :disabled="busy" /><text>我已核对原收货单和批次</text></label>
+    </checkbox-group>
+    <button class="btn btn-primary btn-sm" :disabled="busy || !confirmed" @click="act('finish')">结束已完成收货</button>
+   </view>
+   <view v-else class="card mt12">
+    <text class="t-body">查询不到不代表未入库。确需继续时按原内容、原请求号重试，不能换号。</text>
+    <checkbox-group @change="confirmed = $event.detail.value.includes('yes')">
+     <label class="check-row"><checkbox class="check-box" value="yes" :checked="confirmed" :disabled="busy" /><text>我已核对，按原内容重试</text></label>
+    </checkbox-group>
+    <button class="btn btn-ghost btn-sm" :disabled="busy || !confirmed" @click="act('retry')">同原内容重试</button>
+   </view>
   </template>
+
   <template v-else-if="allowed && preview">
-   <text class="subtitle">确认本次实际收货</text><text class="code">{{ preview.orderNo }}</text>
-   <view v-for="line in preview.lines" :key="line.purchaseOrderItemId" class="panel"><text class="subtitle">{{ line.productName }}</text><view v-for="(batch,index) in line.batches" :key="index" class="batch"><text>第 {{ index+1 }} 批：{{ batch.originalQuantity }} {{ batch.originalUnit }} = {{ batch.baseQuantity }} {{ line.baseUnitName }}</text><text class="intro">¥{{ batch.originalUnitCost }} / {{ batch.originalUnit }} · 本批 ¥{{ receiptMultiply(batch.originalQuantity,batch.originalUnitCost) }}</text><text class="code">厂家批号：{{ batch.supplierBatchNo ?? '未提供' }}</text><text class="intro">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text></view></view>
-   <text v-if="preview.exceptionReason" class="intro">超收说明：{{ preview.exceptionReason }}</text><text v-if="preview.remark" class="intro">备注：{{ preview.remark }}</text>
-   <button class="primary" :disabled="busy" :loading="busy" @click="submit">确认本次入库</button><button :disabled="busy" @click="preview=null">返回修改</button>
+   <view class="card card-tight">
+    <text class="t-title">确认本次实际收货</text>
+    <text class="t-code mt4">{{ preview.orderNo }}</text>
+   </view>
+   <view v-for="line in preview.lines" :key="line.purchaseOrderItemId" class="card">
+    <text class="t-sub">{{ line.productName }}</text>
+    <view v-for="(batch, index) in line.batches" :key="index" class="batch-box">
+     <view class="row-between">
+      <text class="t-meta">第 {{ index + 1 }} 批</text>
+      <text class="t-strong">{{ batch.originalQuantity }} {{ batch.originalUnit }}</text>
+     </view>
+     <text class="t-code">= {{ batch.baseQuantity }} {{ line.baseUnitName }} · ¥{{ batch.originalUnitCost }}/{{ batch.originalUnit }}</text>
+     <text class="t-code">本批 ¥{{ receiptMultiply(batch.originalQuantity, batch.originalUnitCost) }}</text>
+     <text class="t-cap">厂家批号：{{ batch.supplierBatchNo ?? '未提供' }}</text>
+     <text class="t-cap">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text>
+    </view>
+   </view>
+   <view v-if="preview.exceptionReason || preview.remark" class="card">
+    <view v-if="preview.exceptionReason" class="kv"><text class="kv-key">超收说明</text><text class="kv-val">{{ preview.exceptionReason }}</text></view>
+    <view v-if="preview.remark" class="kv"><text class="kv-key">备注</text><text class="kv-val">{{ preview.remark }}</text></view>
+   </view>
+   <button class="btn btn-ghost" :disabled="busy" @click="preview = null">返回修改</button>
   </template>
+
   <template v-else-if="allowed && detail && !finished">
-   <text class="subtitle">{{ detail.orderNo }}</text><text class="intro">{{ detail.supplierName ?? '供应商待核对' }} · 按实际到货填写，不照搬采购总量。</text>
-   <view class="panel"><button :disabled="busy" @click="scanProduct">扫描商品，定位采购行</button><input v-model="scanInput" :disabled="busy" maxlength="100" placeholder="也可手输商品编码或条码" @input="scanMatches=[];scanMessage=''" /><button :disabled="busy" @click="locateCode(scanInput)">识别并定位</button><text class="hint">这里只定位本采购单商品，不代填数量或进价，也不作为收货批次证据。</text><text v-if="scanMessage" class="intro" role="status">{{ scanMessage }}</text><button v-for="item in scanMatches" :key="item.id" :disabled="busy" @click="chooseLine(item)">{{ item.productName }} · 原采购 {{ item.orderedQuantity }} {{ item.orderedUnit }} · 定位这行</button></view>
-   <view v-for="line in drafts" :id="'receipt-line-'+line.purchaseOrderItemId" :key="line.purchaseOrderItemId" class="panel" :class="{located:locatedLine===line.purchaseOrderItemId}">
+   <view class="card card-tight">
+    <view class="row-between">
+     <view class="grow">
+      <text class="t-title">{{ detail.orderNo }}</text>
+      <text class="t-meta mt4">{{ detail.supplierName ?? '供应商待核对' }}</text>
+     </view>
+     <text class="chip chip-sm chip-primary">按实到登记</text>
+    </view>
+   </view>
+
+   <view class="card">
+    <view class="row">
+     <button class="btn btn-primary btn-sm grow mr8" :disabled="busy" @click="scanProduct"><AppIcon name="scan" :size="16" class="mr4" />扫描商品</button>
+     <button class="btn btn-ghost btn-sm grow" :disabled="busy" @click="locateCode(scanInput)">识别编码</button>
+    </view>
+    <input v-model="scanInput" class="input mt8" :disabled="busy" maxlength="100" placeholder="也可手输商品编码或条码" placeholder-style="color:#9aa6b2" @input="scanMatches = []; scanMessage = ''" />
+    <text class="t-cap mt8">只定位本采购单商品，不代填数量或进价，也不作为收货批次证据。</text>
+    <text v-if="scanMessage" class="t-body mt8" role="status">{{ scanMessage }}</text>
+    <button v-for="item in scanMatches" :key="item.id" class="btn btn-ghost btn-sm mt8" :disabled="busy" @click="chooseLine(item)">{{ item.productName }} · 原采购 {{ item.orderedQuantity }} {{ item.orderedUnit }} · 定位这行</button>
+   </view>
+
+   <view v-for="line in drafts" :id="'receipt-line-' + line.purchaseOrderItemId" :key="line.purchaseOrderItemId" class="card" :class="{ located: locatedLine === line.purchaseOrderItemId }">
     <template v-if="itemFor(line)">
-     <text class="subtitle">{{ itemFor(line)!.productName }}</text><text class="intro">采购 {{ itemFor(line)!.orderedQuantity }} {{ itemFor(line)!.orderedUnit }} · 已收 {{ itemFor(line)!.receivedBaseQuantity }} {{ itemFor(line)!.baseUnitName }} · 待收 {{ itemFor(line)!.remainingBaseQuantity }} {{ itemFor(line)!.baseUnitName }}</text>
-     <checkbox-group @change="line.included=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="line.included" :disabled="busy" />本次收这个商品</label></checkbox-group>
+     <view class="row-between">
+      <text class="t-sub grow">{{ itemFor(line)!.productName }}</text>
+      <text class="chip chip-sm" :class="line.included ? 'chip-primary' : 'chip-line'">{{ line.included ? '本次收' : '本次不收' }}</text>
+     </view>
+     <view class="kv mt8"><text class="kv-key">采购</text><text class="kv-val">{{ itemFor(line)!.orderedQuantity }} {{ itemFor(line)!.orderedUnit }}</text></view>
+     <view class="kv"><text class="kv-key">已收</text><text class="kv-val">{{ itemFor(line)!.receivedBaseQuantity }} {{ itemFor(line)!.baseUnitName }}</text></view>
+     <view class="kv"><text class="kv-key">待收</text><text class="kv-val t-primary t-strong">{{ itemFor(line)!.remainingBaseQuantity }} {{ itemFor(line)!.baseUnitName }}</text></view>
+     <checkbox-group @change="line.included = $event.detail.value.includes('yes')">
+      <label class="check-row"><checkbox class="check-box" value="yes" :checked="line.included" :disabled="busy" /><text>本次收这个商品</text></label>
+     </checkbox-group>
+
      <template v-if="line.included">
-      <view v-for="(batch,index) in line.batches" :key="batch.clientId" class="batch">
-       <text class="label">第 {{ index+1 }} 批实际到货</text>
-       <text class="label">收货单位</text><picker :range="itemFor(line)!.units.map(u=>u.name)" :disabled="busy" @change="changeUnit(line,batch,Number($event.detail.value))"><view class="picker">{{ batch.originalUnit }} · 点击选择</view></picker>
-       <text class="label">数量（{{ batch.originalUnit }}）</text><input v-model="batch.originalQuantity" type="digit" :disabled="busy" maxlength="32" placeholder="填写本批实际数量" /><text class="hint">{{ hint(itemFor(line)!,batch) }}</text>
-       <text class="label">实际进价（元 / {{ batch.originalUnit }}）</text><input v-model="batch.originalUnitCost" type="digit" :disabled="busy" maxlength="32" placeholder="必须填写，不自动沿用其他批次进价" />
-       <text class="label">厂家批号（可空）</text><input v-model="batch.supplierBatchNo" :disabled="busy" maxlength="100" placeholder="查看包装实物标签" />
-       <text class="label">生产日期</text><picker mode="date" :value="batch.productionDate" :disabled="busy" @change="batch.productionDate=$event.detail.value;batch.unknownDates=false"><view class="picker">{{ batch.productionDate || '点击填写，确实未知可留空' }}</view></picker><button v-if="batch.productionDate" class="quiet" @click="batch.productionDate=''">清除生产日期</button>
-       <text class="label">有效期至</text><picker mode="date" :value="batch.expiryDate" :disabled="busy" @change="batch.expiryDate=$event.detail.value;batch.unknownDates=false"><view class="picker">{{ batch.expiryDate || '点击填写，确实未知可留空' }}</view></picker><button v-if="batch.expiryDate" class="quiet" @click="batch.expiryDate=''">清除有效期</button>
-       <checkbox-group v-if="!batch.productionDate && !batch.expiryDate" @change="batch.unknownDates=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="batch.unknownDates" :disabled="busy" />已查看实物，两项日期都未知</label></checkbox-group>
-       <button v-if="line.batches.length>1" :disabled="busy" @click="removeBatch(line,batch)">移除这批</button>
+      <view v-for="(batch, index) in line.batches" :key="batch.clientId" class="batch-box">
+       <view class="row-between">
+        <text class="t-strong">第 {{ index + 1 }} 批</text>
+        <button v-if="line.batches.length > 1" class="btn btn-danger-quiet btn-sm btn-auto" :disabled="busy" @click="removeBatch(line, batch)">移除这批</button>
+       </view>
+       <view class="field">
+        <text class="field-label">收货单位</text>
+        <picker :range="itemFor(line)!.units.map(u => u.name)" :disabled="busy" @change="changeUnit(line, batch, Number($event.detail.value))">
+         <view class="picker"><text class="picker-value">{{ batch.originalUnit }}</text><AppIcon name="chevron" :size="12" class="chev" /></view>
+        </picker>
+       </view>
+       <view class="field">
+        <text class="field-label">数量（{{ batch.originalUnit }}）</text>
+        <input v-model="batch.originalQuantity" class="input" type="digit" :disabled="busy" maxlength="32" placeholder="本批实际数量" placeholder-style="color:#9aa6b2" />
+        <text v-if="hint(itemFor(line)!, batch)" class="t-cap mt4">{{ hint(itemFor(line)!, batch) }}</text>
+       </view>
+       <view class="field">
+        <text class="field-label">实际进价（元 / {{ batch.originalUnit }}）</text>
+        <input v-model="batch.originalUnitCost" class="input" type="digit" :disabled="busy" maxlength="32" placeholder="必填，不沿用其他批次" placeholder-style="color:#9aa6b2" />
+       </view>
+       <view class="field">
+        <text class="field-label">厂家批号（可空）</text>
+        <input v-model="batch.supplierBatchNo" class="input" :disabled="busy" maxlength="100" placeholder="查看包装实物标签" placeholder-style="color:#9aa6b2" />
+       </view>
+       <view class="row mt12">
+        <view class="grow mr8">
+         <text class="field-label">生产日期</text>
+         <picker mode="date" :value="batch.productionDate" :disabled="busy" @change="batch.productionDate = $event.detail.value; batch.unknownDates = false">
+          <view class="picker"><text :class="batch.productionDate ? 'picker-value' : 'picker-placeholder'">{{ batch.productionDate || '未填写' }}</text><AppIcon name="chevron" :size="12" class="chev" /></view>
+         </picker>
+        </view>
+        <view class="grow">
+         <text class="field-label">有效期至</text>
+         <picker mode="date" :value="batch.expiryDate" :disabled="busy" @change="batch.expiryDate = $event.detail.value; batch.unknownDates = false">
+          <view class="picker"><text :class="batch.expiryDate ? 'picker-value' : 'picker-placeholder'">{{ batch.expiryDate || '未填写' }}</text><AppIcon name="chevron" :size="12" class="chev" /></view>
+         </picker>
+        </view>
+       </view>
+       <view class="row mt8">
+        <button v-if="batch.productionDate" class="btn btn-quiet btn-sm btn-auto mr8" @click="batch.productionDate = ''">清除生产日期</button>
+        <button v-if="batch.expiryDate" class="btn btn-quiet btn-sm btn-auto" @click="batch.expiryDate = ''">清除有效期</button>
+       </view>
+       <checkbox-group v-if="!batch.productionDate && !batch.expiryDate" @change="batch.unknownDates = $event.detail.value.includes('yes')">
+        <label class="check-row"><checkbox class="check-box" value="yes" :checked="batch.unknownDates" :disabled="busy" /><text>已查看实物，两项日期都未知</text></label>
+       </checkbox-group>
       </view>
-      <button :disabled="busy || line.batches.length>=50" @click="addBatch(line)">增加另一个实际批次</button>
+      <button class="btn btn-ghost btn-sm mt8" :disabled="busy || line.batches.length >= 50" @click="addBatch(line)"><AppIcon name="plus" :size="14" class="mr4" />增加另一个实际批次</button>
      </template>
     </template>
    </view>
-   <view class="panel"><text class="label">超收说明（超过原采购量时必填）</text><textarea v-model="exceptionReason" :disabled="busy" maxlength="500" placeholder="例如供应商实发数量超出原采购量" /><text class="label">本次收货备注（可空）</text><textarea v-model="remark" :disabled="busy" maxlength="500" /></view>
-   <button class="primary" :disabled="busy" @click="review">核对本次收货摘要</button>
+
+   <view class="card">
+    <view class="field field-first">
+     <text class="field-label">超收说明（超过原采购量时必填）</text>
+     <textarea v-model="exceptionReason" class="textarea" :disabled="busy" maxlength="500" placeholder="例如供应商实发数量超出原采购量" placeholder-style="color:#9aa6b2" />
+    </view>
+    <view class="field">
+     <text class="field-label">本次收货备注（可空）</text>
+     <textarea v-model="remark" class="textarea" :disabled="busy" maxlength="500" placeholder="可留空" placeholder-style="color:#9aa6b2" />
+    </view>
+   </view>
   </template>
-  <text v-if="message" class="intro" role="status">{{ message }}</text><button :disabled="busy" @click="back">返回待收采购单</button>
+
+  <view v-if="message" class="alert alert-info" role="status">
+   <AppIcon name="alert" :size="16" class="alert-icon" />
+   <text>{{ message }}</text>
+  </view>
+
+  <button class="btn btn-quiet" :disabled="busy" @click="back">返回待收采购单</button>
+
+  <view v-if="allowed && !pending && !preview && detail && !finished" class="dock">
+   <view class="dock-inner"><button class="btn btn-primary" :disabled="busy" @click="review">核对本次收货摘要</button></view>
+  </view>
+  <view v-else-if="allowed && preview" class="dock">
+   <view class="dock-inner"><button class="btn btn-primary" :disabled="busy" :loading="busy" @click="submit">确认本次入库</button></view>
+  </view>
  </view>
 </template>
-<style scoped>
-.page{padding:24px 20px;max-width:600px;margin:auto}.title{display:block;font-size:24px;font-weight:600}.subtitle{display:block;font-size:20px;font-weight:600;line-height:1.6}.intro,.hint{display:block;color:#4b5563;line-height:1.7;margin:12px 0}.hint{font-size:14px}.panel{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0}.located{border-color:#1d5d73}.batch{border-top:1px solid #e5e7eb;margin-top:20px;padding-top:16px}.label{display:block;font-weight:600;line-height:1.7;margin:16px 0 8px}.code{display:block;line-height:1.7;word-break:break-all}.picker,input,textarea{box-sizing:border-box;width:100%;min-height:48px;padding:12px;background:#f5f6f8;border:1px solid #d1d5db;border-radius:6px;font-size:16px;line-height:1.5}textarea{height:100px}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73}.primary{color:#fff;background:#1d5d73}.quiet{font-size:14px}label{display:block;line-height:1.7;margin:16px 0}
-</style>

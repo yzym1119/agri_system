@@ -54,47 +54,58 @@ async function act(kind: 'read' | 'cancel' | 'finish') {
 </script>
 <template>
   <view class="page">
-    <text class="title">核对上次收银</text>
-    <text v-if="loading" class="intro">正在核对当前身份…</text>
+    <text v-if="loading" class="card t-meta">正在核对当前身份…</text>
+
     <template v-else-if="allowed && pending">
-      <view class="notice"><text>这笔请求结果需要核对，请勿再次向客户收款。</text></view>
-      <text class="heading">应结算 ¥{{ formatCents(pending.summary.netCents) }}</text>
-      <text class="intro">{{ pending.summary.customerId ? '客户编号：' + pending.summary.customerId : '散客' }} · {{ pending.summary.lines.length }} 条物料</text>
-      <text class="code">请求号：{{ pending.requestKey }}</text>
-      <view v-for="(line, index) in pending.summary.lines" :key="index" class="line">
-        <text>商品编号 {{ line.productId }} · {{ line.quantity }} {{ line.unit }}</text>
-        <text>¥{{ formatCents(line.lineCents) }}</text>
+      <view class="alert alert-danger">
+        <AppIcon name="alert" :size="16" class="alert-icon" />
+        <view class="grow">
+          <text class="t-strong">这笔请求结果需要核对</text>
+          <text class="t-meta">请勿再次向客户收款，核对前不要换号重开。</text>
+        </view>
       </view>
-      <button class="primary" :disabled="busy" :loading="busy" @click="act('read')">核对原请求结果</button>
-      <view v-if="result?.status === 'COMPLETED'" class="result">
-        <text class="heading">原请求已成交</text><text>原订单编号：{{ result.orderId }}</text>
-        <checkbox-group @change="confirmed = $event.detail.value.includes('confirmed')">
-          <label><checkbox value="confirmed" :checked="confirmed" :disabled="busy" />我已核对原订单已成交</label>
-        </checkbox-group>
-        <button :disabled="busy || !confirmed" @click="act('finish')">结束已成交单据</button>
+
+      <view class="card">
+        <text class="t-cap">应结算</text>
+        <text class="t-num mt4">¥{{ formatCents(pending.summary.netCents) }}</text>
+        <view class="divider"></view>
+        <view class="kv"><text class="kv-key">客户</text><text class="kv-val">{{ pending.summary.customerId ? pending.summary.customerId : '散客' }}</text></view>
+        <view class="kv"><text class="kv-key">物料</text><text class="kv-val">{{ pending.summary.lines.length }} 条</text></view>
+        <view class="kv"><text class="kv-key">请求号</text><text class="kv-val">{{ pending.requestKey }}</text></view>
       </view>
-      <view v-else class="result">
-        <text>确需重新开单时，先让后台结束原请求。若原请求已成交，会返回原订单。</text>
+
+      <view class="card card-flat">
+        <view v-for="(line, index) in pending.summary.lines" :key="index" class="list-item row-between" :class="{ 'list-item-last': index === pending.summary.lines.length - 1 }">
+          <text class="t-meta grow">商品 {{ line.productId }} · {{ line.quantity }} {{ line.unit }}</text>
+          <text class="t-strong">¥{{ formatCents(line.lineCents) }}</text>
+        </view>
+      </view>
+
+      <button class="btn btn-primary" :disabled="busy" :loading="busy" @click="act('read')">核对原请求结果</button>
+
+      <view v-if="result?.status === 'COMPLETED'" class="card card-ok mt12">
+        <view class="row"><AppIcon name="check" :size="18" class="t-ok mr8" /><text class="t-sub">原请求已成交</text></view>
+        <text class="t-code mt4">原订单编号 {{ result.orderId }}</text>
         <checkbox-group @change="confirmed = $event.detail.value.includes('confirmed')">
-          <label><checkbox value="confirmed" :checked="confirmed" :disabled="busy" />我已核对实际交款；结束请求不等于退款</label>
+          <label class="check-row"><checkbox class="check-box" value="confirmed" :checked="confirmed" :disabled="busy" /><text>我已核对原订单已成交</text></label>
         </checkbox-group>
-        <button :disabled="busy || !confirmed" @click="act('cancel')">结束原未成交请求</button>
+        <button class="btn btn-primary btn-sm" :disabled="busy || !confirmed" @click="act('finish')">结束已成交单据</button>
+      </view>
+
+      <view v-else class="card mt12">
+        <text class="t-body">确需重新开单时，先让后台结束原请求。若原请求已成交，会返回原订单。</text>
+        <checkbox-group @change="confirmed = $event.detail.value.includes('confirmed')">
+          <label class="check-row"><checkbox class="check-box" value="confirmed" :checked="confirmed" :disabled="busy" /><text>我已核对实际交款；结束请求不等于退款</text></label>
+        </checkbox-group>
+        <button class="btn btn-ghost btn-sm" :disabled="busy || !confirmed" @click="act('cancel')">结束原未成交请求</button>
       </view>
     </template>
-    <text v-if="message" class="intro" role="status">{{ message }}</text>
-    <text class="hint">这里只核对本机保存的原请求，不会创建新订单。换手机或清除数据后的缺失记录，请联系门店人工核查。</text>
+
+    <view v-if="message" class="alert alert-info" role="status">
+      <AppIcon name="alert" :size="16" class="alert-icon" />
+      <text>{{ message }}</text>
+    </view>
+
+    <text class="t-cap mt12">只核对本机保存的原请求，不会创建新订单。换手机或清除数据后的缺失记录，请联系门店人工核查。</text>
   </view>
 </template>
-<style scoped>
-.page { padding:24px 20px; max-width:600px; margin:auto; }
-.title { display:block; font-size:24px; font-weight:600; margin-bottom:20px; }
-.heading { display:block; font-size:20px; font-weight:600; margin:16px 0 8px; }
-.intro,.hint { display:block; color:#4b5563; line-height:1.7; margin:16px 0; }
-.notice,.result { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:20px; margin:20px 0; line-height:1.7; }
-.notice { color:#80521b; }
-.code { display:block; overflow-wrap:anywhere; line-height:1.7; }
-.line { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px; padding:16px 0; border-bottom:1px solid #e5e7eb; }
-button { margin:16px 0; color:#1d5d73; background:#fff; border:1px solid #1d5d73; }
-.primary { color:#fff; background:#1d5d73; }
-label { display:block; margin-top:16px; }
-</style>

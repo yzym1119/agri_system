@@ -73,16 +73,73 @@ async function scan(){
 const back=()=>uni.redirectTo({url:'/pages/pickup/list/index'});
 </script>
 <template>
- <view class="page"><text class="title">核对库房提货</text><text v-if="loading" class="intro">正在读取最新待交数量…</text>
- <text v-if="uncertain" class="notice">上次结果待核对，请勿再次交货。</text>
- <template v-if="preview && !loading"><text class="subtitle">{{ preview.productName || '商品资料待核对' }}</text><text class="intro">{{ preview.orderNo || '订单号待核对' }}</text>
-  <view v-if="preview.status==='FULFILLED'" class="panel"><text class="subtitle">提货已完成</text><text class="intro">{{ preview.fulfilledAt?.replace('T',' ') || '完成时间未记录' }}</text><text class="intro">不按后续退货余额反推历史交付数量。</text></view>
-  <template v-else-if="preview.canConfirm"><button :disabled="busy" @click="scan">扫描内部批次标签辅助核对</button>
-   <checkbox-group @change="checked=$event.detail.value"><label v-for="a in preview.allocations" :key="a.id" class="panel item"><checkbox :value="a.id" :checked="checked.includes(a.id)" :disabled="busy"/><view><text class="subtitle">{{ a.locationName }}</text><text class="batch">{{ a.internalBatchNo }}</text><text class="quantity">本次交付 {{ a.quantity }} {{ a.unit }}</text></view></label></checkbox-group>
-   <view class="panel"><checkbox-group @change="handedOver=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="handedOver" :disabled="busy"/>已逐批核对，以上商品已实际交给客户</label></checkbox-group><text class="intro">确认只记录交付，不再次扣库存或收款。</text><button class="primary" :disabled="!canConfirm()" :loading="busy" @click="confirm">确认已实际交付</button></view>
-  </template><text v-else class="notice">{{ preview.blockReason }}</text>
- </template><text v-if="message" class="intro" role="status">{{ message }}</text><button :disabled="busy || loading" @click="readCurrent">核对本请求最新结果</button><button :disabled="busy" @click="back">返回提货任务</button></view>
+ <view class="page" :class="{ 'page-dock': !loading && preview && preview.canConfirm }">
+  <text v-if="loading" class="card t-meta">正在读取最新待交数量…</text>
+
+  <view v-if="uncertain" class="alert alert-danger">
+   <AppIcon name="alert" :size="16" class="alert-icon" />
+   <view class="grow"><text class="t-strong">上次结果待核对</text><text class="t-meta">核对完成前请勿再次交货。</text></view>
+  </view>
+
+  <template v-if="preview && !loading">
+   <view class="card card-tight">
+    <view class="row-between">
+     <view class="grow">
+      <text class="t-title">{{ preview.productName || '商品资料待核对' }}</text>
+      <text class="t-meta mt4">{{ preview.orderNo || '订单号待核对' }}</text>
+     </view>
+     <text class="chip" :class="preview.status === 'FULFILLED' ? 'chip-ok' : 'chip-warn'">{{ preview.status === 'FULFILLED' ? '已提货' : '待交付' }}</text>
+    </view>
+   </view>
+
+   <view v-if="preview.status === 'FULFILLED'" class="card card-ok">
+    <view class="row"><AppIcon name="check" :size="18" class="t-ok mr8" /><text class="t-sub">提货已完成</text></view>
+    <text class="t-meta mt4">{{ preview.fulfilledAt?.replace('T', ' ') || '完成时间未记录' }}</text>
+    <text class="t-cap mt8">不按后续退货余额反推历史交付数量。</text>
+   </view>
+
+   <template v-else-if="preview.canConfirm">
+    <view class="section section-first">
+     <view class="section-head"><text class="section-title">按批次核对</text><text class="section-note">已核 {{ checked.length }}/{{ preview.allocations.length }}</text></view>
+    </view>
+    <button class="btn btn-ghost btn-sm" :disabled="busy" @click="scan"><AppIcon name="scan" :size="16" class="mr8" />扫描内部批次标签辅助核对</button>
+
+    <checkbox-group @change="checked = $event.detail.value">
+     <label v-for="a in preview.allocations" :key="a.id" class="card check-card">
+      <checkbox class="check-box" :value="a.id" :checked="checked.includes(a.id)" :disabled="busy" />
+      <view class="grow">
+       <view class="row-between">
+        <text class="t-sub">{{ a.locationName }}</text>
+        <AppIcon name="pin" :size="14" class="t-meta" />
+       </view>
+       <text class="t-code mt4">{{ a.internalBatchNo }}</text>
+       <text class="qty">{{ a.quantity }} {{ a.unit }}</text>
+      </view>
+     </label>
+    </checkbox-group>
+
+    <view class="card">
+     <checkbox-group @change="handedOver = $event.detail.value.includes('yes')">
+      <label class="check-row"><checkbox class="check-box" value="yes" :checked="handedOver" :disabled="busy" /><text>已逐批核对，以上商品已实际交给客户</text></label>
+     </checkbox-group>
+     <text class="t-cap">确认只记录交付，不再次扣库存或收款。</text>
+    </view>
+   </template>
+
+   <view v-else class="alert">
+    <AppIcon name="alert" :size="16" class="alert-icon" />
+    <text>{{ preview.blockReason }}</text>
+   </view>
+  </template>
+
+  <text v-if="message" class="t-body mt8" role="status">{{ message }}</text>
+  <button class="btn btn-ghost btn-gap" :disabled="busy || loading" @click="readCurrent">核对本请求最新结果</button>
+  <button class="btn btn-quiet" :disabled="busy" @click="back">返回提货任务</button>
+
+  <view v-if="!loading && preview && preview.canConfirm" class="dock">
+   <view class="dock-inner">
+    <button class="btn btn-primary" :disabled="!canConfirm()" :loading="busy" @click="confirm">确认已实际交付</button>
+   </view>
+  </view>
+ </view>
 </template>
-<style scoped>
-.page{padding:24px 20px;max-width:600px;margin:auto}.title{display:block;font-size:24px;font-weight:600}.subtitle{display:block;font-size:20px;font-weight:600;line-height:1.6}.intro,.batch{display:block;line-height:1.7;word-break:break-all;color:#4b5563;margin:12px 0}.panel{display:block;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0}.item{display:flex;gap:12px;align-items:flex-start}.quantity{display:block;font-size:24px;color:#1d5d73}.notice{display:block;line-height:1.8;border:1px solid #c8ac80;padding:20px;margin:16px 0}label{line-height:1.8}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73}.primary{color:#fff;background:#1d5d73}
-</style>

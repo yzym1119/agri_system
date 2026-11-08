@@ -3,19 +3,19 @@
     {
       "path": "pages/login/index",
       "style": {
-        "navigationBarTitleText": "员工登录"
+        "navigationBarTitleText": "登录"
       }
     },
     {
       "path": "pages/workbench/index",
       "style": {
-        "navigationBarTitleText": "门店工作台"
+        "navigationBarTitleText": "工作台"
       }
     },
     {
       "path": "pages/scan/index",
       "style": {
-        "navigationBarTitleText": "扫码查货"
+        "navigationBarTitleText": "查货"
       }
     },
     {
@@ -27,25 +27,25 @@
     {
       "path": "pages/receipt/list/index",
       "style": {
-        "navigationBarTitleText": "待收采购单"
+        "navigationBarTitleText": "采购收货"
       }
     },
     {
       "path": "pages/receipt/detail/index",
       "style": {
-        "navigationBarTitleText": "登记本次到货"
+        "navigationBarTitleText": "收货登记"
       }
     },
     {
       "path": "pages/delivery/list/index",
       "style": {
-        "navigationBarTitleText": "我的配送任务"
+        "navigationBarTitleText": "配送任务"
       }
     },
     {
       "path": "pages/delivery/detail/index",
       "style": {
-        "navigationBarTitleText": "核对配送交付"
+        "navigationBarTitleText": "配送核对"
       }
     },
     {
@@ -57,30 +57,30 @@
     {
       "path": "pages/recovery/index",
       "style": {
-        "navigationBarTitleText": "核对上次收银"
+        "navigationBarTitleText": "收银核对"
       }
     },
     {
       "path": "pages/device-check/index",
       "style": {
-        "navigationBarTitleText": "员工端设备验证"
+        "navigationBarTitleText": "设备检查"
       }
     },
     {
       "path": "pages/pickup/list/index",
       "style": {
-        "navigationBarTitleText": "库房提货"
+        "navigationBarTitleText": "提货任务"
       }
     },
     {
       "path": "pages/pickup/detail/index",
       "style": {
-        "navigationBarTitleText": "核对库房提货"
+        "navigationBarTitleText": "提货核对"
       }
     }
   ],
   "globalStyle": {
-    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarBackgroundColor": "#f5f6f8",
     "navigationBarTextStyle": "black",
     "backgroundColor": "#f5f6f8"
   }
