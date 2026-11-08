@@ -111,6 +111,9 @@ button::after { border: 0; }
 .list-item { padding: 14px 16px; border-bottom: 1px solid #eff2f0; transition: background .12s ease; }
 .list-item-last { border-bottom: 0; }
 .tap { background: #fff; }
+/* 整单卡内的提货行：一行一条原提货请求，已交项不隐藏但弱化。 */
+.line { display: flex; align-items: center; padding: 10px 0; border-top: 1px solid #eff2f0; margin-top: 8px; }
+.line-done { opacity: .62; }
 
 /* ---------- 标签 ---------- */
 .chip {

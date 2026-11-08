@@ -6,9 +6,13 @@ import com.agri_system.application.order.service.MobilePickupTaskService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-/** 手机只读适配；确认仍使用原提货履约入口及其订单锁、数量摘要和防重。 */
+/**
+ * 手机只读适配：整单清单按原订单聚合，确认仍使用原提货履约入口及其订单锁、数量摘要和防重。
+ *
+ * <p>预览路径保持按提货请求定位，一行请求对应一个原请求编号，不能拿订单号轮换确认。</p>
+ */
 @RestController
-@RequestMapping("/api/admin/mobile/pickup/tasks")
+@RequestMapping("/api/admin/mobile/pickup")
 @SaCheckPermission("order:pickup:verify")
 @RequiredArgsConstructor
 public class MobilePickupController {
@@ -19,13 +23,13 @@ public class MobilePickupController {
         response.setHeader("Cache-Control","no-store");
     }
 
-    @GetMapping
-    public MobilePickupTaskService.Tasks list(@RequestParam(defaultValue="PENDING") String state,
-                                              @RequestParam(required=false) Long after) {
-        return tasks.listTasks(CurrentUser.staffId(),state,after);
+    @GetMapping("/orders")
+    public MobilePickupTaskService.Orders list(@RequestParam(defaultValue="PENDING") String state,
+                                               @RequestParam(required=false) Long after) {
+        return tasks.listOrders(CurrentUser.staffId(),state,after);
     }
 
-    @GetMapping("/{requestId}")
+    @GetMapping("/tasks/{requestId}")
     public MobilePickupTaskService.Preview preview(@PathVariable Long requestId) {
         return tasks.preview(requestId,CurrentUser.staffId());
     }

@@ -20,4 +20,9 @@ public interface OrderPickupRequestRepository {
      * 按门店 + 状态查询取货请求（按 id 升序）
      */
     List<OrderPickupRequest> findByStoreIdAndStatus(Long storeId, String status);
+
+    /**
+     * 按门店 + 订单集合查询取货请求（不限状态，按 id 升序）；订单为空时返回空集合。
+     */
+    List<OrderPickupRequest> findByStoreIdAndOrderIds(Long storeId, List<Long> orderIds);
 }

@@ -859,6 +859,15 @@ class PickupFulfillmentServiceTest {
                     .toList();
         }
 
+        @Override
+        public List<OrderPickupRequest> findByStoreIdAndOrderIds(Long storeId, List<Long> orderIds) {
+            if (orderIds == null || orderIds.isEmpty()) return List.of();
+            return rows.stream()
+                    .filter(row -> storeId.equals(row.getStoreId()))
+                    .filter(row -> orderIds.contains(row.getOrderId()))
+                    .toList();
+        }
+
         List<OrderPickupRequest> all() {
             return rows;
         }

@@ -27,11 +27,28 @@ test('扫描只定位已加载真实批次，不自动确认或改变数量',asy
  const f=await fixture();await f.p.hooks.show();await f.p.state.scan();assert.match(f.p.state.message.value,/后仓/);assert.equal(f.p.state.checked.value.length,0);assert.equal(f.calls.length,0);
  f.setScan({status:'SCANNED',code:'SKU101',scanType:'barCode'});await f.p.state.scan();assert.match(f.p.state.message.value,/不属于/);assert.equal(f.p.state.preview.value.allocations[0].quantity,'2');
 });
-test('提货列表按当前权限读取并使用原请求编号打开详情，隐藏清空任务',async()=>{
+test('提货列表按整单聚合打开原请求编号详情，隐藏清空订单',async()=>{
  const f=await fixture(),calls=[];
- const p=setupPage('pickup/list',f.auth,true,{'../../../services/auth':{staffAuth:f.auth},'../../../services/pickup':{readPickupTasks:async(state,after)=>{calls.push({state,after});return {storeId:'3',state,tasks:[{requestId:'42',orderNo:'ORDER50',productName:'肥料',status:state,createdAt:null,fulfilledAt:null}],nextCursor:null};}}});
- await p.hooks.show();assert.equal(calls.length,1);p.state.open(p.state.tasks.value[0]);assert.equal(p.routes[0],'/pages/pickup/detail/index?requestId=42');
- p.hooks.hide();assert.equal(p.state.tasks.value.length,0);
+ const order={orderId:'50',orderNo:'ORDER50',customerLabel:'张**',pendingCount:1,fulfilledCount:1,lines:[
+  {requestId:'42',productName:'肥料',unit:'袋',remainingQuantity:'2',status:'PENDING',canConfirm:true,blockReason:null,fulfilledAt:null},
+  {requestId:'41',productName:'农药',unit:null,remainingQuantity:null,status:'FULFILLED',canConfirm:false,blockReason:null,fulfilledAt:'2026-11-01T09:00'}]};
+ const p=setupPage('pickup/list',f.auth,true,{'../../../services/auth':{staffAuth:f.auth},'../../../services/pickup':{readPickupOrders:async(state,after)=>{calls.push({state,after});return {storeId:'3',state,orders:[order],nextCursor:null};}}});
+ await p.hooks.show();assert.equal(calls.length,1);assert.equal(p.state.orders.value.length,1);assert.equal(p.state.orders.value[0].pendingCount,1);
+ p.state.open(p.state.orders.value[0].lines[0]);assert.equal(p.routes[0],'/pages/pickup/detail/index?requestId=42');
+ p.state.open(p.state.orders.value[0].lines[1]);assert.equal(p.routes[1],'/pages/pickup/detail/index?requestId=41');
+ p.hooks.hide();assert.equal(p.state.orders.value.length,0);
+});
+test('待交与已提货切换按原状态重新读取，翻页按订单合并去重且不丢整单项数',async()=>{
+ const f=await fixture(),calls=[];
+ const line=id=>({requestId:id,productName:'肥料',unit:'公斤',remainingQuantity:'1',status:'PENDING',canConfirm:true,blockReason:null,fulfilledAt:null});
+ const order=(id,lineId)=>({orderId:id,orderNo:'ORDER'+id,customerLabel:null,pendingCount:1,fulfilledCount:0,lines:[line(lineId)]});
+ let first={storeId:'3',state:'PENDING',orders:[order('50','42')],nextCursor:'50'},second={storeId:'3',state:'PENDING',orders:[order('50','41'),order('49','43')],nextCursor:null};
+ const p=setupPage('pickup/list',f.auth,true,{'../../../services/auth':{staffAuth:f.auth},'../../../services/pickup':{readPickupOrders:async(state,after)=>{calls.push({state,after});return structuredClone(after===null?first:second);}}});
+ await p.hooks.show();assert.equal(p.state.nextCursor.value,'50');
+ await p.state.more();assert.deepEqual(Array.from(p.state.orders.value,item=>item.orderId),['50','49']);
+ assert.equal(p.state.orders.value[0].lines.length,1);assert.equal(p.state.orders.value[0].lines[0].requestId,'41');
+ assert.equal(p.state.nextCursor.value,null);
+ await p.state.chooseState('FULFILLED');assert.equal(calls.at(-1).state,'FULFILLED');assert.equal(calls.at(-1).after,null);
 });
 test('库存查询权限不能替代提货确认权限，缺权或售后暂停不能提交',async()=>{
  const denied=await fixture(['inventory:view']);await denied.p.hooks.show();assert.equal(denied.p.state.preview.value,null);assert.match(denied.p.state.message.value,/权限/);

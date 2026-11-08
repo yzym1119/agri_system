@@ -16,20 +16,35 @@ public class PickupTaskQueryImpl implements PickupTaskQuery {
     private final JdbcTemplate jdbc;
 
     @Override
-    public List<Task> findTasks(Long storeId, String state, Long after) {
-        var args=new ArrayList<Object>();args.add(storeId);args.add(state);
-        String cursor="";
-        if(after!=null){cursor=" AND r.id<?";args.add(after);}
+    public List<OrderLine> findOrderLines(Long storeId, String state, Long after) {
+        // 分页子表只按状态定位订单与游标，外层再取这些订单的全部请求行；两层各自校验门店与未删除订单。
+        // 分页必须放在派生表里：MySQL 不接受带 LIMIT 的 IN 子查询（ERROR 1235）。
+        var args = new ArrayList<Object>();
+        args.add(storeId); args.add(state);
+        String cursor = "";
+        if (after != null) { cursor = " AND r2.order_id<?"; args.add(after); }
+        args.add(storeId);
+        String paged = """
+                SELECT DISTINCT r2.order_id FROM order_pickup_request r2
+                JOIN `order` o2 ON o2.id=r2.order_id AND o2.store_id=r2.store_id AND o2.deleted=0
+                WHERE r2.store_id=? AND r2.status=?
+                """ + cursor + " ORDER BY r2.order_id DESC LIMIT 21";
         return List.copyOf(jdbc.query("""
-                SELECT r.id,o.order_no,p.name,r.status,r.created_at,r.fulfilled_at
-                FROM order_pickup_request r JOIN `order` o ON o.id=r.order_id AND o.store_id=r.store_id
+                SELECT r.id AS request_id,r.order_id,o.order_no,c.name AS customer_name,p.name AS product_name,
+                       r.status,r.created_at,r.fulfilled_at
+                FROM (""" + paged + """
+                ) paged JOIN order_pickup_request r ON r.order_id=paged.order_id
+                JOIN `order` o ON o.id=r.order_id AND o.store_id=r.store_id AND o.deleted=0
                 LEFT JOIN product p ON p.id=r.product_id
-                WHERE r.store_id=? AND r.status=? AND o.deleted=0
-                """+cursor+" ORDER BY r.id DESC LIMIT 21",(r,n)->new Task(r.getLong("id"),r.getString("order_no"),
-                r.getString("name"),r.getString("status"),time(r,"created_at"),time(r,"fulfilled_at")),args.toArray()));
+                LEFT JOIN customer c ON c.id=o.customer_id
+                WHERE r.store_id=?
+                ORDER BY r.order_id DESC,r.id ASC""", (r, n) -> new OrderLine(r.getLong("request_id"),
+                r.getLong("order_id"), r.getString("order_no"), r.getString("customer_name"),
+                r.getString("product_name"), r.getString("status"), time(r, "created_at"), time(r, "fulfilled_at")),
+                args.toArray()));
     }
 
-    private static LocalDateTime time(ResultSet row,String name)throws SQLException {
-        var value=row.getTimestamp(name);return value==null?null:value.toLocalDateTime();
+    private static LocalDateTime time(ResultSet row, String name) throws SQLException {
+        var value = row.getTimestamp(name); return value == null ? null : value.toLocalDateTime();
     }
 }

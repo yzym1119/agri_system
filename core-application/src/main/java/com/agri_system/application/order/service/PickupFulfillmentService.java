@@ -110,6 +110,26 @@ public class PickupFulfillmentService {
         if (requests.isEmpty()) {
             return List.of();
         }
+        return assemble(storeId, requests);
+    }
+
+    /**
+     * 手机整单清单：按原订单集合装配与工作项完全相同的事实。
+     *
+     * <p>只换取数范围，不复制余量、批次或暂停判断；订单集合为空时不发起查询。</p>
+     */
+    public List<PickupWorkItemVO> listPickupRequestsForOrders(Long storeId, List<Long> orderIds) {
+        if (storeId == null) {
+            throw new IllegalArgumentException("storeId 不能为空");
+        }
+        List<OrderPickupRequest> requests = pickupRequestRepository.findByStoreIdAndOrderIds(storeId, orderIds);
+        if (requests.isEmpty()) {
+            return List.of();
+        }
+        return assemble(storeId, requests);
+    }
+
+    private List<PickupWorkItemVO> assemble(Long storeId, List<OrderPickupRequest> requests) {
         Set<Long> orderIds = requests.stream().map(OrderPickupRequest::getOrderId)
                 .filter(id -> id != null).collect(Collectors.toSet());
         Set<Long> productIds = requests.stream().map(OrderPickupRequest::getProductId)

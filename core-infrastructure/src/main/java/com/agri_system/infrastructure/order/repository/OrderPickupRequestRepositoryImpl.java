@@ -50,4 +50,15 @@ public class OrderPickupRequestRepositoryImpl implements OrderPickupRequestRepos
                 .and("status = ?", status).orderBy("id ASC");
         return mapper.selectListByQuery(query);
     }
+
+    @Override
+    public List<OrderPickupRequest> findByStoreIdAndOrderIds(Long storeId, List<Long> orderIds) {
+        // 空集合不生成 IN () 非法 SQL；调用方已按门店过滤的分页订单传入。
+        if (storeId == null || orderIds == null || orderIds.isEmpty()) return List.of();
+        QueryWrapper query = QueryWrapper.create().where("store_id = ?", storeId)
+                .and("order_id IN (" + String.join(",", java.util.Collections.nCopies(orderIds.size(), "?")) + ")",
+                        orderIds.toArray())
+                .orderBy("id ASC");
+        return mapper.selectListByQuery(query);
+    }
 }

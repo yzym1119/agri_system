@@ -384,15 +384,15 @@ class AuthorityHttpIntegrationTest {
     }
 
     @Test void 手机提货沿用原权限且撤销立即生效() throws Exception {
-        String token=login(4),base="/api/admin/mobile/pickup/tasks";
+        String token=login(4),base="/api/admin/mobile/pickup/orders",preview="/api/admin/mobile/pickup/tasks";
         reject(call(null,"GET",base,null));reject(call(loginId("CUST_1"),"GET",base,null));reject(call(token,"GET",base,null));
         businessPermission(102,"order:pickup:verify");
-        when(mobilePickup.listTasks(4L,"PENDING",null)).thenReturn(new com.agri_system.application.order.service.MobilePickupTaskService.Tasks("1","PENDING",List.of(),null));
+        when(mobilePickup.listOrders(4L,"PENDING",null)).thenReturn(new com.agri_system.application.order.service.MobilePickupTaskService.Orders("1","PENDING",List.of(),null));
         assertEquals("1",call(token,"GET",base+"?storeId=2&staffId=99",null).path("storeId").asText());
-        org.mockito.Mockito.verify(mobilePickup).listTasks(4L,"PENDING",null);
+        org.mockito.Mockito.verify(mobilePickup).listOrders(4L,"PENDING",null);
         reject(call(token,"GET","/api/admin/orders/42",null));reject(call(token,"GET","/api/admin/staff",null));
         jdbc.update("DELETE FROM sys_role_menu WHERE role_id=4 AND menu_id=102");
-        reject(call(token,"GET",base,null));reject(call(token,"GET",base+"/42",null));
+        reject(call(token,"GET",base,null));reject(call(token,"GET",preview+"/42",null));
         reject(call(token,"POST","/api/admin/orders/pickup/requests/42/fulfill","{\"confirmationKey\":\""+"a".repeat(64)+"\",\"allocationIds\":[1]}"));
     }
 

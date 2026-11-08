@@ -1,11 +1,11 @@
-import { isPickupTasks,isPickupPreview,type PickupTasks } from '@agri/mobile-contracts/pickup';
+import { isPickupOrders,isPickupPreview,type PickupOrders } from '@agri/mobile-contracts/pickup';
 import { staffAuth } from './auth';
 async function own<T extends {storeId:string}>(url:string,validate:(v:unknown)=>v is T,epoch:number){
  const actor=staffAuth.current();if(!actor||actor.epoch!==epoch)throw Error('STALE_SESSION');
  const answer=await staffAuth.request({url,method:'GET'},validate,epoch);
  if(answer.storeId!==actor.storeId)throw Error('STORE_MISMATCH');return answer;
 }
-export const readPickupTasks=(state:PickupTasks['state'],after:string|null,epoch:number)=>own('/api/admin/mobile/pickup/tasks?state='+state+(after?'&after='+encodeURIComponent(after):''),isPickupTasks,epoch)
+export const readPickupOrders=(state:PickupOrders['state'],after:string|null,epoch:number)=>own('/api/admin/mobile/pickup/orders?state='+state+(after?'&after='+encodeURIComponent(after):''),isPickupOrders,epoch)
  .then(answer=>{if(answer.state!==state)throw Error('RESPONSE_INVALID');return answer;});
 export const readPickupPreview=(id:string,epoch:number)=>own('/api/admin/mobile/pickup/tasks/'+encodeURIComponent(id),isPickupPreview,epoch)
  .then(answer=>{if(answer.requestId!==id)throw Error('RESPONSE_INVALID');return answer;});
