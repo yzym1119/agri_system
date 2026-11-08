@@ -2,7 +2,7 @@ import { isPositiveLongId as positiveId, normalizeLongId } from './ids.js';
 export type RecoveryActor = Readonly<{ staffId: string; storeId: string; epoch: number }>;
 export type SaleSummary = {
   totalCents: number; netCents: number; paymentMethod: number; customerId: string | null;
-  lines: { productId: string; packageId: string | null; unit: string; quantity: string; lineCents: number }[];
+  lines: { productId: string | null; packageId: string | null; unit: string; quantity: string; lineCents: number }[];
 };
 export type PendingSaleRecord = {
   schemaVersion: 1; kind: 'POS'; requestKey: string; scope: { staffId: string; storeId: string };
@@ -25,11 +25,16 @@ function copySummary(value: unknown): SaleSummary {
     || ![1,2,3,4,5,6,10].includes(value.paymentMethod as number)
     || !(value.customerId === null || positiveId(value.customerId)) || !Array.isArray(value.lines)
     || value.lines.length === 0 || value.lines.length > 500) throw new Error('SUMMARY_INVALID');
-  const lines = value.lines.map(line => {
-    if (!object(line) || !positiveId(line.productId) || !(line.packageId === null || positiveId(line.packageId))
-      || typeof line.unit !== 'string' || !line.unit.trim() || line.unit.length > 32 || !quantity(line.quantity)
-      || !cents(line.lineCents)) throw new Error('SUMMARY_INVALID');
-    return { productId: line.productId, packageId: line.packageId, unit: line.unit, quantity: line.quantity, lineCents: line.lineCents };
+  const lines = value.lines.map(raw => {
+    if (!object(raw)) throw new Error('SUMMARY_INVALID');
+    // 单品与套餐互斥：productId 与 packageId 恰有一个，两个都空或都有都是坏记录。
+    const product = positiveId(raw.productId);
+    const bundle = positiveId(raw.packageId);
+    if (product === bundle
+      || typeof raw.unit !== 'string' || !raw.unit.trim() || raw.unit.length > 32 || !quantity(raw.quantity)
+      || !cents(raw.lineCents)) throw new Error('SUMMARY_INVALID');
+    return { productId: product ? raw.productId as string : null, packageId: bundle ? raw.packageId as string : null,
+      unit: raw.unit, quantity: raw.quantity, lineCents: raw.lineCents };
   });
   return { totalCents: value.totalCents, netCents: value.netCents, paymentMethod: value.paymentMethod as number,
     customerId: value.customerId, lines };

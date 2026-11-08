@@ -1,9 +1,10 @@
 import { staffAuth } from './auth';
 import { posRecovery } from './pos-recovery';
 import {
-  isCatalogEnvelope, decodeCatalog, decodeCustomers, decodeQuote, toSaleSummary, buildSaleCommand, isOrderId,
-  resolveSaleOptions,
+  isCatalogEnvelope, decodeCatalog, decodeCustomers, decodeQuote, decodePackages, decodePackageQuote,
+  toSaleSummary, buildSaleCommand, isOrderId, resolveSaleOptions,
   type CatalogProduct, type PosCustomer, type SaleLine, type PriceQuote, type SaleOptions,
+  type PosPackage, type PackageQuote,
 } from '@agri/mobile-contracts/sale';
 
 /** 目录与报价是 {code:"200",data} 自定义包装；通用 R 解码不适用，这里显式解包。 */
@@ -51,6 +52,33 @@ export const quoteProduct = async (
     method: 'GET',
   }, envelope, epoch);
   return decodeQuote(body, productId);
+};
+
+/** 套餐目录：后端按当前员工门店算可售套数（子商品可用量整除取小），前端不再二次计算。
+ *  该接口目前只支持分页、没有关键词参数，所以套餐搜索在本机按名称/编码过滤这一页。 */
+export const readPackages = async (epoch: number): Promise<PosPackage[]> => {
+  const body = await staffAuth.request({
+    url: '/api/admin/pos/catalog/packages?pageNum=1&pageSize=200', method: 'GET',
+  }, envelope, epoch);
+  return decodePackages(body);
+};
+
+/** 套餐按套报价：每套价、总额与物料分摊都由后端算，quoteId 是唯一指纹。 */
+export const quotePackage = async (
+  packageId: string,
+  packages: string,
+  epoch: number,
+  customerId: string | null = null,
+): Promise<PackageQuote> => {
+  const customer = customerId ? '&customerId=' + encodeURIComponent(customerId) : '';
+  const store = staffAuth.current()?.storeId;
+  const storeParam = store ? '&storeId=' + encodeURIComponent(store) : '';
+  const body = await staffAuth.request({
+    url: '/api/admin/product-packages/' + encodeURIComponent(packageId)
+      + '/price-quote?quantity=' + encodeURIComponent(packages) + customer + storeParam,
+    method: 'GET',
+  }, envelope, epoch);
+  return decodePackageQuote(body, packageId, packages);
 };
 
 /** 唯一销售写入口：交给 V133 持久请求协调器，结果未知只返回 VERIFYING，不自动换号重收。 */

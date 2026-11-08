@@ -2,16 +2,20 @@
 import { ref, computed, watch } from 'vue';
 import { onShow, onHide } from '@dcloudio/uni-app';
 import { staffAuth } from '../../services/auth';
-import { readCatalog, searchCatalog, searchCustomers, quoteProduct, submitSale } from '../../services/sale';
+import { readCatalog, searchCatalog, searchCustomers, quoteProduct, readPackages, quotePackage, submitSale } from '../../services/sale';
 import { posRecovery, readPOSResult } from '../../services/pos-recovery';
-import { lineCents, type CatalogProduct, type PosCustomer, type SaleLine } from '@agri/mobile-contracts/sale';
+import { lineCents, isPackageLine, type CatalogProduct, type PosCustomer, type PosPackage, type SaleLine } from '@agri/mobile-contracts/sale';
 import { money, preciseDecimal } from '../../utils/money';
 
 const products = ref<CatalogProduct[]>([]), keyword = ref('');
 const searchResults = ref<CatalogProduct[]>([]), searching = ref(false);
 const availabilityNotice = ref('');
+/** 商品与套餐分开取：套餐按套报价，物料由后端展开，前端不把套餐拆成商品行。 */
+const mode = ref<'PRODUCT' | 'PACKAGE'>('PRODUCT');
+const packages = ref<PosPackage[]>([]), packageLoading = ref(false), packageNotice = ref('');
 const lines = ref<SaleLine[]>([]);
 const selected = ref<CatalogProduct | null>(null), quantity = ref('1');
+const selectedPackage = ref<PosPackage | null>(null), packageCount = ref('1');
 /** 客户档案是唯一来源：选了客户才带会员价，配送时收货信息也取自这里。 */
 const customer = ref<PosCustomer | null>(null);
 const customerOpen = ref(false), customerKeyword = ref(''), customerResults = ref<PosCustomer[]>([]);
@@ -29,6 +33,12 @@ const totalCents = computed(() => lines.value.reduce((sum, line) => sum + lineCe
 const customerId = computed(() => (customer.value ? customer.value.id : ''));
 /** 有关键词时展示服务端搜索结果，无关键词时展示完整目录首页。 */
 const filtered = computed(() => (keyword.value.trim() ? searchResults.value : products.value));
+/** 套餐接口没有关键词参数，就在已加载的这一页里按名称/编码过滤，避免员工翻不到。 */
+const filteredPackages = computed(() => {
+  const query = keyword.value.trim().toLowerCase();
+  if (!query) return packages.value;
+  return packages.value.filter(pkg => pkg.name.toLowerCase().includes(query) || pkg.code.toLowerCase().includes(query));
+});
 /** 门店配送的收货信息一律来自客户档案；缺项时就地说明，不让人手抄。 */
 const receiverProblem = computed(() => {
   if (deliveryType.value !== 2) return '';
@@ -55,12 +65,29 @@ function canChoose(product: CatalogProduct): boolean {
   return true;
 }
 
+/** 套餐可售套数由后端按子商品可用量算；未知与 0 都要挡在加入之前，但不混为一句话。 */
+function packageStockText(pkg: PosPackage): string {
+  return pkg.saleablePackages === null ? '本店可售套数待核对' : '本店可售 ' + pkg.saleablePackages + ' 套';
+}
+const packageOutOfStock = (pkg: PosPackage) => pkg.saleablePackages !== null && Number(pkg.saleablePackages) <= 0;
+function materialsText(pkg: PosPackage): string {
+  return pkg.materials.map(m => m.name + ' ' + preciseDecimal(m.quantity) + m.unit).join('、');
+}
+function lineUnit(line: SaleLine): string { return isPackageLine(line) ? '套' : line.unit; }
+function lineMaterials(line: SaleLine): string {
+  return isPackageLine(line) ? line.materials.map(m => m.name + ' ' + preciseDecimal(m.quantity) + m.unit).join('、') : '';
+}
+function lineKey(line: SaleLine, index: number): string {
+  return (isPackageLine(line) ? 'P' + line.packageId : 'G' + line.productId) + ':' + index;
+}
+
 async function reload() {
   if (!current() || busy.value) return;
   const ticket = ++generation;
   searchSeq++; searching.value = false;
   if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
   loading.value = true; message.value = ''; availabilityNotice.value = ''; products.value = []; searchResults.value = []; selected.value = null;
+  packageNotice.value = ''; packages.value = []; selectedPackage.value = null; packageLoading.value = true;
   try {
     const list = await readCatalog(epoch.value);
     if (!current(ticket)) return;
@@ -71,6 +98,14 @@ async function reload() {
     if (current(ticket)) message.value = '商品目录读取失败，请重新进入本页或检查网络。';
   } finally { if (ticket === generation) loading.value = false; }
 
+  // 套餐单独取：套餐接口失败不该把商品销售一起拖死。
+  try {
+    const list = await readPackages(epoch.value);
+    if (!current(ticket)) return;
+    packages.value = list;
+  } catch {
+    if (current(ticket)) packageNotice.value = '套餐目录读取失败；商品开单不受影响，可稍后重试或改用后台收银台。';
+  } finally { if (ticket === generation) packageLoading.value = false; }
 }
 
 /** 服务端搜索（防抖）；商品超过目录首页 200 条时仍可通过编码/名称/条码找到。 */
@@ -98,8 +133,17 @@ async function runSearch(query: string) {
 watch(keyword, () => {
   searchSeq++; searchResults.value = []; searching.value = false;
   if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
-  if (current()) scheduleSearch();
+  // 套餐是本地过滤，不走商品搜索接口，避免每次输入都打一次无关请求。
+  if (current() && mode.value === 'PRODUCT') scheduleSearch();
 }, { flush: 'sync' });
+/** 切换商品/套餐时清掉上一类的搜索词与提示，避免"没有匹配的商品"留在套餐页。 */
+function switchMode(next: 'PRODUCT' | 'PACKAGE') {
+  if (mode.value === next) return;
+  mode.value = next; keyword.value = ''; message.value = ''; availabilityNotice.value = '';
+  searchResults.value = []; searchSeq++; searching.value = false;
+  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+  selected.value = null; selectedPackage.value = null;
+}
 
 /* ---------- 客户选择 ---------- */
 async function loadCustomers(query: string) {
@@ -154,6 +198,8 @@ onShow(async () => {
   loading.value = true; busy.value = false; allowed.value = false; blocked.value = false;
   products.value = []; searchResults.value = []; availabilityNotice.value = ''; lines.value = [];
   selected.value = null; keyword.value = '';
+  mode.value = 'PRODUCT'; packages.value = []; selectedPackage.value = null; packageCount.value = '1';
+  packageNotice.value = ''; packageLoading.value = false;
   if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; } searchSeq++; searching.value = false;
   customer.value = null; customerOpen.value = false; customerKeyword.value = ''; customerResults.value = [];
   customerSearchSeq.value++;
@@ -175,6 +221,7 @@ onShow(async () => {
   finally { if (ticket === generation) loading.value = false; }
 });
 onHide(() => { visible = false; generation++; allowed.value = false; customerOpen.value = false;
+  selectedPackage.value = null; packageCount.value = '1';
   if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; } searchSeq++; searching.value = false;
   if (customerTimer) { clearTimeout(customerTimer); customerTimer = null; } customerSearchSeq.value++; });
 
@@ -242,6 +289,13 @@ async function requoteAllLines() {
   try {
     const updated: SaleLine[] = [];
     for (const line of lines.value) {
+      if (isPackageLine(line)) {
+        // 套餐必须带套数重报价：换会员等级会改变每套价，旧 quoteId 直接作废。
+        const requoted = await quotePackage(line.packageId, line.quantity, epoch.value, currentCustomer || null);
+        if (seq !== requoteSeq || !current()) return;
+        updated.push({ ...line, packageQuoteId: requoted.quoteId, quotedUnitPrice: requoted.suggestedUnitPrice });
+        continue;
+      }
       const quote = await quoteProduct(line.productId, line.unit, epoch.value, currentCustomer || null);
       if (seq !== requoteSeq) return; // 期间客户再次变更，本次结果作废
       if (!current()) return;
@@ -258,6 +312,43 @@ async function requoteAllLines() {
   }
 }
 watch(customerId, () => { if (current()) void requoteAllLines(); });
+
+/* ---------- 套餐选择与加入 ---------- */
+function choosePackage(pkg: PosPackage) {
+  if (!current() || busy.value || requoting.value || packageLoading.value) return;
+  if (packageOutOfStock(pkg)) { message.value = '该套餐本店可售套数为 0，请先收货或调拨后刷新。'; return; }
+  if (pkg.saleablePackages === null) {
+    message.value = '该套餐可售套数待核对（物料单位或库存资料不完整），请先在后台确认套餐配置。'; return;
+  }
+  message.value = ''; selectedPackage.value = pkg; packageCount.value = '1';
+}
+function closePackageAdd() { selectedPackage.value = null; packageCount.value = '1'; }
+const validPackages = (value: string) => /^[1-9]\d{0,3}$/.test(value);
+function stepPackageCount(delta: number) {
+  const base = Number(packageCount.value);
+  const next = Number.isFinite(base) ? base + delta : 1;
+  packageCount.value = String(next > 0 ? Math.min(9999, Math.round(next)) : 1);
+}
+async function addPackageLine() {
+  const pkg = selectedPackage.value;
+  if (!current() || busy.value || requoting.value || !pkg) return;
+  if (lines.value.length && customerId.value.trim() !== quotedUnderCustomer) { await requoteAllLines(); return; }
+  if (!validPackages(packageCount.value)) { message.value = '套餐只能按整数套销售：套数需为 1 以上整数。'; return; }
+  busy.value = true; message.value = '';
+  try {
+    const requestCustomer = customerId.value.trim();
+    const quote = await quotePackage(pkg.id, packageCount.value, epoch.value, requestCustomer || null);
+    if (!current()) return;
+    if (customerId.value.trim() !== requestCustomer) {
+      message.value = '报价期间客户已变更，套餐未加入；请确认客户后重新添加。'; return;
+    }
+    lines.value = [...lines.value, { kind: 'PACKAGE', packageId: pkg.id, packageQuoteId: quote.quoteId,
+      name: pkg.name, quantity: packageCount.value, quotedUnitPrice: quote.suggestedUnitPrice, materials: pkg.materials }];
+    selectedPackage.value = null; packageCount.value = '1';
+    quotedUnderCustomer = requestCustomer;
+  } catch { if (current()) message.value = '套餐报价失败，已停止加入；请检查网络后重试。'; }
+  finally { busy.value = false; }
+}
 function removeLine(index: number) {
   if (!current() || busy.value || requoting.value) return;
   lines.value = lines.value.filter((_, i) => i !== index); message.value = '';
@@ -332,52 +423,94 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
     <text class="chip chip-line chip-sm">切换</text>
    </view>
 
+   <view class="tabs block">
+    <view hover-class="tab-hover" hover-stay-time="80" class="tab grow" :class="{ 'tab-on': mode === 'PRODUCT' }" @click="switchMode('PRODUCT')">商品</view>
+    <view hover-class="tab-hover" hover-stay-time="80" class="tab grow" :class="{ 'tab-on': mode === 'PACKAGE' }" @click="switchMode('PACKAGE')">套餐</view>
+   </view>
+
    <view class="search-wrap block">
     <AppIcon name="search" :size="16" class="search-ic" />
-    <input v-model="keyword" class="input input-search" placeholder="按商品名称、编码或条码搜索" placeholder-style="color:#9aa6b2" />
+    <input v-model="keyword" class="input input-search" :placeholder="mode === 'PRODUCT' ? '按商品名称、编码或条码搜索' : '按套餐名称或编码筛选'" placeholder-style="color:#9aa6b2" />
    </view>
 
-   <view class="section section-first">
-    <view class="section-head"><text class="section-title">选择商品</text><text class="section-note">{{ searching ? '搜索中…' : filtered.length + ' 个 · 来自后台商品档案' }}</text></view>
-   </view>
+   <template v-if="mode === 'PRODUCT'">
+    <view class="section section-first">
+     <view class="section-head"><text class="section-title">选择商品</text><text class="section-note">{{ searching ? '搜索中…' : filtered.length + ' 个 · 来自后台商品档案' }}</text></view>
+    </view>
 
-   <view v-if="availabilityNotice" class="alert alert-danger" role="status"><text>{{ availabilityNotice }}</text></view>
-   <text class="t-cap">可售量按基准单位统计，排除预留、过期批次和停用货位；实际成交仍以后端出库校验为准。</text>
-   <view v-if="filtered.length" class="card card-flat">
-    <view hover-class="tap-hover" hover-stay-time="80" v-for="(product, index) in filtered" :key="product.id" class="list-item row-between" :class="{ 'list-item-last': index === filtered.length - 1 }" @click="choose(product)">
-     <view class="grow">
-      <text class="t-sub">{{ product.name }}</text>
-      <view class="row mt4">
-       <text class="t-cap">{{ product.code }} · 按{{ product.mainUnit }}销售</text>
-       <text class="t-cap ml8" :class="{ 't-warn': outOfStock(product) }">· {{ stockText(product) }}</text>
+    <view v-if="availabilityNotice" class="alert alert-danger" role="status"><text>{{ availabilityNotice }}</text></view>
+    <text class="t-cap">可售量按基准单位统计，排除预留、过期批次和停用货位；实际成交仍以后端出库校验为准。</text>
+    <view v-if="filtered.length" class="card card-flat">
+     <view hover-class="tap-hover" hover-stay-time="80" v-for="(product, index) in filtered" :key="product.id" class="list-item row-between" :class="{ 'list-item-last': index === filtered.length - 1 }" @click="choose(product)">
+      <view class="grow">
+       <text class="t-sub">{{ product.name }}</text>
+       <view class="row mt4">
+        <text class="t-cap">{{ product.code }} · 按{{ product.mainUnit }}销售</text>
+        <text class="t-cap ml8" :class="{ 't-warn': outOfStock(product) }">· {{ stockText(product) }}</text>
+       </view>
+      </view>
+      <view class="price-box">
+       <text class="t-money t-primary">¥{{ money(product.suggestedRetailPrice) }}</text>
+       <text class="t-cap">/{{ product.pricingUnit || '计价单位待核对' }}</text>
+       <AppIcon name="chevron" :size="12" class="chev" />
       </view>
      </view>
-     <view class="price-box">
-      <text class="t-money t-primary">¥{{ money(product.suggestedRetailPrice) }}</text>
-      <text class="t-cap">/{{ product.pricingUnit || '计价单位待核对' }}</text>
-      <AppIcon name="chevron" :size="12" class="chev" />
+    </view>
+   </template>
+
+   <template v-else>
+    <view class="section section-first">
+     <view class="section-head"><text class="section-title">选择套餐</text><text class="section-note">{{ packageLoading ? '读取中…' : filteredPackages.length + ' 个 · 整套销售，物料由后端展开' }}</text></view>
+    </view>
+    <view v-if="packageNotice" class="alert alert-danger" role="status"><text>{{ packageNotice }}</text></view>
+    <text class="t-cap">套餐只按整数套销售：每套价与物料分摊都由后端报价，手机不拆分组合价。</text>
+    <view v-if="filteredPackages.length" class="card card-flat">
+     <view hover-class="tap-hover" hover-stay-time="80" v-for="(pkg, index) in filteredPackages" :key="pkg.id" class="list-item" :class="{ 'list-item-last': index === filteredPackages.length - 1 }" @click="choosePackage(pkg)">
+      <view class="row-between">
+       <view class="grow">
+        <text class="t-sub">{{ pkg.name }}</text>
+        <view class="row mt4">
+         <text class="t-cap">{{ pkg.code }} · 整套销售</text>
+         <text class="t-cap ml8" :class="{ 't-warn': packageOutOfStock(pkg) }">· {{ packageStockText(pkg) }}</text>
+        </view>
+       </view>
+       <view class="price-box">
+        <text class="t-money t-primary">¥{{ money(pkg.suggestedRetailPrice) }}</text>
+        <text class="t-cap">/套</text>
+        <AppIcon name="chevron" :size="12" class="chev" />
+       </view>
+      </view>
+      <text class="t-cap mt4">含 {{ materialsText(pkg) }}</text>
      </view>
     </view>
-   </view>
+    <view v-else-if="!packageLoading && !packageNotice" class="card empty">
+     <view class="empty-icon"><AppIcon name="box" :size="22" /></view>
+     <text class="empty-text">{{ keyword.trim() ? '没有匹配的套餐，换个名称或编码再试。' : '本店暂无可销售套餐，请先在后台建立并上架套餐。' }}</text>
+    </view>
+   </template>
 
    <view class="section">
-    <view class="section-head"><text class="section-title">本次商品</text><text class="section-note">{{ lines.length }} 项</text></view>
+    <view class="section-head"><text class="section-title">本次清单</text><text class="section-note">{{ lines.length }} 项</text></view>
    </view>
 
    <view v-if="!lines.length" class="card empty">
     <view class="empty-icon"><AppIcon name="bag" :size="22" /></view>
-    <text class="empty-text">还没有商品。点上方商品选数量加入，单价由后端报价。</text>
+    <text class="empty-text">还没有商品。点上方商品或套餐选数量加入，单价由后端报价。</text>
    </view>
 
-   <view v-for="(line, index) in lines" :key="line.productId + ':' + index" class="card card-tight">
+   <view v-for="(line, index) in lines" :key="lineKey(line, index)" class="card card-tight">
     <view class="row-between">
-     <text class="t-sub grow">{{ line.name }}</text>
+     <view class="row grow">
+      <text class="t-sub">{{ line.name }}</text>
+      <text v-if="isPackageLine(line)" class="chip chip-line chip-sm ml8">套餐</text>
+     </view>
      <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-danger-quiet btn-sm btn-auto" :disabled="busy || requoting" @click="removeLine(index)">移除</button>
     </view>
     <view class="row-between mt4">
-     <text class="t-meta">{{ line.quantity }} {{ line.unit }} · 单价 ¥{{ money(line.quotedUnitPrice) }}</text>
+     <text class="t-meta">{{ line.quantity }} {{ lineUnit(line) }} · {{ isPackageLine(line) ? '每套' : '单价' }} ¥{{ money(line.quotedUnitPrice) }}</text>
      <text class="t-money">¥{{ cents(lineCents(line)) }}</text>
     </view>
+    <text v-if="isPackageLine(line)" class="t-cap mt4">含 {{ lineMaterials(line) }}</text>
    </view>
 
    <view v-if="lines.length" class="card card-tight">
@@ -527,6 +660,33 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
     <text class="t-cap mt8">加入时按后端实时报价，结算金额以后端为准。</text>
     <view class="sheet-foot">
      <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy || !validQuantity(selected, quantity)" @click="addLine">加入本次商品</button>
+    </view>
+   </view>
+  </template>
+  <!-- 套餐套数面板：整套销售，套数只能正整数 -->
+  <template v-if="selectedPackage">
+   <view class="mask" @click="closePackageAdd"></view>
+   <view class="sheet">
+    <view class="sheet-head">
+     <view class="grow">
+      <text class="sheet-title">{{ selectedPackage.name }}</text>
+      <text class="t-cap">{{ selectedPackage.code }} · 参考价 ¥{{ money(selectedPackage.suggestedRetailPrice) }}/套</text>
+     </view>
+     <view hover-class="tap-hover" hover-stay-time="80" class="sheet-close" @click="closePackageAdd"><AppIcon name="close" :size="16" /></view>
+    </view>
+    <view class="qty-line">
+     <view hover-class="tap-hover" hover-stay-time="80" class="qty-btn" @click="stepPackageCount(-1)">−</view>
+     <input v-model="packageCount" class="qty-input" inputmode="numeric" />
+     <view hover-class="tap-hover" hover-stay-time="80" class="qty-btn" @click="stepPackageCount(1)">+</view>
+    </view>
+    <view class="row-between mt8">
+     <text class="t-cap">套 · 只能整数 · {{ packageStockText(selectedPackage) }}</text>
+     <text v-if="packageOutOfStock(selectedPackage)" class="chip chip-warn chip-sm">本店无可售套数</text>
+    </view>
+    <text class="t-cap mt8">含 {{ materialsText(selectedPackage) }}</text>
+    <text class="t-cap mt4">加入时按后端实时报价，物料由后端展开，手机不计算组合价。</text>
+    <view class="sheet-foot">
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy || !validPackages(packageCount)" @click="addPackageLine">加入本次清单</button>
     </view>
    </view>
   </template>

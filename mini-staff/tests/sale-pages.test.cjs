@@ -10,6 +10,10 @@ const customer77 = { id: '77', code: 'C077', name: '张三农资', phone: '13800
   address: '测试村77号', type: 1, vipLevel: null, vipActive: false };
 const customer88 = { ...customer77, id: '88', code: 'C088', name: '李四农资', phone: '13800000088' };
 
+const pkg = { id: '501', code: 'PKG001', name: '春季套餐', suggestedRetailPrice: '200', saleablePackages: '3',
+  materials: [{ productId: '11', name: '复合肥', quantity: '2', unit: '袋' }] };
+const pkgQuote = { quoteId: 'PQ-501-1', packageId: '501', quantity: '2', suggestedUnitPrice: '200.00', totalAmount: '400.00' };
+
 async function fixture(permissions = ['pos:order:create']) {
   const user = { id: '8', name: '虚构店员', permissions, extra: { storeId: '3' } };
   const auth = createStaffAuth(async req => ({ statusCode: 200,
@@ -17,7 +21,9 @@ async function fixture(permissions = ['pos:order:create']) {
   await auth.login('test', 'pass');
   let catalog = [product], priceQuote = quote, submit = async () => ({ status: 'COMPLETED', orderId: '900' }), restore = null;
   let customers = [customer77], searchOverride = null;
-  const calls = { catalog: 0, search: [], quote: [], submit: [], customerSearch: [], finish: [] };
+  let packageList = [pkg], packageQuote = pkgQuote, packageFailure = false;
+  const calls = { catalog: 0, search: [], quote: [], submit: [], customerSearch: [], finish: [],
+    packages: 0, packageQuote: [] };
   const p = setupPage('sale', auth, true, {
     '../../services/sale': {
       readCatalog: async () => { calls.catalog++; return catalog; },
@@ -31,6 +37,13 @@ async function fixture(permissions = ['pos:order:create']) {
         return customers.filter(item => !kw || item.name.includes(kw) || item.phone.includes(kw));
       },
       quoteProduct: async (id, unit, epoch, customerId) => { calls.quote.push({ id, unit, customerId: customerId ?? null }); return typeof priceQuote === 'function' ? priceQuote() : priceQuote; },
+      readPackages: async () => { calls.packages++; if (packageFailure) throw new Error('NETWORK'); return packageList; },
+      quotePackage: async (id, packages, epoch, customerId) => {
+        calls.packageQuote.push({ id, packages, customerId: customerId ?? null });
+        const built = typeof packageQuote === 'function' ? packageQuote(packages) : packageQuote;
+        return built instanceof Promise ? built : { ...built, quantity: packages,
+          totalAmount: (Number(built.suggestedUnitPrice) * Number(packages)).toFixed(2) };
+      },
       submitSale: async (lines, epoch, options) => { calls.submit.push({ lines, epoch, options }); return submit(); },
     },
     '../../services/pos-recovery': { readPOSResult: async () => ({}),
@@ -40,7 +53,9 @@ async function fixture(permissions = ['pos:order:create']) {
   });
   return { p, auth, calls, setCatalog: v => catalog = v, setQuote: v => priceQuote = v,
     setSubmit: v => submit = v, setRestore: v => restore = v, setUser: v => Object.assign(user, v),
-    setCustomers: v => customers = v, setSearch: v => searchOverride = v };
+    setCustomers: v => customers = v, setSearch: v => searchOverride = v,
+    setPackages: v => packageList = v, setPackageQuote: v => packageQuote = v,
+    failPackages: () => { packageFailure = true; } };
 }
 
 function selectCustomer(f,item){f.p.state.customerOpen.value=true;f.p.state.customerResults.value=[item];f.p.state.pickCustomer(f.p.state.customerResults.value[0]);}
@@ -354,4 +369,95 @@ test('刷新保留关键词重新查询，刷新前的在途搜索不能回填�
  assert.equal(f.p.state.keyword.value,'P001');assert.equal(f.p.state.filtered.value[0]?.availableBaseQuantity,'7');
  finishOld([{...product,availableBaseQuantity:'102'}]);await old;
  assert.equal(f.p.state.filtered.value[0]?.availableBaseQuantity,'7');f.p.hooks.hide();
+});
+
+test('套餐按整数套加入清单，命令只带套餐ID/套数/报价指纹', async () => {
+  const f = await fixture(); await f.p.hooks.show();
+  assert.equal(f.calls.packages, 1, '进页面同时读套餐目录');
+  f.p.state.mode.value = 'PACKAGE';
+  assert.equal(f.p.state.filteredPackages.value.length, 1);
+  f.p.state.choosePackage(pkg);
+  assert.equal(f.p.state.selectedPackage.value.id, '501');
+  f.p.state.packageCount.value = '2';
+  await f.p.state.addPackageLine();
+  assert.deepEqual(f.calls.packageQuote, [{ id: '501', packages: '2', customerId: null }]);
+  const line = f.p.state.lines.value[0];
+  assert.equal(line.kind, 'PACKAGE');
+  assert.equal(line.packageId, '501'); assert.equal(line.packageQuoteId, 'PQ-501-1');
+  assert.equal(line.quantity, '2'); assert.equal(line.quotedUnitPrice, '200.00');
+  assert.equal(f.p.state.totalCents.value, 40000);
+  await f.p.state.checkout();
+  assert.equal(f.calls.submit.length, 1);
+  assert.equal(f.calls.submit[0].lines[0].kind, 'PACKAGE');
+  assert.equal(f.calls.submit[0].lines[0].materials.length, 1, '清单保留物料供核对，但提交时由契约只发套餐行');
+});
+
+test('套餐与单品可混合开单，换客户后两者一起重新报价', async () => {
+  const f = await fixture(); await f.p.hooks.show();
+  f.p.state.choose(product); await f.p.state.addLine();
+  f.p.state.choosePackage(pkg); f.p.state.packageCount.value = '1'; await f.p.state.addPackageLine();
+  assert.equal(f.p.state.lines.value.length, 2);
+  assert.equal(f.p.state.totalCents.value, 1234 + 20000);
+  f.setQuote({ ...quote, suggestedUnitPrice: '9.90' });      // 会员价
+  f.setPackageQuote({ ...pkgQuote, suggestedUnitPrice: '180.00' });
+  selectCustomer(f, customer77);
+  await new Promise(r => setImmediate(r));
+  const productLine = f.p.state.lines.value[0], bundleLine = f.p.state.lines.value[1];
+  assert.equal(productLine.quotedUnitPrice, '9.90');
+  assert.equal(bundleLine.quotedUnitPrice, '180.00', '套餐按新客户重报价，旧指纹作废');
+  assert.deepEqual(f.calls.packageQuote.at(-1), { id: '501', packages: '1', customerId: '77' });
+  await f.p.state.checkout();
+  assert.equal(f.calls.submit.length, 1);
+  assert.equal(f.calls.submit[0].lines.length, 2);
+});
+
+test('可售套数为 0 或未知都不允许加入，半套直接拒绝', async () => {
+  const f = await fixture(); await f.p.hooks.show();
+  f.p.state.choosePackage({ ...pkg, saleablePackages: '0' });
+  assert.equal(f.p.state.selectedPackage.value, null);
+  assert.match(f.p.state.message.value, /可售套数为 0/);
+  f.p.state.choosePackage({ ...pkg, saleablePackages: null });
+  assert.equal(f.p.state.selectedPackage.value, null);
+  assert.match(f.p.state.message.value, /待核对/);
+  f.p.state.choosePackage(pkg); f.p.state.packageCount.value = '1.5';
+  await f.p.state.addPackageLine();
+  assert.match(f.p.state.message.value, /整数/);
+  assert.equal(f.p.state.lines.value.length, 0);
+  assert.equal(f.calls.packageQuote.length, 0, '套数非法时不发报价');
+});
+
+test('套餐报价期间客户变更则放弃加入，不把零售价记成会员价', async () => {
+  const f = await fixture(); await f.p.hooks.show();
+  let release; f.setPackageQuote(() => new Promise(res => release = res));
+  f.p.state.choosePackage(pkg); f.p.state.packageCount.value = '1';
+  const pending = f.p.state.addPackageLine();
+  selectCustomer(f, customer77);
+  release({ ...pkgQuote, quantity: '1', suggestedUnitPrice: '180.00', totalAmount: '180.00' });
+  await pending;
+  assert.equal(f.p.state.lines.value.length, 0);
+  assert.match(f.p.state.message.value, /客户已变更/);
+});
+
+test('套餐目录读取失败不影响商品开单', async () => {
+  const f = await fixture(); f.failPackages(); await f.p.hooks.show();
+  assert.match(f.p.state.packageNotice.value, /套餐目录读取失败/);
+  f.p.state.choose(product); await f.p.state.addLine();
+  assert.equal(f.p.state.lines.value.length, 1, '商品销售不被套餐故障拖死');
+  assert.equal(f.p.state.message.value, '', '商品加购成功后不再显示套餐错误');
+});
+
+test('切换商品/套餐会清掉上一类的搜索词与提示，套餐筛选不打商品搜索接口', async () => {
+  const f = await fixture(); await f.p.hooks.show();
+  f.p.state.keyword.value = 'P001';
+  await new Promise(r => setTimeout(r, 350));
+  assert.equal(f.calls.search.length, 1);
+  f.p.state.switchMode('PACKAGE');
+  assert.equal(f.p.state.keyword.value, '');
+  assert.equal(f.p.state.message.value, '');
+  f.p.state.keyword.value = '春季';
+  await new Promise(r => setTimeout(r, 350));
+  assert.equal(f.calls.search.length, 1, '套餐只做本地过滤');
+  assert.deepEqual(f.p.state.filteredPackages.value.map(p => p.id), ['501']);
+  f.p.state.keyword.value = '不存在';
+  assert.equal(f.p.state.filteredPackages.value.length, 0);
 });

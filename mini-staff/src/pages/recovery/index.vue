@@ -79,7 +79,7 @@ async function act(kind: 'read' | 'cancel' | 'finish') {
 
       <view class="card card-flat">
         <view v-for="(line, index) in pending.summary.lines" :key="index" class="list-item row-between" :class="{ 'list-item-last': index === pending.summary.lines.length - 1 }">
-          <text class="t-meta grow">商品 {{ line.productId }} · {{ line.quantity }} {{ line.unit }}</text>
+          <text class="t-meta grow">{{ line.packageId ? '套餐 ' + line.packageId : '商品 ' + line.productId }} · {{ line.quantity }} {{ line.unit }}</text>
           <text class="t-strong">¥{{ formatCents(line.lineCents) }}</text>
         </view>
       </view>

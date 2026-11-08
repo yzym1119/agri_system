@@ -146,3 +146,22 @@ test('结束A请求时即使外部回调改写参数，也不能删除B的待核
   await assert.rejects(ending,/STALE_SESSION/);
   assert.equal(f.values.size,2);
 });
+test('套餐原请求摘要以 packageId 标识，单品与套餐互斥才允许落盘', async () => {
+  const f = await fixture();
+  const bundle = { totalCents: 40000, netCents: 40000, paymentMethod: 1, customerId: null,
+    lines: [{ productId: null, packageId: '501', unit: '套', quantity: '2', lineCents: 40000 }] };
+  const result = await f.recovery.submitOnce(bundle, async () => 9);
+  assert.equal(result.status, 'COMPLETED');
+  const restored = f.recovery.restore();
+  assert.equal(restored.summary.lines[0].packageId, '501');
+  assert.equal(restored.summary.lines[0].productId, null);
+
+  for (const bad of [
+    { productId: null, packageId: null, unit: '套', quantity: '2', lineCents: 40000 },
+    { productId: '1', packageId: '501', unit: '套', quantity: '2', lineCents: 40000 },
+  ]) {
+    const other = await fixture();
+    await assert.rejects(other.recovery.submitOnce({ ...bundle, lines: [bad] }, async () => 9), /SUMMARY_INVALID/);
+    assert.equal(other.values.size, 0, '坏摘要不得先落盘');
+  }
+});

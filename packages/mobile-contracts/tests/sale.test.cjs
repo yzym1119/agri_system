@@ -109,3 +109,63 @@ test('目录可售量保留原十进制和门店，缺失或非法证据明确�
  assert.equal(decode({...current,baseUnitName:null}).availableBaseQuantity,null);
  assert.equal(decode({...current,availabilityStoreId:'0'}).availableBaseQuantity,null);
 });
+
+const pkgRow = { id: 501, code: 'PKG20261001001', name: '春季套餐', suggestedRetailPrice: 200,
+  vipPrice: 180, minPrice: 150, status: 1, stock: 3.0000,
+  items: [{ productId: 9101, productName: '复合肥', quantity: 2.0000, unit: '袋' }] };
+const pkgQuote = { quoteId: 'PQ-501-1', packageId: 501, packageName: '春季套餐', quantity: 2,
+  suggestedUnitPrice: 200.00, referenceFloor: 150.00, belowReference: false, dealUnitPrice: 200.00,
+  totalAmount: 400.00, specialFundEligibleAmount: 0, items: [] };
+const pkgLine = { kind: 'PACKAGE', packageId: '501', packageQuoteId: 'PQ-501-1', name: '春季套餐',
+  quantity: '2', quotedUnitPrice: '200.00', materials: [{ productId: '9101', name: '复合肥', quantity: '2.0000', unit: '袋' }] };
+
+test('套餐目录只带核对所需字段，可售套数缺失保持未知而不是 0', () => {
+  const rows = sale.decodePackages(catalogBody({ records: [pkgRow], totalRow: 1 }));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, '501');
+  assert.equal(rows[0].suggestedRetailPrice, '200');
+  assert.equal(rows[0].saleablePackages, '3');
+  assert.deepEqual(rows[0].materials.map(m => m.productId + '/' + m.quantity + m.unit), ['9101/2袋']);
+  const unknown = sale.decodePackages(catalogBody({ records: [{ ...pkgRow, stock: null }] }))[0];
+  assert.equal(unknown.saleablePackages, null, '后端没给可信值就是未知，不能当 0');
+  assert.throws(() => sale.decodePackages(catalogBody({ records: [{ ...pkgRow, items: [] }] })), /PACKAGE_INVALID/);
+  assert.throws(() => sale.decodePackages(catalogBody({ records: [{ ...pkgRow, id: '0' }] })), /PACKAGE_INVALID/);
+  assert.throws(() => sale.decodePackages(catalogBody({ records: [{ ...pkgRow, suggestedRetailPrice: null }] })), /PACKAGE_INVALID/);
+  assert.throws(() => sale.decodePackages({ code: 200, data: { records: [pkgRow] } }), /PACKAGE_INVALID/);
+});
+
+test('套餐报价必须以 quoteId 作指纹，套数或套餐对不上直接拒绝', () => {
+  const quote = sale.decodePackageQuote(quoteBody(pkgQuote), '501', '2');
+  assert.equal(quote.quoteId, 'PQ-501-1');
+  assert.equal(quote.suggestedUnitPrice, '200');
+  assert.equal(quote.totalAmount, '400');
+  assert.throws(() => sale.decodePackageQuote(quoteBody({ ...pkgQuote, quoteId: '' }), '501', '2'), /PACKAGE_QUOTE_INVALID/);
+  assert.throws(() => sale.decodePackageQuote(quoteBody({ ...pkgQuote, packageId: 502 }), '501', '2'), /PACKAGE_QUOTE_INVALID/);
+  assert.throws(() => sale.decodePackageQuote(quoteBody(pkgQuote), '501', '3'), /PACKAGE_QUOTE_INVALID/);
+  assert.throws(() => sale.decodePackageQuote({ code: '200', data: null }, '501', '2'), /PACKAGE_QUOTE_INVALID/);
+});
+
+test('套餐整套提交：命令只带套餐ID/套数/报价指纹，不拆物料也不分摊金额', () => {
+  const summary = sale.toSaleSummary([line, pkgLine]);
+  assert.equal(summary.totalCents, 2468 + 40000);
+  assert.deepEqual(summary.lines.map(l => [l.productId, l.packageId, l.unit]),
+    [['11', null, '袋'], [null, '501', '套']]);
+  const command = sale.buildSaleCommand('c'.repeat(8), actor, [line, pkgLine]);
+  const bundle = command.items[1];
+  assert.equal(bundle.itemType, 2); assert.equal(bundle.packageId, '501');
+  assert.equal(bundle.packageQuoteId, 'PQ-501-1'); assert.equal(bundle.quantity, '2');
+  assert.equal(bundle.quotedUnitPrice, '200.00');
+  assert.equal(bundle.productId, undefined, '套餐行不能带商品ID，否则后端按单品处理');
+  assert.equal(bundle.unit, '套', '与后端套餐行同口径，物料单位仍由后端展开');
+  assert.equal(bundle.unitPrice, undefined);
+  assert.equal(command.items[0].itemType, 1);
+});
+
+test('半套套餐与缺报价的套餐行在契约层就被拒绝', () => {
+  assert.throws(() => sale.toSaleSummary([{ ...pkgLine, quantity: '1.5' }]), /SUMMARY_INVALID/);
+  assert.throws(() => sale.toSaleSummary([{ ...pkgLine, quantity: '0' }]), /SUMMARY_INVALID/);
+  assert.throws(() => sale.toSaleSummary([{ ...pkgLine, packageQuoteId: '' }]), /SUMMARY_INVALID/);
+  assert.throws(() => sale.toSaleSummary([{ ...pkgLine, packageId: '0' }]), /SUMMARY_INVALID/);
+  assert.throws(() => sale.buildSaleCommand('k', actor, [{ ...pkgLine, quantity: '2.5' }]), /SUMMARY_INVALID/);
+  assert.throws(() => sale.toSaleSummary([pkgLine, { ...pkgLine, quantity: '100000' }]), /SUMMARY_INVALID/);
+});
