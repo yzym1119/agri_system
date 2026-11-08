@@ -53,8 +53,6 @@
     <suppress files="api\-client[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]api[\\/]client[\\/]controller[\\/]AuthClientController\.java" checks=".*"/>
     <suppress files="api\-client[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]api[\\/]client[\\/]controller[\\/]DevClientLoginController\.java" checks=".*"/>
     <suppress files="api\-client[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]api[\\/]client[\\/]controller[\\/]HealthController\.java" checks=".*"/>
-    <suppress files="api\-client[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]api[\\/]client[\\/]controller[\\/]OrderClientController\.java" checks=".*"/>
-    <suppress files="api\-client[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]api[\\/]client[\\/]controller[\\/]OrderPaymentPublicController\.java" checks=".*"/>
     <suppress files="api\-client[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]api[\\/]client[\\/]controller[\\/]PointsMallClientController\.java" checks=".*"/>
     <suppress files="api\-client[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]api[\\/]client[\\/]controller[\\/]QrClientController\.java" checks=".*"/>
     <suppress files="api\-client[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]api[\\/]client[\\/]controller[\\/]WalletClientController\.java" checks=".*"/>
@@ -72,7 +70,6 @@
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]auth[\\/]dto[\\/]LoginResultVO\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]auth[\\/]dto[\\/]StaffLoginCommand\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]auth[\\/]service[\\/]AuthService\.java" checks=".*"/>
-    <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]auth[\\/]service[\\/]WechatService\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]auth[\\/]util[\\/]BCryptUtils\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]auth[\\/]util[\\/]CurrentUser\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]common[\\/]PageResult\.java" checks=".*"/>
@@ -179,7 +176,6 @@
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]dto[\\/]vo[\\/]PickupWorkItemVO\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]exception[\\/]OrderErrorCode\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]job[\\/]OrderAutoFinishJob\.java" checks=".*"/>
-    <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]service[\\/]ClientOrderPaymentService\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]service[\\/]DeliveryTaskService\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]service[\\/]ManualPriceAuditService\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]service[\\/]MobilePickupTaskService\.java" checks=".*"/>
@@ -189,7 +185,6 @@
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]service[\\/]OrderDeliveryConfirmation\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]service[\\/]OrderFulfillmentService\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]service[\\/]OrderPaymentDisplayPolicy\.java" checks=".*"/>
-    <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]service[\\/]OrderPaymentService\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]service[\\/]OrderQueryService\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]service[\\/]OrderRefundHistory\.java" checks=".*"/>
     <suppress files="core\-application[\\/]src[\\/]main[\\/]java[\\/]com[\\/]agri_system[\\/]application[\\/]order[\\/]service[\\/]OrderRefundService\.java" checks=".*"/>

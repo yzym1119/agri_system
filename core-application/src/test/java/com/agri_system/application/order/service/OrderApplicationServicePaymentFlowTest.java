@@ -130,7 +130,7 @@ class OrderApplicationServicePaymentFlowTest {
         command.setOrderId(order.getId());
 
         when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
-        when(paymentService.previewPayment(order, null, null, null)).thenReturn(preview);
+        when(paymentService.previewPayment(order, null, null, null, 2)).thenReturn(preview);
 
         OrderPayPreviewVO result = orderService.payOrder(command, order.getCustomerId());
 
@@ -146,10 +146,11 @@ class OrderApplicationServicePaymentFlowTest {
         OrderPayCommand command = new OrderPayCommand();
         command.setOrderId(order.getId());
         command.setExternalPaymentType(2);
+        command.setRequestKey("rk-create-intent-snapshot");
 
         // 锁顺序统一后发起路径持订单行锁（findById 不再走）
         when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
-        when(paymentService.previewPayment(order, null, null, null)).thenReturn(preview);
+        when(paymentService.previewPayment(order, null, null, null, 2)).thenReturn(preview);
         when(paymentIntentRepository.save(any(OrderPaymentIntent.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -183,7 +184,7 @@ class OrderApplicationServicePaymentFlowTest {
 
         when(paymentIntentRepository.findByIntentNo(intent.getIntentNo())).thenReturn(Optional.of(intent));
         when(paymentIntentRepository.claimPendingByIntentNo(intent.getIntentNo())).thenReturn(1);
-        when(paymentService.previewPayment(order, null, null, null)).thenReturn(preview);
+        when(paymentService.previewPayment(order, null, null, null, 2)).thenReturn(preview);
         when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
         when(itemRepository.findByOrderId(order.getId())).thenReturn(Collections.singletonList(item));
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
@@ -234,7 +235,7 @@ class OrderApplicationServicePaymentFlowTest {
         when(paymentIntentRepository.findByIntentNo(intent.getIntentNo())).thenReturn(Optional.of(intent));
         when(paymentIntentRepository.claimPendingByIntentNo(intent.getIntentNo())).thenReturn(1);
         when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
-        when(paymentService.previewPayment(order, null, null, null)).thenReturn(preview);
+        when(paymentService.previewPayment(order, null, null, null, 2)).thenReturn(preview);
 
         assertThrows(IllegalArgumentException.class,
                 () -> orderService.confirmExternalPayment(command, order.getCustomerId()));

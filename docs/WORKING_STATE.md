@@ -451,3 +451,32 @@
 最终clean verify800项792通过8条件跳过；真实MySQL46/46补8项，历史Disabled0；前端227/227与类型/构建绿；新包启动后既有预览31只读SQL通过，净销84欠款0库存388业务数据未新增。验收docs/reviews/2026-10-20-可靠性测试与异常收银验收.md及test-results/preview-consistency-results。仅3091/9081升级api-admin-reliability-4a857c6858dd.jar，SHA256 4a857c6858dd46a1f40f831f18a88789bc9fb1d8b22a49b4f222a80b0571b411；原库/6390保留，V132无迁移，原3090/9080/6389不动。原服务前后快照一致，无清库或远端推送。
 
 下一步门店完整营业日试用；服务端POS幂等与跨标签页恢复另评估，不能把浏览器冻结当后台幂等。客户端payment-confirmation URL订单未绑定意图、pay DTO冗余orderId仍未改；默认客户端主动支付确认关闭，启用前须统一契约和真实客户端全HTTP链。VIP顺序幂等已真验，并发月权益/真实支付/验证码/硬件/压测仍未验。
+
+## 2026-11-08 支付链路六项审计结论修复
+
+承接对 ClientOrderPaymentService、OrderPaymentService、V140、Checkstyle 基线与 WechatService 的只读核验，用户“你来修复”授权后按六项逐条修。
+
+- 幂等重放：requestKey 改为发起外部支付必填（空白即拒绝）；同键重放先校验键归属，再判意图状态与过期，最后逐项比对 useBalance/useSpecialFund/couponId/externalPaymentType 与金额，任一变化即拒绝，不再只用金额相等推断选项相同。归属校验前置是因为过期判断会写库，不能让他人键触发副作用。重放响应中的预览改为按意图保存的选项重算，不再回填本次请求参数。
+- 意图状态：仅 PENDING(1) 且 expire_at 未到可重放；已完成(2)、已失效(3) 拒绝并提示更换 requestKey，避免把旧意图交回客户端付款后确认被拒、只能人工对账。过期仍用独立事务条件更新留痕。状态模型保持 1/2/3 三态，未新增第四态。
+- 渠道：previewPayment 增渠道入参，resolveExternalPaymentType 收敛为 OrderPaymentService 包内静态唯一入口；预览、意图、落库、确认同源，支付宝请求不再被标成微信。预检与落库仍用同一渠道。
+- Checkstyle：ClientOrderPaymentService 与 OrderPaymentService 从基线移出（改为显式导入，10.20.1 检查 0 违规，core-application 273 文件 0 违规）；CI 的 Checkstyle 步骤去掉 continue-on-error，成为真正拦截。其余存量文件仍按文件豁免，未扩大范围。
+- V140：外部流水唯一索引调整到意图表变更之前执行，历史重复时失败不再留下半迁移；先把空串/纯空白流水号归一为 NULL（空串参与唯一比较，会让同类型多笔无流水收款互撞），脚本头补充只读重复核查 SQL。未在本轮新增字段，未接入真实商户号。
+- 微信登录：URL 改为参数化拼接；只对 HTTP 调用做兜底脱敏，业务错误码仍原样上抛；日志只保留脱敏摘要与异常类型（按 secret/js_code 参数名双重脱敏），不再记录异常对象/原始消息；向上抛出去敏异常并保留原调用栈，避免 RestTemplate 消息里的 AppSecret/code 外泄。
+
+验证：core-application 全量 679 项（679 通过、4 项既有跳过，含新增 8 项：选项/渠道/失效/过期重放拒绝、无键拒绝、支付宝预览渠道、微信脱敏 2 项）；api-client ClientHttpBoundaryTest 47 项通过；全模块 Checkstyle 0 违规。未直连真实 MySQL 跑迁移，V140 改动需 dev 环境自动 repair、prod 新库执行；真实支付、客户端小程序联调与生产重复数据核查仍未验。
+
+## 2026-11-08 支付链路二次评审（问题 A–F）处置
+
+承接外部评审，按代码事实复核后处置如下。未改动 V140，新增 V141。
+
+- 问题 A（修改已执行过的 V140）：已修复。V140 恢复为 master 原样（逐字节一致），checksum 与已执行过的环境一致；本轮新增结构变更全部放进 V141。代价是 V140 内两段 ALTER 的执行顺序回到原状，但 V140 只在空库/无支付数据的库上首次执行，唯一索引不会因历史重复失败，半迁移风险在当前（未上线）阶段不成立；若未来出现带历史数据的库，按脚本执行一次只读重复核查。
+- 问题 B（重放依赖动态预览）：已修复。新增 V141 给 order_payment_intent 增加 coupon_amount / special_fund_amount / balance_amount 三列，发起时把四段金额落库。重放直接按快照重建预览，不再读钱包与券，充值/消费/券面额变化都不影响同一 requestKey 的返回；重放校验改为「选项一致 + 快照合计=订单当前应付」，只拦改价，不拦资金变动。
+- 问题 C（失效且过期回调绕过对账）：已修复。确认路径改为先重查最新意图状态再分流：已确认(2)同流水重放、已失效(3)走人工对账告警，最后才做过期判定；过期条件更新命中 0 行时按最新状态重新分流，不再抛 IllegalStateException。新增用例覆盖「先失效后到期」的回调。
+- 问题 E（内部支付与外部意图缺乏协调）：已修复。payOrder 在真正执行内部扣款前调用 expirePendingByOrderId 作废该订单待确认外部意图，命中时告警；平台侧交易无法撤销，后续真实扣款会走 C 的对账分支。
+- 问题 6（脱敏不彻底）：已修复。日志不再记录任何异常消息（含脱敏后的消息），只留 code 脱敏摘要与异常类型；微信业务失败只回传 errcode，不再拼接 errmsg。redact 按字符串替换的实现随之删除。
+- 问题 4（旧文件仍全量豁免）：已处理。WechatService、OrderClientController、OrderPaymentPublicController 三条 checks=".*" 豁免已移除（基线 670→667）；OrderClientController 的星号导入当场改为显式导入，三文件现由规则真实约束。
+- 问题 5（商户号与查重）：维持现状。merchant_no 恒为空串，索引有效键等价于 (payment_type, outer_trans_no)，与应用层两参查重口径一致；补商户号需要真实平台身份模型，不在本轮凭空加字段。历史重复核查保留为迁移脚本注释中的只读查询，失败时 ALTER 本身会阻断。
+- 问题 D（真实平台验签）：未实现，属上线前置缺口。缺少微信/支付宝商户号、API v3 密钥、平台证书，无法在此实现可验证的签名与金额核对；client-confirm 继续默认关闭。
+- 评审点 1（/pay 无幂等键）：维持现状并记录限制。重复提交不会二次扣款（订单行锁 + isCompletedClientPayment），但「余额贡献为 0 时无法从支付明细反推当时是否勾选余额」，只能保证同参数重放返回原成功，无法证明参数逐项相同；要彻底解决需为内部支付引入请求号表，属独立改造。
+
+验证：core-application 681 项（0 失败/0 错误、4 项既有跳过）；core-infrastructure 迁移测试已放开到 V141；api-client ClientHttpBoundaryTest 47 项；全模块 compile 通过、Checkstyle 0 违规（含新移出基线的三个文件）。未连真实 MySQL 执行迁移，V141 需在 dev 与目标库各自执行一次。

@@ -29,9 +29,18 @@ public class OrderPaymentIntent {
 
     private Boolean useBalance;
 
+    /** 发起时本金余额抵扣金额快照：重放直接返回该值，不重新读钱包 */
+    private BigDecimal balanceAmount;
+
     private Boolean useSpecialFund;
 
+    /** 发起时专用金抵扣金额快照：重放直接返回该值，不重新读专用金账户 */
+    private BigDecimal specialFundAmount;
+
     private Long couponId;
+
+    /** 发起时优惠券抵扣金额快照 */
+    private BigDecimal couponAmount;
 
     private Integer externalPaymentType;
 

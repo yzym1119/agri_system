@@ -58,7 +58,6 @@ jobs:
 
       - name: Run Checkstyle
         run: mvn checkstyle:check -B
-        continue-on-error: true
 
       - name: Run backend gate tests
         run: python3 -m unittest discover -s scripts/tests -p 'test_verify_backend_reports.py'

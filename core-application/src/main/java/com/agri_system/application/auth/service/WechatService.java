@@ -1,11 +1,11 @@
 package com.agri_system.application.auth.service;
 
 import lombok.Data;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 /**
  * 微信服务
@@ -15,7 +15,6 @@ import org.springframework.web.client.RestTemplate;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class WechatService {
     
     @Value("${wechat.app-id:}")
@@ -37,34 +36,50 @@ public class WechatService {
      * @return 微信登录结果
      */
     public WechatLoginResult jscode2session(String code) {
-        String url = String.format(
-                "https://api.weixin.qq.com/sns/jscode2session?appid=%s&secret=%s&js_code=%s&grant_type=authorization_code",
-                appId, appSecret, code
-        );
+        // appid/secret/js_code 走参数化拼接，避免 code 含 & 等字符时改写查询串或污染日志
+        String url = UriComponentsBuilder.fromUriString("https://api.weixin.qq.com/sns/jscode2session")
+                .queryParam("appid", appId)
+                .queryParam("secret", appSecret)
+                .queryParam("js_code", code)
+                .queryParam("grant_type", "authorization_code")
+                .encode()
+                .build()
+                .toUriString();
         
+        // 只对 HTTP 调用本身做兜底脱敏：微信返回的业务错误（errcode）不含凭据，
+        // 但仍不把服务端自由文本 errmsg 回传或落库，只保留可核对的错误码。
+        WechatResponse response;
         try {
-            WechatResponse response = restTemplate.getForObject(url, WechatResponse.class);
-            
-            if (response == null) {
-                throw new RuntimeException("微信API调用失败：响应为空");
-            }
-            
-            if (response.getErrcode() != null && response.getErrcode() != 0) {
-                throw new RuntimeException("微信API调用失败：" + response.getErrmsg());
-            }
-            
-            WechatLoginResult result = new WechatLoginResult();
-            result.setOpenId(response.getOpenid());
-            result.setSessionKey(response.getSession_key());
-            result.setUnionId(response.getUnionid());
-            
-            return result;
+            response = restTemplate.getForObject(url, WechatResponse.class);
         } catch (Exception e) {
-            // 日志脱敏：微信 code 等同于临时登录凭证，禁止完整落日志；
-            // 只记录脱敏摘要与错误信息，请求追踪由 MDC traceId 承担。
-            log.error("微信登录失败：code={}, error={}", maskCode(code), e.getMessage(), e);
-            throw new RuntimeException("微信登录失败：" + e.getMessage(), e);
+            // 微信 code 与 AppSecret 都等同于凭据；RestTemplate 的异常消息通常带完整请求 URL。
+            // 日志只留脱敏摘要与异常类型，连消息都不记录——字符串替换无法覆盖所有异常格式。
+            log.error("微信登录失败：code={}, errorType={}", maskCode(code), e.getClass().getName());
+            throw sanitizedFailure(e);
         }
+
+        if (response == null) {
+            throw new RuntimeException("微信登录失败：微信接口无响应");
+        }
+
+        if (response.getErrcode() != null && response.getErrcode() != 0) {
+            log.warn("微信登录失败：code={}, errcode={}", maskCode(code), response.getErrcode());
+            throw new RuntimeException("微信登录失败：微信接口返回错误码 " + response.getErrcode());
+        }
+
+        WechatLoginResult result = new WechatLoginResult();
+        result.setOpenId(response.getOpenid());
+        result.setSessionKey(response.getSession_key());
+        result.setUnionId(response.getUnionid());
+
+        return result;
+    }
+
+    /** 用固定文案重建异常并保留原调用栈，向上抛出时不携带含 AppSecret/code 的 URL 或平台原始文本。 */
+    private RuntimeException sanitizedFailure(Exception cause) {
+        RuntimeException failure = new RuntimeException("微信登录失败，请稍后重试");
+        failure.setStackTrace(cause.getStackTrace());
+        return failure;
     }
 
     /** code 脱敏：仅保留前 4 位与长度，中间以 *** 代替。 */
@@ -85,11 +100,9 @@ public class WechatService {
         private String unionId;
     }
     
-    /**
-     * 微信API响应
-     */
+    /** 微信API响应（包内可见：便于同包测试构造平台返回） */
     @Data
-    private static class WechatResponse {
+    static class WechatResponse {
         private String openid;
         private String session_key;
         private String unionid;

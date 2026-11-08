@@ -121,8 +121,8 @@
                     <configLocation>${maven.multiModuleProjectDirectory}/config/checkstyle/checkstyle.xml</configLocation>
                     <propertyExpansion>config_loc=${maven.multiModuleProjectDirectory}/config/checkstyle</propertyExpansion>
                     <!-- 增量策略：只查主代码；测试源不查（测试方法名中文为项目约定）。
-                         存量 671 文件由 suppressions-baseline.xml 豁免，仅新文件受约束，
-                         避免 4176 项存量违规一次性重写（ratchet 不扩大原则）。 -->
+                         存量文件由 suppressions-baseline.xml 按文件豁免，未列入基线的文件必须 0 违规；
+                         支付相关服务已从基线移出，其新增违规同样会被拦截。 -->
                     <includeTestSourceDirectory>false</includeTestSourceDirectory>
                     <failOnViolation>true</failOnViolation>
                     <violationSeverity>error</violationSeverity>

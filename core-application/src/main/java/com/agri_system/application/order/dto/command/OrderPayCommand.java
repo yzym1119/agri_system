@@ -28,8 +28,9 @@ public class OrderPayCommand {
     @Schema(description = "外部支付方式：2-微信，3-支付宝。为空时默认按微信处理", example = "2")
     private Integer externalPaymentType = OrderMainPaymentMethod.WECHAT.getCode();
 
-    @Schema(description = "支付发起幂等键：同键重复/重试请求返回同一支付意图，不会作废已创建意图。"
-            + "建议客户端按「订单号+支付选项+重试序号」生成，长度不超过64字符", example = "pay-1-20260411103000-a1b2c3")
+    @Schema(description = "支付发起幂等键（发起外部支付时必填）：同键重复/重试请求返回同一支付意图，不会作废已创建意图；"
+            + "同键但余额/专用金/券/外部渠道任一变化会被拒绝，需更换新键。长度不超过64字符",
+            example = "pay-1-20260411103000-a1b2c3", requiredMode = Schema.RequiredMode.NOT_REQUIRED)
     private String requestKey;
 }
 

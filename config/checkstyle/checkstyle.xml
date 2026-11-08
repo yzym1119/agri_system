@@ -4,8 +4,8 @@
         "https://checkstyle.org/dtds/configuration_1_3.dtd">
 <!-- 增量检查基线（技术债 ratchet 策略）：
      仅对主代码（src/main/java）生效，测试源不检查（现有测试方法名用中文属项目约定）；
-     现有 824 个文件的存量违规（约 4176 项）由 suppressions-baseline.xml 全量豁免，
-     只有新建文件才受规则约束——存量债不扩大、不一次性重写。 -->
+     存量文件的违规由 suppressions-baseline.xml 按文件全量豁免，只有未列入基线的文件才受规则约束——
+     存量债不扩大、不一次性重写。新增文件、以及已从基线移出的文件，其新增违规必须当场修好。 -->
 <module name="Checker">
     <property name="charset" value="UTF-8"/>
     <property name="severity" value="error"/>

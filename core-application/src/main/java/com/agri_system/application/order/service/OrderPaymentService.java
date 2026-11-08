@@ -51,15 +51,24 @@ public class OrderPaymentService {
     private final com.agri_system.domain.after_sales.repository.AfterSalesItemRepository afterSalesItemRepository;
     
     /**
+     * 预运算支付金额（不实际扣减），外部支付渠道按默认（微信）展示。
+     */
+    public OrderPayPreviewVO previewPayment(Order order, Boolean useBalance, Boolean useSpecialFund, Long couponId) {
+        return previewPayment(order, useBalance, useSpecialFund, couponId, null);
+    }
+
+    /**
      * 预运算支付金额（不实际扣减）
-     * 
+     *
      * @param order 订单
      * @param useBalance 是否使用本金余额
      * @param useSpecialFund 是否使用专用金
      * @param couponId 优惠券ID
+     * @param externalPaymentType 外部支付方式：2-微信，3-支付宝；为空按微信
      * @return 支付预览
      */
-    public OrderPayPreviewVO previewPayment(Order order, Boolean useBalance, Boolean useSpecialFund, Long couponId) {
+    public OrderPayPreviewVO previewPayment(Order order, Boolean useBalance, Boolean useSpecialFund, Long couponId,
+                                            Integer externalPaymentType) {
         BigDecimal totalAmount = order.getPayAmount();
         List<OrderPaymentVO> payments = new ArrayList<>();
         
@@ -132,11 +141,11 @@ public class OrderPaymentService {
             }
         }
         
-        // 4. 外部支付（微信/支付宝）
+        // 4. 外部支付（微信/支付宝）：渠道必须与本次发起/确认一致，不能一律标成微信
         BigDecimal externalAmount = remaining;
         if (externalAmount.compareTo(BigDecimal.ZERO) > 0) {
             OrderPaymentVO payment = new OrderPaymentVO();
-            payment.setPaymentType(PaymentMethod.WECHAT.getCode());
+            payment.setPaymentType(resolveExternalPaymentType(externalPaymentType));
             payment.setAmount(externalAmount);
             payments.add(payment);
         }
@@ -169,8 +178,8 @@ public class OrderPaymentService {
                                             Integer externalPaymentType,
                                             String externalTransactionNo,
                                             LocalDateTime externalPaidAt) {
-        // 先预运算
-        OrderPayPreviewVO preview = previewPayment(order, useBalance, useSpecialFund, couponId);
+        // 先预运算：渠道与本次执行一致，预览明细与落库明细同源
+        OrderPayPreviewVO preview = previewPayment(order, useBalance, useSpecialFund, couponId, externalPaymentType);
 
         List<OrderPayment> payments = new ArrayList<>();
         BigDecimal totalPaid = BigDecimal.ZERO;
@@ -323,13 +332,14 @@ public class OrderPaymentService {
                 .collect(Collectors.toList());
     }
 
-    private Integer resolveExternalPaymentType(Integer externalPaymentType) {
+    /** 外部支付渠道唯一解析入口：为空按微信，只接受 2-微信 / 3-支付宝。 */
+    static Integer resolveExternalPaymentType(Integer externalPaymentType) {
         if (externalPaymentType == null) {
             return OrderMainPaymentMethod.WECHAT.getCode();
         }
         if (!externalPaymentType.equals(OrderMainPaymentMethod.WECHAT.getCode())
                 && !externalPaymentType.equals(OrderMainPaymentMethod.ALIPAY.getCode())) {
-            throw new IllegalArgumentException(OrderErrorCode.PAYMENT_AMOUNT_MISMATCH + ": 外部支付方式不正确");
+            throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 外部支付方式不支持");
         }
         return externalPaymentType;
     }

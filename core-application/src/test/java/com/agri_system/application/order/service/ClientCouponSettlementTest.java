@@ -33,6 +33,7 @@ class ClientCouponSettlementTest {
     private final com.agri_system.domain.customer.repository.CustomerRepository customers=mock(com.agri_system.domain.customer.repository.CustomerRepository.class);
     private final WalletApplicationService wallet=mock(WalletApplicationService.class);
     private final com.agri_system.application.inventory.service.InventoryApplicationService inventory=mock(com.agri_system.application.inventory.service.InventoryApplicationService.class);
+    private final org.springframework.transaction.PlatformTransactionManager tx=mock(org.springframework.transaction.PlatformTransactionManager.class);
     private final List<OrderPayment> sources=new ArrayList<>();
     private final List<Order> savedOrders=new ArrayList<>();
     private final Map<String,OrderPaymentIntent> storedIntents=new HashMap<>();
@@ -67,7 +68,7 @@ class ClientCouponSettlementTest {
                 null,
                 null,
                 new com.agri_system.application.order.service.ClientOrderPaymentService(orders, items, payments, intents, deliveries, funding, inventory, customers,
-                        mock(org.springframework.transaction.PlatformTransactionManager.class)),
+                        tx),
                 new com.agri_system.application.order.service.OrderFulfillmentService(orders, deliveries, staff, afterSales, mock(org.springframework.context.ApplicationEventPublisher.class), org.mockito.Mockito.mock(com.agri_system.domain.system.log.repository.SysOperationLogRepository.class)),
                 null);
         when(intents.save(any())).thenAnswer(i->{OrderPaymentIntent intent=i.getArgument(0);intent.setId(70L);storedIntents.put(intent.getIntentNo(),intent);return intent;});
@@ -80,7 +81,7 @@ class ClientCouponSettlementTest {
         ReflectionTestUtils.setField(ReflectionTestUtils.getField(service,"clientOrderPaymentService"),"clientPaymentConfirmEnabled",true);
     }
     private BigDecimal m(String amount){return new BigDecimal(amount).setScale(2);}
-    private OrderPayCommand command(boolean balance,boolean special){var command=new OrderPayCommand();command.setOrderId(1L);command.setCouponId(40L);command.setUseBalance(balance);command.setUseSpecialFund(special);return command;}
+    private OrderPayCommand command(boolean balance,boolean special){var command=new OrderPayCommand();command.setOrderId(1L);command.setCouponId(40L);command.setUseBalance(balance);command.setUseSpecialFund(special);command.setRequestKey("rk-"+java.util.UUID.randomUUID());return command;}
     private void assertNet(String net,String couponAmount,int method) {
         assertEquals(m(net),order.getPayAmount());assertEquals(m(couponAmount),order.getCouponAmount());assertEquals(method,order.getPaymentMethod());
         assertEquals(m(net),sources.stream().filter(p->p.getPaymentType()!=5).map(OrderPayment::getAmount).reduce(m("0"),BigDecimal::add));
@@ -140,12 +141,64 @@ class ClientCouponSettlementTest {
         verify(intents,times(1)).expirePendingByOrderId(1L);
         verify(intents,times(1)).save(any());
     }
-    @Test void conflictingRequestKeyWithChangedAmountOrOtherCustomerIsRejected() {
-        var first=command(false,false);first.setRequestKey("rk-pay-2");
+    @Test void replayKeepsFirstSnapshotWhenWalletOrCouponChanges() {
+        // 充值、消费或券面额变化都不改变已发起的资金拆分：同键重试必须拿到第一次的结果
+        when(wallet.getBalance(10L)).thenReturn(m("20"));
+        var first=command(true,false);first.setRequestKey("rk-snapshot");
+        var created=service.createExternalPaymentIntent(first,10L);
+        assertEquals(m("50"),created.getExternalAmount());
+        when(wallet.getBalance(10L)).thenReturn(m("60"));
+        coupon.setAmount(m("40"));
+        var retry=command(true,false);retry.setRequestKey("rk-snapshot");
+        var replayed=service.createExternalPaymentIntent(retry,10L);
+        assertEquals(m("50"),replayed.getExternalAmount());
+        assertEquals(m("20"),replayed.getPreview().getBalanceAmount());
+        assertEquals(m("30"),replayed.getPreview().getCouponAmount());
+        verify(intents,times(1)).save(any());
+    }
+    @Test void replayWithSameAmountButDifferentWalletOptionIsRejected() {
+        // 余额为 0 时选不选余额，外部金额都是 70：金额相等不能证明选项相同
+        when(wallet.getBalance(10L)).thenReturn(m("0"));
+        var first=command(true,false);first.setRequestKey("rk-option");
+        assertEquals(m("70"),service.createExternalPaymentIntent(first,10L).getExternalAmount());
+        var conflict=command(false,false);conflict.setRequestKey("rk-option");
+        IllegalArgumentException failure=assertThrows(IllegalArgumentException.class,()->service.createExternalPaymentIntent(conflict,10L));
+        assertTrue(failure.getMessage().contains("选项"),failure.getMessage());
+        verify(intents,times(1)).expirePendingByOrderId(1L);verify(intents,times(1)).save(any());
+    }
+    @Test void replayWithDifferentExternalChannelIsRejected() {
+        var first=command(false,false);first.setRequestKey("rk-channel");first.setExternalPaymentType(2);
         service.createExternalPaymentIntent(first,10L);
-        coupon.setAmount(m("40")); // 金额已变化仍用旧幂等键重试
-        var conflict=command(false,false);conflict.setRequestKey("rk-pay-2");
-        assertThrows(IllegalArgumentException.class,()->service.createExternalPaymentIntent(conflict,10L));
+        var conflict=command(false,false);conflict.setRequestKey("rk-channel");conflict.setExternalPaymentType(3);
+        IllegalArgumentException failure=assertThrows(IllegalArgumentException.class,()->service.createExternalPaymentIntent(conflict,10L));
+        assertTrue(failure.getMessage().contains("选项"),failure.getMessage());
+    }
+    @Test void replayOfInvalidatedIntentIsRejectedWithoutReturningOldIntent() {
+        var request=command(false,false);request.setRequestKey("rk-invalid");
+        var intent=service.createExternalPaymentIntent(request,10L);
+        storedIntents.get(intent.getIntentNo()).setStatus(3); // 已被新意图替代或已标记失效
+        IllegalArgumentException failure=assertThrows(IllegalArgumentException.class,()->service.createExternalPaymentIntent(request,10L));
+        assertTrue(failure.getMessage().contains("已失效"),failure.getMessage());
+    }
+    @Test void replayOfExpiredIntentIsRejectedAndMarkedExpired() {
+        when(tx.getTransaction(any())).thenReturn(mock(org.springframework.transaction.TransactionStatus.class));
+        var request=command(false,false);request.setRequestKey("rk-expired");
+        var intent=service.createExternalPaymentIntent(request,10L);
+        storedIntents.get(intent.getIntentNo()).setExpireAt(LocalDateTime.now().minusMinutes(1));
+        IllegalArgumentException failure=assertThrows(IllegalArgumentException.class,()->service.createExternalPaymentIntent(request,10L));
+        assertTrue(failure.getMessage().contains("已过期"),failure.getMessage());
+        verify(intents).expirePendingByIntentNo(intent.getIntentNo());
+    }
+    @Test void intentCreationWithoutRequestKeyIsRejected() {
+        var request=command(false,false);request.setRequestKey(null);
+        IllegalArgumentException failure=assertThrows(IllegalArgumentException.class,()->service.createExternalPaymentIntent(request,10L));
+        assertTrue(failure.getMessage().contains("requestKey"),failure.getMessage());
+        assertTrue(storedIntents.isEmpty());verifyNoInteractions(inventory);
+    }
+    @Test void alipayRequestPreviewsAlipayChannel() {
+        var request=command(false,false);request.setExternalPaymentType(3);
+        var payments=service.previewOrderPayment(request,10L).getPayments();
+        assertEquals(3,payments.get(payments.size()-1).getPaymentType());
     }
     @Test void confirmDeclaredChannelMustMatchIntentChannel() {
         var request=command(false,false);request.setExternalPaymentType(2); // 微信发起
@@ -175,16 +228,35 @@ class ClientCouponSettlementTest {
         assertEquals(1,order.getOrderStatus());assertEquals(1,coupon.getStatus());
         verifyNoInteractions(inventory);
     }
-    @Test void staleSupersededReadReplaysByLatestCompletedStatus() {
-        // 并发读：确认线程持陈旧 status=3 读，但行锁竞争后重查发现已是 COMPLETED(2) 同流水 → 幂等重放
+    @Test void repeatedCallbackWithSameTransactionReplaysByLatestCompletedStatus() {
+        // 重复回调按「重查最新状态」分流：已是 COMPLETED(2) 且同一流水 → 安全重放，不得二次收款
         var request=command(false,false);var intent=service.createExternalPaymentIntent(request,10L);
         var confirm=new OrderExternalPaymentCallbackCommand();confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("wechat-x-70");
         service.confirmExternalPaymentCallback(confirm);assertNet("70","30",2);
-        var stale=new OrderPaymentIntent();org.springframework.beans.BeanUtils.copyProperties(storedIntents.get(intent.getIntentNo()),stale);stale.setStatus(3);
-        when(intents.findByIntentNo(intent.getIntentNo())).thenReturn(java.util.Optional.of(stale),java.util.Optional.of(storedIntents.get(intent.getIntentNo())));
         when(intents.claimPendingByIntentNo(intent.getIntentNo())).thenReturn(0);
         assertDoesNotThrow(()->service.confirmExternalPaymentCallback(confirm));
         assertEquals(m("70"),sources.stream().filter(p->p.getPaymentType()!=5).map(OrderPayment::getAmount).reduce(m("0"),BigDecimal::add),"重放不得二次收款");
+    }
+    @Test void expiredAndInvalidatedCallbackGoesToReconciliationInsteadOfRawFailure() {
+        // 先被替代失效(3)、后到期：必须按最新状态走对账告警，不能先做过期条件更新而更新 0 行抛底层异常
+        var request=command(false,false);request.setRequestKey("rk-stale-expired");
+        var intent=service.createExternalPaymentIntent(request,10L);
+        var stale=storedIntents.get(intent.getIntentNo());stale.setStatus(3);stale.setExpireAt(LocalDateTime.now().minusMinutes(5));
+        var confirm=new OrderExternalPaymentCallbackCommand();confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("wechat-paid-but-invalid");
+        IllegalArgumentException failure=assertThrows(IllegalArgumentException.class,()->service.confirmExternalPaymentCallback(confirm));
+        assertTrue(failure.getMessage().contains("对账"),failure.getMessage());
+        assertTrue(failure.getMessage().contains("wechat-paid-but-invalid"),"错误信息应带流水号供对账");
+        verify(intents,never()).expirePendingByIntentNo(anyString());
+        assertTrue(sources.isEmpty());assertTrue(savedOrders.isEmpty());
+    }
+    @Test void internalPaymentVoidsPendingExternalIntentBeforeSettling() {
+        // 客户已发起外部支付又改用钱包结清：必须先作废待确认意图，避免同一订单并行两个支付尝试
+        var external=command(false,false);external.setRequestKey("rk-pending");
+        service.createExternalPaymentIntent(external,10L);
+        when(intents.expirePendingByOrderId(1L)).thenReturn(1);
+        assertNull(service.payOrder(command(true,false),10L));
+        assertEquals(3,order.getOrderStatus());
+        verify(intents,times(2)).expirePendingByOrderId(1L);
     }
     @Test void stalePendingReadCannotChargeTheAlreadyCompletedCurrentOrder() {
         var stale=new Order();org.springframework.beans.BeanUtils.copyProperties(order,stale);order.setOrderStatus(3);order.setPayAmount(m("70"));order.setCouponAmount(m("30"));order.setPaymentMethod(4);
