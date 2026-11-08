@@ -34,6 +34,12 @@ public interface OrderPaymentRepository {
      * 根据订单ID和外部流水号查询支付明细
      */
     Optional<OrderPayment> findByOrderIdAndOuterTransNo(Long orderId, String outerTransNo);
+
+    /**
+     * 全局按「支付平台 + 外部流水号」查收款：同一平台流水只允许归属一笔有效业务收款（DB 唯一索引兜底），
+     * 用于回调/确认前冲突预检，命中即拒绝入账并进入异常对账。
+     */
+    Optional<OrderPayment> findByPaymentTypeAndOuterTransNo(Integer paymentType, String outerTransNo);
 }
 
 

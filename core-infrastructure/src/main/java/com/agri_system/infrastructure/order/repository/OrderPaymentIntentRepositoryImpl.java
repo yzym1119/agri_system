@@ -36,6 +36,13 @@ public class OrderPaymentIntentRepositoryImpl implements OrderPaymentIntentRepos
     }
 
     @Override
+    public Optional<OrderPaymentIntent> findByRequestKey(String requestKey) {
+        OrderPaymentIntent intent = mapper.selectOneByQuery(QueryWrapper.create()
+                .where("request_key = ?", requestKey));
+        return Optional.ofNullable(intent);
+    }
+
+    @Override
     public int expirePendingByOrderId(Long orderId) {
         return mapper.expirePendingByOrderId(orderId);
     }

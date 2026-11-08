@@ -54,6 +54,9 @@ public class AuthService {
     @Value("${auth.dev-login.enabled:false}")
     private boolean devLoginEnabled;
 
+    /** prod profile 硬约束：即使配置误开也无法在生产调用开发登录 */
+    private final org.springframework.core.env.Environment environment;
+
     private static final int MAX_LOGIN_ATTEMPTS = 5;
     private static final long LOGIN_LOCK_MINUTES = 15;
     
@@ -189,6 +192,10 @@ public class AuthService {
      * 通过手机号直接登录，绕过微信认证
      */
     public LoginResultVO devClientLogin(String phone) {
+        // 硬约束第一道：prod profile 下无论配置如何都拒绝（防运维误开 auth.dev-login.enabled）
+        if (environment != null && java.util.Arrays.asList(environment.getActiveProfiles()).contains("prod")) {
+            throw new IllegalStateException("开发登录在生产环境被硬性禁止");
+        }
         if (!devLoginEnabled) {
             // 防御性兜底：即使误注册了端点，配置未显式开启也直接拒绝。
             throw new IllegalStateException("开发登录未启用：需显式配置 auth.dev-login.enabled=true");

@@ -60,9 +60,19 @@ public class WechatService {
             
             return result;
         } catch (Exception e) {
-            log.error("微信登录失败：code={}, error={}", code, e.getMessage(), e);
+            // 日志脱敏：微信 code 等同于临时登录凭证，禁止完整落日志；
+            // 只记录脱敏摘要与错误信息，请求追踪由 MDC traceId 承担。
+            log.error("微信登录失败：code={}, error={}", maskCode(code), e.getMessage(), e);
             throw new RuntimeException("微信登录失败：" + e.getMessage(), e);
         }
+    }
+
+    /** code 脱敏：仅保留前 4 位与长度，中间以 *** 代替。 */
+    private String maskCode(String code) {
+        if (code == null || code.length() <= 4) {
+            return "***";
+        }
+        return code.substring(0, 4) + "***(" + code.length() + ")";
     }
     
     /**

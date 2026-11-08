@@ -13,6 +13,9 @@ public interface OrderPaymentIntentRepository {
 
     Optional<OrderPaymentIntent> findByIntentNo(String intentNo);
 
+    /** 按发起幂等键查找历史意图：存在即重放，不再新建/作废旧意图 */
+    Optional<OrderPaymentIntent> findByRequestKey(String requestKey);
+
     int expirePendingByOrderId(Long orderId);
 
     /**

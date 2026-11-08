@@ -72,6 +72,8 @@ class ClientCouponSettlementTest {
                 null);
         when(intents.save(any())).thenAnswer(i->{OrderPaymentIntent intent=i.getArgument(0);intent.setId(70L);storedIntents.put(intent.getIntentNo(),intent);return intent;});
         when(intents.findByIntentNo(anyString())).thenAnswer(i->Optional.ofNullable(storedIntents.get(i.getArgument(0))));
+        lenient().when(intents.findByRequestKey(anyString())).thenAnswer(i->storedIntents.values().stream()
+                .filter(x->i.getArgument(0).equals(x.getRequestKey())).findFirst());
         // 确认前条件锁定：单测环境默认意图均为 PENDING 可锁定
         lenient().when(intents.claimPendingByIntentNo(anyString())).thenReturn(1);
         lenient().when(intents.expirePendingByIntentNo(anyString())).thenReturn(1);
@@ -117,7 +119,7 @@ class ClientCouponSettlementTest {
     @Test void couponWalletAndConfirmedExternalAmountShareOneSavedNetAndCallbackReplay() {
         when(wallet.getBalance(10L)).thenReturn(m("20"));var request=command(true,false);request.setExternalPaymentType(3);
         var intent=service.createExternalPaymentIntent(request,10L);assertEquals(m("50"),intent.getExternalAmount());assertEquals(1,coupon.getStatus());
-        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("alipay-original-50");service.confirmExternalPayment(confirm,10L);
+        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("alipay-original-50");confirm.setExternalPaymentType(3);service.confirmExternalPayment(confirm,10L);
         assertNet("70","30",10);service.confirmExternalPayment(confirm,10L);assertNet("70","30",10);
         assertEquals(m("50"),sources.stream().filter(p->p.getPaymentType()==3).map(OrderPayment::getAmount).reduce(m("0"),BigDecimal::add));
         verify(wallet,times(1)).deductBalance(any(),eq(m("20")),any(),any(),any(),any());verify(inventory,times(1)).outbound(any(),isNull());
@@ -126,6 +128,32 @@ class ClientCouponSettlementTest {
         var request=command(false,false);var intent=service.createExternalPaymentIntent(request,10L);assertEquals(m("70"),intent.getExternalAmount());
         var confirm=new OrderExternalPaymentCallbackCommand();confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("wechat-original-70");service.confirmExternalPaymentCallback(confirm);service.confirmExternalPaymentCallback(confirm);
         assertNet("70","30",2);verify(inventory,times(1)).outbound(any(),isNull());assertEquals(2,sources.size());
+    }
+    @Test void duplicateRequestKeyReplaysSameIntentWithoutExpiringOrCreating() {
+        var first=command(false,false);first.setRequestKey("rk-pay-1");
+        var created=service.createExternalPaymentIntent(first,10L);
+        var retry=command(false,false);retry.setRequestKey("rk-pay-1");
+        var replayed=service.createExternalPaymentIntent(retry,10L);
+        assertEquals(created.getIntentNo(),replayed.getIntentNo());
+        assertEquals(created.getExternalAmount(),replayed.getExternalAmount());
+        // 重试不得作废已创建意图，也不得新建
+        verify(intents,times(1)).expirePendingByOrderId(1L);
+        verify(intents,times(1)).save(any());
+    }
+    @Test void conflictingRequestKeyWithChangedAmountOrOtherCustomerIsRejected() {
+        var first=command(false,false);first.setRequestKey("rk-pay-2");
+        service.createExternalPaymentIntent(first,10L);
+        coupon.setAmount(m("40")); // 金额已变化仍用旧幂等键重试
+        var conflict=command(false,false);conflict.setRequestKey("rk-pay-2");
+        assertThrows(IllegalArgumentException.class,()->service.createExternalPaymentIntent(conflict,10L));
+    }
+    @Test void confirmDeclaredChannelMustMatchIntentChannel() {
+        var request=command(false,false);request.setExternalPaymentType(2); // 微信发起
+        var intent=service.createExternalPaymentIntent(request,10L);
+        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());
+        confirm.setExternalTransactionNo("ali-901");confirm.setExternalPaymentType(3); // 支付宝流水确认微信意图
+        assertThrows(IllegalArgumentException.class,()->service.confirmExternalPayment(confirm,10L));
+        assertTrue(sources.isEmpty());assertTrue(savedOrders.isEmpty());
     }
     @Test void changedCouponRejectsOldExternalIntentBeforeAnyCouponWalletOrOrderWrite() {
         var request=command(false,false);var intent=service.createExternalPaymentIntent(request,10L);coupon.setAmount(m("40"));
@@ -178,7 +206,7 @@ class ClientCouponSettlementTest {
         when(wallet.getBalance(10L)).thenReturn(m("20"));var request=command(true,false);request.setExternalPaymentType(3);
         service.previewOrderPayment(request,10L);var intent=service.createExternalPaymentIntent(request,10L);
         assertEquals(1,delivery.getDeliveryStatus());verify(deliveries,never()).save(any());
-        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("delivery-alipay-50");
+        var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("delivery-alipay-50");confirm.setExternalPaymentType(3);
         service.confirmExternalPayment(confirm,10L);assertEquals(2,delivery.getDeliveryStatus());
         service.shipOrder(shipment(2),8L);service.confirmExternalPayment(confirm,10L);
         assertEquals(3,delivery.getDeliveryStatus());verify(inventory,times(1)).outbound(any(),isNull());

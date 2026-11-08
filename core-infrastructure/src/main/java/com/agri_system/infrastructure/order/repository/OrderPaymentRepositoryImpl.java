@@ -62,4 +62,14 @@ public class OrderPaymentRepositoryImpl implements OrderPaymentRepository {
         );
         return Optional.ofNullable(payment);
     }
+
+    @Override
+    public Optional<OrderPayment> findByPaymentTypeAndOuterTransNo(Integer paymentType, String outerTransNo) {
+        OrderPayment payment = mapper.selectOneByQuery(
+                com.mybatisflex.core.query.QueryWrapper.create()
+                        .where("payment_type = ?", paymentType)
+                        .and("outer_trans_no = ?", outerTransNo)
+        );
+        return Optional.ofNullable(payment);
+    }
 }

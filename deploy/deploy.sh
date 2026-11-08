@@ -7,6 +7,12 @@ echo "========================================="
 
 COMPOSE="docker compose -f deploy/docker-compose.prod.yml"
 
+# 健康探测目标：生产域名（正确 SNI + 证书校验）。可用环境变量覆盖：
+#   DEPLOY_PROBE_URL=https://admin.example.com/health/ready ./deploy/deploy.sh
+# 不再使用 -k 跳过 TLS 校验——跳过校验会把「证书错误/被劫持」误判为健康。
+DOMAIN="${DEPLOY_DOMAIN:-admin.yourdomain.com}"
+PROBE_URL="${DEPLOY_PROBE_URL:-https://${DOMAIN}/health/ready}"
+
 # 检查 .env 文件
 if [ ! -f .env ]; then
     echo "❌ 缺少 .env 文件，请复制 deploy/.env.example 为 .env 并填写配置"
@@ -45,11 +51,14 @@ check_containers() {
     return $failed
 }
 
-# HTTPS 实际业务入口探测：nginx /health → backend /health（含数据库与Redis依赖探测）。
-# 不能用 http:// 探测——HTTP 入口 301 跳转 HTTPS，curl -f 不把 301 当错误，会误报成功。
+# HTTPS 实际业务入口探测（就绪级）：nginx /health/ready → backend /health/ready（含数据库与Redis依赖探测）。
+# 1) 不能用 http:// 探测——HTTP 入口 301 跳转 HTTPS，curl -f 不把 301 当错误，会误报成功；
+# 2) 不能用 -k 跳过证书校验——证书过期/域名不匹配/被劫持都会被误判为健康；
+#    探测域名必须与 server_name 一致以获得正确 SNI，证书校验失败即发布失败。
+# 3) 探测就绪端点而非存活端点——/health 只证明进程活着，/health/ready 才证明 DB/Redis 可用。
 check_https_entrypoint() {
     local body status
-    body=$(curl -skf -m 5 -w '\n%{http_code}' https://localhost/health 2>/dev/null) || return 1
+    body=$(curl -sf --proto '=https' --tlsv1.2 -m 5 -w '\n%{http_code}' "$PROBE_URL" 2>/dev/null) || return 1
     status=$(echo "$body" | tail -n1)
     [ "$status" = "200" ] && echo "$body" | head -n -1 | grep -q '"status":"UP"'
 }
@@ -76,12 +85,12 @@ if [ -z "$ok" ]; then
     echo "❌ 恢复失败，发布未通过健康验收。请执行以下命令诊断："
     echo "   $COMPOSE ps"
     echo "   $COMPOSE logs backend client"
-    echo "   curl -sk https://localhost/health"
+    echo "   curl -s $PROBE_URL"
     echo "   （如需回滚：用上一版镜像/代码重新构建部署，本脚本不自动降级）"
     exit 1
 fi
 
 echo "✅ 服务启动成功（HTTPS 入口 200 且依赖健康，全部容器 healthy）！"
 echo ""
-echo "访问地址: https://admin.yourdomain.com"
+echo "访问地址: https://$DOMAIN（探测入口: $PROBE_URL）"
 exit 0

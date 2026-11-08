@@ -282,15 +282,16 @@ class RetailFactChainMigrationTest {
         assertEquals(migrationFiles.size(), versions.size(), "所有 V*.sql 文件都必须被枚举和解析");
         assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
         assertTrue(versions.stream().allMatch(version -> version.compareTo(MigrationVersion.fromVersion("1")) >= 0
-                        && version.compareTo(MigrationVersion.fromVersion("139")) <= 0),
-                "存在超出 V1..V139 范围的迁移版本");
+                        && version.compareTo(MigrationVersion.fromVersion("140")) <= 0),
+                "存在超出 V1..V140 范围的迁移版本");
         assertTrue(versions.containsAll(List.of(MigrationVersion.fromVersion("119"),
                 MigrationVersion.fromVersion("120"), MigrationVersion.fromVersion("121"),
                 MigrationVersion.fromVersion("123"), MigrationVersion.fromVersion("124"),
                 MigrationVersion.fromVersion("125"), MigrationVersion.fromVersion("126"),
                 MigrationVersion.fromVersion("127"), MigrationVersion.fromVersion("128"), MigrationVersion.fromVersion("131"),MigrationVersion.fromVersion("134"),MigrationVersion.fromVersion("135"),
-                MigrationVersion.fromVersion("136"), MigrationVersion.fromVersion("137"), MigrationVersion.fromVersion("138"))),
-                "缺少 V119/V120/V121/V123/V124/V125/V126/V127/V128/V131/V134/V135/V136/V137/V138");
+                MigrationVersion.fromVersion("136"), MigrationVersion.fromVersion("137"), MigrationVersion.fromVersion("138"),
+                MigrationVersion.fromVersion("139"), MigrationVersion.fromVersion("140"))),
+                "缺少 V119/V120/V121/V123/V124/V125/V126/V127/V128/V131/V134/V135/V136/V137/V138/V139/V140");
         assertEquals("128", flyway.info().current().getVersion().getVersion());
     }
 

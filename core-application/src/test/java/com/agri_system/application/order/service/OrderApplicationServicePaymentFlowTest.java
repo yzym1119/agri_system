@@ -147,7 +147,8 @@ class OrderApplicationServicePaymentFlowTest {
         command.setOrderId(order.getId());
         command.setExternalPaymentType(2);
 
-        when(orderRepository.findById(order.getId())).thenReturn(Optional.of(order));
+        // 锁顺序统一后发起路径持订单行锁（findById 不再走）
+        when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
         when(paymentService.previewPayment(order, null, null, null)).thenReturn(preview);
         when(paymentIntentRepository.save(any(OrderPaymentIntent.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
@@ -255,6 +256,8 @@ class OrderApplicationServicePaymentFlowTest {
         command.setExternalTransactionNo("wx202604110003");
 
         when(paymentIntentRepository.findByIntentNo(intent.getIntentNo())).thenReturn(Optional.of(intent));
+        // 锁顺序统一后确认路径先持订单行锁再处理幂等重放
+        when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
 
         orderService.confirmExternalPayment(command, order.getCustomerId());
 

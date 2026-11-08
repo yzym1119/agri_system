@@ -16,6 +16,7 @@ import com.agri_system.domain.order.repository.OrderPaymentRepository;
 import com.agri_system.domain.order.service.OrderDomainService;
 import com.agri_system.domain.product.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +33,7 @@ import java.util.stream.Collectors;
  * 
  * @author AI Generated
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class OrderPaymentService {
@@ -212,14 +214,32 @@ public class OrderPaymentService {
         
         // 4. 外部支付（微信/支付宝）- 仅在已确认外部支付后落库
         if (includeExternalPayment && preview.getExternalAmount().compareTo(BigDecimal.ZERO) > 0) {
+            Integer resolvedType = resolveExternalPaymentType(externalPaymentType);
+            // 全局唯一性预检：同一平台流水只能归属一笔有效业务收款（V140 唯一索引兜底）。
+            // 重复/冲突通知绝不静默入账——留痕后拒绝，进入异常对账流程。
+            if (externalTransactionNo != null && paymentRepository
+                    .findByPaymentTypeAndOuterTransNo(resolvedType, externalTransactionNo).isPresent()) {
+                log.warn("外部支付流水冲突：流水号已被其他收款占用，拒绝入账待人工对账: outerTransNo={}, paymentType={}, orderId={}",
+                        externalTransactionNo, resolvedType, order.getId());
+                throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED
+                        + ": 外部流水 " + externalTransactionNo + " 已归属其他收款，禁止重复入账，请人工对账");
+            }
             OrderPayment payment = new OrderPayment();
             payment.setOrderId(order.getId());
-            payment.setPaymentType(resolveExternalPaymentType(externalPaymentType));
+            payment.setPaymentType(resolvedType);
             payment.setAmount(preview.getExternalAmount());
             payment.setOuterTransNo(externalTransactionNo);
             payment.setCallbackTime(externalPaidAt != null ? externalPaidAt : LocalDateTime.now());
             payment.setCreatedAt(LocalDateTime.now());
-            payment = paymentRepository.save(payment);
+            try {
+                payment = paymentRepository.save(payment);
+            } catch (org.springframework.dao.DuplicateKeyException raceWithConcurrentCallback) {
+                // 并发窗口内预检后被抢先：DB 唯一索引兜底，同样拒绝入账进入对账
+                log.warn("外部支付流水唯一约束冲突（并发回调），拒绝入账待人工对账: outerTransNo={}, paymentType={}, orderId={}",
+                        externalTransactionNo, resolvedType, order.getId());
+                throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED
+                        + ": 外部流水 " + externalTransactionNo + " 并发重复通知，已拒绝入账，请人工对账");
+            }
             payments.add(payment);
             totalPaid = totalPaid.add(preview.getExternalAmount());
         }

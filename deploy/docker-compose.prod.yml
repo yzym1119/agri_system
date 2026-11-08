@@ -68,7 +68,7 @@ services:
     networks:
       - agri-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health/ready || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -106,7 +106,7 @@ services:
     networks:
       - agri-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8081/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/health/ready || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 3

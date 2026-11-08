@@ -20,6 +20,9 @@ public class OrderPaymentIntent {
 
     private String intentNo;
 
+    /** 发起请求幂等键（可空）：同键重复请求重放同一意图，防止网络重试作废已创建意图 */
+    private String requestKey;
+
     private Long orderId;
 
     private Long customerId;

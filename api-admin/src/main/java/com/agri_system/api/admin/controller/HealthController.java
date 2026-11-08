@@ -16,15 +16,20 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 健康检查（含依赖探测）。
+ * 健康检查：区分存活(liveness)与就绪(readiness)两级。
  *
- * <p>固定 "UP" 不校验依赖会让 nginx/容器健康检查在数据库、Redis 故障时误报可用。
- * 此处实际探测数据库连通性与 Redis PING；任一依赖失败返回 503，
- * 使容器 healthcheck 置为 unhealthy、部署脚本不误判发布成功。</p>
+ * <ul>
+ *   <li>{@code GET /health}：轻量存活检查，不触碰任何依赖、无 IO，供进程探活与 LB 摘除前的快速判断。</li>
+ *   <li>{@code GET /health/ready}：依赖就绪检查，真实探测数据库与 Redis，任一失败返回 503，
+ *       使容器 healthcheck 置为 unhealthy、部署脚本不误判发布成功。该路径由 nginx 限制为仅本机访问。</li>
+ * </ul>
+ *
+ * <p>Redis 探测经 {@code redisTemplate.execute(RedisCallback)} 托管回调：
+ * 连接的获取与释放由模板负责，杜绝 {@code getConnection()} 裸调用造成的连接泄漏。</p>
  */
 @RestController
 @RequestMapping("/health")
-@Tag(name = "健康检查", description = "系统健康检查接口（含数据库与Redis依赖探测）")
+@Tag(name = "健康检查", description = "存活检查(轻量)与依赖就绪检查(数据库+Redis)")
 @RequiredArgsConstructor
 public class HealthController {
 
@@ -32,8 +37,18 @@ public class HealthController {
     private final StringRedisTemplate redisTemplate;
 
     @GetMapping
-    @Operation(summary = "健康检查", description = "返回系统及依赖健康状态")
-    public ResponseEntity<Map<String, Object>> health() {
+    @Operation(summary = "存活检查", description = "轻量探活：不校验外部依赖，无 IO 开销")
+    public ResponseEntity<Map<String, Object>> live() {
+        Map<String, Object> result = new HashMap<>();
+        result.put("service", "api-admin");
+        result.put("status", "UP");
+        result.put("timestamp", LocalDateTime.now());
+        return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/ready")
+    @Operation(summary = "就绪检查", description = "真实探测数据库与 Redis，任一失败返回 503")
+    public ResponseEntity<Map<String, Object>> ready() {
         Map<String, Object> result = new HashMap<>();
         result.put("service", "api-admin");
         result.put("timestamp", LocalDateTime.now());
@@ -57,10 +72,11 @@ public class HealthController {
         }
     }
 
+    /** 经 RedisTemplate 托管回调执行 PING：连接由模板借还，避免手动 getConnection 泄漏。 */
     private String checkRedis() {
         try {
-            if (redisTemplate.getConnectionFactory() == null) return "DOWN";
-            String pong = redisTemplate.getConnectionFactory().getConnection().ping();
+            String pong = redisTemplate.execute((org.springframework.data.redis.core.RedisCallback<String>)
+                    connection -> connection.ping());
             return "PONG".equalsIgnoreCase(pong) ? "UP" : "DOWN";
         } catch (Exception e) {
             return "DOWN";

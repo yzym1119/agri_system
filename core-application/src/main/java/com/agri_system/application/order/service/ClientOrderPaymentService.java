@@ -103,20 +103,36 @@ public class ClientOrderPaymentService {
 
     /**
      * 生成外部支付发起信息（小程序）
-     * 旧意图失效与新意图落库必须同事务，避免出现旧意图已不可用、新意图未创建的中间态。
+     * 锁顺序约定（全服务统一为「订单行锁 → 支付意图行锁」，避免与确认路径互等死锁）：
+     * 先取订单行锁串行化同订单的并发发起，再做幂等重放/旧意图失效/新意图落库。
+     * 幂等键 requestKey：重复或网络重试请求重放同一意图，绝不作废已创建的待确认意图。
      */
     @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public OrderExternalPaymentIntentVO createExternalPaymentIntent(OrderPayCommand command, Long customerId) {
-        Order order = loadPendingCustomerOrder(command.getOrderId(), customerId);
+        String requestKey = normalizeRequestKey(command.getRequestKey());
+        // 订单维度状态协调：行锁串行化并发发起，两个并发请求不可能各建一个待确认意图
+        Order order = orderRepository.findByIdForUpdate(command.getOrderId())
+                .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
+        validatePendingCustomerOrder(order, customerId);
         OrderPayPreviewVO preview = buildClientPaymentPreview(order, command);
         if (preview.getExternalAmount().compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 当前订单无需外部支付");
+        }
+
+        if (requestKey != null) {
+            // 幂等重放：同键请求必须与原请求参数一致，防止键冲突把客户 A 的意图发给客户 B
+            OrderPaymentIntent existing = paymentIntentRepository.findByRequestKey(requestKey).orElse(null);
+            if (existing != null) {
+                validateRequestKeyReplay(existing, order, customerId, preview);
+                return toIntentVO(existing, order, preview);
+            }
         }
 
         paymentIntentRepository.expirePendingByOrderId(order.getId());
 
         OrderPaymentIntent intentRecord = new OrderPaymentIntent();
         intentRecord.setIntentNo(generatePaymentIntentNo(order.getId()));
+        intentRecord.setRequestKey(requestKey);
         intentRecord.setOrderId(order.getId());
         intentRecord.setCustomerId(customerId);
         intentRecord.setUseBalance(Boolean.TRUE.equals(command.getUseBalance()));
@@ -130,15 +146,53 @@ public class ClientOrderPaymentService {
         intentRecord.setUpdatedAt(LocalDateTime.now());
         paymentIntentRepository.save(intentRecord);
 
+        return toIntentVO(intentRecord, order, preview);
+    }
+
+    private String normalizeRequestKey(String requestKey) {
+        if (requestKey == null || requestKey.isBlank()) {
+            return null;
+        }
+        if (requestKey.length() > 64) {
+            throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": requestKey 不能超过64字符");
+        }
+        return requestKey;
+    }
+
+    /** 幂等键冲突校验：订单、客户、金额、支付方式必须与原请求完全一致（金额已隐含余额/专用金/券抵扣选项）。 */
+    private void validateRequestKeyReplay(OrderPaymentIntent existing, Order order, Long customerId,
+                                          OrderPayPreviewVO preview) {
+        if (!order.getId().equals(existing.getOrderId()) || !customerId.equals(existing.getCustomerId())) {
+            throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED
+                    + ": requestKey 已被其他订单或客户占用，请更换后重试");
+        }
+        if (preview.getExternalAmount().compareTo(existing.getExternalAmount()) != 0) {
+            throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED
+                    + ": requestKey 对应的支付意图金额已变化，请更换 requestKey 后重新发起");
+        }
+    }
+
+    private OrderExternalPaymentIntentVO toIntentVO(OrderPaymentIntent intentRecord, Order order,
+                                                    OrderPayPreviewVO preview) {
         OrderExternalPaymentIntentVO intent = new OrderExternalPaymentIntentVO();
         intent.setIntentNo(intentRecord.getIntentNo());
         intent.setOrderId(order.getId());
         intent.setOrderNo(order.getOrderNo());
         intent.setExternalPaymentType(intentRecord.getExternalPaymentType());
-        intent.setExternalAmount(preview.getExternalAmount());
+        intent.setExternalAmount(intentRecord.getExternalAmount());
         intent.setExpireAt(intentRecord.getExpireAt());
         intent.setPreview(preview);
         return intent;
+    }
+
+    /** 发起路径与确认路径共用的订单归属与状态校验（不带锁版本，锁由调用方持有）。 */
+    private void validatePendingCustomerOrder(Order order, Long customerId) {
+        if (order.getOrderStatus() == null || order.getOrderStatus() != 1) {
+            throw new IllegalArgumentException(OrderErrorCode.ORDER_STATUS_INVALID + ": 订单状态不正确");
+        }
+        if (order.getCustomerId() == null || !order.getCustomerId().equals(customerId)) {
+            throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 无权操作此订单");
+        }
     }
 
     /**
@@ -155,6 +209,14 @@ public class ClientOrderPaymentService {
         }
         if (command.getOrderId() == null || !command.getOrderId().equals(intent.getOrderId())) {
             throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 支付意图与订单不一致");
+        }
+        // 回调核验（V140）：商户订单号由 intentNo 绑定订单体现；实付金额/状态在 confirmExternalPaymentIntent 中
+        // 经 preview 比对与条件锁定核验；此处补齐支付平台一致性——确认声明的渠道必须与发起意图一致，
+        // 防止用支付宝流水确认微信意图。平台订单号/币种/商户号字段待真实平台接入时随 V141 扩展。
+        if (!java.util.Objects.equals(resolveExternalPaymentType(command.getExternalPaymentType()),
+                intent.getExternalPaymentType())) {
+            throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED
+                    + ": 支付方式与发起意图不一致，请核对支付渠道");
         }
         confirmExternalPaymentIntent(intent, command.getExternalTransactionNo(), command.getExternalPaidAt(), customerId);
     }
@@ -234,6 +296,10 @@ public class ClientOrderPaymentService {
                                               String externalTransactionNo,
                                               LocalDateTime externalPaidAt,
                                               Long operatorId) {
+        // 锁顺序（全服务统一「订单行锁 → 意图行锁」）：先持订单行锁，再 claim 意图行锁，
+        // 与发起路径 createExternalPaymentIntent 一致，避免支付意图锁与订单锁相互等待死锁。
+        Order order = orderRepository.findByIdForUpdate(intent.getOrderId())
+                .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
         if (intent.getStatus() != null && intent.getStatus() == 2) {
             if (externalTransactionNo.equals(intent.getExternalTransactionNo())) {
                 return;
@@ -267,8 +333,6 @@ public class ClientOrderPaymentService {
                     + "请按流水号 " + externalTransactionNo + " 人工对账退款");
         }
 
-        Order order = orderRepository.findByIdForUpdate(intent.getOrderId())
-                .orElseThrow(() -> new IllegalArgumentException(OrderErrorCode.ORDER_NOT_FOUND + ": 订单不存在"));
         if (order.getOrderStatus() != null && order.getOrderStatus() != 1) {
             if (paymentRepository.findByOrderIdAndOuterTransNo(order.getId(), externalTransactionNo).isPresent()) {
                 intent.setStatus(2);
