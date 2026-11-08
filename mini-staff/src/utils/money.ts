@@ -8,3 +8,11 @@ export function money(value: string | number | null | undefined): string {
   if (text === '' || !/^-?\d+(\.\d+)?$/.test(text)) return text;
   return Number(text).toFixed(2);
 }
+
+/** 单位成本与库存数量仅去掉无意义尾零，保留原始有效小数，不转浮点数。 */
+export function preciseDecimal(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return '';
+  const text = String(value).trim();
+  if (!/^-?\d+(\.\d+)?$/.test(text)) return text;
+  return text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text;
+}

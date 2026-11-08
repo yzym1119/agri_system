@@ -53,3 +53,14 @@ test('旧页核对响应不能覆盖返回前台后的新视图', async()=>{
   f.page.hooks.hide();await f.page.hooks.show();resolve(complete(9));await old;
   assert.equal(f.page.state.result.value,null);assert.equal(f.page.state.busy.value,false);assert.equal(f.data.size,1);
 });
+test('收银核对隐藏即清理金融视图，不删除原请求，旧页面不能继续发起核对',async()=>{
+ const f=await fixture();await f.page.hooks.show();assert.ok(f.page.state.pending.value);
+ f.page.hooks.hide();assert.equal(f.page.state.pending.value,null);assert.equal(f.page.state.result.value,null);
+ await f.page.state.act('read');assert.equal(f.counts().reads,0);assert.equal(f.data.size,1);
+});
+test('本机坏记录不显示成无待办，同员工新登录的旧页面不能操作原视图',async()=>{
+ const broken=await fixture();broken.data.set([...broken.data.keys()][0],'broken');await broken.page.hooks.show();
+ assert.equal(broken.page.state.restored.value,false);
+ const f=await fixture();await f.page.hooks.show();await f.auth.login('test','password');
+ await f.page.state.act('read');assert.equal(f.counts().reads,0);assert.equal(f.data.size,1);
+});

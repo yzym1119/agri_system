@@ -16,7 +16,7 @@ function loadUtil(name) {
   utilCache[name] = mod.exports;
   return mod.exports;
 }
-function setupPage(page, auth, configured = true, extraImports = {}) {
+function setupPage(page, auth, configured = true, extraImports = {}, platform = {}) {
   const file = path.join(__dirname, '../../src/pages',page,'index.vue');
   const { descriptor } = parse(fs.readFileSync(file, 'utf8'));
   const compiled = compileScript(descriptor, { id: page });
@@ -27,6 +27,7 @@ function setupPage(page, auth, configured = true, extraImports = {}) {
   }, '../../services/auth': { staffAuth: auth, serviceConfigured: configured },
   '../../utils/money': loadUtil('money'), '../../../utils/money': loadUtil('money'), ...extraImports };
   vm.runInNewContext(js, { module: mod, exports: mod.exports, Error, uni: {
+    ...platform,
     reLaunch: options => routes.push(options.url), navigateTo: options => routes.push(options.url),
     redirectTo: options=>routes.push(options.url),pageScrollTo: options=>scrolls.push(options.selector),
     setClipboardData:options=>{clipboard.push(options.data);options.success?.({errMsg:'ok'});},

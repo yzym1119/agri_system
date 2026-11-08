@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed, nextTick } from 'vue';
+import { money, preciseDecimal } from '../../../utils/money';
 import { onLoad,onShow,onHide } from '@dcloudio/uni-app';
-import { money } from '../../../utils/money';
 import { buildReceiptSnapshot,receiptMultiply,type ReceivingDetail,type ReceivingItem,type ReceiptSnapshot,type PendingReceipt,type ReceiptResult } from '@agri/mobile-contracts/receipt';
 import { isPositiveLongId } from '@agri/mobile-contracts/ids';
 import { staffAuth } from '../../../services/auth';
@@ -12,6 +12,9 @@ type LineDraft={purchaseOrderItemId:string;included:boolean;remark:string;batche
 const detail=ref<ReceivingDetail|null>(null),drafts=ref<LineDraft[]>([]),preview=ref<ReceiptSnapshot|null>(null),pending=ref<PendingReceipt|null>(null),result=ref<ReceiptResult|null>(null);
 const allowed=ref(false),loading=ref(true),busy=ref(false),confirmed=ref(false),finished=ref(false),message=ref(''),remark=ref(''),exceptionReason=ref('');
 const scanInput=ref(''),scanMessage=ref(''),scanMatches=ref<ReceivingItem[]>([]),locatedLine=ref('');
+const activeLine=ref(''),reviewError=ref('');
+const includedCount=computed(()=>drafts.value.filter(line=>line.included).length);
+function toggleLine(line:LineDraft){if(!editable()||!drafts.value.includes(line))return;activeLine.value=activeLine.value===line.purchaseOrderItemId?'':line.purchaseOrderItemId;}
 let orderId:string|null=null,generation=0,actorEpoch=-1,visible=false,batchSequence=0;
 type DraftOwner={staffId:string;storeId:string;orderId:string};
 let loadedOwner:DraftOwner|null=null,savedDraft:(DraftOwner&{lines:LineDraft[];remark:string;exceptionReason:string})|null=null;
@@ -23,7 +26,7 @@ onLoad(options=>{orderId=isPositiveLongId(options?.orderId)?options.orderId:null
 onShow(async()=>{
  cacheDraft();loadedOwner=null;
  visible=true;const ticket=++generation;allowed.value=false;loading.value=true;busy.value=false;confirmed.value=false;finished.value=false;
- detail.value=null;drafts.value=[];preview.value=null;pending.value=null;result.value=null;message.value='';remark.value='';exceptionReason.value='';scanInput.value='';scanMessage.value='';scanMatches.value=[];locatedLine.value='';
+ activeLine.value='';reviewError.value='';detail.value=null;drafts.value=[];preview.value=null;pending.value=null;result.value=null;message.value='';remark.value='';exceptionReason.value='';scanInput.value='';scanMessage.value='';scanMatches.value=[];locatedLine.value='';
  try{
   await staffAuth.refresh();if(!visible||ticket!==generation)return;
   const actor=staffAuth.current();if(!actor)throw Error('UNAUTHORIZED');actorEpoch=actor.epoch;
@@ -36,6 +39,7 @@ onShow(async()=>{
   const loaded=await readReceivingDetail(orderId,actorEpoch);if(!current(ticket))return;
   detail.value=loaded;const cached=savedDraft;
   drafts.value=loaded.items.map(item=>cached?.lines.find(l=>l.purchaseOrderItemId===item.id)??{purchaseOrderItemId:item.id,included:item.remainingBaseQuantity!=='0',remark:'',batches:[newBatch(item.orderedUnit)]});
+  activeLine.value=drafts.value.find(line=>line.included)?.purchaseOrderItemId??drafts.value[0]?.purchaseOrderItemId??'';
   loadedOwner={staffId:actor.staffId,storeId:actor.storeId,orderId:loaded.id};
   if(cached){remark.value=cached.remark;exceptionReason.value=cached.exceptionReason;message.value='已恢复尚未提交的输入；采购资料已重新读取，请重新核对本次数量、进价和日期。';}
   savedDraft=null;
@@ -47,7 +51,7 @@ onShow(async()=>{
   catch{allowed.value=false;message.value='本机收货记录读取异常，暂停新的收货，请联系老板核对，不要清除数据。';}
  }finally{if(visible&&ticket===generation&&staffAuth.current()?.epoch===actorEpoch)loading.value=false;}
 });
-onHide(()=>{cacheDraft();loadedOwner=null;visible=false;generation++;allowed.value=false;detail.value=null;drafts.value=[];preview.value=null;pending.value=null;result.value=null;confirmed.value=false;remark.value='';exceptionReason.value='';scanInput.value='';scanMessage.value='';scanMatches.value=[];locatedLine.value='';});
+onHide(()=>{reviewError.value='';cacheDraft();loadedOwner=null;visible=false;generation++;allowed.value=false;detail.value=null;drafts.value=[];preview.value=null;pending.value=null;result.value=null;confirmed.value=false;remark.value='';exceptionReason.value='';scanInput.value='';scanMessage.value='';scanMatches.value=[];locatedLine.value='';});
 function locateCode(value:string){
  if(!editable()||!detail.value)return;scanMatches.value=[];locatedLine.value='';const code=value.trim();
  if(!code||code.length>100){scanMessage.value='请输入完整商品编码或条码。';return;}
@@ -61,7 +65,7 @@ async function scanProduct(){
  }catch{if(current(ticket))scanMessage.value='暂时无法扫码，可手输编码定位。';}finally{if(ticket===generation)busy.value=false;}
 }
 function chooseLine(item:ReceivingItem){
- if(!editable()||!scanMatches.value.includes(item))return;locatedLine.value=item.id;const ticket=generation;
+ if(!editable()||!scanMatches.value.includes(item))return;activeLine.value=item.id;locatedLine.value=item.id;const ticket=generation;
  uni.pageScrollTo({selector:'#receipt-line-'+item.id,duration:150,fail:()=>{if(current(ticket))scanMessage.value='已标出 '+item.productName+'，请在下方核对采购行。';}});
 }
 function newBatch(unit:string):BatchDraft{return {clientId:++batchSequence,originalUnit:unit,originalQuantity:'',originalUnitCost:'',supplierBatchNo:'',productionDate:'',expiryDate:'',unknownDates:false};}
@@ -76,13 +80,20 @@ function hint(item:ReceivingItem,batch:BatchDraft){try{const unit=item.units.fin
  const base=receiptMultiply(batch.originalQuantity,unit.baseQuantityPerUnit);return batch.originalQuantity+' '+unit.name+' = '+base+' '+item.baseUnitName;
  }catch{return '请填写普通数字，不使用科学计数法。';}}
 function review(){
- if(!editable()||!detail.value)return;message.value='';
- try{preview.value=buildReceiptSnapshot(detail.value,drafts.value.filter(l=>l.included),{remark:remark.value,exceptionReason:exceptionReason.value});}
+ if(!editable()||!detail.value)return;message.value='';reviewError.value='';
+ try{preview.value=buildReceiptSnapshot(detail.value,drafts.value.filter(l=>l.included),{remark:remark.value,exceptionReason:exceptionReason.value});scrollToReceiptStart(preview.value);}
  catch(failure){preview.value=null;const code=failure instanceof Error?failure.message:'';
   message.value=code==='OVER_RECEIPT_REASON_REQUIRED'?'本次各批合计超过这条采购明细的待收数量，请先填写超收说明，或更正数量后重新核对。'
    :code==='QUANTITY_GRANULARITY'?'换算到最小单位后必须是完整数量，请核对箱内件数和实收数量。'
    :code==='DATE_CONFIRMATION_REQUIRED'?'请核对生产日期和有效期；两者都不知道时，明确勾选“日期未知”。'
-   :'请核对各批实际数量、每单位进价及单位；数量和进价须大于0，最多12位整数、8位有效小数。至少选择一条本次收货商品。';}
+   :'请核对各批实际数量、每单位进价及单位；数量和进价须大于0，最多12位整数、8位有效小数。至少选择一条本次收货商品。';reviewError.value=message.value;}
+}
+function scrollToReceiptStart(expected:ReceiptSnapshot|null){
+ const ticket=generation;
+ void nextTick(()=>{if(current(ticket)&&!busy.value&&!pending.value&&preview.value===expected)uni.pageScrollTo({selector:'#receipt-start',duration:0});});
+}
+function editReceipt(){
+ if(!editable()||!preview.value)return;preview.value=null;scrollToReceiptStart(null);
 }
 async function submit(){
  if(!editable()||!preview.value)return;const ticket=generation,snapshot=preview.value;busy.value=true;message.value='';confirmed.value=false;
@@ -106,14 +117,14 @@ async function act(kind:'read'|'retry'|'finish'){
 const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
 </script>
 <template>
- <view class="page" :class="{ 'page-dock': allowed && (preview || (!pending && detail && !finished)) }">
+ <view id="receipt-start" class="page" :class="{ 'page-dock': allowed && (preview || (!pending && detail && !finished)) }">
   <text v-if="loading" class="card t-meta">正在核对员工、采购单和本机记录…</text>
 
   <template v-else-if="allowed && pending">
    <view class="alert alert-danger">
     <AppIcon name="alert" :size="16" class="alert-icon" />
     <view class="grow">
-     <text class="t-strong">这笔收货结果待核对</text>
+     <text class="t-strong">{{ result?.status==='COMPLETED' ? '本次收货已入库' : '这笔收货结果待核对' }}</text>
      <text class="t-meta">不能修改或重新登记；同号重试不会建立另一笔收货。</text>
     </view>
    </view>
@@ -130,7 +141,7 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
       <text class="t-meta">第 {{ index + 1 }} 批</text>
       <text class="t-strong">{{ batch.originalQuantity }} {{ batch.originalUnit }}</text>
      </view>
-     <text class="t-code">= {{ batch.baseQuantity }} {{ line.baseUnitName }} · ¥{{ money(batch.originalUnitCost) }}/{{ batch.originalUnit }}</text>
+     <text class="t-code">= {{ batch.baseQuantity }} {{ line.baseUnitName }} · ¥{{ preciseDecimal(batch.originalUnitCost) }}/{{ batch.originalUnit }}</text>
      <text class="t-cap">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text>
     </view>
    </view>
@@ -138,7 +149,7 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy" :loading="busy" @click="act('read')">核对原收货结果</button>
 
    <view v-if="result?.status === 'COMPLETED'" class="card card-ok mt12">
-    <view class="row"><AppIcon name="check" :size="18" class="t-ok mr8" /><text class="t-sub">原收货已完成</text></view>
+    <view class="row"><AppIcon name="check" :size="18" class="t-ok mr8" /><text class="t-sub">已入库，请核对批次</text></view>
     <text class="t-code mt4">收货单 {{ result.receiptNo }}</text>
     <view v-for="line in result.lines" :key="line.purchaseOrderItemId">
      <text v-for="batch in line.batches" :key="batch.id" class="t-code">内部批次 {{ batch.internalBatchNo }}</text>
@@ -146,7 +157,7 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
     <checkbox-group @change="confirmed = $event.detail.value.includes('yes')">
      <label class="check-row"><checkbox class="check-box" value="yes" :checked="confirmed" :disabled="busy" /><text>我已核对原收货单和批次</text></label>
     </checkbox-group>
-    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary btn-sm" :disabled="busy || !confirmed" @click="act('finish')">结束已完成收货</button>
+    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary btn-sm" :disabled="busy || !confirmed" @click="act('finish')">完成本次核对</button>
    </view>
    <view v-else class="card mt12">
     <text class="t-body">查询不到不代表未入库。确需继续时按原内容、原请求号重试，不能换号。</text>
@@ -169,7 +180,7 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
       <text class="t-meta">第 {{ index + 1 }} 批</text>
       <text class="t-strong">{{ batch.originalQuantity }} {{ batch.originalUnit }}</text>
      </view>
-     <text class="t-code">= {{ batch.baseQuantity }} {{ line.baseUnitName }} · ¥{{ money(batch.originalUnitCost) }}/{{ batch.originalUnit }}</text>
+     <text class="t-code">= {{ batch.baseQuantity }} {{ line.baseUnitName }} · ¥{{ preciseDecimal(batch.originalUnitCost) }}/{{ batch.originalUnit }}</text>
      <text class="t-code">本批 ¥{{ money(receiptMultiply(batch.originalQuantity, batch.originalUnitCost)) }}</text>
      <text class="t-cap">厂家批号：{{ batch.supplierBatchNo ?? '未提供' }}</text>
      <text class="t-cap">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text>
@@ -179,7 +190,7 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
     <view v-if="preview.exceptionReason" class="kv"><text class="kv-key">超收说明</text><text class="kv-val">{{ preview.exceptionReason }}</text></view>
     <view v-if="preview.remark" class="kv"><text class="kv-key">备注</text><text class="kv-val">{{ preview.remark }}</text></view>
    </view>
-   <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost" :disabled="busy" @click="preview = null">返回修改</button>
+   <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost" :disabled="busy" @click="editReceipt">返回修改</button>
   </template>
 
   <template v-else-if="allowed && detail && !finished">
@@ -217,7 +228,8 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
       <label class="check-row"><checkbox class="check-box" value="yes" :checked="line.included" :disabled="busy" /><text>本次收这个商品</text></label>
      </checkbox-group>
 
-     <template v-if="line.included">
+     <button v-if="line.included" class="btn btn-quiet btn-sm" :disabled="busy" @click="toggleLine(line)">{{ activeLine===line.purchaseOrderItemId ? '收起填写内容 ↑' : '填写本次到货 ↓' }}</button>
+     <template v-if="line.included && activeLine===line.purchaseOrderItemId">
       <view v-for="(batch, index) in line.batches" :key="batch.clientId" class="batch-box">
        <view class="row-between">
         <text class="t-strong">第 {{ index + 1 }} 批</text>
@@ -289,7 +301,7 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
   <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-quiet" :disabled="busy" @click="back">返回待收采购单</button>
 
   <view v-if="allowed && !pending && !preview && detail && !finished" class="dock">
-   <view class="dock-inner"><button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy" @click="review">核对本次收货摘要</button></view>
+   <view class="dock-inner"><view class="grow"><text v-if="reviewError" class="t-danger" role="alert">{{ reviewError }}</text><button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy" @click="review">核对本次收货摘要</button></view></view>
   </view>
   <view v-else-if="allowed && preview" class="dock">
    <view class="dock-inner"><button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy" :loading="busy" @click="submit">确认本次入库</button></view>

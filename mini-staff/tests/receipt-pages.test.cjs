@@ -11,20 +11,20 @@ async function fixture(page='receipt/detail',permissions=['purchase:inbound']){
  const auth=createStaffAuth(async req=>({statusCode:200,data:req.url.endsWith('/login')?{tokenName:'Authorization',tokenValue:'test',userInfo:user}:user}));await auth.login('test','pass');
  const data=new Map(),storage={readStorage:k=>data.get(k)??null,writeStorage:(k,v)=>data.set(k,v),removeStorage:k=>data.delete(k)};
  const recovery=contracts.createReceiptRecovery(storage,()=>auth.current(),async()=>KEY);
- let source=detail,result=completed(),camera={status:'SCANNED',code:'BOX10',scanType:'CODE_128'};const calls={detail:0,list:0,send:0,read:0};
+ let source=detail,result=completed(),listSource=null,camera={status:'SCANNED',code:'BOX10',scanType:'CODE_128'};const calls={detail:0,list:0,send:0,read:0};
  const api={receiptRecovery:recovery,readReceivingDetail:async()=>{calls.detail++;return typeof source==='function'?source():structuredClone(source);},
-   readReceivingOrders:async page=>{calls.list++;return{storeId:'1',page,hasMore:false,orders:[{id:'8',orderNo:'PO8',supplierName:'测试供应商'}]};},
+   readReceivingOrders:async page=>{calls.list++;if(listSource)return listSource(page);return{storeId:'1',page,hasMore:false,orders:[{id:'8',orderNo:'PO8',supplierName:'测试供应商'}]};},
    sendReceipt:async command=>{calls.send++;assert.equal(data.size,1);assert.equal(command.requestKey,KEY);return undefined;},
    readReceiptResult:async key=>{calls.read++;assert.equal(key,KEY);return typeof result==='function'?result():result;}};
  const p=setupPage(page,auth,true,{'../../../services/auth':{staffAuth:auth},'../../../services/receipt':api,
    '../../../services/platform':{mobilePlatform:{scan:async()=>camera}},'@agri/mobile-contracts/receipt':contracts,'@agri/mobile-contracts/ids':ids});
- return {p,auth,data,recovery,calls,setDetail:v=>source=v,setResult:v=>result=v,setCamera:v=>camera=v,setUser:v=>user=v};
+ return {p,auth,data,recovery,calls,setList:v=>listSource=v,setDetail:v=>source=v,setResult:v=>result=v,setCamera:v=>camera=v,setUser:v=>user=v};
 }
 function fill(f){const b=f.p.state.drafts.value[0].batches[0];b.originalQuantity='0.5';b.originalUnitCost='120';b.unknownDates=true;}
 test('手机收货空成本不预造，半箱换算完整最小单位，提交先摘要再确认',async()=>{
  const f=await fixture();f.p.hooks.load({orderId:'8'});await f.p.hooks.show();
- assert.equal(f.p.state.drafts.value[0].batches[0].originalUnitCost,'');f.p.state.review();assert.equal(f.p.state.preview.value,null);assert.equal(f.calls.send,0);
- fill(f);f.p.state.review();assert.equal(f.p.state.preview.value.lines[0].batches[0].baseQuantity,'6');assert.equal(f.calls.send,0);
+ assert.equal(f.p.state.drafts.value[0].batches[0].originalUnitCost,'');f.p.state.review();assert.equal(f.p.state.preview.value,null);assert.equal(f.calls.send,0);assert.ok(f.p.state.reviewError.value);
+ fill(f);f.p.state.review();assert.equal(f.p.state.reviewError.value,'');assert.equal(f.p.state.preview.value.lines[0].batches[0].baseQuantity,'6');assert.equal(f.calls.send,0);
  await f.p.state.submit();assert.equal(f.calls.send,1);assert.equal(f.p.state.pending.value.requestKey,KEY);assert.equal(f.p.state.result.value.receiptId,'90');
 });
 test('未知结果冻结原体，不准换采购单新收；显式同体重试仍用原号',async()=>{
@@ -66,7 +66,7 @@ test('收货扫码只定位本采购行，重码必须选行，不代填数量�
  const f=await fixture();const two=structuredClone(detail);two.items.push({...structuredClone(two.items[0]),id:'82'});f.setDetail(two);
  f.p.hooks.load({orderId:'8'});await f.p.hooks.show();await f.p.state.scanProduct();
  assert.equal(f.p.state.scanMatches.value.length,2);assert.equal(f.p.scrolls.length,0);
- f.p.state.chooseLine(f.p.state.scanMatches.value[1]);assert.equal(f.p.scrolls[0],'#receipt-line-82');assert.equal(f.p.state.drafts.value[1].batches[0].originalQuantity,'');assert.equal(f.calls.send,0);
+ f.p.state.chooseLine(f.p.state.scanMatches.value[1]);assert.equal(f.p.state.activeLine.value,'82');assert.equal(f.p.scrolls[0],'#receipt-line-82');assert.equal(f.p.state.drafts.value[1].batches[0].originalQuantity,'');assert.equal(f.calls.send,0);
  f.setCamera({status:'SCANNED',code:'INTERNAL-FAKE',scanType:'CODE_128'});await f.p.state.scanProduct();assert.equal(f.p.state.scanMatches.value.length,0);assert.match(f.p.state.scanMessage.value,/没有匹配/);
  f.setCamera({status:'DENIED'});await f.p.state.scanProduct();assert.match(f.p.state.scanMessage.value,/手输/);
  f.p.state.locateCode('BOX10');assert.equal(f.p.state.scanMatches.value.length,2);
@@ -102,4 +102,37 @@ test('原收货处理中登录失效仍跳登录，不能清除原收货记录',
   await f.auth.logout();resolve(completed());await old;assert.equal(f.p.routes.at(-1),'/pages/login/index');assert.equal(f.data.size,1);
  }
  const denied=await fixture('receipt/detail',[]);denied.p.hooks.load({orderId:'8'});await denied.p.hooks.show();assert.equal(denied.p.state.loading.value,false);
+});
+
+test('收货切换展开商品不清除输入，不改变确认摘要，也不提前写入库存',async()=>{
+ const f=await fixture();const two=structuredClone(detail);two.items.push({...structuredClone(two.items[0]),id:'82',productId:'20'});f.setDetail(two);
+ f.p.hooks.load({orderId:'8'});await f.p.hooks.show();fill(f);f.p.state.drafts.value[1].included=false;
+ f.p.state.review();const before=JSON.stringify(f.p.state.preview.value);f.p.state.preview.value=null;
+ f.p.state.toggleLine(f.p.state.drafts.value[1]);f.p.state.toggleLine(f.p.state.drafts.value[0]);
+ assert.equal(f.p.state.drafts.value[0].batches[0].originalQuantity,'0.5');assert.equal(f.p.state.drafts.value[0].batches[0].originalUnitCost,'120');
+ f.p.state.review();assert.equal(JSON.stringify(f.p.state.preview.value),before);assert.equal(f.calls.send,0);
+});
+test('待核对原收货时不再读取其他待收单，直接入口仍回到原采购单',async()=>{
+ const f=await fixture('receipt/list');
+ const snapshot=contracts.buildReceiptSnapshot(detail,[{purchaseOrderItemId:'81',batches:[{originalUnit:'箱',originalQuantity:'0.5',originalUnitCost:'120',unknownDates:true}]}],{});
+ const unknown={requestKey:KEY,status:'UNKNOWN',storeId:'1',purchaseOrderId:null,receiptId:null,receiptNo:null,lines:[]};
+ await f.recovery.submit(snapshot,async()=>{},async()=>unknown);
+ await f.p.hooks.show();assert.equal(f.calls.list,0);assert.equal(f.p.state.pending.value.snapshot.purchaseOrderId,'8');
+ await f.p.state.load(1);assert.equal(f.calls.list,0);
+ f.p.state.open('99');assert.equal(f.p.routes[0],'/pages/receipt/detail/index?orderId=8');
+});
+test('采购单读取失败与成功空列表分别标记，失败不显示成已查到零笔',async()=>{
+ const f=await fixture('receipt/list');f.setList(async()=>{throw Error('offline');});await f.p.hooks.show();
+ assert.equal(f.p.state.loaded.value,false);assert.match(f.p.state.message.value,/未完成/);
+ f.setList(async()=>({storeId:'1',page:1,hasMore:false,orders:[]}));await f.p.state.load(1);
+ assert.equal(f.p.state.loaded.value,true);assert.equal(f.p.state.orders.value.length,0);
+});
+
+test('收货核对与返回修改回到页首且保留草稿，隐藏后不滚动新页面',async()=>{
+ const f=await fixture();f.p.hooks.load({orderId:'8'});await f.p.hooks.show();fill(f);
+ f.p.state.review();await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.scrolls.at(-1),'#receipt-start');assert.equal(f.p.state.preview.value.lines[0].batches[0].baseQuantity,'6');
+ f.p.state.editReceipt();await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.state.preview.value,null);assert.equal(f.p.state.drafts.value[0].batches[0].originalQuantity,'0.5');assert.equal(f.p.scrolls.at(-1),'#receipt-start');
+ f.p.scrolls.length=0;f.p.state.review();f.p.hooks.hide();await new Promise(r=>setImmediate(r));assert.equal(f.p.scrolls.length,0);assert.equal(f.calls.send,0);
 });

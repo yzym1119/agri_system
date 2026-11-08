@@ -5,7 +5,7 @@ import { staffAuth } from '../../services/auth';
 import { readCatalog, searchCatalog, readStock, searchCustomers, quoteProduct, submitSale } from '../../services/sale';
 import { posRecovery, readPOSResult } from '../../services/pos-recovery';
 import { lineCents, type CatalogProduct, type PosCustomer, type SaleLine } from '@agri/mobile-contracts/sale';
-import { money } from '../../utils/money';
+import { money, preciseDecimal } from '../../utils/money';
 
 const products = ref<CatalogProduct[]>([]), keyword = ref('');
 const searchResults = ref<CatalogProduct[]>([]), searching = ref(false);
@@ -16,7 +16,7 @@ const selected = ref<CatalogProduct | null>(null), quantity = ref('1');
 /** 客户档案是唯一来源：选了客户才带会员价，配送时收货信息也取自这里。 */
 const customer = ref<PosCustomer | null>(null);
 const customerOpen = ref(false), customerKeyword = ref(''), customerResults = ref<PosCustomer[]>([]);
-const customerLoading = ref(false), customerSearchSeq = ref(0);
+const customerLoading = ref(false), customerSearchSeq = ref(0), customerError = ref('');
 const deliveryType = ref<1 | 2>(1), remark = ref('');
 const loading = ref(true), busy = ref(false), allowed = ref(false), blocked = ref(false);
 const message = ref(''), orderId = ref(''), epoch = ref(-1);
@@ -43,8 +43,7 @@ const current = (ticket = generation) => visible && allowed.value && ticket === 
 function stockText(product: CatalogProduct): string {
   const row = stock.value[product.id];
   if (!row) return '无库存记录';
-  const qty = Number(row.quantity);
-  const text = Number.isFinite(qty) ? qty.toFixed(qty % 1 === 0 ? 0 : 2) : row.quantity;
+  const text = preciseDecimal(row.quantity);
   return '库存 ' + text + (row.unit ? ' ' + row.unit : '');
 }
 const outOfStock = (product: CatalogProduct) => {
@@ -81,31 +80,35 @@ function scheduleSearch() {
   searchTimer = setTimeout(() => { void runSearch(query); }, 300);
 }
 async function runSearch(query: string) {
-  if (!current() || busy.value) return;
+  if (!current() || busy.value || query !== keyword.value.trim()) return;
   const seq = ++searchSeq;
   searching.value = true;
   try {
     const list = await searchCatalog(query, epoch.value);
-    if (!current() || seq !== searchSeq) return;
+    if (!current() || seq !== searchSeq || query !== keyword.value.trim()) return;
     searchResults.value = list;
     if (!list.length) message.value = '没有匹配的商品，可尝试编码、名称或条码搜索。';
   } catch {
     if (current() && seq === searchSeq) message.value = '商品搜索失败，请检查网络后重试。';
   } finally { if (seq === searchSeq) searching.value = false; }
 }
-watch(keyword, () => { if (current()) scheduleSearch(); });
+watch(keyword, () => {
+  searchSeq++; searchResults.value = []; searching.value = false;
+  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+  if (current()) scheduleSearch();
+}, { flush: 'sync' });
 
 /* ---------- 客户选择 ---------- */
 async function loadCustomers(query: string) {
   if (!current()) return;
   const seq = ++customerSearchSeq.value;
-  customerLoading.value = true;
+  customerLoading.value = true; customerError.value = ''; customerResults.value = [];
   try {
     const list = await searchCustomers(query, epoch.value);
     if (!current() || seq !== customerSearchSeq.value) return;
     customerResults.value = list;
   } catch {
-    if (current() && seq === customerSearchSeq.value) customerResults.value = [];
+    if (current() && seq === customerSearchSeq.value) { customerResults.value = []; customerError.value = '客户查询未完成，请重试；不要把网络失败当成客户未建档。'; }
   } finally { if (seq === customerSearchSeq.value) customerLoading.value = false; }
 }
 let customerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -116,13 +119,22 @@ function openCustomers() {
   customerKeyword.value = '';
   void loadCustomers('');
 }
-function closeCustomers() { customerOpen.value = false; customerKeyword.value = ''; }
+function closeCustomers() {
+  if (customerTimer) { clearTimeout(customerTimer); customerTimer = null; }
+  customerSearchSeq.value++; customerLoading.value = false; customerResults.value = []; customerError.value = '';
+  customerOpen.value = false; customerKeyword.value = '';
+}
+watch(customerKeyword, () => {
+  customerSearchSeq.value++; customerResults.value = []; customerLoading.value = false; customerError.value = '';
+  if (customerTimer) { clearTimeout(customerTimer); customerTimer = null; }
+}, { flush: 'sync' });
 function scheduleCustomerSearch() {
   if (customerTimer) clearTimeout(customerTimer);
-  customerTimer = setTimeout(() => { void loadCustomers(customerKeyword.value); }, 300);
+  const query = customerKeyword.value;
+  customerTimer = setTimeout(() => { customerTimer = null; if (customerOpen.value && query === customerKeyword.value) void loadCustomers(query); }, 300);
 }
 function pickCustomer(item: PosCustomer) {
-  if (!current()) return;
+  if (!current() || !customerOpen.value || !customerResults.value.includes(item)) return;
   customer.value = item;
   closeCustomers();
   message.value = '';
@@ -165,7 +177,7 @@ onHide(() => { visible = false; generation++; allowed.value = false; customerOpe
 
 /* ---------- 商品选择与加入 ---------- */
 function choose(product: CatalogProduct) {
-  if (!current() || busy.value) return;
+  if (!current() || busy.value || requoting.value) return;
   selected.value = product; quantity.value = '1'; message.value = '';
 }
 function closeAdd() { selected.value = null; quantity.value = '1'; }
@@ -184,7 +196,12 @@ function stepQuantity(delta: number) {
 }
 async function addLine() {
   const product = selected.value;
-  if (!current() || busy.value || !product || !validQuantity(product, quantity.value)) {
+  if (!current() || busy.value || requoting.value) return;
+  if (lines.value.length && customerId.value.trim() !== quotedUnderCustomer) {
+    await requoteAllLines();
+    return;
+  }
+  if (!product || !validQuantity(product, quantity.value)) {
     message.value = '数量无效：整件单位只能填整数，计量单位最多四位小数。'; return;
   }
   busy.value = true; message.value = '';
@@ -236,7 +253,7 @@ async function requoteAllLines() {
 }
 watch(customerId, () => { if (current()) void requoteAllLines(); });
 function removeLine(index: number) {
-  if (!current() || busy.value) return;
+  if (!current() || busy.value || requoting.value) return;
   lines.value = lines.value.filter((_, i) => i !== index); message.value = '';
 }
 function saleOptions() {
@@ -347,7 +364,7 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
    <view v-for="(line, index) in lines" :key="line.productId + ':' + index" class="card card-tight">
     <view class="row-between">
      <text class="t-sub grow">{{ line.name }}</text>
-     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-danger-quiet btn-sm btn-auto" :disabled="busy" @click="removeLine(index)">移除</button>
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-danger-quiet btn-sm btn-auto" :disabled="busy || requoting" @click="removeLine(index)">移除</button>
     </view>
     <view class="row-between mt4">
      <text class="t-meta">{{ line.quantity }} {{ line.unit }} · 单价 ¥{{ money(line.quotedUnitPrice) }}</text>
@@ -452,6 +469,7 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
     <view class="sheet-body">
      <scroll-view scroll-y class="sheet-list">
       <view v-if="customerLoading" class="row mt12"><view class="spinner spinner-primary"></view><text class="t-meta">正在读取客户档案…</text></view>
+      <view v-else-if="customerError" class="alert alert-danger" role="status"><text>{{ customerError }}</text><button class="btn btn-ghost btn-sm" @click="loadCustomers(customerKeyword)">重试查询</button></view>
       <view v-else-if="!customerResults.length" class="empty">
        <view class="empty-icon"><AppIcon name="user" :size="22" /></view>
        <text class="empty-text">{{ customerKeyword.trim() ? '没有匹配的客户，换个姓名或手机号再试。' : '后台还没有客户档案，可直接按散客开单。' }}</text>

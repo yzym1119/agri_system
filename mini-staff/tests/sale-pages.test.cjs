@@ -43,6 +43,8 @@ async function fixture(permissions = ['pos:order:create']) {
     setCustomers: v => customers = v };
 }
 
+function selectCustomer(f,item){f.p.state.customerOpen.value=true;f.p.state.customerResults.value=[item];f.p.state.pickCustomer(f.p.state.customerResults.value[0]);}
+
 test('无收银权限不读取目录，也不开放开单', async () => {
   const f = await fixture(['inventory:view']);
   await f.p.hooks.show();
@@ -100,7 +102,7 @@ test('添加商品过程中切换客户：普通零售价不得标成按新客�
   f.p.state.choose(product);
   const adding = f.p.state.addLine(); // 未选客户时的普通零售价报价进行中
   await new Promise(r => setImmediate(r));
-  f.p.state.pickCustomer(customer77); // 期间选了客户；购物车为空，重报价监听跳过
+  selectCustomer(f,customer77); // 期间选了客户；购物车为空，重报价监听跳过
   await new Promise(r => setImmediate(r));
   resolveQuote({ ...quote, suggestedUnitPrice: '12.34' }); // 普通零售价返回
   await adding;
@@ -168,7 +170,7 @@ test('客户检索面板按关键字查后台档案，选中后关闭面板并�
   assert.equal(f.p.state.customerResults.value.length, 0);
   f.p.state.customerKeyword.value = ''; f.p.state.scheduleCustomerSearch();
   await new Promise(r => setTimeout(r, 350));
-  f.p.state.pickCustomer(customer77);
+  selectCustomer(f,customer77);
   assert.equal(f.p.state.customerOpen.value, false);
   assert.equal(f.p.state.customer.value.name, '张三农资');
   assert.equal(f.p.state.customerId.value, '77');
@@ -185,14 +187,14 @@ test('门店配送必须先选客户，且客户档案缺电话或地址时阻�
   assert.equal(f.calls.submit.length, 0);
   assert.match(f.p.state.message.value, /先选客户/);
 
-  f.p.state.pickCustomer({ ...customer77, address: null });
+  selectCustomer(f,{ ...customer77, address: null });
   await new Promise(r => setImmediate(r));
   f.p.state.deliveryType.value = 2;
   await f.p.state.checkout();
   assert.equal(f.calls.submit.length, 0);
   assert.match(f.p.state.message.value, /缺少地址/);
 
-  f.p.state.pickCustomer({ ...customer77, phone: '' });
+  selectCustomer(f,{ ...customer77, phone: '' });
   await new Promise(r => setImmediate(r));
   await f.p.state.checkout();
   assert.equal(f.calls.submit.length, 0);
@@ -201,7 +203,7 @@ test('门店配送必须先选客户，且客户档案缺电话或地址时阻�
 
 test('选了客户即可配送：命令不带收货人，三项恒为空由后端按档案带出', async () => {
   const f = await fixture(); await f.p.hooks.show();
-  f.p.state.pickCustomer(customer77);
+  selectCustomer(f,customer77);
   await new Promise(r => setImmediate(r));
   f.p.state.choose(product); await f.p.state.addLine();
   f.p.state.deliveryType.value = 2; f.p.state.remark.value = '备注';
@@ -231,7 +233,7 @@ test('客户变更后购物车全部明细按新客户重取报价指纹', async
   f.p.state.choose({ ...product, id: '12', code: 'P002', name: '尿素' }); await f.p.state.addLine();
   const retailCount = f.calls.quote.length;
   f.setQuote({ ...quote, suggestedUnitPrice: '9.90' }); // 模拟 VIP 会员价
-  f.p.state.pickCustomer(customer77);
+  selectCustomer(f,customer77);
   await new Promise(r => setImmediate(r));
   assert.equal(f.calls.quote.length, retailCount + 2, '每条购物车明细都重取一次报价');
   assert.ok(f.calls.quote.slice(retailCount).every(c => c.customerId === '77'));
@@ -256,9 +258,9 @@ test('客户连续变更时慢的旧重报价结果被丢弃，指纹只在成�
   assert.equal(f.p.state.lines.value[0].quotedUnitPrice, '12.34');
   const resolvers = [];
   f.setQuote(() => new Promise(res => resolvers.push(res)));
-  f.p.state.pickCustomer(customer77); // 第一次重报价（挂起）
+  selectCustomer(f,customer77); // 第一次重报价（挂起）
   await new Promise(r => setImmediate(r));
-  f.p.state.pickCustomer(customer88); // 期间再次变更，第二次重报价
+  selectCustomer(f,customer88); // 期间再次变更，第二次重报价
   await new Promise(r => setImmediate(r));
   assert.equal(f.calls.quote.length, 3); // 首报价 + 两次重报价各一行
   resolvers[0]({ ...quote, suggestedUnitPrice: '5.00' }); // 慢的旧请求后到
@@ -276,10 +278,54 @@ test('重报价失败后指纹不得伪装成新客户，结算会触发重新�
   const f = await fixture(); await f.p.hooks.show();
   f.p.state.choose(product); await f.p.state.addLine();
   f.setQuote(() => { throw Error('QUOTE_FAILED'); });
-  f.p.state.pickCustomer(customer77);
+  selectCustomer(f,customer77);
   await new Promise(r => setImmediate(r));
   assert.match(f.p.state.message.value, /重新报价失败/);
   await f.p.state.checkout(); // 指纹仍是旧客户 → 结算被转为重新触发重报价而不是提交
   assert.equal(f.calls.submit.length, 0, '重报价失败时不得直接结算');
   assert.equal(f.calls.quote.length, 3, 'checkout 检测到指纹不一致会再次触发重报价');
+});
+
+test('审查复现：客户重新报价期间移除商品后不得被慢报价重新加入', async()=>{
+ const f=await fixture();await f.p.hooks.show();f.p.state.choose(product);await f.p.state.addLine();
+ let finish;f.setQuote(()=>new Promise(resolve=>{finish=resolve;}));
+ selectCustomer(f,customer77);await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.state.requoting.value,true);f.p.state.removeLine(0);
+ assert.equal(f.p.state.lines.value.length,1,'报价未完成时保留清单并阻止移除');
+ finish({...quote,suggestedUnitPrice:'9.90'});await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.state.lines.value.length,1,'报价只更新原清单');
+});
+test('审查复现：旧行重报价失败后新增商品不能伪装整单报价成功',async()=>{
+ const f=await fixture();await f.p.hooks.show();f.p.state.choose(product);await f.p.state.addLine();
+ f.setQuote(()=>{throw Error('offline');});selectCustomer(f,customer77);await new Promise(r=>setImmediate(r));
+ assert.match(f.p.state.message.value,/重新报价失败/);
+ f.setQuote({...quote,suggestedUnitPrice:'9.90'});f.p.state.choose(product);await f.p.state.addLine();
+ assert.equal(f.p.state.lines.value.length,1,'先修复旧行报价，本次不继续加入新商品');
+ assert.equal(f.p.state.lines.value[0].quotedUnitPrice,'9.90');assert.equal(f.calls.submit.length,0);
+ await f.p.state.checkout();assert.equal(f.calls.submit.length,1);assert.equal(f.calls.submit[0].lines[0].quotedUnitPrice,'9.90');
+});
+
+test('客户关键词改变立即作废旧列表，关闭面板不再发送防抖查询',async()=>{
+ const f=await fixture();await f.p.hooks.show();f.p.state.openCustomers();await new Promise(r=>setImmediate(r));
+ const old=f.p.state.customerResults.value[0];assert.ok(old);
+ f.p.state.customerKeyword.value='另一客户';f.p.state.scheduleCustomerSearch();
+ assert.equal(f.p.state.customerResults.value.length,0,'防抖等待期间不能保留旧客户可选行');
+ f.p.state.pickCustomer(old);assert.equal(f.p.state.customer.value,null);
+ f.p.state.closeCustomers();const before=f.calls.customerSearch.length;await new Promise(r=>setTimeout(r,350));
+ assert.equal(f.calls.customerSearch.length,before,'关闭后取消未发送的查询');
+});
+
+test('客户查询失败保留失败状态，不显示成没有客户档案',async()=>{
+ const f=await fixture();await f.p.hooks.show();f.setCustomers(null);
+ f.p.state.openCustomers();await new Promise(r=>setImmediate(r));
+ assert.equal(f.p.state.customerResults.value.length,0);assert.match(f.p.state.customerError.value,/查询未完成/);
+ assert.equal(f.p.state.customerLoading.value,false);assert.equal(f.calls.submit.length,0);
+});
+
+test('商品关键词变化在防抖前立即清理旧候选，旧词响应不能变成新词列表',async()=>{
+ const f=await fixture();await f.p.hooks.show();f.p.state.keyword.value='P001';await new Promise(r=>setTimeout(r,350));
+ assert.equal(f.p.state.searchResults.value.length,1);
+ f.p.state.keyword.value='没有这个商品';assert.equal(f.p.state.searchResults.value.length,0);
+ await f.p.state.runSearch('P001');assert.equal(f.p.state.searchResults.value.length,0);
+ f.p.hooks.hide();
 });

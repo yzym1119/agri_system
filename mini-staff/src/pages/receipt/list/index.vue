@@ -5,17 +5,17 @@ import type { ReceivingOrders,PendingReceipt } from '@agri/mobile-contracts/rece
 import { staffAuth } from '../../../services/auth';
 import { receiptRecovery,readReceivingOrders } from '../../../services/receipt';
 const orders=ref<ReceivingOrders['orders']>([]),pending=ref<PendingReceipt|null>(null),loading=ref(true),allowed=ref(false),message=ref('');
-const keyword=ref(''),page=ref(1),hasMore=ref(false);
+const keyword=ref(''),page=ref(1),hasMore=ref(false),loaded=ref(false);
 let generation=0,visible=false,actorEpoch=-1,lastQuery='';
 const current=(ticket=generation)=>visible&&allowed.value&&ticket===generation&&staffAuth.current()?.epoch===actorEpoch;
 onShow(async()=>{
-  visible=true;const ticket=++generation;allowed.value=false;loading.value=true;orders.value=[];pending.value=null;message.value='';
+  visible=true;const ticket=++generation;allowed.value=false;loading.value=true;loaded.value=false;orders.value=[];pending.value=null;message.value='';
   try{
     await staffAuth.refresh();if(!visible||ticket!==generation)return;
     const actor=staffAuth.current();if(!actor)throw Error('UNAUTHORIZED');actorEpoch=actor.epoch;
     allowed.value=actor.permissions.includes('*')||actor.permissions.includes('purchase:inbound');
     if(!allowed.value){message.value='当前账号没有采购收货权限，请联系老板。';return;}
-    pending.value=receiptRecovery.restore();await load(1,lastQuery);
+    pending.value=receiptRecovery.restore();if(!pending.value)await load(1,lastQuery);
   }catch{
     if(!visible||ticket!==generation)return;
     if(!staffAuth.current()){uni.reLaunch({url:'/pages/login/index'});return;}
@@ -24,9 +24,9 @@ onShow(async()=>{
 });
 onHide(()=>{visible=false;generation++;allowed.value=false;orders.value=[];pending.value=null;});
 async function load(next:number,query=lastQuery){
-  if(!current())return;const ticket=++generation;loading.value=true;orders.value=[];message.value='';
+  if(!current()||pending.value)return;const ticket=++generation;loading.value=true;loaded.value=false;orders.value=[];message.value='';
   try{const result=await readReceivingOrders(next,query,actorEpoch);if(!current(ticket))return;
-    orders.value=result.orders;page.value=result.page;hasMore.value=result.hasMore;lastQuery=query;
+    loaded.value=true;orders.value=result.orders;page.value=result.page;hasMore.value=result.hasMore;lastQuery=query;
     if(!result.orders.length)message.value='当前没有待收货采购单，或没有匹配到这个单号。';
   }catch{if(visible&&ticket===generation){if(!staffAuth.current())uni.reLaunch({url:'/pages/login/index'});else message.value='待收采购单读取未完成，请重试。';}}
   finally{if(ticket===generation)loading.value=false;}
@@ -46,7 +46,7 @@ function open(id:string){if(!current()||loading.value)return;uni.navigateTo({url
     </view>
 
     <view v-if="loading" class="card row"><view class="spinner spinner-primary"></view><text class="t-meta">正在读取待收采购单…</text></view>
-    <template v-else-if="allowed">
+    <template v-else-if="allowed && !pending">
       <view class="row block">
         <view class="grow search-wrap">
           <AppIcon name="search" :size="16" class="search-ic" />
@@ -66,7 +66,7 @@ function open(id:string){if(!current()||loading.value)return;uni.navigateTo({url
         </view>
       </view>
 
-      <view v-if="!orders.length" class="card empty">
+      <view v-if="loaded && !orders.length" class="card empty">
         <view class="empty-icon"><AppIcon name="doc" :size="22" /></view>
         <text class="empty-text">{{ message || '当前没有待收货采购单。' }}</text>
       </view>
@@ -77,10 +77,10 @@ function open(id:string){if(!current()||loading.value)return;uni.navigateTo({url
         <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto" :disabled="loading || !hasMore" @click="load(page + 1)">下一页</button>
       </view>
     </template>
-    <view v-else class="empty">
+    <view v-else-if="!allowed" class="empty">
       <view class="empty-icon"><AppIcon name="alert" :size="22" /></view>
       <text class="empty-text">{{ message || '当前账号没有采购收货权限，请联系老板。' }}</text>
     </view>
-    <text v-if="message && orders.length" class="t-cap" role="status">{{ message }}</text>
+    <text v-if="message && (orders.length || !loaded)" class="t-cap" role="status">{{ message }}</text>
   </view>
 </template>

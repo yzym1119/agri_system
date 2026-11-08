@@ -6,10 +6,12 @@ import { staffAuth } from '../../services/auth';
 import { posRecovery, readPOSResult, cancelPOSRequest } from '../../services/pos-recovery';
 const pending = ref<PendingSaleRecord | null>(null), result = ref<POSResult | null>(null);
 const loading = ref(true), busy = ref(false), allowed = ref(false), confirmed = ref(false);
-const message = ref('');
+const message = ref(''), restored = ref(false);
+let visible=false,actorEpoch=-1;
 let epoch = 0;
 const formatCents = (value: number) => { const text=String(value).padStart(3,'0'); return text.slice(0,-2)+'.'+text.slice(-2); };
 onShow(async () => {
+  visible=true;actorEpoch=-1;restored.value=false;
   const current = ++epoch;
   loading.value = true; allowed.value = false; busy.value = false; pending.value = null;
   result.value = null; confirmed.value = false; message.value = '';
@@ -18,9 +20,10 @@ onShow(async () => {
     if (current !== epoch) return;
     const actor = staffAuth.current();
     if (!actor) throw Error('UNAUTHORIZED');
+    actorEpoch=actor.epoch;
     allowed.value = actor.permissions.includes('*') || actor.permissions.includes('pos:order:create');
     if (!allowed.value) { message.value = '当前账号没有核对收银权限，请联系老板。原记录仍保留。'; return; }
-    pending.value = posRecovery.restore();
+    pending.value = posRecovery.restore(); restored.value=true;
     if (!pending.value) message.value = '本机当前员工、门店没有待核对收银请求。';
   } catch (failure) {
     if (current !== epoch) return;
@@ -28,9 +31,9 @@ onShow(async () => {
     message.value = '本机核对记录读取异常，保持暂停收银。请联系老板核对，不要清除小程序数据。';
   } finally { if (current === epoch) loading.value = false; }
 });
-onHide(() => { epoch++; });
+onHide(() => { visible=false;actorEpoch=-1;epoch++;allowed.value=false;pending.value=null;result.value=null;confirmed.value=false; });
 async function act(kind: 'read' | 'cancel' | 'finish') {
-  if (!allowed.value || busy.value || !pending.value || (kind !== 'read' && !confirmed.value)) return;
+  if (!visible || staffAuth.current()?.epoch!==actorEpoch || !allowed.value || busy.value || !pending.value || (kind !== 'read' && !confirmed.value)) return;
   const current = epoch, expected = result.value?.orderId;
   if (kind === 'finish' && (result.value?.status !== 'COMPLETED' || !expected)) return;
   busy.value = true; message.value = '';
@@ -40,7 +43,7 @@ async function act(kind: 'read' | 'cancel' | 'finish') {
       : await posRecovery.finishCompleted(expected!, true, readPOSResult);
     if (current !== epoch) return;
     result.value = answer; confirmed.value = false;
-    pending.value = posRecovery.restore();
+    pending.value = posRecovery.restore(); restored.value=true;
     message.value = pending.value ? (answer.status === 'COMPLETED' ? '原请求已成交，请核对原订单后结束本单。'
       : '结果仍需核对；没有查到不代表未成交，请勿再次收款。')
       : (answer.status === 'COMPLETED' ? '原成交单据已结束，没有再次收款或扣库存。' : '原请求已由后台结束；请核对客户实际交款。');
