@@ -1,6 +1,6 @@
 # 农资行业进销存系统 - 数据库设计文档
 
-> 2026-10-30核查：本文主体是历史设计资料，含已退出运行链路的多维价格、旧库存结构和扩展设想，不能当作当前完整DDL或直接建表依据。现行入口见[数据库说明](README.md)、[当前状态](../docs/WORKING_STATE.md)和[Flyway迁移](../core-infrastructure/src/main/resources/db/migration/)。本次仅修正下列订单状态与支付编码；其余历史章节不代表已逐字段同步。
+> 2026-10-30核查：本文主体是历史设计资料，含已退出运行链路的多维价格、旧库存结构和扩展设想，不能当作当前完整DDL或直接建表依据。现行入口见[数据库说明](../docs/current/08-数据库现行说明.md)、[当前状态](../docs/current/02-当前开发状态.md)和[Flyway迁移](../core-infrastructure/src/main/resources/db/migration)。本次仅修正下列订单状态与支付编码；其余历史章节不代表已逐字段同步。
 
 ## 1. 概述
 
