@@ -61,7 +61,7 @@ async function logout() {
             <text class="hero-name">{{ name }}</text>
             <text class="hero-meta">门店 {{ store }}</text>
           </view>
-          <button class="hero-exit" @click="logout">退出</button>
+          <button hover-class="btn-hover" hover-stay-time="60" class="hero-exit" @click="logout">退出</button>
         </view>
       </view>
 
@@ -74,42 +74,42 @@ async function logout() {
 
       <view class="tiles">
         <view v-if="canSale" class="tile">
-          <view class="tile-box" @click="openSale">
-            <view class="tile-icon tile-icon-accent"><AppIcon name="bag" :size="20" /></view>
+          <view hover-class="tile-hover" hover-stay-time="80" class="tile-box" @click="openSale">
+            <view class="tile-icon"><AppIcon name="bag" :size="22" /></view>
             <text class="tile-name">移动开单</text>
             <text class="tile-desc">扫码加购，后端报价</text>
           </view>
         </view>
         <view v-if="canReceive" class="tile">
-          <view class="tile-box" @click="openReceiving">
+          <view hover-class="tile-hover" hover-stay-time="80" class="tile-box" @click="openReceiving">
             <view class="tile-icon"><AppIcon name="doc" :size="20" /></view>
             <text class="tile-name">采购收货</text>
             <text class="tile-desc">按实际到货登记</text>
           </view>
         </view>
         <view v-if="canQueryInventory" class="tile">
-          <view class="tile-box" @click="openInventory">
+          <view hover-class="tile-hover" hover-stay-time="80" class="tile-box" @click="openInventory">
             <view class="tile-icon"><AppIcon name="scan" :size="20" /></view>
             <text class="tile-name">扫码查货</text>
             <text class="tile-desc">条码、批次、货位</text>
           </view>
         </view>
         <view v-if="canPickup" class="tile">
-          <view class="tile-box" @click="openPickup">
+          <view hover-class="tile-hover" hover-stay-time="80" class="tile-box" @click="openPickup">
             <view class="tile-icon"><AppIcon name="box" :size="20" /></view>
             <text class="tile-name">库房提货</text>
             <text class="tile-desc">按原批次核对交付</text>
           </view>
         </view>
         <view v-if="canDeliver" class="tile">
-          <view class="tile-box" @click="openDelivery">
+          <view hover-class="tile-hover" hover-stay-time="80" class="tile-box" @click="openDelivery">
             <view class="tile-icon"><AppIcon name="truck" :size="20" /></view>
             <text class="tile-name">配送任务</text>
             <text class="tile-desc">本人任务与签收</text>
           </view>
         </view>
         <view v-if="canRecover" class="tile">
-          <view class="tile-box" @click="openRecovery">
+          <view hover-class="tile-hover" hover-stay-time="80" class="tile-box" @click="openRecovery">
             <view class="tile-icon"><AppIcon name="clock" :size="20" /></view>
             <text class="tile-name">收银核对</text>
             <text class="tile-desc">结果未定时先核对</text>
@@ -124,7 +124,7 @@ async function logout() {
 
       <view class="section"><text class="section-title">本机</text></view>
       <view class="card card-flat">
-        <view class="list-item list-item-last row-between" @click="openDeviceCheck">
+        <view hover-class="tap-hover" hover-stay-time="80" class="list-item list-item-last row-between" @click="openDeviceCheck">
           <view class="row">
             <AppIcon name="device" :size="20" class="t-primary" />
             <view class="ml10">

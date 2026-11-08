@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { onLoad,onShow,onHide } from '@dcloudio/uni-app';
+import { money } from '../../../utils/money';
 import { buildReceiptSnapshot,receiptMultiply,type ReceivingDetail,type ReceivingItem,type ReceiptSnapshot,type PendingReceipt,type ReceiptResult } from '@agri/mobile-contracts/receipt';
 import { isPositiveLongId } from '@agri/mobile-contracts/ids';
 import { staffAuth } from '../../../services/auth';
@@ -129,12 +130,12 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
       <text class="t-meta">第 {{ index + 1 }} 批</text>
       <text class="t-strong">{{ batch.originalQuantity }} {{ batch.originalUnit }}</text>
      </view>
-     <text class="t-code">= {{ batch.baseQuantity }} {{ line.baseUnitName }} · ¥{{ batch.originalUnitCost }}/{{ batch.originalUnit }}</text>
+     <text class="t-code">= {{ batch.baseQuantity }} {{ line.baseUnitName }} · ¥{{ money(batch.originalUnitCost) }}/{{ batch.originalUnit }}</text>
      <text class="t-cap">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text>
     </view>
    </view>
 
-   <button class="btn btn-primary" :disabled="busy" :loading="busy" @click="act('read')">核对原收货结果</button>
+   <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy" :loading="busy" @click="act('read')">核对原收货结果</button>
 
    <view v-if="result?.status === 'COMPLETED'" class="card card-ok mt12">
     <view class="row"><AppIcon name="check" :size="18" class="t-ok mr8" /><text class="t-sub">原收货已完成</text></view>
@@ -145,14 +146,14 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
     <checkbox-group @change="confirmed = $event.detail.value.includes('yes')">
      <label class="check-row"><checkbox class="check-box" value="yes" :checked="confirmed" :disabled="busy" /><text>我已核对原收货单和批次</text></label>
     </checkbox-group>
-    <button class="btn btn-primary btn-sm" :disabled="busy || !confirmed" @click="act('finish')">结束已完成收货</button>
+    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary btn-sm" :disabled="busy || !confirmed" @click="act('finish')">结束已完成收货</button>
    </view>
    <view v-else class="card mt12">
     <text class="t-body">查询不到不代表未入库。确需继续时按原内容、原请求号重试，不能换号。</text>
     <checkbox-group @change="confirmed = $event.detail.value.includes('yes')">
      <label class="check-row"><checkbox class="check-box" value="yes" :checked="confirmed" :disabled="busy" /><text>我已核对，按原内容重试</text></label>
     </checkbox-group>
-    <button class="btn btn-ghost btn-sm" :disabled="busy || !confirmed" @click="act('retry')">同原内容重试</button>
+    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm" :disabled="busy || !confirmed" @click="act('retry')">同原内容重试</button>
    </view>
   </template>
 
@@ -168,8 +169,8 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
       <text class="t-meta">第 {{ index + 1 }} 批</text>
       <text class="t-strong">{{ batch.originalQuantity }} {{ batch.originalUnit }}</text>
      </view>
-     <text class="t-code">= {{ batch.baseQuantity }} {{ line.baseUnitName }} · ¥{{ batch.originalUnitCost }}/{{ batch.originalUnit }}</text>
-     <text class="t-code">本批 ¥{{ receiptMultiply(batch.originalQuantity, batch.originalUnitCost) }}</text>
+     <text class="t-code">= {{ batch.baseQuantity }} {{ line.baseUnitName }} · ¥{{ money(batch.originalUnitCost) }}/{{ batch.originalUnit }}</text>
+     <text class="t-code">本批 ¥{{ money(receiptMultiply(batch.originalQuantity, batch.originalUnitCost)) }}</text>
      <text class="t-cap">厂家批号：{{ batch.supplierBatchNo ?? '未提供' }}</text>
      <text class="t-cap">生产：{{ batch.productionDate ?? '未知' }} · 有效期至：{{ batch.expiryDate ?? '未知' }}</text>
     </view>
@@ -178,7 +179,7 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
     <view v-if="preview.exceptionReason" class="kv"><text class="kv-key">超收说明</text><text class="kv-val">{{ preview.exceptionReason }}</text></view>
     <view v-if="preview.remark" class="kv"><text class="kv-key">备注</text><text class="kv-val">{{ preview.remark }}</text></view>
    </view>
-   <button class="btn btn-ghost" :disabled="busy" @click="preview = null">返回修改</button>
+   <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost" :disabled="busy" @click="preview = null">返回修改</button>
   </template>
 
   <template v-else-if="allowed && detail && !finished">
@@ -194,13 +195,13 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
 
    <view class="card">
     <view class="row">
-     <button class="btn btn-primary btn-sm grow mr8" :disabled="busy" @click="scanProduct"><AppIcon name="scan" :size="16" class="mr4" />扫描商品</button>
-     <button class="btn btn-ghost btn-sm grow" :disabled="busy" @click="locateCode(scanInput)">识别编码</button>
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary btn-sm grow mr8" :disabled="busy" @click="scanProduct"><AppIcon name="scan" :size="16" class="mr4" />扫描商品</button>
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm grow" :disabled="busy" @click="locateCode(scanInput)">识别编码</button>
     </view>
     <input v-model="scanInput" class="input mt8" :disabled="busy" maxlength="100" placeholder="也可手输商品编码或条码" placeholder-style="color:#9aa6b2" @input="scanMatches = []; scanMessage = ''" />
     <text class="t-cap mt8">只定位本采购单商品，不代填数量或进价，也不作为收货批次证据。</text>
     <text v-if="scanMessage" class="t-body mt8" role="status">{{ scanMessage }}</text>
-    <button v-for="item in scanMatches" :key="item.id" class="btn btn-ghost btn-sm mt8" :disabled="busy" @click="chooseLine(item)">{{ item.productName }} · 原采购 {{ item.orderedQuantity }} {{ item.orderedUnit }} · 定位这行</button>
+    <button hover-class="btn-hover" hover-stay-time="60" v-for="item in scanMatches" :key="item.id" class="btn btn-ghost btn-sm mt8" :disabled="busy" @click="chooseLine(item)">{{ item.productName }} · 原采购 {{ item.orderedQuantity }} {{ item.orderedUnit }} · 定位这行</button>
    </view>
 
    <view v-for="line in drafts" :id="'receipt-line-' + line.purchaseOrderItemId" :key="line.purchaseOrderItemId" class="card" :class="{ located: locatedLine === line.purchaseOrderItemId }">
@@ -220,7 +221,7 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
       <view v-for="(batch, index) in line.batches" :key="batch.clientId" class="batch-box">
        <view class="row-between">
         <text class="t-strong">第 {{ index + 1 }} 批</text>
-        <button v-if="line.batches.length > 1" class="btn btn-danger-quiet btn-sm btn-auto" :disabled="busy" @click="removeBatch(line, batch)">移除这批</button>
+        <button hover-class="btn-hover" hover-stay-time="60" v-if="line.batches.length > 1" class="btn btn-danger-quiet btn-sm btn-auto" :disabled="busy" @click="removeBatch(line, batch)">移除这批</button>
        </view>
        <view class="field">
         <text class="field-label">收货单位</text>
@@ -256,14 +257,14 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
         </view>
        </view>
        <view class="row mt8">
-        <button v-if="batch.productionDate" class="btn btn-quiet btn-sm btn-auto mr8" @click="batch.productionDate = ''">清除生产日期</button>
-        <button v-if="batch.expiryDate" class="btn btn-quiet btn-sm btn-auto" @click="batch.expiryDate = ''">清除有效期</button>
+        <button hover-class="btn-hover" hover-stay-time="60" v-if="batch.productionDate" class="btn btn-quiet btn-sm btn-auto mr8" @click="batch.productionDate = ''">清除生产日期</button>
+        <button hover-class="btn-hover" hover-stay-time="60" v-if="batch.expiryDate" class="btn btn-quiet btn-sm btn-auto" @click="batch.expiryDate = ''">清除有效期</button>
        </view>
        <checkbox-group v-if="!batch.productionDate && !batch.expiryDate" @change="batch.unknownDates = $event.detail.value.includes('yes')">
         <label class="check-row"><checkbox class="check-box" value="yes" :checked="batch.unknownDates" :disabled="busy" /><text>已查看实物，两项日期都未知</text></label>
        </checkbox-group>
       </view>
-      <button class="btn btn-ghost btn-sm mt8" :disabled="busy || line.batches.length >= 50" @click="addBatch(line)"><AppIcon name="plus" :size="14" class="mr4" />增加另一个实际批次</button>
+      <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm mt8" :disabled="busy || line.batches.length >= 50" @click="addBatch(line)"><AppIcon name="plus" :size="14" class="mr4" />增加另一个实际批次</button>
      </template>
     </template>
    </view>
@@ -285,13 +286,13 @@ const back=()=>uni.redirectTo({url:'/pages/receipt/list/index'});
    <text>{{ message }}</text>
   </view>
 
-  <button class="btn btn-quiet" :disabled="busy" @click="back">返回待收采购单</button>
+  <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-quiet" :disabled="busy" @click="back">返回待收采购单</button>
 
   <view v-if="allowed && !pending && !preview && detail && !finished" class="dock">
-   <view class="dock-inner"><button class="btn btn-primary" :disabled="busy" @click="review">核对本次收货摘要</button></view>
+   <view class="dock-inner"><button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy" @click="review">核对本次收货摘要</button></view>
   </view>
   <view v-else-if="allowed && preview" class="dock">
-   <view class="dock-inner"><button class="btn btn-primary" :disabled="busy" :loading="busy" @click="submit">确认本次入库</button></view>
+   <view class="dock-inner"><button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy" :loading="busy" @click="submit">确认本次入库</button></view>
   </view>
  </view>
 </template>

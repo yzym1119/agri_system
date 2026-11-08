@@ -128,8 +128,8 @@ const back=()=>uni.redirectTo({url:'/pages/delivery/list/index'});
      </view>
      <view class="addr mt12"><text class="t-body">{{ preview.receiverAddress }}</text></view>
      <view class="row mt12">
-      <button class="icon-btn grow mr8" :disabled="busy" @click="showNavigation"><AppIcon name="pin" :size="18" /><text class="icon-btn-label">导航</text></button>
-      <button class="icon-btn grow" :disabled="busy" @click="copyAddress"><AppIcon name="copy" :size="18" /><text class="icon-btn-label">复制地址</text></button>
+      <button hover-class="btn-hover" hover-stay-time="60" class="icon-btn grow mr8" :disabled="busy" @click="showNavigation"><AppIcon name="pin" :size="18" /><text class="icon-btn-label">导航</text></button>
+      <button hover-class="btn-hover" hover-stay-time="60" class="icon-btn grow" :disabled="busy" @click="copyAddress"><AppIcon name="copy" :size="18" /><text class="icon-btn-label">复制地址</text></button>
      </view>
     </view>
 
@@ -166,12 +166,12 @@ const back=()=>uni.redirectTo({url:'/pages/delivery/list/index'});
   </view>
 
   <text v-if="message" class="t-body mt8" role="status">{{ message }}</text>
-  <button v-if="allowed && orderId" class="btn btn-ghost btn-gap" :disabled="busy || loading" @click="readCurrent">{{ uncertain ? '核对本任务签收结果' : '重新读取任务' }}</button>
-  <button class="btn btn-quiet" :disabled="busy" @click="back">返回配送任务</button>
+  <button hover-class="btn-hover" hover-stay-time="60" v-if="allowed && orderId" class="btn btn-ghost btn-gap" :disabled="busy || loading" @click="readCurrent">{{ uncertain ? '核对本任务签收结果' : '重新读取任务' }}</button>
+  <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-quiet" :disabled="busy" @click="back">返回配送任务</button>
 
   <view v-if="!loading && preview && preview.canConfirm" class="dock">
    <view class="dock-inner">
-    <button class="btn btn-primary" :disabled="!canConfirm()" :loading="busy" @click="confirm">确认已实际交付</button>
+    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="!canConfirm()" :loading="busy" @click="confirm">确认已实际交付</button>
    </view>
   </view>
  </view>

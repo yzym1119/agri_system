@@ -30,8 +30,10 @@
 .ai--truck::after { left: 60%; }
 
 /* 购物袋：移动开单 */
-.ai--bag .s1 { left: 16%; top: 32%; width: 68%; height: 58%; border: 1.6px solid currentColor; border-radius: 3px; }
-.ai--bag .s2 { left: 32%; top: 13%; width: 36%; height: 20%; border: 1.6px solid currentColor; border-bottom: 0; border-radius: 40% 40% 0 0; }
+.ai--bag .s1 { left: 13%; top: 40%; width: 74%; height: 52%; border: 1.6px solid currentColor; border-radius: 3px; }
+.ai--bag .s2 { left: 28%; top: 14%; width: 12%; height: 28%; border: 1.6px solid currentColor; border-bottom: 0; border-radius: 4px 4px 0 0; }
+
+.ai--bag .s3 { left: 60%; top: 14%; width: 12%; height: 28%; border: 1.6px solid currentColor; border-bottom: 0; border-radius: 4px 4px 0 0; }
 
 /* 搜索 */
 .ai--search .s1 { left: 8%; top: 8%; width: 60%; height: 60%; border: 1.8px solid currentColor; border-radius: 50%; }

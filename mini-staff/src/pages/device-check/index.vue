@@ -122,15 +122,15 @@ const recordingText = computed(() => ({
     <view class="card card-flat">
       <view class="list-item row-between">
         <view class="row"><AppIcon name="scan" :size="20" class="t-primary" /><text class="t-sub ml10">扫码</text></view>
-        <button class="btn btn-sm btn-auto" :disabled="busy || recordingBusy" @click="check('scan')">检查</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto" :disabled="busy || recordingBusy" @click="check('scan')">检查</button>
       </view>
       <view class="list-item row-between">
         <view class="row"><AppIcon name="box" :size="20" class="t-primary" /><text class="t-sub ml10">本机记录</text></view>
-        <button class="btn btn-sm btn-auto" :disabled="busy || recordingBusy" @click="check('storage')">检查</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto" :disabled="busy || recordingBusy" @click="check('storage')">检查</button>
       </view>
       <view class="list-item list-item-last row-between">
         <view class="row"><AppIcon name="check" :size="20" class="t-primary" /><text class="t-sub ml10">安全请求号</text></view>
-        <button class="btn btn-sm btn-auto" :disabled="busy || recordingBusy" @click="check('random')">检查</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto" :disabled="busy || recordingBusy" @click="check('random')">检查</button>
       </view>
     </view>
 
@@ -143,19 +143,19 @@ const recordingText = computed(() => ({
     <view class="card">
       <text class="t-meta">{{ recordingText }}</text>
       <view class="row mt12">
-        <button class="btn btn-primary btn-sm grow mr8" :disabled="busy || recordingBusy" @click="startRecording">开始录音</button>
-        <button class="btn btn-ghost btn-sm grow" :disabled="!['STARTING', 'RECORDING'].includes(recording.phase)" @click="recorder?.stop()">停止</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary btn-sm grow mr8" :disabled="busy || recordingBusy" @click="startRecording">开始录音</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm grow" :disabled="!['STARTING', 'RECORDING'].includes(recording.phase)" @click="recorder?.stop()">停止</button>
       </view>
       <view class="row mt8">
-        <button class="btn btn-ghost btn-sm grow mr8" :disabled="!recording.clip" @click="play">试听</button>
-        <button class="btn btn-ghost btn-sm grow" :disabled="!recording.clip" @click="clearRecording">清除</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm grow mr8" :disabled="!recording.clip" @click="play">试听</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm grow" :disabled="!recording.clip" @click="clearRecording">清除</button>
       </view>
     </view>
 
     <view class="section"><text class="section-title">网络</text></view>
     <view class="card">
       <text class="t-body">{{ network }}</text>
-      <button class="btn btn-ghost btn-sm mt8" @click="refreshNetwork">重新读取网络状态</button>
+      <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm mt8" @click="refreshNetwork">重新读取网络状态</button>
       <text class="t-cap mt8">切断并恢复网络、切后台再返回，观察状态是否更新。这里不向后台发请求，不能据此判定弱网业务恢复通过。</text>
     </view>
 
@@ -176,7 +176,7 @@ const recordingText = computed(() => ({
           <input v-model="longitude" class="input" maxlength="24" placeholder="GCJ02 经度" placeholder-style="color:#9aa6b2" />
         </view>
       </view>
-      <button class="btn btn-ghost btn-sm mt12" :disabled="busy || recordingBusy || !address.trim()" @click="check('navigation')">检查目的地</button>
+      <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm mt12" :disabled="busy || recordingBusy || !address.trim()" @click="check('navigation')">检查目的地</button>
     </view>
 
     <text class="t-cap mt12">请分别记录安卓和 iPhone 的结果。编译成功不代表真机或业务验收通过。</text>

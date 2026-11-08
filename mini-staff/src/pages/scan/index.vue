@@ -84,19 +84,19 @@ const kind=(match:InventoryMatch)=>match.type==='SKU'?'商品':match.type==='LOC
     <text v-if="loading" class="card t-meta">正在核对当前员工和门店…</text>
     <template v-else-if="allowed">
       <view class="card">
-        <button class="btn btn-primary" :disabled="busy" :loading="busy" @click="scan"><AppIcon name="scan" :size="18" class="mr8" />扫描条码 / 内部标签</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy" :loading="busy" @click="scan"><AppIcon name="scan" :size="18" class="mr8" />扫描条码 / 内部标签</button>
         <view class="field">
           <text class="field-label">手输完整编码</text>
           <view class="row">
             <input v-model="code" class="input grow" maxlength="100" :disabled="busy" placeholder="编码、条码或货位码" placeholder-style="color:#9aa6b2" confirm-type="search" @confirm="resolveManual" />
-            <button class="btn btn-sm btn-auto ml8" :disabled="busy" @click="resolveManual">识别</button>
+            <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto ml8" :disabled="busy" @click="resolveManual">识别</button>
           </view>
         </view>
         <view class="field">
           <text class="field-label">找不到编码？按名称搜索</text>
           <view class="row">
             <input v-model="keyword" class="input grow" maxlength="100" :disabled="busy" placeholder="商品名称或编码" placeholder-style="color:#9aa6b2" confirm-type="search" @confirm="search" />
-            <button class="btn btn-sm btn-auto ml8" :disabled="busy" @click="search">搜索</button>
+            <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto ml8" :disabled="busy" @click="search">搜索</button>
           </view>
         </view>
       </view>
@@ -110,7 +110,7 @@ const kind=(match:InventoryMatch)=>match.type==='SKU'?'商品':match.type==='LOC
         <text>{{ message }}</text>
       </view>
 
-      <view v-for="match in matches" :key="match.type + ':' + match.id + ':' + match.unitId" class="card tap" @click="choose(match)">
+      <view hover-class="tap-hover" hover-stay-time="80" v-for="match in matches" :key="match.type + ':' + match.id + ':' + match.unitId" class="card tap" @click="choose(match)">
         <view class="row-between">
           <text class="t-sub grow">{{ match.name }}</text>
           <text class="chip chip-sm" :class="match.enabled ? 'chip-line' : 'chip-warn'">{{ kind(match) }}{{ match.enabled ? '' : ' · 已停用' }}</text>
@@ -127,9 +127,9 @@ const kind=(match:InventoryMatch)=>match.type==='SKU'?'商品':match.type==='LOC
       <text v-if="hasMore && mode === 'scan'" class="t-cap mt8">匹配项较多，请核对标签，或输入更具体的商品名称搜索。</text>
 
       <view v-if="mode !== 'scan' && (page > 1 || hasMore)" class="row-between mt8">
-        <button class="btn btn-sm btn-auto" :disabled="busy || page === 1" @click="previous">上一页</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto" :disabled="busy || page === 1" @click="previous">上一页</button>
         <text class="t-meta">第 {{ page }} 页</text>
-        <button class="btn btn-sm btn-auto" :disabled="busy || !hasMore" @click="next">下一页</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto" :disabled="busy || !hasMore" @click="next">下一页</button>
       </view>
     </template>
     <view v-else-if="message" class="alert alert-info" role="status">

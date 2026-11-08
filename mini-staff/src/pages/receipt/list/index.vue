@@ -36,7 +36,7 @@ function open(id:string){if(!current()||loading.value)return;uni.navigateTo({url
 </script>
 <template>
   <view class="page">
-    <view v-if="pending" class="alert" @click="open(pending.snapshot.purchaseOrderId)">
+    <view hover-class="alert-hover" hover-stay-time="80" v-if="pending" class="alert" @click="open(pending.snapshot.purchaseOrderId)">
       <AppIcon name="alert" :size="16" class="alert-icon" />
       <view class="grow">
         <text class="t-strong">有 1 笔收货结果待核对</text>
@@ -45,17 +45,17 @@ function open(id:string){if(!current()||loading.value)return;uni.navigateTo({url
       <AppIcon name="chevron" :size="14" class="chev" />
     </view>
 
-    <text v-if="loading" class="card t-meta">正在读取待收采购单…</text>
+    <view v-if="loading" class="card row"><view class="spinner spinner-primary"></view><text class="t-meta">正在读取待收采购单…</text></view>
     <template v-else-if="allowed">
       <view class="row block">
         <view class="grow search-wrap">
           <AppIcon name="search" :size="16" class="search-ic" />
           <input v-model="keyword" class="input input-search" maxlength="100" placeholder="采购单号，留空看全部" confirm-type="search" @confirm="search" />
         </view>
-        <button class="btn btn-sm btn-auto ml8" :disabled="loading" @click="search">查询</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto ml8" :disabled="loading" @click="search">查询</button>
       </view>
 
-      <view v-for="order in orders" :key="order.id" class="card tap" @click="open(order.id)">
+      <view hover-class="tap-hover" hover-stay-time="80" v-for="order in orders" :key="order.id" class="card tap" @click="open(order.id)">
         <view class="row-between">
           <text class="t-sub grow">{{ order.orderNo }}</text>
           <AppIcon name="chevron" :size="14" class="chev" />
@@ -72,11 +72,15 @@ function open(id:string){if(!current()||loading.value)return;uni.navigateTo({url
       </view>
 
       <view v-if="page > 1 || hasMore" class="row-between mt4">
-        <button class="btn btn-sm btn-auto" :disabled="loading || page === 1" @click="load(page - 1)">上一页</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto" :disabled="loading || page === 1" @click="load(page - 1)">上一页</button>
         <text class="t-meta">第 {{ page }} 页</text>
-        <button class="btn btn-sm btn-auto" :disabled="loading || !hasMore" @click="load(page + 1)">下一页</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto" :disabled="loading || !hasMore" @click="load(page + 1)">下一页</button>
       </view>
     </template>
+    <view v-else class="empty">
+      <view class="empty-icon"><AppIcon name="alert" :size="22" /></view>
+      <text class="empty-text">{{ message || '当前账号没有采购收货权限，请联系老板。' }}</text>
+    </view>
     <text v-if="message && orders.length" class="t-cap" role="status">{{ message }}</text>
   </view>
 </template>

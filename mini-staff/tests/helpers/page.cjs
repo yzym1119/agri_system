@@ -4,6 +4,18 @@ const path = require('node:path');
 const vm = require('node:vm');
 const ts = require('typescript');
 const { parse, compileScript } = require('@vue/compiler-sfc');
+const utilCache = {};
+/** 按需转译 src/utils 下的纯函数模块，页面测试里用的是真实实现而不是替身。 */
+function loadUtil(name) {
+  if (utilCache[name]) return utilCache[name];
+  const file = path.join(__dirname, '../../src/utils', name + '.ts');
+  const js = ts.transpileModule(fs.readFileSync(file, 'utf8'),
+    { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText;
+  const mod = { exports: {} };
+  vm.runInNewContext(js, { module: mod, exports: mod.exports, Error, Number, RegExp, String }, { filename: file });
+  utilCache[name] = mod.exports;
+  return mod.exports;
+}
 function setupPage(page, auth, configured = true, extraImports = {}) {
   const file = path.join(__dirname, '../../src/pages',page,'index.vue');
   const { descriptor } = parse(fs.readFileSync(file, 'utf8'));
@@ -12,7 +24,8 @@ function setupPage(page, auth, configured = true, extraImports = {}) {
   const hooks = {}, routes = [], scrolls=[],clipboard=[], mod = { exports: {} };
   const imports = { vue: require('vue'), '@dcloudio/uni-app': {
     onShow: cb => hooks.show = cb, onHide: cb => hooks.hide = cb, onLoad: cb => hooks.load = cb,
-  }, '../../services/auth': { staffAuth: auth, serviceConfigured: configured }, ...extraImports };
+  }, '../../services/auth': { staffAuth: auth, serviceConfigured: configured },
+  '../../utils/money': loadUtil('money'), '../../../utils/money': loadUtil('money'), ...extraImports };
   vm.runInNewContext(js, { module: mod, exports: mod.exports, Error, uni: {
     reLaunch: options => routes.push(options.url), navigateTo: options => routes.push(options.url),
     redirectTo: options=>routes.push(options.url),pageScrollTo: options=>scrolls.push(options.selector),
@@ -21,7 +34,7 @@ function setupPage(page, auth, configured = true, extraImports = {}) {
   setTimeout, clearTimeout, clearInterval }, { filename: file });
   return { state: mod.exports.default.setup({}, { expose() {} }), hooks, routes,scrolls,clipboard };
 }
-module.exports = { setupPage };
+module.exports = { setupPage, loadUtil };
 module.exports.setupService = (name, imports) => {
   const file=path.join(__dirname,'../../src/services',name+'.ts');
   const js=ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS}}).outputText;

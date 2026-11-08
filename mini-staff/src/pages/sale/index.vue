@@ -5,6 +5,7 @@ import { staffAuth } from '../../services/auth';
 import { readCatalog, searchCatalog, quoteProduct, submitSale } from '../../services/sale';
 import { posRecovery } from '../../services/pos-recovery';
 import { lineCents, type CatalogProduct, type SaleLine } from '@agri/mobile-contracts/sale';
+import { money } from '../../utils/money';
 
 const products = ref<CatalogProduct[]>([]), lines = ref<SaleLine[]>([]), keyword = ref('');
 const searchResults = ref<CatalogProduct[]>([]);
@@ -211,7 +212,7 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
     <text class="t-meta">核对完成前不能新开单，避免重复成交。</text>
    </view>
   </view>
-  <button v-if="blocked" class="btn btn-primary" @click="openRecovery">核对上次收银</button>
+  <button hover-class="btn-hover" hover-stay-time="60" v-if="blocked" class="btn btn-primary" @click="openRecovery">核对上次收银</button>
 
   <template v-if="!loading && allowed && !blocked">
    <view class="search-wrap block">
@@ -224,13 +225,13 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
    </view>
 
    <view v-if="filtered.length" class="card card-flat">
-    <view v-for="(product, index) in filtered" :key="product.id" class="list-item row-between" :class="{ 'list-item-last': index === filtered.length - 1 }" @click="choose(product)">
+    <view hover-class="tap-hover" hover-stay-time="80" v-for="(product, index) in filtered" :key="product.id" class="list-item row-between" :class="{ 'list-item-last': index === filtered.length - 1 }" @click="choose(product)">
      <view class="grow">
       <text class="t-sub">{{ product.name }}</text>
       <text class="t-cap">{{ product.code }} · 主单位 {{ product.mainUnit }}</text>
      </view>
      <view class="price-box">
-      <text class="t-money t-primary">¥{{ product.suggestedRetailPrice }}</text>
+      <text class="t-money t-primary">¥{{ money(product.suggestedRetailPrice) }}</text>
       <AppIcon name="chevron" :size="12" class="chev" />
      </view>
     </view>
@@ -245,7 +246,7 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
      <text class="field-label">数量（{{ selected.mainUnit }}）{{ selected.allowFractionalBaseQuantity ? '，最多四位小数' : '，仅整数' }}</text>
      <input v-model="quantity" class="input" inputmode="decimal" />
     </view>
-    <button class="btn btn-primary btn-sm mt8" :disabled="busy" @click="addLine">按后端报价加入</button>
+    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary btn-sm mt8" :disabled="busy" @click="addLine">按后端报价加入</button>
    </view>
 
    <view class="section">
@@ -260,10 +261,10 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
    <view v-for="(line, index) in lines" :key="line.productId + ':' + index" class="card card-tight">
     <view class="row-between">
      <text class="t-sub grow">{{ line.name }}</text>
-     <button class="btn btn-danger-quiet btn-sm btn-auto" :disabled="busy" @click="removeLine(index)">移除</button>
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-danger-quiet btn-sm btn-auto" :disabled="busy" @click="removeLine(index)">移除</button>
     </view>
     <view class="row-between mt4">
-     <text class="t-meta">{{ line.quantity }} {{ line.unit }} · 单价 ¥{{ line.quotedUnitPrice }}</text>
+     <text class="t-meta">{{ line.quantity }} {{ line.unit }} · 单价 ¥{{ money(line.quotedUnitPrice) }}</text>
      <text class="t-money">¥{{ cents(lineCents(line)) }}</text>
     </view>
    </view>
@@ -279,8 +280,8 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
    <view class="section"><text class="section-title">结算方式</text></view>
    <view class="card">
     <view class="row">
-     <button class="btn btn-sm grow mr8" :class="paymentType === 1 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="paymentType = 1">现金</button>
-     <button class="btn btn-sm grow" :class="paymentType === 6 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="paymentType = 6">赊销（挂账）</button>
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm grow mr8" :class="paymentType === 1 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="paymentType = 1">现金</button>
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm grow" :class="paymentType === 6 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="paymentType = 6">赊销（挂账）</button>
     </view>
     <view class="field">
      <text class="field-label">客户编号{{ paymentType === 6 ? '（赊销必填）' : '（现金可留空）' }}</text>
@@ -292,8 +293,8 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
    <view class="section"><text class="section-title">交货方式</text></view>
    <view class="card">
     <view class="row">
-     <button class="btn btn-sm grow mr8" :class="deliveryType === 1 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="deliveryType = 1">当场交货</button>
-     <button class="btn btn-sm grow" :class="deliveryType === 2 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="deliveryType = 2">门店配送</button>
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm grow mr8" :class="deliveryType === 1 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="deliveryType = 1">当场交货</button>
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm grow" :class="deliveryType === 2 ? 'btn-primary' : 'btn-ghost'" :disabled="busy" @click="deliveryType = 2">门店配送</button>
     </view>
     <template v-if="deliveryType === 2">
      <view class="field">
@@ -326,8 +327,8 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
    <text>{{ message }}</text>
   </view>
 
-  <button class="btn btn-quiet mt8" :disabled="busy" @click="reload">重新读取商品</button>
-  <button class="btn btn-quiet" :disabled="busy" @click="back">返回工作台</button>
+  <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-quiet mt8" :disabled="busy" @click="reload">重新读取商品</button>
+  <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-quiet" :disabled="busy" @click="back">返回工作台</button>
 
   <view v-if="!loading && allowed && !blocked" class="dock">
    <view class="dock-inner">
@@ -336,7 +337,7 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
       <text class="dock-label">展示合计</text>
       <text class="dock-amount">¥{{ cents(totalCents) }}</text>
      </view>
-     <button class="btn btn-primary dock-btn" :disabled="busy || !lines.length" :loading="busy" @click="checkout">提交开单</button>
+     <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary dock-btn" :disabled="busy || !lines.length" :loading="busy" @click="checkout">提交开单</button>
     </view>
    </view>
   </view>

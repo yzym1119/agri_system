@@ -32,12 +32,12 @@ function open(task:AssignedTask){if(!current()||loading.value||!tasks.value.incl
 <template>
  <view class="page">
   <view class="tabs">
-   <view class="tab" :class="{ 'tab-on': state === 'PENDING' }" @click="chooseState('PENDING')">待交任务</view>
-   <view class="tab" :class="{ 'tab-on': state === 'COMPLETED' }" @click="chooseState('COMPLETED')">已签收</view>
+   <view hover-class="tab-hover" hover-stay-time="80" class="tab" :class="{ 'tab-on': state === 'PENDING' }" @click="chooseState('PENDING')">待交任务</view>
+   <view hover-class="tab-hover" hover-stay-time="80" class="tab" :class="{ 'tab-on': state === 'COMPLETED' }" @click="chooseState('COMPLETED')">已签收</view>
   </view>
-  <text v-if="loading" class="card t-meta">正在读取本人任务…</text>
+  <view v-if="loading" class="card row"><view class="spinner spinner-primary"></view><text class="t-meta">正在读取本人任务…</text></view>
   <template v-else-if="allowed">
-   <view v-for="task in tasks" :key="task.orderId" class="card tap" @click="open(task)">
+   <view hover-class="tap-hover" hover-stay-time="80" v-for="task in tasks" :key="task.orderId" class="card tap" @click="open(task)">
     <view class="row-between">
      <text class="t-sub grow">{{ task.orderNo }}</text>
      <text class="chip" :class="task.status === 'COMPLETED' ? 'chip-ok' : 'chip-warn'">{{ task.status === 'COMPLETED' ? '已签收' : '待交付' }}</text>
@@ -52,9 +52,13 @@ function open(task:AssignedTask){if(!current()||loading.value||!tasks.value.incl
     <view class="empty-icon"><AppIcon name="truck" :size="22" /></view>
     <text class="empty-text">{{ message || '当前没有任务。' }}</text>
    </view>
-   <button v-if="nextCursor" class="btn btn-ghost" :disabled="loading" @click="more">读取更多任务</button>
-   <button class="btn btn-quiet" :disabled="loading" @click="load(null)">重新查询</button>
+   <button hover-class="btn-hover" hover-stay-time="60" v-if="nextCursor" class="btn btn-ghost" :disabled="loading" @click="more">读取更多任务</button>
+   <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-quiet" :disabled="loading" @click="load(null)">重新查询</button>
   </template>
+  <view v-else class="empty">
+   <view class="empty-icon"><AppIcon name="alert" :size="22" /></view>
+   <text class="empty-text">{{ message || '当前账号没有该页面的访问权限，请联系店长。' }}</text>
+  </view>
   <text v-if="message && tasks.length" class="t-cap" role="status">{{ message }}</text>
  </view>
 </template>

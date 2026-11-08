@@ -81,7 +81,7 @@ async function act(kind: 'read' | 'cancel' | 'finish') {
         </view>
       </view>
 
-      <button class="btn btn-primary" :disabled="busy" :loading="busy" @click="act('read')">核对原请求结果</button>
+      <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="busy" :loading="busy" @click="act('read')">核对原请求结果</button>
 
       <view v-if="result?.status === 'COMPLETED'" class="card card-ok mt12">
         <view class="row"><AppIcon name="check" :size="18" class="t-ok mr8" /><text class="t-sub">原请求已成交</text></view>
@@ -89,7 +89,7 @@ async function act(kind: 'read' | 'cancel' | 'finish') {
         <checkbox-group @change="confirmed = $event.detail.value.includes('confirmed')">
           <label class="check-row"><checkbox class="check-box" value="confirmed" :checked="confirmed" :disabled="busy" /><text>我已核对原订单已成交</text></label>
         </checkbox-group>
-        <button class="btn btn-primary btn-sm" :disabled="busy || !confirmed" @click="act('finish')">结束已成交单据</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary btn-sm" :disabled="busy || !confirmed" @click="act('finish')">结束已成交单据</button>
       </view>
 
       <view v-else class="card mt12">
@@ -97,7 +97,7 @@ async function act(kind: 'read' | 'cancel' | 'finish') {
         <checkbox-group @change="confirmed = $event.detail.value.includes('confirmed')">
           <label class="check-row"><checkbox class="check-box" value="confirmed" :checked="confirmed" :disabled="busy" /><text>我已核对实际交款；结束请求不等于退款</text></label>
         </checkbox-group>
-        <button class="btn btn-ghost btn-sm" :disabled="busy || !confirmed" @click="act('cancel')">结束原未成交请求</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm" :disabled="busy || !confirmed" @click="act('cancel')">结束原未成交请求</button>
       </view>
     </template>
 

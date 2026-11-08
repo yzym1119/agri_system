@@ -102,7 +102,7 @@ const back=()=>uni.redirectTo({url:'/pages/pickup/list/index'});
     <view class="section section-first">
      <view class="section-head"><text class="section-title">按批次核对</text><text class="section-note">已核 {{ checked.length }}/{{ preview.allocations.length }}</text></view>
     </view>
-    <button class="btn btn-ghost btn-sm" :disabled="busy" @click="scan"><AppIcon name="scan" :size="16" class="mr8" />扫描内部批次标签辅助核对</button>
+    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-sm" :disabled="busy" @click="scan"><AppIcon name="scan" :size="16" class="mr8" />扫描内部批次标签辅助核对</button>
 
     <checkbox-group @change="checked = $event.detail.value">
      <label v-for="a in preview.allocations" :key="a.id" class="card check-card">
@@ -133,12 +133,12 @@ const back=()=>uni.redirectTo({url:'/pages/pickup/list/index'});
   </template>
 
   <text v-if="message" class="t-body mt8" role="status">{{ message }}</text>
-  <button class="btn btn-ghost btn-gap" :disabled="busy || loading" @click="readCurrent">核对本请求最新结果</button>
-  <button class="btn btn-quiet" :disabled="busy" @click="back">返回提货任务</button>
+  <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-gap" :disabled="busy || loading" @click="readCurrent">核对本请求最新结果</button>
+  <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-quiet" :disabled="busy" @click="back">返回提货任务</button>
 
   <view v-if="!loading && preview && preview.canConfirm" class="dock">
    <view class="dock-inner">
-    <button class="btn btn-primary" :disabled="!canConfirm()" :loading="busy" @click="confirm">确认已实际交付</button>
+    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :disabled="!canConfirm()" :loading="busy" @click="confirm">确认已实际交付</button>
    </view>
   </view>
  </view>

@@ -12,18 +12,23 @@
 
 | 令牌 | 值 | 用途 |
 | --- | --- | --- |
-| `--c-primary` | `#1d5d73` | 主操作、选中、金额强调 |
-| `--c-primary-strong` | `#16495a` | 主按钮按下、深色身份卡底 |
-| `--c-primary-soft` / `--c-primary-line` | `#e9f2f5` / `#cfe0e7` | 主色浅底与描边 |
-| `--c-accent` / `--c-accent-soft` | `#7ea76d` / `#eff5ea` | 品牌辅色、完成态辅助 |
-| `--c-text` / `--c-text-2` / `--c-text-3` | `#1f2937` / `#4b5563` / `#76838f` | 正文 / 说明 / 次要 |
-| `--c-line` / `--c-line-2` | `#e6eaee` / `#f0f2f5` | 边框 / 分隔线 |
-| `--c-bg` / `--c-surface` | `#f5f6f8` / `#ffffff` | 页面底 / 卡片底 |
-| `--c-warn` `--c-warn-bg` `--c-warn-line` | `#8a5a12` `#fdf7ec` `#f0e0c2` | 待核对、需人工确认 |
-| `--c-danger` `--c-danger-bg` `--c-danger-line` | `#a12925` `#fdf1f0` `#f1d2cf` | 失败、不可逆提示 |
-| `--c-ok` `--c-ok-bg` `--c-ok-line` | `#2b6a4a` `#eef6f1` `#cfe6d9` | 已确认、已同步 |
+| `--c-primary` | `#0e6b5a` | 主操作、选中、金额强调 |
+| `--c-primary-strong` | `#0a4c41` | 主按钮按下、深色身份卡底 |
+| `--c-primary-soft` / `--c-primary-line` | `#e6f2ee` / `#c6e0d8` | 主色浅底与描边 |
+| `--c-text` / `--c-text-2` / `--c-text-3` | `#18211e` / `#4a5450` / `#65716c` | 正文 / 说明 / 次要 |
+| `--c-line` / `--c-line-2` | `#e3e7e4` / `#eff2f0` | 边框 / 分隔线 |
+| `--c-bg` / `--c-surface` | `#f4f6f4` / `#ffffff` | 页面底 / 卡片底 |
+| `--c-warn` `--c-warn-bg` `--c-warn-line` | `#96601a` `#fdf6e7` `#f0e2c4` | 待核对、需人工确认 |
+| `--c-danger` `--c-danger-bg` `--c-danger-line` | `#a0302a` `#fcf0ee` `#f0d4d0` | 失败、不可逆提示 |
+| `--c-ok` `--c-ok-bg` `--c-ok-line` | `#1f7a55` `#eaf5ef` `#cbe7d9` | 已确认、已同步 |
 
-字号：正文 15px（`page` 基准）、次要 13px、辅助最小 12px、区块标题 15px 加粗、主数字 26px、金额 20px。行高 1.6。
+只有主色一个色相（青绿）加三组状态色，中性色带一点绿味（页底 #f4f6f4）。不设第二品牌色：需要强调时用主色深浅或状态色，不再新增色相——宫格里出现「一个绿块 + 五个蓝块」这种没来由的对比，就是多色相造成的。
+
+对比度按 WCAG AA（正文 4.5:1）实测：主色/白 6.42、正文/页底 15.16、次要/白 7.85、辅助/白 5.08、辅助/页底 4.68、警告/警告底 4.90、危险/危险底 6.38、成功/成功底 4.73、白字/深底卡 9.89。改色后必须重测这一组。
+
+字号：正文 15px（`page` 基准）、次要 13px、辅助最小 12px、区块标题 15px 加粗、主数字 26px、金额 19-20px。行高 1.6。数字统一 `font-variant-numeric: tabular-nums`，金额变化时列不会左右跳。
+
+金额一律经 `src/utils/money.ts` 格式化为两位小数：后端返回的是 `"25"`、`"38.5"` 这类十进制字符串，页面自己截取会出现同一份数据在一页显示 ¥25、在另一页显示 ¥25.00。取不到值返回空串，不伪造成 ¥0.00。
 
 ## 间距与布局
 
@@ -71,10 +76,31 @@
 - 不使用 `wxss` 不支持的子代组合器（`>`）、兄弟组合器（`+` `~`）与属性选择器。
 - 页面里不写行内 `style`（`placeholder-style` 等原生属性除外）。
 
-## 交互约定
+## 交互与动效
 
-- 每次提交按钮点击后立即置 loading 并禁用，防重复提交；错误就地显示在操作区上方，不用全屏 toast 顶替可读原因。
-- 危险操作（作废、强制结束）用 `btn-danger-quiet` + 二次确认，主操作永不用红色。
+**按压反馈**：微信原生组件不响应 `:active`，可点击元素一律用 `hover-class` 挂全局类，不要自己写交互态样式：
+
+| 元素 | hover-class | hover-stay-time |
+| --- | --- | --- |
+| 卡片/列表行等 `view` | `tap-hover` | 80 |
+| 工作台宫格 `.tile-box` | `tile-hover` | 80 |
+| 分段标签 `.tab` | `tab-hover` | 80 |
+| 可点击提示条 `.alert` | `alert-hover` | 80 |
+| `button` | `btn-hover` | 60 |
+
+**动效**：只做短促的入场与按压，不做循环动画、不做滚动视差。
+
+- 页面入场 `agri-page-in` 只有 opacity，**不加 `transform`**：`.page` 内含 `position: fixed` 的底部栏，父级一旦有 transform，fixed 会退化成相对父级定位，底部栏就不再吸附屏幕（实测确认过）。
+- 底部栏 `agri-dock-in` 上滑 220ms；宫格 `agri-rise` 220ms。转场时长统一 ≤ 220ms，避免和微信原生导航转场叠加发飘。
+- 提交中的按钮用 `spinner` 与文案并排，不只换文字，否则按钮宽度会跳。
+- 动效只表达「内容就位」与「已按下」，不承担状态说明；状态必须另有文字或色块。
+
+**反馈与可读性**：
+
+- 每次提交按钮点击后立即 loading 并禁用；错误就地显示在操作区上方，不用全屏 toast 顶替可读原因。
+- 加载态给转圈 + 一句话（`.card .row` + `.spinner-primary` + `t-meta`），不要只留白屏。
+- 无权限或读取失败必须有可见解释：`.empty` + `alert` 图标 + 具体原因（例如「当前账号没有本人配送权限，请联系店长」）。只判权限不渲染分支，用户看到的是一片空白。
+- 危险操作用 `btn-danger-quiet` + 二次确认，主操作永不用红色。
 - 列表空态给「下一步做什么」，不给「暂无数据」四个字了事。
 - 长单号、长编码用 `t-code` 折行显示，提供复制按钮；存储值不做截断。
 - 状态文案统一为业务口径（待核对 / 已确认 / 已同步 / 已作废），不用「成功」「失败」这类无主语词。
@@ -83,9 +109,35 @@
 
 - `design/preview.html`：8 屏静态设计墙（登录、工作台、查货、库存详情、移动开单、采购收货、收货登记、配送核对），引用 `src/styles` 下同一份 CSS，改样式后重截 `design/preview.png` 即可复核。
   ```bash
-  # 单屏 2 倍放大：?only=<从 0 开始的屏序号>&zoom=2
+  # 全墙
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-    --headless=new --no-sandbox --disable-gpu --window-size=430,932 \
+    --headless=new --no-sandbox --disable-gpu --hide-scrollbars \
+    --window-size=1640,1820 --virtual-time-budget=2500 \
     --screenshot=design/preview.png "file://$PWD/design/preview.html"
+  # 单屏 2 倍放大：?only=<从 0 开始的屏序号>&zoom=2
   ```
-- 页面测试（`npm test`，87 项）只断言 `state.*`，不断言文案与模板结构，因此调整排版不会破坏逻辑回归；但改类名后必须跑一次 `npm run build:mp-weixin`，确认产物 `app.wxss` 仍含 `--c-primary` / `ai--*` / `dock`。
+  `preview.css` 里关掉了入场动画（`animation: none`），否则截图会截到淡入中间帧、整墙发灰。
+
+- 页面测试（`npm test`，90 项）只断言 `state.*`，不断言文案与模板结构，因此重排版面不会破坏逻辑回归；但改类名后必须跑一次 `npm run build:mp-weixin`，确认产物 `app.wxss` 仍含 `--c-primary` / `ai--*` / `dock`。
+
+- **真实模拟器验收**（静态稿看不出的问题只能在这里发现：原生组件样式隔离、`position: fixed` 是否吸附、按压态、点击热区）：
+  ```bash
+  # 1) 生成 dev 产物（本机联调必须 dev，生产构建只认 HTTPS）
+  npm --prefix mini-staff run dev:mp-weixin          # 产出 dist/dev/mp-weixin
+  # 2) dist/dev/mp-weixin/project.config.json 填测试号 appid 并 urlCheck=false（ignored，不提交）
+  # 3) 打开项目并开启自动化
+  cli open  --project <abs>/dist/dev/mp-weixin
+  cli auto  --project <abs>/dist/dev/mp-weixin
+  # 4) 用 miniprogram-automator 连接、截图、点按
+  ```
+  ```js
+  const automator = require('miniprogram-automator');
+  const mp = await automator.launch({ cliPath: '<wechatwebdevtools>/Contents/MacOS/cli',
+    projectPath: '<abs>/dist/dev/mp-weixin', port: 9420, trustProject: true });
+  await mp.reLaunch('/pages/workbench/index');          // 逐页导航
+  await mp.screenshot({ path: 'shot.png' });            // 真机渲染截图
+  const el = await (await mp.currentPage()).$('.dock'); // 读元素位置，验证 fixed 是否吸附
+  ```
+  注意：`mp.waitFor` 不存在，等待用 `setTimeout`；`page.scrollTop()` 在 AppService 下不生效，滚动验证用 `mp.evaluate(() => wx.pageScrollTo({ scrollTop: 500, duration: 0 }))`。截图前要等 600ms 以上，否则截到入场动画中间帧。
+
+- 已确认的模拟器能力边界：能验渲染、布局、点击、滚动、跳转、控制台报错；**不能**替代真机验扫码、录音、定位授权、弱网、杀进程恢复与真实 AppID 相关能力。

@@ -91,19 +91,19 @@ const back=()=>uni.navigateBack();
       </view>
 
       <view v-if="inventory.totalRows > 30" class="row-between mt8">
-        <button class="btn btn-sm btn-auto" :disabled="loading || inventory.page === 1" @click="load(inventory.page - 1)">上一页</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto" :disabled="loading || inventory.page === 1" @click="load(inventory.page - 1)">上一页</button>
         <text class="t-meta">第 {{ inventory.page }} 页</text>
-        <button class="btn btn-sm btn-auto" :disabled="loading || inventory.page * 30 >= inventory.totalRows" @click="load(inventory.page + 1)">下一页</button>
+        <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-sm btn-auto" :disabled="loading || inventory.page * 30 >= inventory.totalRows" @click="load(inventory.page + 1)">下一页</button>
       </view>
 
-      <button class="btn btn-ghost btn-gap" :disabled="loading" @click="retry">刷新最新库存</button>
+      <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-ghost btn-gap" :disabled="loading" @click="retry">刷新最新库存</button>
     </template>
 
     <view v-if="message" class="alert alert-info mt8" role="status">
       <AppIcon name="alert" :size="16" class="alert-icon" />
       <text>{{ message }}</text>
     </view>
-    <button v-if="message && allowed && target" class="btn btn-ghost" :disabled="loading" @click="retry">重新读取</button>
-    <button class="btn btn-quiet" @click="back">返回查货</button>
+    <button hover-class="btn-hover" hover-stay-time="60" v-if="message && allowed && target" class="btn btn-ghost" :disabled="loading" @click="retry">重新读取</button>
+    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-quiet" @click="back">返回查货</button>
   </view>
 </template>

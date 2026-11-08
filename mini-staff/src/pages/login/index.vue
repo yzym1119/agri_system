@@ -56,8 +56,8 @@ async function login() {
       </view>
     </view>
 
-    <button class="btn btn-primary" :loading="busy" :disabled="busy || !serviceConfigured || !account.trim() || !password" @click="login">登录</button>
-    <button class="btn btn-quiet btn-gap" :disabled="busy" @click="openDeviceCheck">先检查这台手机</button>
+    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-primary" :loading="busy" :disabled="busy || !serviceConfigured || !account.trim() || !password" @click="login">登录</button>
+    <button hover-class="btn-hover" hover-stay-time="60" class="btn btn-quiet btn-gap" :disabled="busy" @click="openDeviceCheck">先检查这台手机</button>
     <text class="foot">密码不在本机保存，下次打开需重新登录。没有账号请联系老板。</text>
   </view>
 </template>
