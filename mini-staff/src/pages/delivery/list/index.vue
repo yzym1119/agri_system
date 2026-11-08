@@ -5,10 +5,11 @@ import type { AssignedTask,AssignedTasks } from '@agri/mobile-contracts/fulfillm
 import { staffAuth } from '../../../services/auth';
 import { readAssignedTasks } from '../../../services/fulfillment';
 const tasks=ref<AssignedTask[]>([]),state=ref<AssignedTasks['state']>('PENDING'),nextCursor=ref<string|null>(null),loading=ref(true),allowed=ref(false),message=ref('');
+const loaded=ref(false);
 let generation=0,actorEpoch=-1,visible=false;
 const current=(ticket=generation)=>visible&&allowed.value&&ticket===generation&&staffAuth.current()?.epoch===actorEpoch;
 onShow(async()=>{
- visible=true;const ticket=++generation;loading.value=true;allowed.value=false;tasks.value=[];nextCursor.value=null;message.value='';
+ visible=true;const ticket=++generation;loading.value=true;loaded.value=false;allowed.value=false;tasks.value=[];nextCursor.value=null;message.value='';
  try{await staffAuth.refresh();if(!visible||ticket!==generation)return;
   const actor=staffAuth.current();if(!actor)throw Error('UNAUTHORIZED');actorEpoch=actor.epoch;
   allowed.value=actor.permissions.includes('*')||actor.permissions.includes('order:delivery:assigned');
@@ -18,9 +19,9 @@ onShow(async()=>{
 });
 onHide(()=>{visible=false;generation++;allowed.value=false;tasks.value=[];nextCursor.value=null;});
 async function load(after:string|null){
- if(!current())return;const ticket=++generation,filter=state.value;loading.value=true;message.value='';if(after===null){tasks.value=[];nextCursor.value=null;}
+ if(!current())return;const ticket=++generation,filter=state.value;loading.value=true;message.value='';if(after===null){loaded.value=false;tasks.value=[];nextCursor.value=null;}
  try{const result=await readAssignedTasks(filter,after,actorEpoch);if(!current(ticket))return;
-  tasks.value=after===null?result.tasks:[...tasks.value,...result.tasks.filter(t=>!tasks.value.some(old=>old.orderId===t.orderId))];nextCursor.value=result.nextCursor;
+  loaded.value=true;tasks.value=after===null?result.tasks:[...tasks.value,...result.tasks.filter(t=>!tasks.value.some(old=>old.orderId===t.orderId))];nextCursor.value=result.nextCursor;
   if(!tasks.value.length)message.value=filter==='PENDING'?'当前没有分配给你的待交任务。':'当前没有本人的已签收记录。';
  }catch{if(visible&&ticket===generation){if(!staffAuth.current())uni.reLaunch({url:'/pages/login/index'});else message.value='任务读取未完成，请重新查询或联系店长确认权限。';}}
  finally{if(ticket===generation)loading.value=false;}
@@ -30,13 +31,15 @@ const more=()=>current()&&!loading.value&&nextCursor.value?load(nextCursor.value
 function open(task:AssignedTask){if(!current()||loading.value||!tasks.value.includes(task))return;uni.navigateTo({url:'/pages/delivery/detail/index?orderId='+encodeURIComponent(task.orderId)});}
 </script>
 <template>
- <view class="page"><text class="title">我的配送任务</text><text class="intro">这里只列分配给当前员工的门店配送。进入详情后，先核对最新物料和收货人。</text>
-  <template v-if="allowed"><view class="filters"><button :class="{primary:state==='PENDING'}" @click="chooseState('PENDING')">待交任务</button><button :class="{primary:state==='COMPLETED'}" @click="chooseState('COMPLETED')">已签收</button></view>
-   <view v-for="task in tasks" :key="task.orderId" class="panel"><text class="subtitle">{{ task.orderNo }}</text><text class="intro">{{ task.status==='COMPLETED'?'已签收':'待核对交付' }}</text><text class="intro">{{ task.status==='COMPLETED'?(task.receivedAt?.replace('T',' ')??'签收时间未记录'):(task.deliveryAt?.replace('T',' ')??'派送时间未记录') }}</text><button :disabled="loading" @click="open(task)">{{ task.status==='COMPLETED'?'查看完成记录':'核对本次交付' }}</button></view>
-   <button v-if="nextCursor" :disabled="loading" @click="more">读取更多任务</button><button :disabled="loading" @click="load(null)">重新查询</button>
-  </template><text v-if="loading" class="intro">正在读取本人任务…</text><text v-if="message" class="intro" role="status">{{ message }}</text>
+ <view class="staff-page"><view class="page-heading"><text class="eyebrow">门店配送</text><text class="title">我的配送</text><text class="intro">只显示分配给你的任务，送达后核对商品与收货人。</text></view>
+  <template v-if="allowed"><view class="filters"><button :class="state==='PENDING'?'filter active':'filter'" @click="chooseState('PENDING')">待送达</button><button :class="state==='COMPLETED'?'filter active':'filter'" @click="chooseState('COMPLETED')">已签收</button></view>
+   <view class="section-head"><text class="subtitle">{{ state==='PENDING'?'待处理任务':'完成记录' }}</text><button class="text-button" :disabled="loading" @click="load(null)">刷新</button></view>
+   <view v-for="task in tasks" :key="task.orderId" class="staff-panel task-card"><view class="card-head"><text class="task-title">配送单</text><text class="status-label">{{ task.status==='COMPLETED'?'已签收':'待核对' }}</text></view><text class="order-number">{{ task.orderNo }}</text><text class="muted">{{ task.status==='COMPLETED'?'签收时间：'+(task.receivedAt?.replace('T',' ')??'未记录'):'派送时间：'+(task.deliveryAt?.replace('T',' ')??'未记录') }}</text><button class="staff-secondary" :disabled="loading" @click="open(task)">{{ task.status==='COMPLETED'?'查看完成记录 ›':'查看收货信息 ›' }}</button></view>
+   <view v-if="loaded && !loading && !tasks.length" class="staff-panel empty-panel"><text class="subtitle">{{ state==='PENDING'?'暂时没有待处理任务':'还没有完成记录' }}</text><text class="intro">{{ state==='PENDING'?'可稍后刷新，或联系店长确认任务安排。':'完成交付后，可在这里核对记录。' }}</text></view>
+   <button v-if="nextCursor" class="staff-secondary" :disabled="loading" @click="more">加载更多</button>
+  </template><text v-if="loading" class="intro" role="status">正在读取任务，请稍候…</text><text v-if="message" class="notice" role="status">{{ message }}</text>
  </view>
 </template>
 <style scoped>
-.page{padding:24px 20px;max-width:600px;margin:auto}.title{display:block;font-size:24px;font-weight:600}.intro{display:block;color:#4b5563;line-height:1.7;margin:12px 0}.panel{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0}.subtitle{display:block;font-size:20px;font-weight:600;line-height:1.6;word-break:break-all}.filters{display:flex;gap:12px}.filters button{flex:1}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73}.primary{color:#fff;background:#1d5d73}
+.page-heading{padding:12px 0 20px}.eyebrow{display:block;color:#1d5d73;font-size:13px;font-weight:600;margin-bottom:10px}.title{display:block;font-size:25px;font-weight:650;line-height:1.45}.intro{display:block;color:#4b5563;font-size:14px;line-height:1.7;margin:12px 0}.subtitle{display:block;font-size:17px;font-weight:600}.filters{display:flex;gap:8px;background:#eaf1f4;padding:5px;border-radius:10px}.filter{flex:1;background:transparent;color:#4b5563;font-size:15px;margin:0;border:0}.filter.active{background:#fff;color:#1d5d73;font-weight:600;border:1px solid #1d5d73}.section-head{display:flex;align-items:center;justify-content:space-between;margin:20px 0 12px}.text-button{background:transparent;color:#1d5d73;font-size:14px;margin:0;padding:0 8px}.task-card{margin:12px 0}.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.task-title{display:block;font-size:18px;font-weight:600;line-height:1.5;overflow-wrap:anywhere}.status-label{flex-shrink:0;font-size:12px;color:#1d5d73;background:#eaf1f4;padding:3px 8px;border-radius:5px}.order-number{display:block;color:#4b5563;font-size:13px;line-height:1.7;overflow-wrap:anywhere;margin:8px 0}.muted{display:block;color:#4b5563;font-size:13px;line-height:1.7}.task-card button{font-size:15px;margin:16px 0 0}.notice{display:block;font-size:14px;line-height:1.7;color:#4b5563;margin:16px 0}.empty-panel{margin:16px 0}
 </style>

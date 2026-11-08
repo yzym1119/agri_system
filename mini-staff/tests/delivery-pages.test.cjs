@@ -138,3 +138,19 @@ test('隐藏期间同scope合法记录被替换也不能接受新key',async()=>{
  await f.p.hooks.show();check(f);await f.p.state.confirm();assert.equal(f.calls.confirm.length,1);
  f.p.hooks.hide();await f.p.hooks.show();check(f);await f.p.state.confirm();assert.equal(f.calls.confirm.length,1);
 });
+
+test('联系收货人只用当前可交付任务号码，不确认交付，失效身份或完成任务不拨号',async()=>{
+ const f=await fixture();f.p.hooks.load({orderId:'42'});await f.p.hooks.show();f.p.state.callReceiver();
+ assert.deepEqual(f.p.phoneCalls,['13800000000']);assert.equal(f.calls.confirm.length,0);
+ f.setPreview({...ready,status:'COMPLETED',canConfirm:false,receiverName:null,receiverPhone:null,receiverAddress:null,confirmationKey:null,items:[]});
+ await f.p.state.readCurrent();f.p.state.callReceiver();assert.equal(f.p.phoneCalls.length,1);
+ f.setPreview(ready);await f.p.state.readCurrent();await f.auth.logout();f.p.state.callReceiver();assert.equal(f.p.phoneCalls.length,1);
+});
+test('非电话号码不交给拨号器，配送列表读取失败与成功空记录不混淆',async()=>{
+ const f=await fixture();f.p.hooks.load({orderId:'42'});f.setPreview({...ready,receiverPhone:'*123#'});await f.p.hooks.show();f.p.state.callReceiver();
+ assert.equal(f.p.phoneCalls.length,0);assert.match(f.p.state.message.value,/格式/);
+ const list=await fixture('delivery/list');list.setList(async()=>{throw Error('offline');});await list.p.hooks.show();
+ assert.equal(list.p.state.loaded.value,false);assert.match(list.p.state.message.value,/未完成/);
+ list.setList(async state=>({storeId:'3',state,tasks:[],nextCursor:null}));await list.p.state.load(null);
+ assert.equal(list.p.state.loaded.value,true);assert.equal(list.p.state.tasks.value.length,0);
+});

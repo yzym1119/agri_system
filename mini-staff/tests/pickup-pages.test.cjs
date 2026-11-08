@@ -67,3 +67,10 @@ test('隐藏期间合法原记录被替换，不能按新批次数量再次提�
  for(let i=0;i<2;i++){await f.p.hooks.show();f.p.state.checked.value=['1'];f.p.state.handedOver.value=true;await f.p.state.confirm();f.p.hooks.hide();}
  assert.equal(f.calls.length,1);assert.equal(f.p.state.uncertain.value,true);
 });
+
+test('提货列表读取失败不呈现成功空记录，重试后才建立空结果状态',async()=>{
+ const f=await fixture();let fail=true;
+ const p=setupPage('pickup/list',f.auth,true,{'../../../services/auth':{staffAuth:f.auth},'../../../services/pickup':{readPickupTasks:async state=>{if(fail)throw Error('offline');return{storeId:'3',state,tasks:[],nextCursor:null};}}});
+ await p.hooks.show();assert.equal(p.state.loaded.value,false);assert.match(p.state.message.value,/未完成/);
+ fail=false;await p.state.load(null);assert.equal(p.state.loaded.value,true);assert.equal(p.state.tasks.value.length,0);
+});

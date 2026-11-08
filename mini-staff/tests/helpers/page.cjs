@@ -9,7 +9,7 @@ function setupPage(page, auth, configured = true, extraImports = {}, platform = 
   const { descriptor } = parse(fs.readFileSync(file, 'utf8'));
   const compiled = compileScript(descriptor, { id: page });
   const js = ts.transpileModule(compiled.content, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText;
-  const hooks = {}, routes = [], scrolls=[],clipboard=[], mod = { exports: {} };
+  const hooks = {}, routes = [], scrolls=[],clipboard=[],phoneCalls=[], mod = { exports: {} };
   const imports = { vue: require('vue'), '@dcloudio/uni-app': {
     onShow: cb => hooks.show = cb, onHide: cb => hooks.hide = cb, onLoad: cb => hooks.load = cb,
   }, '../../services/auth': { staffAuth: auth, serviceConfigured: configured }, ...extraImports };
@@ -17,10 +17,11 @@ function setupPage(page, auth, configured = true, extraImports = {}, platform = 
     ...platform,
     reLaunch: options => routes.push(options.url), navigateTo: options => routes.push(options.url),
     redirectTo: options=>routes.push(options.url),pageScrollTo: options=>scrolls.push(options.selector),
+    makePhoneCall:options=>{phoneCalls.push(options.phoneNumber);},
     setClipboardData:options=>{clipboard.push(options.data);options.success?.({errMsg:'ok'});},
   }, require: name => { assert.ok(name in imports, name); return imports[name]; },
   setTimeout, clearTimeout, clearInterval }, { filename: file });
-  return { state: mod.exports.default.setup({}, { expose() {} }), hooks, routes,scrolls,clipboard };
+  return { state: mod.exports.default.setup({}, { expose() {} }), hooks, routes,scrolls,clipboard,phoneCalls };
 }
 module.exports = { setupPage };
 module.exports.setupService = (name, imports) => {

@@ -89,26 +89,34 @@ function copyAddress(){
  const p=preview.value;if(!current()||!p?.canConfirm||!p.receiverAddress||busy.value)return;const ticket=generation;
  uni.setClipboardData({data:p.receiverAddress,success:()=>{if(current(ticket))message.value='地址已复制，可粘贴到地图搜索。';},fail:()=>{if(current(ticket))message.value='复制未完成，可查看上方完整文字地址。';}});
 }
+function callReceiver(){
+ const p=preview.value;if(!current()||busy.value||loading.value||!p?.canConfirm||!p.receiverPhone)return;
+ const phone=p.receiverPhone.replace(/[ -]/g,'');
+ if(!/^\+?\d{5,20}$/.test(phone)){message.value='联系电话格式无法直接拨打，请核对上方原号码。';return;}
+ const ticket=generation;
+ uni.makePhoneCall({phoneNumber:phone,fail:()=>{if(current(ticket))message.value='未能拨打电话，可核对上方号码后联系收货人。';}});
+}
+const quantityLabel=(value:string)=>value.includes('.')?value.replace(/0+$/,'').replace(/\.$/,''):value;
 const back=()=>uni.redirectTo({url:'/pages/delivery/list/index'});
 </script>
 <template>
- <view class="page"><text class="title">核对配送交付</text><text v-if="loading" class="intro">正在读取本人任务的最新信息…</text>
-  <view v-if="uncertain" class="notice"><text>上次签收结果待核对，请勿再次交货。</text></view>
+ <view class="staff-page"><view class="page-heading"><text class="eyebrow">我的配送</text><text class="title">核对送货与签收</text><text class="intro">先联系收货人，到达后逐项核对实物。</text></view><text v-if="loading" class="intro">正在读取任务的最新信息…</text>
+  <view v-if="uncertain" class="notice"><text class="subtitle">上次签收结果需要核对</text><text class="intro">请勿再次交货。先读取同一任务的最新状态。</text></view>
   <template v-if="!loading && allowed && preview">
-   <text class="subtitle">{{ preview.orderNo }}</text>
-   <template v-if="preview.status==='COMPLETED'"><view class="panel"><text class="subtitle">已签收</text><text class="intro">{{ preview.receivedAt?.replace('T',' ')??'签收时间未记录' }}</text><text class="intro">历史确认不按后续退货后的余额反推交付数量。</text></view></template>
+   <text class="code order-reference">订单 {{ preview.orderNo }}</text>
+   <template v-if="preview.status==='COMPLETED'"><view class="staff-panel section-panel success-panel"><text class="status-label">已完成</text><text class="subtitle">本次配送已签收</text><text class="intro">{{ preview.receivedAt?.replace('T',' ')??'签收时间未记录' }}</text><text class="muted">这是原签收记录，后续退货不会用于推算当时交付数量。</text></view></template>
    <template v-else-if="preview.canConfirm">
-    <view class="panel"><text class="subtitle">收货人</text><text class="intro">{{ preview.receiverName }} · {{ preview.receiverPhone }}</text><text class="address">{{ preview.receiverAddress }}</text><button :disabled="busy" @click="showNavigation">查看导航方式</button><button :disabled="busy" @click="copyAddress">复制完整地址</button></view>
-    <text class="subtitle">本次待交商品</text>
-    <checkbox-group @change="checkedItems=$event.detail.value"><label v-for="item in preview.items" :key="deliveryItemKey(item)" class="panel item"><checkbox :value="deliveryItemKey(item)" :checked="checkedItems.includes(deliveryItemKey(item))" :disabled="busy" /><view><text class="subtitle">{{ item.productName }}</text><text class="quantity">{{ item.quantity }} {{ item.unit }}</text></view></label></checkbox-group>
-    <view class="panel"><checkbox-group @change="receiverConfirmed=$event.detail.value.includes('yes')"><label><checkbox value="yes" :checked="receiverConfirmed" :disabled="busy" />已核对收货人，且以上商品已实际交给客户</label></checkbox-group><text class="intro">本操作只记录这项任务的签收，不会再次扣库存或收款。</text><button class="primary" :disabled="!canConfirm()" :loading="busy" @click="confirm">确认已实际交付</button></view>
+    <view class="staff-panel receiver-panel"><text class="muted">收货人</text><text class="receiver-name">{{ preview.receiverName }}</text><text class="phone" selectable>{{ preview.receiverPhone }}</text><text class="address">{{ preview.receiverAddress }}</text><view class="contact-actions"><button class="staff-primary" :disabled="busy" @click="callReceiver">拨打电话</button><button class="staff-secondary" :disabled="busy" @click="copyAddress">复制地址</button></view><button class="text-button" :disabled="busy" @click="showNavigation">查看导航方式 ›</button><text v-if="message" class="intro" role="status">{{ message }}</text></view>
+    <view class="section-head"><text class="subtitle">1. 逐项核对商品</text><text class="muted">共 {{ preview.items.length }} 项</text></view>
+    <checkbox-group @change="checkedItems=$event.detail.value"><label v-for="item in preview.items" :key="deliveryItemKey(item)" class="staff-panel allocation-row"><checkbox :value="deliveryItemKey(item)" :checked="checkedItems.includes(deliveryItemKey(item))" :disabled="busy" /><view class="allocation-info"><text class="location">{{ item.productName }}</text><text class="quantity">{{ quantityLabel(item.quantity) }} <text class="unit">{{ item.unit }}</text></text><text class="muted">本次待交数量</text></view></label></checkbox-group>
+    <view class="staff-panel section-panel"><text class="subtitle">2. 记录实际签收</text><checkbox-group @change="receiverConfirmed=$event.detail.value.includes('yes')"><label class="confirmation"><checkbox value="yes" :checked="receiverConfirmed" :disabled="busy" />已核对收货人，且以上商品已实际交给客户</label></checkbox-group><text class="muted">确认仅记录本任务签收，不会再次出库或收款。</text><text v-if="!canConfirm()" class="hint">{{ uncertain ? '请先核对上次结果，内容变化时联系店长处理。' : '请勾选所有商品，并确认已经交给收货人。' }}</text><button class="staff-primary" :disabled="!canConfirm()" :loading="busy" @click="confirm">确认配送已签收</button></view>
    </template>
-   <view v-else class="notice"><text>{{ preview.blockReason }}</text></view>
+   <view v-else class="notice"><text class="subtitle">当前不能交付</text><text class="intro">{{ preview.blockReason }}</text></view>
   </template>
-  <view v-if="result" class="panel"><text class="subtitle">签收已完成</text><text class="intro">{{ result.receivedAt?.replace('T',' ')??'签收时间未记录' }}</text></view>
-  <text v-if="message" class="intro" role="status">{{ message }}</text><button v-if="allowed && orderId" :disabled="busy || loading" @click="readCurrent">{{ uncertain?'核对本任务签收结果':'重新读取任务' }}</button><button :disabled="busy" @click="back">返回我的配送任务</button>
+  <view v-if="result" class="staff-panel section-panel success-panel"><text class="subtitle">签收已完成</text><text class="intro">{{ result.receivedAt?.replace('T',' ')??'签收时间未记录' }}</text></view>
+  <text v-if="message" class="notice" role="status">{{ message }}</text><button v-if="allowed && orderId" class="staff-secondary" :disabled="busy || loading" @click="readCurrent">{{ uncertain?'核对上次签收结果':'重新读取任务' }}</button><button class="back-button" :disabled="busy" @click="back">返回我的配送</button>
  </view>
 </template>
 <style scoped>
-.page{padding:24px 20px;max-width:600px;margin:auto}.title{display:block;font-size:24px;font-weight:600}.subtitle{display:block;font-size:20px;font-weight:600;line-height:1.6;word-break:break-all}.intro{display:block;color:#4b5563;line-height:1.7;margin:12px 0}.panel{display:block;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;margin:20px 0}.notice{background:#fff;border:1px solid #c8ac80;border-radius:10px;padding:20px;margin:20px 0;line-height:1.7}.address{display:block;line-height:1.8;word-break:break-all}.quantity{display:block;font-size:24px;color:#1d5d73;margin-top:8px}.item{display:flex;align-items:flex-start;gap:12px}label{line-height:1.8}button{min-height:48px;margin:16px 0;color:#1d5d73;background:#fff;border:1px solid #1d5d73}.primary{color:#fff;background:#1d5d73}
+.page-heading{padding:12px 0 20px}.eyebrow{display:block;color:#1d5d73;font-size:13px;font-weight:600;margin-bottom:10px}.title{display:block;font-size:25px;font-weight:650;line-height:1.45}.subtitle{display:block;font-size:17px;font-weight:600;line-height:1.6;overflow-wrap:anywhere}.intro{display:block;font-size:14px;line-height:1.7;color:#4b5563;margin:12px 0}.muted,.code{display:block;font-size:13px;line-height:1.7;color:#4b5563}.code{overflow-wrap:anywhere}.order-reference{margin-bottom:16px}.section-panel,.object-panel{margin:16px 0}.section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:24px 0 12px}.allocation-row{display:flex;align-items:flex-start;gap:12px;margin:12px 0}.allocation-info{flex:1;min-width:0}.location{display:block;font-size:17px;font-weight:600;line-height:1.5;overflow-wrap:anywhere}.quantity{display:block;font-size:26px;line-height:1.5;font-weight:600;color:#1d5d73;margin:8px 0}.unit{font-size:15px;font-weight:400}.confirmation{display:block;font-size:15px;line-height:1.8;margin:16px 0}.notice{display:block;background:#fff;border:1px solid #c8ac80;border-radius:10px;padding:16px;margin:16px 0;line-height:1.7;font-size:14px}.hint{display:block;font-size:13px;color:#4b5563;line-height:1.7;margin-top:12px}.success-panel{border-color:#7ea76d}.status-label{display:inline-block;background:#edf4e9;color:#35582c;font-size:12px;padding:3px 8px;border-radius:5px;margin-bottom:12px}.staff-primary,.staff-secondary{margin:16px 0;font-size:15px}.back-button,.text-button{background:transparent;color:#1d5d73;font-size:14px;margin:12px 0}.receiver-name{display:block;font-size:22px;font-weight:600;margin-top:8px}.phone{display:block;font-size:17px;line-height:1.7;color:#1f2937;margin:6px 0}.address{display:block;font-size:16px;line-height:1.8;color:#1f2937;overflow-wrap:anywhere;border-top:1px solid #e5e7eb;padding-top:16px;margin-top:16px}.contact-actions{display:flex;gap:12px}.contact-actions button{flex:1;font-size:14px;margin-bottom:0}
 </style>
