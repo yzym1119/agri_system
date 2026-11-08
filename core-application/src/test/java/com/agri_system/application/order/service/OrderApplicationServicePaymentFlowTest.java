@@ -181,6 +181,7 @@ class OrderApplicationServicePaymentFlowTest {
         command.setExternalPaidAt(LocalDateTime.of(2026, 4, 11, 10, 30));
 
         when(paymentIntentRepository.findByIntentNo(intent.getIntentNo())).thenReturn(Optional.of(intent));
+        when(paymentIntentRepository.claimPendingByIntentNo(intent.getIntentNo())).thenReturn(1);
         when(paymentService.previewPayment(order, null, null, null)).thenReturn(preview);
         when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
         when(itemRepository.findByOrderId(order.getId())).thenReturn(Collections.singletonList(item));
@@ -230,6 +231,7 @@ class OrderApplicationServicePaymentFlowTest {
         command.setExternalTransactionNo("wx202604110002");
 
         when(paymentIntentRepository.findByIntentNo(intent.getIntentNo())).thenReturn(Optional.of(intent));
+        when(paymentIntentRepository.claimPendingByIntentNo(intent.getIntentNo())).thenReturn(1);
         when(orderRepository.findByIdForUpdate(order.getId())).thenReturn(Optional.of(order));
         when(paymentService.previewPayment(order, null, null, null)).thenReturn(preview);
 

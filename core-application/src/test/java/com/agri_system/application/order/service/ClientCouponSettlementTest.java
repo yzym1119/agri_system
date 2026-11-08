@@ -72,6 +72,9 @@ class ClientCouponSettlementTest {
                 null);
         when(intents.save(any())).thenAnswer(i->{OrderPaymentIntent intent=i.getArgument(0);intent.setId(70L);storedIntents.put(intent.getIntentNo(),intent);return intent;});
         when(intents.findByIntentNo(anyString())).thenAnswer(i->Optional.ofNullable(storedIntents.get(i.getArgument(0))));
+        // 确认前条件锁定：单测环境默认意图均为 PENDING 可锁定
+        lenient().when(intents.claimPendingByIntentNo(anyString())).thenReturn(1);
+        lenient().when(intents.expirePendingByIntentNo(anyString())).thenReturn(1);
         ReflectionTestUtils.setField(ReflectionTestUtils.getField(service,"clientOrderPaymentService"),"clientPaymentConfirmEnabled",true);
     }
     private BigDecimal m(String amount){return new BigDecimal(amount).setScale(2);}
@@ -129,6 +132,31 @@ class ClientCouponSettlementTest {
         var confirm=new OrderExternalPaymentConfirmCommand();confirm.setOrderId(order.getId());confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("old-wechat-70");
         assertThrows(IllegalArgumentException.class,()->service.confirmExternalPayment(confirm,10L));
         assertTrue(sources.isEmpty());assertTrue(savedOrders.isEmpty());assertEquals(1,coupon.getStatus());assertEquals(m("100"),order.getPayAmount());verifyNoInteractions(inventory);
+    }
+    @Test void supersededIntentCannotBeConfirmedAndNoMoneyMoves() {
+        // 意图A被新意图B替代（expirePendingByOrderId 置 status=3）后，A的回调到达：
+        // 必须条件锁定失败→重查确认已失效→拒绝，绝不进入正常结算造成双重收款。
+        var request=command(false,false);var intent=service.createExternalPaymentIntent(request,10L);
+        var confirm=new OrderExternalPaymentCallbackCommand();confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("wechat-stale-70");
+        var stale=storedIntents.get(intent.getIntentNo());stale.setStatus(3); // 模拟已被替代失效
+        when(intents.claimPendingByIntentNo(intent.getIntentNo())).thenReturn(0); // 条件锁定失败
+        IllegalArgumentException failure=assertThrows(IllegalArgumentException.class,()->service.confirmExternalPaymentCallback(confirm));
+        assertTrue(failure.getMessage().contains("已失效"),"应显式拒绝已失效意图: "+failure.getMessage());
+        assertTrue(failure.getMessage().contains("wechat-stale-70"),"错误信息应带流水号供对账");
+        assertTrue(sources.isEmpty());assertTrue(savedOrders.isEmpty());
+        assertEquals(1,order.getOrderStatus());assertEquals(1,coupon.getStatus());
+        verifyNoInteractions(inventory);
+    }
+    @Test void staleSupersededReadReplaysByLatestCompletedStatus() {
+        // 并发读：确认线程持陈旧 status=3 读，但行锁竞争后重查发现已是 COMPLETED(2) 同流水 → 幂等重放
+        var request=command(false,false);var intent=service.createExternalPaymentIntent(request,10L);
+        var confirm=new OrderExternalPaymentCallbackCommand();confirm.setIntentNo(intent.getIntentNo());confirm.setExternalTransactionNo("wechat-x-70");
+        service.confirmExternalPaymentCallback(confirm);assertNet("70","30",2);
+        var stale=new OrderPaymentIntent();org.springframework.beans.BeanUtils.copyProperties(storedIntents.get(intent.getIntentNo()),stale);stale.setStatus(3);
+        when(intents.findByIntentNo(intent.getIntentNo())).thenReturn(java.util.Optional.of(stale),java.util.Optional.of(storedIntents.get(intent.getIntentNo())));
+        when(intents.claimPendingByIntentNo(intent.getIntentNo())).thenReturn(0);
+        assertDoesNotThrow(()->service.confirmExternalPaymentCallback(confirm));
+        assertEquals(m("70"),sources.stream().filter(p->p.getPaymentType()!=5).map(OrderPayment::getAmount).reduce(m("0"),BigDecimal::add),"重放不得二次收款");
     }
     @Test void stalePendingReadCannotChargeTheAlreadyCompletedCurrentOrder() {
         var stale=new Order();org.springframework.beans.BeanUtils.copyProperties(order,stale);order.setOrderStatus(3);order.setPayAmount(m("70"));order.setCouponAmount(m("30"));order.setPaymentMethod(4);

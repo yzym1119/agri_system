@@ -18,6 +18,7 @@ import com.agri_system.domain.order.repository.OrderPaymentIntentRepository;
 import com.agri_system.domain.order.repository.OrderPaymentRepository;
 import com.agri_system.domain.order.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
 /** 客户端支付与首次付款完成编排；不实现平台验签，不新增真实支付开关。 */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ClientOrderPaymentService {
@@ -46,15 +48,16 @@ public class ClientOrderPaymentService {
     @Value("${payment.client-confirm.enabled:false}")
     private boolean clientPaymentConfirmEnabled;
 
-    /** 过期标记专用独立事务：外层确认事务随后抛异常回滚，但「意图已过期」的事实必须持久保留。 */
+    /** 过期标记专用独立事务：外层确认事务随后抛异常回滚，但「意图已过期」的事实必须持久保留。
+     *  条件更新 WHERE status=1：并发回调下不用先前读取的整行覆盖其他事务刚写入的新状态。 */
     private void markIntentExpiredInNewTransaction(OrderPaymentIntent intent) {
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-        template.executeWithoutResult(status -> {
-            intent.setStatus(3);
-            intent.setUpdatedAt(LocalDateTime.now());
-            paymentIntentRepository.save(intent);
-        });
+        Integer updated = template.execute(status ->
+                paymentIntentRepository.expirePendingByIntentNo(intent.getIntentNo()));
+        if (updated == null || updated != 1) {
+            throw new IllegalStateException("支付意图状态已变化，请重新发起支付");
+        }
     }
 
     @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
@@ -238,10 +241,30 @@ public class ClientOrderPaymentService {
             throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 支付意图已被其他流水确认");
         }
         if (intent.getExpireAt() != null && intent.getExpireAt().isBefore(LocalDateTime.now())) {
-            // 独立事务持久化过期标记：外层事务随后回滚也不丢「该意图已过期」的审计事实；
-            // findByIntentNo 无行锁，REQUIRES_NEW 挂起外层事务写同一行不会自阻塞。
+            // 独立事务条件更新持久化过期标记：外层事务随后回滚也不丢「该意图已过期」的审计事实
             markIntentExpiredInNewTransaction(intent);
             throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 支付意图已过期，请重新发起支付");
+        }
+
+        // 条件锁定：仅当意图仍为 PENDING(1) 时持有行锁至事务提交，串行化并发确认/过期/替代失效。
+        // 严禁已失效(3，被新支付意图替代)的意图进入正常结算——其对应外部资金可能已扣款，必须走对账。
+        if (paymentIntentRepository.claimPendingByIntentNo(intent.getIntentNo()) == 0) {
+            OrderPaymentIntent latest = paymentIntentRepository.findByIntentNo(intent.getIntentNo()).orElse(intent);
+            if (latest.getStatus() != null && latest.getStatus() == 2) {
+                if (externalTransactionNo.equals(latest.getExternalTransactionNo())) {
+                    return;
+                }
+                throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED + ": 支付意图已被其他流水确认");
+            }
+            // status=3：被新支付意图替代失效或已过期标记。真实支付接通后该流水可能已在外部渠道扣款，
+            // 不能静默忽略：留痕告警供人工对账退款，退款闭环上线前由运维按流水号核查。
+            log.warn("已失效支付意图收到确认请求，外部流水未入账，需人工对账退款: intentNo={}, status={}, "
+                            + "externalTransactionNo={}, externalAmount={}, orderId={}",
+                    intent.getIntentNo(), latest.getStatus(), externalTransactionNo,
+                    intent.getExternalAmount(), intent.getOrderId());
+            throw new IllegalArgumentException(OrderErrorCode.ORDER_OPERATION_NOT_SUPPORTED
+                    + ": 支付意图已失效（可能已被新支付替代），确认被拒绝；若该笔外部流水已实际扣款，"
+                    + "请按流水号 " + externalTransactionNo + " 人工对账退款");
         }
 
         Order order = orderRepository.findByIdForUpdate(intent.getOrderId())

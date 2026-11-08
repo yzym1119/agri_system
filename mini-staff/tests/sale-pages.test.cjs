@@ -71,6 +71,27 @@ test('报价失败或单位不一致都不加入，不能回退到本地目录�
   assert.equal(f.p.state.lines.value.length, 0); assert.match(f.p.state.message.value, /单位/);
 });
 
+test('添加商品过程中切换客户：普通零售价不得标成按新客户报价', async () => {
+  const f = await fixture(); await f.p.hooks.show();
+  let resolveQuote;
+  f.setQuote(() => new Promise(res => { resolveQuote = res; }));
+  f.p.state.choose(product);
+  const adding = f.p.state.addLine(); // 未选客户时的普通零售价报价进行中
+  await new Promise(r => setImmediate(r));
+  f.p.state.customerId.value = '77'; // 期间输入 VIP 客户编号；购物车为空，重报价监听跳过
+  await new Promise(r => setImmediate(r));
+  resolveQuote({ ...quote, suggestedUnitPrice: '12.34' }); // 普通零售价返回
+  await adding;
+  assert.equal(f.p.state.lines.value.length, 0, '客户已变更的报价不得加入购物车');
+  assert.match(f.p.state.message.value, /客户已变更/);
+  f.setQuote(quote); // 恢复正常报价，按 VIP 客户重新添加 → 指纹一致可结算
+  f.p.state.choose(product); await f.p.state.addLine();
+  assert.equal(f.p.state.lines.value.length, 1);
+  await f.p.state.checkout();
+  assert.equal(f.calls.submit.length, 1, '报价客户指纹一致后可直接结算');
+  assert.equal(f.calls.submit[0].options.customerId, '77');
+});
+
 test('整件单位拒绝小数数量，计量单位允许四位小数', async () => {
   const f = await fixture(); await f.p.hooks.show();
   f.p.state.choose(product); f.p.state.quantity.value = '0.5'; await f.p.state.addLine();

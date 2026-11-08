@@ -39,4 +39,14 @@ public class OrderPaymentIntentRepositoryImpl implements OrderPaymentIntentRepos
     public int expirePendingByOrderId(Long orderId) {
         return mapper.expirePendingByOrderId(orderId);
     }
+
+    @Override
+    public int claimPendingByIntentNo(String intentNo) {
+        return mapper.claimPendingByIntentNo(intentNo);
+    }
+
+    @Override
+    public int expirePendingByIntentNo(String intentNo) {
+        return mapper.expirePendingByIntentNo(intentNo);
+    }
 }

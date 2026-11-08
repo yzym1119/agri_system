@@ -103,13 +103,20 @@ async function addLine() {
   busy.value = true; message.value = '';
   try {
     // 单价只取后端报价指纹（含当前客户上下文），前端不推算、不兜底。
-    const quote = await quoteProduct(product.id, product.mainUnit, epoch.value, customerId.value.trim() || null);
+    // 请求客户指纹：报价期间客户变更（购物车为空时变更监听不会触发重报价），
+    // 返回的零售价不得标成按新客户报价，直接丢弃本次加入。
+    const requestCustomer = customerId.value.trim();
+    const quote = await quoteProduct(product.id, product.mainUnit, epoch.value, requestCustomer || null);
     if (!current()) return;
+    if (customerId.value.trim() !== requestCustomer) {
+      message.value = '报价期间客户已变更，商品未加入；请确认客户后重新添加。';
+      return;
+    }
     if (quote.saleUnit !== product.mainUnit) { message.value = '报价单位与商品主单位不一致，请重新进入本页。'; return; }
     lines.value = [...lines.value, { productId: product.id, name: product.name,
       unit: product.mainUnit, quantity: quantity.value, quotedUnitPrice: quote.suggestedUnitPrice }];
     selected.value = null; quantity.value = '1';
-    quotedUnderCustomer = customerId.value.trim();
+    quotedUnderCustomer = requestCustomer;
   } catch { if (current()) message.value = '后端报价失败，已停止加入；请检查网络后重试。'; }
   finally { busy.value = false; }
 }
