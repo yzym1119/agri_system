@@ -9,9 +9,11 @@ COPY core-domain/pom.xml core-domain/
 COPY core-infrastructure/pom.xml core-infrastructure/
 COPY core-application/pom.xml core-application/
 COPY api-client/pom.xml api-client/
+# 国内服务器构建加速：阿里云 Maven 镜像（文件不存在时请先在仓库根创建 maven-settings.xml）
+COPY maven-settings.xml /root/.m2/settings.xml
 RUN mvn dependency:go-offline -B
 COPY . .
-RUN mvn package -pl ${MODULE} -am -DskipTests -B
+RUN mvn package -pl ${MODULE} -am -DskipTests -Dcheckstyle.skip=true -B
 
 FROM eclipse-temurin:17-jre-alpine
 ARG MODULE=api-admin

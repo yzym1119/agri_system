@@ -2,7 +2,8 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY admin-web/package*.json ./
-RUN npm ci
+# 国内构建加速：npmmirror 镜像源
+RUN npm ci --registry=https://registry.npmmirror.com
 COPY admin-web/ .
 RUN npm run build
 
