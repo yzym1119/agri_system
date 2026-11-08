@@ -57,6 +57,11 @@ public class ProductDetailVO {
     /** 实际持久化基准单位；旧档案投影不作为数量证据。 */
     private String baseUnitName;
     private Boolean allowFractionalBaseQuantity;
+
+    /** 仅POS目录填充：本店当前可售的基准数量；null表示单位证据待核对。 */
+    private String availableBaseQuantity;
+    /** 此可售快照所属门店，字符串避免移动端Long精度丢失。 */
+    private String availabilityStoreId;
     
     @Schema(description = "会员价（元/基准单位，0或空表示使用零售价）", example = "45.00")
     private BigDecimal vipPrice;

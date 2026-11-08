@@ -97,3 +97,15 @@ test('订单号守卫只接受可规范化为正长整型的裸值', () => {
   assert.equal(sale.isOrderId(null), false);
   assert.equal(sale.isOrderId({}), false);
 });
+
+test('目录可售量保留原十进制和门店，缺失或非法证据明确未知',()=>{
+ const decode=row=>sale.decodeCatalog(catalogBody({records:[row]}))[0];
+ const current={...product,availabilityStoreId:'3',availableBaseQuantity:'999999999999.00000001'};
+ assert.equal(decode(current).availableBaseQuantity,'999999999999.00000001');
+ assert.equal(decode(current).availabilityStoreId,'3');assert.equal(decode(current).pricingUnit,'袋');
+ assert.equal(decode({...product}).availableBaseQuantity,null);
+ assert.equal(decode({...current,availableBaseQuantity:0.0001}).availableBaseQuantity,null,'不通过浮点猜精度');
+ assert.equal(decode({...current,availableBaseQuantity:'-1'}).availableBaseQuantity,null);
+ assert.equal(decode({...current,baseUnitName:null}).availableBaseQuantity,null);
+ assert.equal(decode({...current,availabilityStoreId:'0'}).availableBaseQuantity,null);
+});

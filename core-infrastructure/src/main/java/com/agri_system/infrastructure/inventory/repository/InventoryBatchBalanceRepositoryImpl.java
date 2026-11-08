@@ -18,6 +18,14 @@ public class InventoryBatchBalanceRepositoryImpl implements InventoryBatchBalanc
     private final InventoryBatchBalanceMapper mapper;
 
     @Override
+    public List<com.agri_system.domain.inventory.vo.SaleableStock> findSaleableStock(Long storeId, List<Long> productIds) {
+        if (storeId == null || storeId <= 0) throw new IllegalArgumentException("可售量必须指定门店");
+        if (productIds == null || productIds.isEmpty()) return List.of();
+        if (productIds.stream().anyMatch(id -> id == null || id <= 0)) throw new IllegalArgumentException("商品编号无效");
+        return mapper.findSaleableStock(storeId, productIds.stream().distinct().toList());
+    }
+
+    @Override
     public void save(InventoryBatchBalance balance) {
         if (balance.getId() == null) mapper.insert(balance); else mapper.update(balance);
     }

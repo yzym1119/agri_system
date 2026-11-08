@@ -4,7 +4,7 @@ const { createStaffAuth } = require('../../packages/mobile-contracts/dist/staff-
 const sale = require('../../packages/mobile-contracts/dist/sale.js');
 
 const product = { id: '11', code: 'P001', name: '复合肥', mainUnit: '袋', suggestedRetailPrice: '12.34',
-  baseUnitName: '袋', allowFractionalBaseQuantity: false, status: 1 };
+  baseUnitName: '袋', pricingUnit:'袋', availableBaseQuantity:'102',availabilityStoreId:'3', allowFractionalBaseQuantity: false, status: 1 };
 const quote = { quoteId: 'q1', productId: '11', saleUnit: '袋', suggestedUnitPrice: '12.34' };
 const customer77 = { id: '77', code: 'C077', name: '张三农资', phone: '13800000077',
   address: '测试村77号', type: 1, vipLevel: null, vipActive: false };
@@ -16,16 +16,16 @@ async function fixture(permissions = ['pos:order:create']) {
     data: req.url.endsWith('/login') ? { tokenName: 'Authorization', tokenValue: 'test', userInfo: user } : user }));
   await auth.login('test', 'pass');
   let catalog = [product], priceQuote = quote, submit = async () => ({ status: 'COMPLETED', orderId: '900' }), restore = null;
-  let customers = [customer77];
+  let customers = [customer77], searchOverride = null;
   const calls = { catalog: 0, search: [], quote: [], submit: [], customerSearch: [], finish: [] };
   const p = setupPage('sale', auth, true, {
     '../../services/sale': {
       readCatalog: async () => { calls.catalog++; return catalog; },
       searchCatalog: async (kw) => {
         calls.search.push(kw);
+        if (searchOverride) return searchOverride(kw);
         return catalog.filter(item => item.name.includes(kw) || item.code.includes(kw));
       },
-      readStock: async () => ({ 11: { quantity: '102.00000000', unit: '袋' } }),
       searchCustomers: async (kw) => {
         calls.customerSearch.push(kw);
         return customers.filter(item => !kw || item.name.includes(kw) || item.phone.includes(kw));
@@ -40,7 +40,7 @@ async function fixture(permissions = ['pos:order:create']) {
   });
   return { p, auth, calls, setCatalog: v => catalog = v, setQuote: v => priceQuote = v,
     setSubmit: v => submit = v, setRestore: v => restore = v, setUser: v => Object.assign(user, v),
-    setCustomers: v => customers = v };
+    setCustomers: v => customers = v, setSearch: v => searchOverride = v };
 }
 
 function selectCustomer(f,item){f.p.state.customerOpen.value=true;f.p.state.customerResults.value=[item];f.p.state.pickCustomer(f.p.state.customerResults.value[0]);}
@@ -79,12 +79,12 @@ test('按后端报价加入商品，展示小计但不把金额提交给后端',
     '成交后必须按回执订单号核对并清掉本机原请求，否则下一单会被误判为待核对');
 });
 
-test('本店库存只作参考展示，缺记录时明确说明', async () => {
+test('本店可售量来自当前目录并保留原始单位精度', async () => {
   const f = await fixture(); await f.p.hooks.show();
-  assert.equal(f.p.state.stock.value['11'].unit, '袋');
-  assert.match(f.p.state.stockText(product), /库存 102 袋/);
+  assert.equal(f.p.state.products.value[0].availableBaseQuantity, '102');
+  assert.match(f.p.state.stockText(product), /本店可售 102 袋/);
   assert.equal(f.p.state.outOfStock(product), false);
-  assert.match(f.p.state.stockText({ ...product, id: '99' }), /无库存记录/);
+  assert.match(f.p.state.stockText({ ...product, id: '99', availableBaseQuantity:null }), /本店可售量待核对/);
 });
 
 test('报价失败或单位不一致都不加入，不能回退到本地目录价', async () => {
@@ -328,4 +328,30 @@ test('商品关键词变化在防抖前立即清理旧候选，旧词响应不�
  f.p.state.keyword.value='没有这个商品';assert.equal(f.p.state.searchResults.value.length,0);
  await f.p.state.runSearch('P001');assert.equal(f.p.state.searchResults.value.length,0);
  f.p.hooks.hide();
+});
+
+test('只读目录的本店可售量，零值和未知拒绝加购而不发报价',async()=>{
+ const f=await fixture();await f.p.hooks.show();
+ const none={...product,availableBaseQuantity:'0',availabilityStoreId:'3'};
+ f.p.state.choose(none);assert.equal(f.p.state.selected.value,null);assert.match(f.p.state.message.value,/无可售/);
+ const unknown={...product,availableBaseQuantity:null,availabilityStoreId:'3'};
+ f.p.state.choose(unknown);assert.equal(f.p.state.selected.value,null);assert.match(f.p.state.message.value,/待核对/);
+ const other={...product,availableBaseQuantity:'100',availabilityStoreId:'4'};
+ f.p.state.choose(other);assert.equal(f.p.state.selected.value,null);assert.equal(f.calls.quote.length,0);
+ const fractional={...product,baseUnitName:'公斤',availableBaseQuantity:'0.0001',availabilityStoreId:'3'};
+ assert.match(f.p.state.stockText(fractional),/本店可售 0.0001 公斤/);
+ f.p.state.choose(fractional);assert.ok(f.p.state.selected.value);
+});
+
+
+test('刷新保留关键词重新查询，刷新前的在途搜索不能回填旧可售量',async()=>{
+ const f=await fixture();await f.p.hooks.show();f.p.state.keyword.value='P001';
+ await new Promise(r=>setTimeout(r,350));assert.equal(f.p.state.filtered.value.length,1);
+ let finishOld;f.setSearch(()=>new Promise(resolve=>finishOld=resolve));
+ const old=f.p.state.runSearch('P001');
+ f.setSearch(async()=>[{...product,availableBaseQuantity:'7'}]);
+ await f.p.state.reload();
+ assert.equal(f.p.state.keyword.value,'P001');assert.equal(f.p.state.filtered.value[0]?.availableBaseQuantity,'7');
+ finishOld([{...product,availableBaseQuantity:'102'}]);await old;
+ assert.equal(f.p.state.filtered.value[0]?.availableBaseQuantity,'7');f.p.hooks.hide();
 });

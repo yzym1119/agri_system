@@ -6,6 +6,7 @@ export type CatalogProduct = {
   id: string; code: string; name: string; mainUnit: string;
   suggestedRetailPrice: string; baseUnitName: string;
   allowFractionalBaseQuantity: boolean; status: number;
+  availableBaseQuantity: string | null; availabilityStoreId: string | null; pricingUnit: string | null;
 };
 export type PriceQuote = {
   quoteId: string; productId: string; saleUnit: string; suggestedUnitPrice: string;
@@ -65,9 +66,15 @@ export function decodeCatalog(envelope: unknown): CatalogProduct[] {
     if (!id || !text(row.code, 100) || !text(row.name, 200) || !text(row.mainUnit, 50)
       || row.suggestedRetailPrice === null || row.suggestedRetailPrice === undefined
       || !price(String(row.suggestedRetailPrice))) throw new Error('CATALOG_INVALID');
+    const store = normalizeLongId(row.availabilityStoreId);
+    const available = typeof row.availableBaseQuantity === 'string'
+      && /^(0|[1-9]\d{0,59})(\.\d{1,8})?$/.test(row.availableBaseQuantity)
+      && text(row.baseUnitName, 50) && store ? row.availableBaseQuantity : null;
     return {
       id, code: row.code, name: row.name, mainUnit: row.mainUnit,
       suggestedRetailPrice: String(row.suggestedRetailPrice),
+      availableBaseQuantity: available, availabilityStoreId: store,
+      pricingUnit: text(row.pricingUnit, 50) ? row.pricingUnit : null,
       baseUnitName: text(row.baseUnitName, 50) ? row.baseUnitName : row.mainUnit,
       allowFractionalBaseQuantity: row.allowFractionalBaseQuantity === true,
       status: typeof row.status === 'number' ? row.status : 1,

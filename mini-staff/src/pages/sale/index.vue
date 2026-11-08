@@ -2,15 +2,14 @@
 import { ref, computed, watch } from 'vue';
 import { onShow, onHide } from '@dcloudio/uni-app';
 import { staffAuth } from '../../services/auth';
-import { readCatalog, searchCatalog, readStock, searchCustomers, quoteProduct, submitSale } from '../../services/sale';
+import { readCatalog, searchCatalog, searchCustomers, quoteProduct, submitSale } from '../../services/sale';
 import { posRecovery, readPOSResult } from '../../services/pos-recovery';
 import { lineCents, type CatalogProduct, type PosCustomer, type SaleLine } from '@agri/mobile-contracts/sale';
 import { money, preciseDecimal } from '../../utils/money';
 
 const products = ref<CatalogProduct[]>([]), keyword = ref('');
 const searchResults = ref<CatalogProduct[]>([]), searching = ref(false);
-/** 本店库存只作参考展示：是否可卖以后端出库时的可用量为准。 */
-const stock = ref<Record<string, { quantity: string; unit: string }>>({});
+const availabilityNotice = ref('');
 const lines = ref<SaleLine[]>([]);
 const selected = ref<CatalogProduct | null>(null), quantity = ref('1');
 /** 客户档案是唯一来源：选了客户才带会员价，配送时收货信息也取自这里。 */
@@ -40,34 +39,38 @@ const receiverProblem = computed(() => {
 });
 const current = (ticket = generation) => visible && allowed.value && ticket === generation && staffAuth.current()?.epoch === epoch.value;
 
-function stockText(product: CatalogProduct): string {
-  const row = stock.value[product.id];
-  if (!row) return '无库存记录';
-  const text = preciseDecimal(row.quantity);
-  return '库存 ' + text + (row.unit ? ' ' + row.unit : '');
+function availabilityKnown(product: CatalogProduct): boolean {
+  return product.availableBaseQuantity !== null && product.availableBaseQuantity !== undefined
+    && !!product.baseUnitName && product.availabilityStoreId === staffAuth.current()?.storeId;
 }
-const outOfStock = (product: CatalogProduct) => {
-  const row = stock.value[product.id];
-  return !!row && Number(row.quantity) <= 0;
-};
+function stockText(product: CatalogProduct): string {
+  return availabilityKnown(product) ? '本店可售 ' + preciseDecimal(product.availableBaseQuantity) + ' ' + product.baseUnitName : '本店可售量待核对';
+}
+const outOfStock = (product: CatalogProduct) => availabilityKnown(product) && /^0(?:\.0+)?$/.test(product.availableBaseQuantity!);
+function canChoose(product: CatalogProduct): boolean {
+  if (!availabilityKnown(product) || outOfStock(product)) {
+    message.value = outOfStock(product) ? '本店无可售库存，请先收货或调拨后刷新。' : '可售量或单位资料待核对，请刷新商品或联系老板。';
+    availabilityNotice.value = message.value;return false;
+  }
+  return true;
+}
 
 async function reload() {
   if (!current() || busy.value) return;
   const ticket = ++generation;
-  loading.value = true; message.value = '';
+  searchSeq++; searching.value = false;
+  if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
+  loading.value = true; message.value = ''; availabilityNotice.value = ''; products.value = []; searchResults.value = []; selected.value = null;
   try {
     const list = await readCatalog(epoch.value);
     if (!current(ticket)) return;
     products.value = list;
-    if (!list.length) message.value = '本店暂无可销售商品，请先在后台建立商品档案。';
+    if (keyword.value.trim()) await runSearch(keyword.value.trim());
+    else if (!list.length) message.value = '本店暂无可销售商品，请先在后台建立商品档案。';
   } catch {
     if (current(ticket)) message.value = '商品目录读取失败，请重新进入本页或检查网络。';
   } finally { if (ticket === generation) loading.value = false; }
-  // 库存读失败不阻断开单：出库时后端会按实际可用量拒绝，页面只做展示。
-  try {
-    const rows = await readStock(epoch.value);
-    if (current(ticket)) stock.value = rows;
-  } catch { /* 库存仅参考 */ }
+
 }
 
 /** 服务端搜索（防抖）；商品超过目录首页 200 条时仍可通过编码/名称/条码找到。 */
@@ -81,15 +84,15 @@ function scheduleSearch() {
 }
 async function runSearch(query: string) {
   if (!current() || busy.value || query !== keyword.value.trim()) return;
-  const seq = ++searchSeq;
+  const seq = ++searchSeq, ticket = generation;
   searching.value = true;
   try {
     const list = await searchCatalog(query, epoch.value);
-    if (!current() || seq !== searchSeq || query !== keyword.value.trim()) return;
+    if (!current(ticket) || seq !== searchSeq || query !== keyword.value.trim()) return;
     searchResults.value = list;
     if (!list.length) message.value = '没有匹配的商品，可尝试编码、名称或条码搜索。';
   } catch {
-    if (current() && seq === searchSeq) message.value = '商品搜索失败，请检查网络后重试。';
+    if (current(ticket) && seq === searchSeq) message.value = '商品搜索失败，请检查网络后重试。';
   } finally { if (seq === searchSeq) searching.value = false; }
 }
 watch(keyword, () => {
@@ -149,7 +152,7 @@ function pickWalkIn() {
 onShow(async () => {
   visible = true; const ticket = ++generation;
   loading.value = true; busy.value = false; allowed.value = false; blocked.value = false;
-  products.value = []; searchResults.value = []; stock.value = {}; lines.value = [];
+  products.value = []; searchResults.value = []; availabilityNotice.value = ''; lines.value = [];
   selected.value = null; keyword.value = '';
   if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; } searchSeq++; searching.value = false;
   customer.value = null; customerOpen.value = false; customerKeyword.value = ''; customerResults.value = [];
@@ -178,6 +181,8 @@ onHide(() => { visible = false; generation++; allowed.value = false; customerOpe
 /* ---------- 商品选择与加入 ---------- */
 function choose(product: CatalogProduct) {
   if (!current() || busy.value || requoting.value) return;
+  if (loading.value || !canChoose(product)) return;
+  availabilityNotice.value = '';
   selected.value = product; quantity.value = '1'; message.value = '';
 }
 function closeAdd() { selected.value = null; quantity.value = '1'; }
@@ -201,6 +206,7 @@ async function addLine() {
     await requoteAllLines();
     return;
   }
+  if (product && !canChoose(product)) return;
   if (!product || !validQuantity(product, quantity.value)) {
     message.value = '数量无效：整件单位只能填整数，计量单位最多四位小数。'; return;
   }
@@ -335,18 +341,20 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
     <view class="section-head"><text class="section-title">选择商品</text><text class="section-note">{{ searching ? '搜索中…' : filtered.length + ' 个 · 来自后台商品档案' }}</text></view>
    </view>
 
+   <view v-if="availabilityNotice" class="alert alert-danger" role="status"><text>{{ availabilityNotice }}</text></view>
+   <text class="t-cap">可售量按基准单位统计，排除预留、过期批次和停用货位；实际成交仍以后端出库校验为准。</text>
    <view v-if="filtered.length" class="card card-flat">
     <view hover-class="tap-hover" hover-stay-time="80" v-for="(product, index) in filtered" :key="product.id" class="list-item row-between" :class="{ 'list-item-last': index === filtered.length - 1 }" @click="choose(product)">
      <view class="grow">
       <text class="t-sub">{{ product.name }}</text>
       <view class="row mt4">
-       <text class="t-cap">{{ product.code }}</text>
+       <text class="t-cap">{{ product.code }} · 按{{ product.mainUnit }}销售</text>
        <text class="t-cap ml8" :class="{ 't-warn': outOfStock(product) }">· {{ stockText(product) }}</text>
       </view>
      </view>
      <view class="price-box">
       <text class="t-money t-primary">¥{{ money(product.suggestedRetailPrice) }}</text>
-      <text class="t-cap">/{{ product.baseUnitName }}</text>
+      <text class="t-cap">/{{ product.pricingUnit || '计价单位待核对' }}</text>
       <AppIcon name="chevron" :size="12" class="chev" />
      </view>
     </view>

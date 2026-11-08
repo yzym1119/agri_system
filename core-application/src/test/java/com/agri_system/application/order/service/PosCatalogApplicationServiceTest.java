@@ -20,7 +20,14 @@ class PosCatalogApplicationServiceTest {
     final ProductPackageApplicationService packages=mock(ProductPackageApplicationService.class);
     final InventoryApplicationService inventory=mock(InventoryApplicationService.class);
     final CustomerRepository customers=mock(CustomerRepository.class);
-    final PosCatalogApplicationService service=new PosCatalogApplicationService(products,packages,inventory,customers);
+    final com.agri_system.domain.inventory.repository.InventoryBatchBalanceRepository balances=mock(com.agri_system.domain.inventory.repository.InventoryBatchBalanceRepository.class);
+    final PosCatalogApplicationService service=new PosCatalogApplicationService(products,packages,inventory,customers,balances);
+    com.agri_system.application.support.EmployeeIdentityTestScope identity;
+    @org.junit.jupiter.api.BeforeEach void bindEmployee(org.junit.jupiter.api.TestInfo info){
+        if(List.of("catalogExcludesDisabledProductsAndNeverExposesPurchaseCost","disabledFirstPageMustNotHideEnabledProductsOrInflateTotal","batchUnitMismatchIsUnknownAndSearchUsesSameStoreSnapshot").contains(info.getTestMethod().orElseThrow().getName()))
+            identity=new com.agri_system.application.support.EmployeeIdentityTestScope(9L,1L,false);
+    }
+    @org.junit.jupiter.api.AfterEach void clearEmployee(){if(identity!=null)identity.close();}
 
     @Test void catalogExcludesDisabledProductsAndNeverExposesPurchaseCost() {
         var enabled=new ProductDetailVO(); enabled.setId(1L); enabled.setStatus(1); enabled.setName("正常商品");
@@ -93,5 +100,40 @@ class PosCatalogApplicationServiceTest {
         assertTrue(rows.get(0).vipActive(),"会员有效期按真实到期日判定");
         vip.setVipEndDate(java.time.LocalDate.now().minusDays(1));
         assertFalse(service.customers("张",20).get(0).vipActive(),"过期会员不得报成会员价");
+    }
+    @Test void catalogHasOneBatchQueryForCurrentPageAndDoesNotGuessUnits() {
+        var first=knownProduct(1L,"箱",100L,"瓶");
+        var second=knownProduct(2L,"公斤",200L,"公斤");
+        var unknown=new ProductDetailVO();unknown.setId(3L);unknown.setMainUnit("袋");
+        var page=new Page<ProductDetailVO>();page.setRecords(List.of(first,second,unknown));page.setTotalRow(3);
+        when(products.queryProducts(any())).thenReturn(page);
+        try(var user=new com.agri_system.application.support.EmployeeIdentityTestScope(9L,1L,false)) {
+            var result=service.products(1,20);
+            assertEquals("1",result.getRecords().get(0).getAvailabilityStoreId());
+            assertEquals("0",result.getRecords().get(0).getAvailableBaseQuantity(),"没有正余额才是真实零值");
+            assertNull(result.getRecords().get(2).getAvailableBaseQuantity(),"缺持久单位不能猜零");
+        }
+    }
+    @Test void batchUnitMismatchIsUnknownAndSearchUsesSameStoreSnapshot() {
+        var p=knownProduct(1L,"箱",100L,"瓶");var page=new Page<ProductDetailVO>();page.setRecords(List.of(p));
+        when(products.queryActiveByKeyword("肥",1,20)).thenReturn(page);
+        when(balances.findSaleableStock(1L,List.of(1L))).thenReturn(List.of(new com.agri_system.domain.inventory.vo.SaleableStock(1L,99L,new BigDecimal("12"))));
+        assertNull(service.products(1,20,"肥").getRecords().get(0).getAvailableBaseQuantity());
+        verify(balances,times(1)).findSaleableStock(1L,List.of(1L));
+        when(balances.findSaleableStock(1L,List.of(1L))).thenReturn(List.of(new com.agri_system.domain.inventory.vo.SaleableStock(1L,100L,new BigDecimal("12"))));
+        assertEquals("12",service.products(1,20,"肥").getRecords().get(0).getAvailableBaseQuantity());
+        assertNull(p.getAvailableBaseQuantity(),"不得污染共用商品详情");
+    }
+    @Test void noStoreDoesNotBecomeAllStoresEvenForAdmin() {
+        try(var user=new com.agri_system.application.support.EmployeeIdentityTestScope(9L,null,true)) {
+            assertThrows(IllegalStateException.class,()->service.products(1,20));
+            verifyNoInteractions(products,balances);
+        }
+    }
+    private static ProductDetailVO knownProduct(Long id,String main,Long baseId,String baseName) {
+        var p=new ProductDetailVO();p.setId(id);p.setMainUnit(main);p.setBaseUnitName(baseName);p.setStatus(1);
+        var base=new com.agri_system.application.product.dto.vo.ProductUnitVO();base.setId(baseId);base.setUnitName(baseName);
+        base.setIsBaseUnit(1);base.setStatus(1);base.setBaseQuantityPerUnit(BigDecimal.ONE);
+        p.setUnits(List.of(base));return p;
     }
 }

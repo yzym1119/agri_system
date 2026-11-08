@@ -8,6 +8,9 @@ import java.util.Map;
 import java.util.Optional;
 
 public interface InventoryBatchBalanceRepository {
+    /** 当前页商品的门店销售可用余额，与销售出库筛选一致，只读、不加库存锁。 */
+    List<com.agri_system.domain.inventory.vo.SaleableStock> findSaleableStock(Long storeId, List<Long> productIds);
+
     void save(InventoryBatchBalance balance);
 
     Optional<InventoryBatchBalance> findByBatchAndLocationForUpdate(Long batchId, Long locationId);

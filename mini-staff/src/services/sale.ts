@@ -26,27 +26,6 @@ export const searchCatalog = async (keyword: string, epoch: number): Promise<Cat
   return decodeCatalog(body);
 };
 
-/** 本店库存（只读参考）：门店由后端按登录员工解析，前端不传 storeId 以免读错店。 */
-export const readStock = async (epoch: number): Promise<Record<string, { quantity: string; unit: string }>> => {
-  const body = await staffAuth.request({
-    url: '/api/admin/pos/catalog/inventory?pageNum=1&pageSize=500', method: 'GET',
-  }, envelope, epoch);
-  if (!isCatalogEnvelope(body) || !body.data || typeof body.data !== 'object') return {};
-  const rows = (body.data as { records?: unknown }).records;
-  if (!Array.isArray(rows)) return {};
-  const stock: Record<string, { quantity: string; unit: string }> = {};
-  for (const row of rows) {
-    if (!row || typeof row !== 'object') continue;
-    const value = row as Record<string, unknown>;
-    const id = typeof value.productId === 'number' || typeof value.productId === 'string' ? String(value.productId) : '';
-    const quantity = typeof value.totalQuantity === 'number' || typeof value.totalQuantity === 'string'
-      ? String(value.totalQuantity) : '';
-    if (!id || !quantity) continue;
-    stock[id] = { quantity, unit: typeof value.unit === 'string' ? value.unit : '' };
-  }
-  return stock;
-};
-
 /** 客户档案检索（姓名/编码/手机号）；关键字为空时返回最近建档的客户，供直接挑选。 */
 export const searchCustomers = async (keyword: string, epoch: number): Promise<PosCustomer[]> => {
   const query = keyword.trim() ? '&keyword=' + encodeURIComponent(keyword.trim()) : '';

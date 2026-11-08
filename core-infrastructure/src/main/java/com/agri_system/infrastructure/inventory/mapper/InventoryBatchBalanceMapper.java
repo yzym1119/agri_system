@@ -12,6 +12,23 @@ import java.util.Map;
 
 @Mapper
 public interface InventoryBatchBalanceMapper extends BaseMapper<InventoryBatchBalance> {
+    @org.apache.ibatis.annotations.ConstructorArgs({
+            @org.apache.ibatis.annotations.Arg(column="productId", javaType=Long.class),
+            @org.apache.ibatis.annotations.Arg(column="baseUnitId", javaType=Long.class),
+            @org.apache.ibatis.annotations.Arg(column="availableBaseQuantity", javaType=BigDecimal.class)
+    })
+    @Select({"<script>",
+            "SELECT b.product_id AS productId, r.base_unit_id AS baseUnitId, SUM(b.base_quantity-b.reserved_base_quantity) AS availableBaseQuantity",
+            "FROM inventory_batch_balance b JOIN inventory_receipt_batch r ON r.id=b.batch_id",
+            "WHERE b.store_id=#{storeId} AND b.product_id IN",
+            "<foreach collection='productIds' item='id' open='(' separator=',' close=')'>#{id}</foreach>",
+            "AND EXISTS(SELECT 1 FROM inventory_location l WHERE l.id=b.location_id AND l.status=1)",
+            "AND b.base_quantity &gt; b.reserved_base_quantity AND (r.expiry_date IS NULL OR r.expiry_date &gt;= CURRENT_DATE)",
+            "GROUP BY b.product_id,r.base_unit_id ORDER BY b.product_id,r.base_unit_id",
+            "</script>"})
+    List<com.agri_system.domain.inventory.vo.SaleableStock> findSaleableStock(@Param("storeId") Long storeId,
+                                                                          @Param("productIds") List<Long> productIds);
+
     @Select("SELECT * FROM inventory_batch_balance WHERE batch_id = #{batchId} AND location_id = #{locationId} FOR UPDATE")
     InventoryBatchBalance findByBatchAndLocationForUpdate(@Param("batchId") Long batchId,
                                                           @Param("locationId") Long locationId);
