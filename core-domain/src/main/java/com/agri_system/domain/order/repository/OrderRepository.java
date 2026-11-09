@@ -101,6 +101,10 @@ public interface OrderRepository {
      * 按 ID 集合批量查询订单（单条 IN 查询）
      */
     java.util.List<Order> findByIds(java.util.Collection<Long> ids);
+
+    /** 真实本人本店POS单，ID倒序最多21条；日期为含起点、不含终点。缺失staff_id不猜创建人。 */
+    java.util.List<Order> findOwnSales(Long storeId, Long staffId, Long after,
+            java.time.LocalDateTime from, java.time.LocalDateTime until, Integer state);
 }
 
 

@@ -44,7 +44,22 @@ public class OrderQueryService {
                 : orderRepository.findPage(query.getPageNum(), query.getPageSize(), query.getKeyword(), query.getStoreId(),
                     query.getOrderType(), query.getDeliveryType(), query.getOrderStatus(), query.getStartTime(), query.getEndTime(), query.getCustomerId(), query.getDeliveryStatus());
 
-        List<Long> fullyRefundedIds=page.getRecords().stream().filter(order -> Integer.valueOf(8).equals(order.getOrderStatus()))
+        List<OrderPageVO> voList = summarizeOrders(page.getRecords());
+
+        // 3. 构建分页结果
+        com.mybatisflex.core.paginate.Page<OrderPageVO> result = new com.mybatisflex.core.paginate.Page<>();
+        result.setRecords(voList);
+        result.setTotalRow(page.getTotalRow());
+        result.setPageNumber(page.getPageNumber());
+        result.setPageSize(page.getPageSize());
+        result.setTotalPage(page.getTotalPage());
+
+        return result;
+    }
+
+    /** 列表共用原财务/交付装配，不提供额外查询范围。 */
+    List<OrderPageVO> summarizeOrders(List<Order> orders) {
+        List<Long> fullyRefundedIds=orders.stream().filter(order -> Integer.valueOf(8).equals(order.getOrderStatus()))
                 .map(Order::getId).toList();
         java.util.Set<Long> returnableIds=fullyRefundedIds.isEmpty()?java.util.Set.of():itemRepository.findOrderIdsWithReturnableItems(fullyRefundedIds);
 
@@ -53,7 +68,7 @@ public class OrderQueryService {
         Map<Long, Optional<Customer>> pageCustomers = new HashMap<>();
 
         // 2. 转换为VO
-        List<OrderPageVO> voList = page.getRecords().stream().map(order -> {
+        return orders.stream().map(order -> {
             OrderPageVO vo = new OrderPageVO();
             List<OrderPayment> payments = paymentRepository.findByOrderId(order.getId());
             PaymentSummary paymentSummary = summarizePayment(order, payments);
@@ -131,15 +146,6 @@ public class OrderQueryService {
             return vo;
         }).collect(Collectors.toList());
 
-        // 3. 构建分页结果
-        com.mybatisflex.core.paginate.Page<OrderPageVO> result = new com.mybatisflex.core.paginate.Page<>();
-        result.setRecords(voList);
-        result.setTotalRow(page.getTotalRow());
-        result.setPageNumber(page.getPageNumber());
-        result.setPageSize(page.getPageSize());
-        result.setTotalPage(page.getTotalPage());
-
-        return result;
     }
 
     public OrderDetailVO getOrderDetail(Long orderId) {

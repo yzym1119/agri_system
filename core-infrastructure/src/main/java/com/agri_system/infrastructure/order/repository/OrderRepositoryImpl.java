@@ -22,6 +22,20 @@ public class OrderRepositoryImpl implements OrderRepository {
     private final OrderMapper mapper;
 
     @Override
+    public java.util.List<Order> findOwnSales(Long storeId, Long staffId, Long after,
+            java.time.LocalDateTime from, java.time.LocalDateTime until, Integer state) {
+        if (storeId == null || storeId <= 0 || staffId == null || staffId <= 0)
+            throw new IllegalArgumentException("本人订单查询必须有明确员工与门店");
+        var query = QueryWrapper.create().where("store_id = ?", storeId)
+                .and("staff_id = ?", staffId).and("order_type = 1");
+        if (after != null) query.and("id < ?", after);
+        if (from != null) query.and("created_at >= ?", from);
+        if (until != null) query.and("created_at < ?", until);
+        if (state != null) query.and("order_status = ?", state);
+        return mapper.selectListByQuery(query.orderBy("id DESC").limit(21));
+    }
+
+    @Override
     public Order save(Order order) {
         if (order.getId() == null) {
             mapper.insert(order);

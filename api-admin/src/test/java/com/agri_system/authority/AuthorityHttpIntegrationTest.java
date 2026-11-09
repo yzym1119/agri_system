@@ -100,6 +100,7 @@ class AuthorityHttpIntegrationTest {
     @MockBean com.agri_system.application.inventory.service.MobileScanQueryService mobileInventory;
     @MockBean com.agri_system.application.order.service.DeliveryTaskService assignedTasks;
     @MockBean com.agri_system.application.order.service.MobilePickupTaskService mobilePickup;
+    @MockBean com.agri_system.application.order.service.MobileOwnOrderService ownOrders;
     @MockBean com.agri_system.application.order.service.OrderApplicationService assignedOrders;
     @MockBean com.agri_system.application.order.service.PickupFulfillmentService pickupFulfillment;
     @MockBean com.agri_system.application.order.service.PosSaleSubmissionService posSubmissions;
@@ -140,6 +141,8 @@ class AuthorityHttpIntegrationTest {
             com.agri_system.api.admin.controller.MobileDeliveryController.class,
             com.agri_system.api.admin.controller.DeliveryReassignmentController.class,
             com.agri_system.api.admin.controller.MobilePickupController.class,
+            com.agri_system.api.admin.controller.MobileOwnOrderController.class,
+            com.agri_system.api.admin.controller.MenuController.class,
             com.agri_system.api.admin.controller.OrderAdminController.class,
             com.agri_system.api.admin.controller.ProductController.class,
             com.agri_system.api.admin.controller.ReportCustomerController.class,
@@ -323,6 +326,31 @@ class AuthorityHttpIntegrationTest {
         reject(call(token,"GET","/api/admin/mobile/inventory/1",null));
         reject(call(token,"GET","/api/admin/mobile/inventory/products?keyword=x",null));
         reject(call(token,"GET","/api/admin/mobile/locations/1/products",null));
+    }
+
+    @Test void 本人订单迁移不自动授权且实际管理员可单独授予撤销() throws Exception {
+        String token=login(4),base="/api/admin/mobile/orders";
+        reject(call(null,"GET",base,null));reject(call(loginId("CUST_1"),"GET",base,null));reject(call(token,"GET",base,null));
+        try(var c=jdbc.getDataSource().getConnection()) {
+            var script=new org.springframework.core.io.ClassPathResource("db/migration/V142__own_order_query_permission.sql");
+            org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(c,script);
+            org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(c,script);
+        }
+        assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM sys_menu WHERE permission='order:own:query'",Integer.class));
+        long id=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='order:own:query'",Long.class);
+        assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM sys_role_menu WHERE menu_id=?",Integer.class,id));
+        reject(call(token,"GET",base,null));
+        String admin=login(1);
+        jdbc.update("INSERT INTO sys_menu(id,parent_id,name,permission,type,sort_order,visible) VALUES(9999,0,'菜单','menu:view',2,1,1)");grant(1,9999);
+        assertTrue(call(admin,"GET","/api/admin/menus/tree",null).toString().contains("order:own:query"));
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(java.util.Map.of("roleId",4,"menuIds",List.of(id)))));
+        when(ownOrders.list(4L,null,null,null,null)).thenReturn(new com.agri_system.application.order.dto.vo.MobileOwnOrderVO.Orders("1",List.of(),null));
+        assertEquals("1",call(token,"GET",base+"?staffId=7&storeId=2",null).path("storeId").asText());
+        org.mockito.Mockito.verify(ownOrders).list(4L,null,null,null,null);
+        reject(call(token,"GET","/api/admin/orders/42",null));reject(call(token,"POST","/api/admin/orders/42/ship","{}"));
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(java.util.Map.of("roleId",4,"menuIds",List.of()))));
+        reject(call(token,"GET",base,null));reject(call(token,"GET",base+"/42",null));
+        grant(4,id);jdbc.update("UPDATE staff SET status=0 WHERE id=4");reject(call(token,"GET",base,null));
     }
 
     @Test void 本人配送不授整店订单和发货权限且撤权立即生效() throws Exception {

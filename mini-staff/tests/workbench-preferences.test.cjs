@@ -2,6 +2,14 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { setupPage } = require('./helpers/page.cjs');
 const keys = values => Array.from(values, item => item.id);
+test('本人订单入口仅独立权限可见，不能靠销售权限或本机收藏扩大查询',async()=>{
+ const denied=fixture(['pos:order:create'],{'staff-home-v1:11:3':{version:1,ids:['orders']}});await denied.page.hooks.show();
+ assert.equal(denied.page.state.features.value.some(f=>f.id==='orders'),false);
+ const allowed=fixture(['order:own:query']);await allowed.page.hooks.show();
+ assert.deepEqual(keys(allowed.page.state.features.value),['orders']);allowed.page.state.features.value[0].open();
+ assert.deepEqual(allowed.page.routes,['/pages/orders/list/index']);
+ allowed.actor.permissions=[];await allowed.page.hooks.show();assert.equal(allowed.page.state.features.value.length,0);
+});
 function fixture(permissions, saved, platform = {}) {
   const actor = { staffId:'11', storeId:'3', name:'验收员工', epoch:1, permissions };
   const writes=[];

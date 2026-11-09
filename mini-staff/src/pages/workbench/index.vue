@@ -12,14 +12,16 @@ const canSale = ref(false);
 const openInventory = () => uni.navigateTo({ url:'/pages/scan/index' });
 const openReceiving = () => uni.navigateTo({url:'/pages/receipt/list/index'});
 const openDelivery = () => uni.navigateTo({url:'/pages/delivery/list/index'});
-const canPickup=ref(false);
+const canPickup=ref(false),canOwnOrders=ref(false);
+const openOrders=()=>uni.navigateTo({url:'/pages/orders/list/index'});
 const openPickup=()=>uni.navigateTo({url:'/pages/pickup/list/index'});
-const featureIcon=(id:string)=>({sale:'bag',inventory:'scan',receipt:'doc',pickup:'box',delivery:'truck'} as Record<string,string>)[id]??'box';
+const featureIcon=(id:string)=>({sale:'bag',inventory:'scan',receipt:'doc',pickup:'box',delivery:'truck',orders:'doc'} as Record<string,string>)[id]??'box';
 // 个人常用项只改变布局，实际入口始终取本次刷新后的权限交集。
 const favoriteIds = ref<string[] | null>(null), draftIds = ref<string[]>([]);
 const editing = ref(false), preferenceMessage = ref('');
 let preferenceKey = '', active = false, actorEpoch = -1;
 const features = computed(() => [
+  { id:'orders', name:'本人订单', hint:'查看自己开出的订单和账款', mark:'单', allowed:canOwnOrders.value, open:openOrders },
   { id:'sale', name:'销售开单', hint:'找商品、选客户，核对现金开单', mark:'售', allowed:canSale.value, open:openSale },
   { id:'inventory', name:'查库存', hint:'扫码找货，核对批次与货位', mark:'查', allowed:canQueryInventory.value, open:openInventory },
   { id:'receipt', name:'采购收货', hint:'按采购单登记本次到货', mark:'收', allowed:canReceive.value, open:openReceiving },
@@ -50,7 +52,7 @@ onShow(async () => {
   checking.value = true; error.value = ''; name.value = ''; store.value = '';
   editing.value = false; favoriteIds.value = null; preferenceKey = ''; preferenceMessage.value = '';
   canRecover.value = false;canSale.value=false;canQueryInventory.value=false;canReceive.value=false;canDeliver.value=false;
-  canPickup.value=false;
+  canPickup.value=false;canOwnOrders.value=false;
   try {
     await staffAuth.refresh();
     if (epoch !== current) return;
@@ -60,6 +62,7 @@ onShow(async () => {
     name.value = actor.name; store.value = actor.storeId;
     canRecover.value = actor.permissions.includes('*') || actor.permissions.includes('pos:order:create');
     canSale.value = canRecover.value;
+    canOwnOrders.value=actor.permissions.includes('*')||actor.permissions.includes('order:own:query');
     canQueryInventory.value=actor.permissions.includes('*')||actor.permissions.includes('inventory:view');
     canReceive.value=actor.permissions.includes('*')||actor.permissions.includes('purchase:inbound');
     canDeliver.value=actor.permissions.includes('*')||actor.permissions.includes('order:delivery:assigned');

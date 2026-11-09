@@ -77,6 +77,18 @@
       "style": {
         "navigationBarTitleText": "提货核对"
       }
+    },
+    {
+      "path": "pages/orders/list/index",
+      "style": {
+        "navigationBarTitleText": "本人订单"
+      }
+    },
+    {
+      "path": "pages/orders/detail/index",
+      "style": {
+        "navigationBarTitleText": "订单详情"
+      }
     }
   ],
   "globalStyle": {
