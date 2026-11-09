@@ -114,21 +114,22 @@ class InventoryLedgerServiceTest {
         assertDecimal("30", stockQuantity(1L)); assertEquals(0, movementCount());
     }
 
-    @Test void fefoExcludesExpiredInactiveAndReservedStockAndUsesEarlierExpiryFirst() {
-        stock(1L, 10L, "99", "0", LocalDate.now().minusDays(1), "1");
+    @Test void dateIsAdvisoryWhileInactiveAndReservedStockStayExcluded() {
+        stock(1L, 10L, "9", "0", LocalDate.now().minusDays(1), "1");
         stock(2L, 10L, "20", "5", LocalDate.now().plusDays(5), "2");
         stock(3L, 10L, "8", "0", LocalDate.now(), "3");
         stock(4L, 11L, "90", "0", LocalDate.now(), "4");
         stock(5L, 10L, "50", "0", null, "5");
         var result = service.outbound(outbound("2", false), 9L);
         ArgumentCaptor<BatchBalanceService.MoveRequest> requests = ArgumentCaptor.forClass(BatchBalanceService.MoveRequest.class);
-        verify(balances, times(2)).move(requests.capture());
-        assertEquals(List.of(3L, 2L), requests.getAllValues().stream().map(BatchBalanceService.MoveRequest::batchId).toList());
-        assertDecimal("8", requests.getAllValues().get(0).baseQuantity());
-        assertDecimal("12", requests.getAllValues().get(1).baseQuantity());
-        assertDecimal("0.8", result.get(0).getQuantity()); assertDecimal("30", result.get(0).getCostPrice());
-        assertDecimal("99", stockQuantity(1L)); assertDecimal("90", stockQuantity(4L));
-        assertDecimal("8", stockQuantity(2L)); assertDecimal("50", stockQuantity(5L));
+        verify(balances, times(3)).move(requests.capture());
+        assertEquals(List.of(1L, 3L, 2L), requests.getAllValues().stream().map(BatchBalanceService.MoveRequest::batchId).toList());
+        assertDecimal("9", requests.getAllValues().get(0).baseQuantity());
+        assertDecimal("8", requests.getAllValues().get(1).baseQuantity());
+        assertDecimal("3", requests.getAllValues().get(2).baseQuantity());
+        assertDecimal("0.9", result.get(0).getQuantity()); assertDecimal("10", result.get(0).getCostPrice());
+        assertDecimal("0", stockQuantity(1L)); assertDecimal("90", stockQuantity(4L));
+        assertDecimal("17", stockQuantity(2L)); assertDecimal("50", stockQuantity(5L));
     }
 
     @Test void orderSaleRecordsActualMovementAndBaseCostAndRejectsSecondDeduction() {

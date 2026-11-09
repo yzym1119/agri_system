@@ -76,7 +76,7 @@ public class InventoryLedgerService {
         }
         if (command.getReferenceId() == null || command.getReferenceType() == null) throw new IllegalArgumentException("出库必须关联业务单据");
         balances.lockStock(command.getStoreId(), command.getProductId());
-        List<Slice> selected = select(command.getStoreId(), command.getProductId(), quantity, true);
+        List<Slice> selected = select(command.getStoreId(), command.getProductId(), quantity);
         List<BatchDetailVO> result = new ArrayList<>();
         String key = command.getReferenceType() + ":" + command.getReferenceId() + ":" + (itemId == null ? command.getProductId() : itemId);
         for (Slice slice : selected) {
@@ -250,7 +250,7 @@ public class InventoryLedgerService {
             move(batch, null, balances.defaultLocation(command.getStoreId()).getId(), COUNT_ADJUSTMENT, quantity, unit,
                     "COUNT", receiptId(batch), operatorId, command.getRemark(), "COUNT:" + operation);
         } else {
-            for (Slice slice : select(command.getStoreId(), command.getProductId(), quantity, false)) {
+            for (Slice slice : select(command.getStoreId(), command.getProductId(), quantity)) {
                 move(batch(slice.batchId()), slice.locationId(), null, COUNT_ADJUSTMENT, slice.quantity(), unit,
                         "COUNT", slice.batchId(), operatorId, command.getRemark(), "COUNT:" + operation + ":" + slice.batchId() + ":" + slice.locationId());
             }
@@ -264,7 +264,7 @@ public class InventoryLedgerService {
         balances.lockStock(Math.min(from, to), product); balances.lockStock(Math.max(from, to), product);
         List<InventoryDomainService.TransferBatchDetail> result = new ArrayList<>();
         List<InventoryDomainService.BatchDeductionDetail> sourceDetails = new ArrayList<>();
-        for (Slice slice : select(from, product, baseQuantity, true)) {
+        for (Slice slice : select(from, product, baseQuantity)) {
             InventoryReceiptBatch source = batch(slice.batchId());
             InventoryReceiptBatch target = createBatch(to, product, source.getSupplierBatchNo(), slice.quantity(), source.getBaseUnitCost(),
                     source.getProductionDate(), source.getExpiryDate(), operator, "调拨单 " + transferId);
@@ -289,13 +289,12 @@ public class InventoryLedgerService {
         detail.setTransferBatchDetails(result); detail.setBatchDetails(sourceDetails); return detail;
     }
 
-    /** 先锁所有候选余额，再按到期日期分配；不足时不产生部分出库。 */
-    private List<Slice> select(Long store, Long product, BigDecimal quantity, boolean excludeExpired) {
+    /** 先锁所有候选余额，日期仅作参考排序不影响可用资格；不足时不产生部分出库。 */
+    private List<Slice> select(Long store, Long product, BigDecimal quantity) {
         List<Slice> candidates = jdbc.query("""
                 SELECT b.batch_id,b.location_id,b.base_quantity-b.reserved_base_quantity AS available
                 FROM inventory_batch_balance b JOIN inventory_receipt_batch r ON r.id=b.batch_id
                 WHERE b.store_id=? AND b.product_id=? AND EXISTS(SELECT 1 FROM inventory_location l WHERE l.id=b.location_id AND l.status=1) AND b.base_quantity>b.reserved_base_quantity
-                """ + (excludeExpired ? " AND (r.expiry_date IS NULL OR r.expiry_date>=CURRENT_DATE) " : "") + """
                 ORDER BY r.expiry_date IS NULL, r.expiry_date, r.received_at, r.id, b.location_id FOR UPDATE
                 """, (rs, n) -> new Slice(rs.getLong(1), rs.getLong(2), rs.getBigDecimal(3)), store, product);
         List<Slice> selected = new ArrayList<>(); BigDecimal remaining = quantity;
@@ -303,7 +302,7 @@ public class InventoryLedgerService {
             BigDecimal take = remaining.min(slice.quantity()); selected.add(new Slice(slice.batchId(), slice.locationId(), take));
             remaining = remaining.subtract(take); if (remaining.signum() == 0) break;
         }
-        if (remaining.signum() != 0) throw new IllegalArgumentException("可用库存不足，已排除预留及不可销售批次");
+        if (remaining.signum() != 0) throw new IllegalArgumentException("可用库存不足，已排除预留及停用货位");
         return selected;
     }
 

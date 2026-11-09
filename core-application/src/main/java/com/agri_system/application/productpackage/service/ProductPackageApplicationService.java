@@ -214,19 +214,10 @@ public class ProductPackageApplicationService {
         
         // 如果提供了 storeId，计算套餐库存
         if (query.getStoreId() != null) {
-            try {
-                calculatePackageStocks(voList, query.getStoreId());
-            } catch (Exception e) {
-                // 计算失败时设置默认值，避免返回null
-                voList.forEach(vo -> {
-                    if (vo.getStock() == null) {
-                        vo.setStock(BigDecimal.ZERO);
-                    }
-                });
-            }
+            calculatePackageStocks(voList, query.getStoreId());
         } else {
-            // 未提供storeId时，设置库存为0而不是null
-            voList.forEach(vo -> vo.setStock(BigDecimal.ZERO));
+            // 未指定门店时未知，不能假装本店无库存。
+            voList.forEach(vo -> vo.setStock(null));
         }
         
         Page<ProductPackageDetailVO> voPage = new Page<>();
@@ -385,9 +376,32 @@ public class ProductPackageApplicationService {
     /** 可售套数：门店可用基准库存 / 每套基准需求，同商品需求先汇总。 */
     private void calculatePackageStocks(List<ProductPackageDetailVO> voList, Long storeId) {
         if (voList == null || voList.isEmpty() || storeId == null) return;
-        Map<Long, BigDecimal> inventory = balanceRepository.sumAvailableBaseQuantityGroupedByProduct(storeId);
+        var productIds = voList.stream().filter(v -> v.getItems() != null)
+                .flatMap(v -> v.getItems().stream()).map(ProductPackageItemVO::getProductId).distinct().toList();
+        var stockRows = productIds.isEmpty() ? List.<com.agri_system.domain.inventory.vo.SaleableStock>of()
+                : balanceRepository.findSaleableStock(storeId, productIds);
+        var stockByProduct = stockRows.stream().collect(Collectors.groupingBy(com.agri_system.domain.inventory.vo.SaleableStock::productId));
+        Map<Long, BigDecimal> inventory = new LinkedHashMap<>();
+        Map<Long, String> baseNames = new LinkedHashMap<>();
+        for (Long productId : productIds) {
+            try {
+                var baseUnits = productUnitService.getUnits(productId).stream()
+                        .filter(u -> u.getId() != null && Integer.valueOf(1).equals(u.getStatus())
+                                && Integer.valueOf(1).equals(u.getIsBaseUnit()) && u.getBaseQuantityPerUnit() != null && BigDecimal.ONE.compareTo(u.getBaseQuantityPerUnit()) == 0
+                                && u.getUnitName() != null && !u.getUnitName().isBlank()).toList();
+                if (baseUnits.size() != 1) continue;
+                baseNames.put(productId, baseUnits.get(0).getUnitName());
+                var rows = stockByProduct.getOrDefault(productId, List.of());
+                if (rows.stream().anyMatch(r -> !baseUnits.get(0).getId().equals(r.baseUnitId())
+                        || r.availableBaseQuantity() == null || r.availableBaseQuantity().signum() < 0)) continue;
+                inventory.put(productId, rows.stream().map(com.agri_system.domain.inventory.vo.SaleableStock::availableBaseQuantity)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add));
+            } catch (IllegalArgumentException | IllegalStateException incompleteUnits) {
+                // 缺少真实单位证据时保持未知，不猜当前单位或零库存。
+            }
+        }
         for (ProductPackageDetailVO vo : voList) {
-            vo.setStock(BigDecimal.ZERO);
+            vo.setStock(null);
             if (vo.getItems() == null || vo.getItems().isEmpty()) continue;
             try {
                 Map<Long, BigDecimal> demand = new LinkedHashMap<>();
@@ -402,18 +416,21 @@ public class ProductPackageApplicationService {
                     if (quantity == null || quantity.signum() <= 0 || coefficient == null || coefficient.signum() <= 0) {
                         throw new IllegalArgumentException("套餐物料数量或基准单位系数无效");
                     }
-                    demand.merge(item.getProductId(), quantity.multiply(coefficient), BigDecimal::add);
+                    BigDecimal baseDemand = com.agri_system.domain.product.service.QuantityGranularityPolicy
+                            .requireBaseQuantity(baseNames.get(item.getProductId()), quantity.multiply(coefficient));
+                    demand.merge(item.getProductId(), baseDemand, BigDecimal::add);
                 }
                 BigDecimal minimum = null;
                 for (Map.Entry<Long, BigDecimal> entry : demand.entrySet()) {
-                    BigDecimal available = inventory.getOrDefault(entry.getKey(), BigDecimal.ZERO).max(BigDecimal.ZERO);
+                    BigDecimal available = inventory.get(entry.getKey());
+                    if (available == null) throw new IllegalArgumentException("套餐物料库存单位待核对");
                     BigDecimal count = available.divide(entry.getValue(), 0, RoundingMode.FLOOR);
                     minimum = minimum == null ? count : minimum.min(count);
                 }
                 vo.setStock(minimum == null ? BigDecimal.ZERO : minimum);
-            } catch (IllegalArgumentException invalidConfiguration) {
-                // 单个套餐单位失效只令该套餐不可售，不能影响其它套餐列表。
-                vo.setStock(BigDecimal.ZERO);
+            } catch (IllegalArgumentException | IllegalStateException invalidConfiguration) {
+                // 单个套餐单位失效保持未知，不能影响其它套餐列表。
+                vo.setStock(null);
             }
         }
     }

@@ -439,7 +439,7 @@ const back = () => uni.redirectTo({ url: '/pages/workbench/index' });
     </view>
 
     <view v-if="availabilityNotice" class="alert alert-danger" role="status"><text>{{ availabilityNotice }}</text></view>
-    <text class="t-cap">可售量按基准单位统计，排除预留、过期批次和停用货位；实际成交仍以后端出库校验为准。</text>
+    <text class="t-cap">可售量按基准单位统计，扣除预留、排除停用货位；日期仅供参考，不自动限制销售；实际成交仍以后端出库校验为准。</text>
     <view v-if="filtered.length" class="card card-flat">
      <view hover-class="tap-hover" hover-stay-time="80" v-for="(product, index) in filtered" :key="product.id" class="list-item row-between" :class="{ 'list-item-last': index === filtered.length - 1 }" @click="choose(product)">
       <view class="grow">

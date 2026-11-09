@@ -40,7 +40,7 @@ class SaleableStockQueryTest {
     @Test void saleableMatchesOutboundFiltersAndKeepsUnitEvidence() {
         var rows=repository.findSaleableStock(1L,List.of(10L,20L));assertEquals(3,rows.size());
         var primary=rows.stream().filter(r->r.productId().equals(10L)&&r.baseUnitId().equals(100L)).findFirst().orElseThrow();
-        assertEquals(0,new BigDecimal("12").compareTo(primary.availableBaseQuantity()),"今天有效及未知日期保留，扣预留，排除过期/停用/别店");
+        assertEquals(0,new BigDecimal("112").compareTo(primary.availableBaseQuantity()),"日期仅提醒：昨天/今天/未知均保留，扣预留，排除停用/别店");
         assertEquals(2,rows.stream().filter(r->r.productId().equals(10L)).count(),"不同原批单位不能合并");
         assertEquals(0,new BigDecimal("0.0001").compareTo(rows.stream().filter(r->r.productId().equals(20L)).findFirst().orElseThrow().availableBaseQuantity()));
         assertEquals(2,repository.findSaleableStock(1L,List.of(10L)).size(),"只查询当前页商品");

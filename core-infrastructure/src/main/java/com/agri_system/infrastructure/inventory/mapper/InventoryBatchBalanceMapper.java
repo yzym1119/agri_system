@@ -23,7 +23,7 @@ public interface InventoryBatchBalanceMapper extends BaseMapper<InventoryBatchBa
             "WHERE b.store_id=#{storeId} AND b.product_id IN",
             "<foreach collection='productIds' item='id' open='(' separator=',' close=')'>#{id}</foreach>",
             "AND EXISTS(SELECT 1 FROM inventory_location l WHERE l.id=b.location_id AND l.status=1)",
-            "AND b.base_quantity &gt; b.reserved_base_quantity AND (r.expiry_date IS NULL OR r.expiry_date &gt;= CURRENT_DATE)",
+            "AND b.base_quantity &gt; b.reserved_base_quantity",
             "GROUP BY b.product_id,r.base_unit_id ORDER BY b.product_id,r.base_unit_id",
             "</script>"})
     List<com.agri_system.domain.inventory.vo.SaleableStock> findSaleableStock(@Param("storeId") Long storeId,
