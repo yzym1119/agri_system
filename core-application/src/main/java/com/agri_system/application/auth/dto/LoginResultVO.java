@@ -20,6 +20,8 @@ public class LoginResultVO {
     
     /** 用户信息 */
     private UserInfo userInfo;
+
+    @Override public String toString(){return "LoginResultVO[登录结果隐藏]";}
     
     /**
      * 用户信息

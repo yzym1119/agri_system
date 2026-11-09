@@ -127,7 +127,12 @@ public class AuthService {
      */
     @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public LoginResultVO clientWechatLogin(ClientWechatLoginCommand command) {
-        var result=wechatService.jscode2session(command.getCode());
+        return loginVerifiedWechat(wechatService.jscode2session(command.getCode()));
+    }
+
+    /** 仅供应用层复用本次真实平台交换结果；不接受控制器或前端自报身份。 */
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public LoginResultVO loginVerifiedWechat(WechatService.WechatLoginResult result) {
         if(result==null||wechatAppId==null||!wechatAppId.matches("wx[a-zA-Z0-9]{16}")||!wechatAppId.equals(result.getAppId())
                 ||result.getOpenId()==null||result.getOpenId().isBlank()||result.getSessionKey()==null||result.getSessionKey().isBlank())
             throw new IllegalStateException("微信登录身份或应用配置无效");

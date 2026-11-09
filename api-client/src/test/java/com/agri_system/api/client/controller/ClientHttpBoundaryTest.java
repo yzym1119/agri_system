@@ -79,6 +79,8 @@ class ClientHttpBoundaryTest {
     @Autowired ObjectMapper json;
     @Autowired OrderPaymentPublicController callbacks;
     @Autowired AuthService authentication;
+    @Autowired com.agri_system.application.auth.service.ClientOnboardingService onboarding;
+    @MockBean com.agri_system.application.auth.service.WechatPhoneAuthorizationService phoneAuthorization;
     @MockBean OrderApplicationService orders;
     @MockBean AfterSalesApplicationService afterSales;
     @MockBean CustomerRepository customers;
@@ -95,7 +97,7 @@ class ClientHttpBoundaryTest {
     @EnableAutoConfiguration
     @Import({SaTokenConfigure.class, AuthService.class, GlobalExceptionHandler.class,
             OrderClientController.class, AfterSalesClientController.class,
-            OrderPaymentPublicController.class, AuthClientController.class, QrClientController.class, LoginProbe.class})
+            OrderPaymentPublicController.class, AuthClientController.class, ClientOnboardingController.class, com.agri_system.application.auth.service.ClientOnboardingService.class, QrClientController.class, LoginProbe.class})
     static class Config {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
     }
@@ -113,6 +115,7 @@ class ClientHttpBoundaryTest {
 
     @BeforeEach void customerAndCallback() {
         ReflectionTestUtils.setField(authentication,"wechatAppId","");
+        ReflectionTestUtils.setField(onboarding,"appId","");
         Customer active = new Customer(); active.setId(101L); active.setStatus(1);
         Customer disabled = new Customer(); disabled.setId(303L); disabled.setStatus(2);
         when(customers.findById(101L)).thenReturn(Optional.of(active));
@@ -140,6 +143,58 @@ class ClientHttpBoundaryTest {
         businessFailure(request(get("/auth/client/info"),token,null),10001);
     }
 
+    private void preparePlatform() {
+        String app="wx1111111111111111";ReflectionTestUtils.setField(authentication,"wechatAppId",app);ReflectionTestUtils.setField(onboarding,"appId",app);
+        var platform=new WechatService.WechatLoginResult();platform.setAppId(app);platform.setOpenId("IT_ONBOARDING_OPEN");platform.setSessionKey("IT_ONBOARDING_SESSION");
+        when(wechat.jscode2session("prepare-code")).thenReturn(platform);
+    }
+    private String prepareOnboarding() throws Exception {
+        preparePlatform();var result=mvc.perform(post("/auth/client/onboarding/wechat").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"prepare-code\"}"))
+            .andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andExpect(jsonPath("$.state").value("PHONE_REQUIRED"))
+            .andExpect(jsonPath("$.openId").doesNotExist()).andExpect(jsonPath("$.sessionKey").doesNotExist()).andReturn();
+        String token=json.readTree(result.getResponse().getContentAsString()).path("tokenValue").asText();assertFalse(token.isBlank());return token;
+    }
+    @Test void temporaryWechatPhoneProofCannotBecomeCustomerOrReadAnyOldAccount() throws Exception {
+        String token=prepareOnboarding();
+        businessFailure(request(get("/api/client/orders/77"),token,null),10003);
+        businessFailure(request(get("/auth/client/info"),token,null),10001);
+        when(phoneAuthorization.authorize("wx1111111111111111","IT_ONBOARDING_OPEN","phone-code")).thenReturn(new com.agri_system.application.auth.service.WechatPhoneAuthorizationService.PhoneEvidence("wx1111111111111111","IT_ONBOARDING_OPEN","13800000000",java.time.Instant.now().getEpochSecond()));
+        var result=mvc.perform(post("/auth/client/onboarding/phone").header("Authorization",token).contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"phone-code\",\"phone\":\"13900000000\",\"openid\":\"forged\"}"))
+            .andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andExpect(jsonPath("$.state").value("PHONE_VERIFIED")).andExpect(jsonPath("$.phoneMasked").value("138****0000")).andExpect(jsonPath("$.phone").doesNotExist()).andExpect(jsonPath("$.customerId").doesNotExist()).andReturn();
+        String verified=json.readTree(result.getResponse().getContentAsString()).path("tokenValue").asText();assertNotEquals(token,verified);
+        mvc.perform(get("/auth/client/onboarding/info").header("Authorization",verified)).andExpect(status().isOk()).andExpect(jsonPath("$.state").value("PHONE_VERIFIED")).andExpect(jsonPath("$.tokenValue").doesNotExist()).andExpect(jsonPath("$.openId").doesNotExist());
+        mvc.perform(get("/auth/client/onboarding/info").header("Authorization",token)).andExpect(status().isOk()).andExpect(jsonPath("$.state").value("PHONE_REQUIRED"));
+        businessFailure(request(get("/api/client/orders/77"),verified,null),10003);verifyNoInteractions(customers,wallets,orders);
+        verify(identities,never()).save(any());
+    }
+    @Test void cancellingTemporaryFlowDuringPlatformCallCannotIssueAnotherProof() throws Exception {
+        String token=prepareOnboarding();
+        when(phoneAuthorization.authorize("wx1111111111111111","IT_ONBOARDING_OPEN","phone-code")).thenAnswer(call->{
+            StpUtil.logoutByTokenValue(token);
+            return new com.agri_system.application.auth.service.WechatPhoneAuthorizationService.PhoneEvidence("wx1111111111111111","IT_ONBOARDING_OPEN","13800000000",java.time.Instant.now().getEpochSecond());
+        });
+        businessFailure(request(post("/auth/client/onboarding/phone"),token,"{\"code\":\"phone-code\"}"),10001);
+        verifyNoInteractions(customers,wallets,orders);verify(identities,never()).save(any());
+    }
+    @Test void expiredOrReconfiguredOnboardingAndOrdinaryCustomerCannotAuthorizePhone() throws Exception {
+        String token=prepareOnboarding();ReflectionTestUtils.setField(onboarding,"appId","wx2222222222222222");
+        businessFailure(request(post("/auth/client/onboarding/phone"),token,"{\"code\":\"phone-code\"}"),10001);
+        ReflectionTestUtils.setField(onboarding,"appId","wx1111111111111111");
+        StpUtil.getTokenSessionByToken(token).set("onboardingV1",Map.of("appId","wx1111111111111111","openId","IT_ONBOARDING_OPEN","state","PHONE_REQUIRED","expiresAt",1L));
+        businessFailure(request(get("/auth/client/onboarding/info"),token,null),10001);
+        businessFailure(request(post("/auth/client/onboarding/phone"),login("CUST_101"),"{\"code\":\"phone-code\"}"),10001);
+        businessFailure(request(post("/auth/client/onboarding/phone"),login("STAFF_11"),"{\"code\":\"phone-code\"}"),10001);
+        verifyNoInteractions(phoneAuthorization,wallets,orders);
+    }
+    @Test void existingVerifiedWechatBindingUsesOriginalLoginAndPersistedRevocationVersion() throws Exception {
+        preparePlatform();var identity=new com.agri_system.domain.auth.model.CustomerIdentity();identity.setId(9L);identity.setCustomerId(101L);identity.setIdentityType("WECHAT_OPENID");identity.setAppId("wx1111111111111111");identity.setIdentityValue("IT_ONBOARDING_OPEN");identity.setStatus(1);identity.setAuthVersion(5L);
+        when(identities.findWechatByAppAndOpenIdForUpdate("wx1111111111111111","IT_ONBOARDING_OPEN")).thenReturn(Optional.of(identity));when(identities.findById(9L)).thenReturn(Optional.of(identity));
+        var result=mvc.perform(post("/auth/client/onboarding/wechat").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"prepare-code\"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.state").value("LINKED")).andExpect(jsonPath("$.tokenValue").doesNotExist()).andReturn();
+        String token=json.readTree(result.getResponse().getContentAsString()).path("login").path("tokenValue").asText();assertFalse(token.isBlank());
+        mvc.perform(get("/auth/client/info").header("Authorization",token)).andExpect(status().isOk());
+        identity.setAuthVersion(6L);businessFailure(request(get("/auth/client/info"),token,null),10001);verifyNoInteractions(phoneAuthorization);
+    }
     @Test void oldQrCannotChangeCustomerOwnershipFromSelfReportedIdsOrOpenId() throws Exception {
         businessFailure(request(post("/api/client/auth/qrBind"),login("CUST_101"),"{\"qrToken\":\"TEST-QR\",\"customerId\":202,\"openid\":\"FAKE\"}"),10001);
         verifyNoInteractions(oldQr);

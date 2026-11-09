@@ -1,13 +1,8 @@
 package com.agri_system.application.notification.service;
 
 import lombok.Data;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -21,72 +16,15 @@ import java.util.Map;
  *
  * @author AI Generated
  */
-@Slf4j
 @Service
 public class WechatSubscribeMessageService {
 
-    private static final String TOKEN_CACHE_PREFIX = "wechat:access_token:";
-    private static final long TOKEN_SAFETY_MARGIN_SECONDS = 200L;
-
-    private final StringRedisTemplate redisTemplate;
-    private final RestTemplate restTemplate;
-
-    @Value("${wechat.app-id:}")
-    private String appId;
-
-    @Value("${wechat.app-secret:}")
-    private String appSecret;
-
-    public WechatSubscribeMessageService(StringRedisTemplate redisTemplate) {
-        this.redisTemplate = redisTemplate;
-        this.restTemplate = new RestTemplate();
-    }
-
-    /**
-     * 获取 access_token：优先 Redis 缓存，未命中则向微信刷新并回写（TTL = expires_in - 200s）。
-     *
-     * @return access_token，或获取失败时 null
-     */
-    String getAccessToken() {
-        if (appId == null || appId.isBlank()) {
-            return null;
-        }
-        String key = TOKEN_CACHE_PREFIX + appId;
-        String cached = redisTemplate.opsForValue().get(key);
-        if (cached != null && !cached.isBlank()) {
-            return cached;
-        }
-        return refreshAccessToken(key);
-    }
-
-    private String refreshAccessToken(String key) {
-        String url = String.format(
-                "https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=%s&secret=%s",
-                appId, appSecret);
-        try {
-            TokenResponse resp = restTemplate.getForObject(url, TokenResponse.class);
-            if (resp == null || resp.getAccess_token() == null || resp.getAccess_token().isBlank()) {
-                log.warn("微信 access_token 刷新失败: errcode={} errmsg={}",
-                        resp == null ? null : resp.getErrcode(),
-                        resp == null ? null : resp.getErrmsg());
-                return null;
-            }
-            long ttl = resp.getExpires_in() != null ? resp.getExpires_in() : 7200L;
-            long ttlSec = Math.max(60L, ttl - TOKEN_SAFETY_MARGIN_SECONDS);
-            redisTemplate.opsForValue().set(key, resp.getAccess_token(), Duration.ofSeconds(ttlSec));
-            return resp.getAccess_token();
-        } catch (Exception e) {
-            log.warn("微信 access_token 刷新异常: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    /** 失效 access_token 缓存（errcode 40001 时调用，便于下次重新获取）。 */
-    void invalidateAccessToken() {
-        if (appId != null && !appId.isBlank()) {
-            redisTemplate.delete(TOKEN_CACHE_PREFIX + appId);
-        }
-    }
+    private final com.agri_system.application.auth.service.WechatAccessTokenService tokens;
+    private final com.agri_system.application.auth.service.WechatApiClient api;
+    public WechatSubscribeMessageService(com.agri_system.application.auth.service.WechatAccessTokenService tokens,
+                                        com.agri_system.application.auth.service.WechatApiClient api){this.tokens=tokens;this.api=api;}
+    String getAccessToken(){try{return tokens.requireAccessToken();}catch(RuntimeException failure){return null;}}
+    void invalidateAccessToken(){tokens.invalidate();}
 
     /**
      * 发送一条订阅消息。access_token 失效(40001)时失效缓存并重试一次。
@@ -107,7 +45,7 @@ public class WechatSubscribeMessageService {
         }
         SendResult result = doPost(token, openid, templateId, page, data, miniprogramState);
         if (result.isTokenInvalid()) {
-            invalidateAccessToken();
+            try{invalidateAccessToken();}catch(RuntimeException failure){return SendResult.fail("access_token 刷新未完成");}
             String refreshed = getAccessToken();
             if (refreshed != null) {
                 result = doPost(refreshed, openid, templateId, page, data, miniprogramState);
@@ -118,7 +56,6 @@ public class WechatSubscribeMessageService {
 
     private SendResult doPost(String token, String openid, String templateId, String page,
                               Map<String, String> data, String miniprogramState) {
-        String url = "https://api.weixin.qq.com/cgi-bin/message/subscribe/send?access_token=" + token;
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("touser", openid);
         body.put("template_id", templateId);
@@ -135,31 +72,11 @@ public class WechatSubscribeMessageService {
         }
         body.put("data", wrapped);
         try {
-            SendResponse resp = restTemplate.postForObject(url, body, SendResponse.class);
-            if (resp == null) {
-                return SendResult.fail("微信响应为空");
-            }
-            if (resp.getErrcode() != null && resp.getErrcode() == 0) {
-                return SendResult.ok();
-            }
-            return SendResult.of(resp.getErrcode(), resp.getErrmsg());
-        } catch (Exception e) {
-            return SendResult.fail("微信订阅消息发送异常: " + e.getMessage());
-        }
-    }
-
-    @Data
-    static class TokenResponse {
-        private String access_token;
-        private Long expires_in;
-        private Integer errcode;
-        private String errmsg;
-    }
-
-    @Data
-    static class SendResponse {
-        private Integer errcode;
-        private String errmsg;
+            var response=api.subscription(token,body);
+            if(response==null||(!response.path("errcode").isIntegralNumber()||!response.path("errcode").canConvertToInt()))return SendResult.fail("微信响应无效");
+            int error=response.path("errcode").asInt();
+            return error==0?SendResult.ok():SendResult.of(error,"微信返回错误码 "+error);
+        }catch(RuntimeException failure){return SendResult.fail("微信订阅消息发送未完成");}
     }
 
     /**

@@ -1,8 +1,10 @@
 package com.agri_system.application.notification.service;
 
-import com.agri_system.application.notification.service.WechatSubscribeMessageService.SendResponse;
+import com.agri_system.application.auth.service.WechatApiClient;
+import com.agri_system.application.auth.service.WechatAccessTokenService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.agri_system.application.notification.service.WechatSubscribeMessageService.SendResult;
-import com.agri_system.application.notification.service.WechatSubscribeMessageService.TokenResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,7 +16,6 @@ import org.mockito.quality.Strictness;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.client.RestTemplate;
 
 import java.time.Duration;
 import java.util.Map;
@@ -33,42 +34,33 @@ import static org.mockito.Mockito.*;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class WechatSubscribeMessageServiceTest {
 
-    private static final String TOKEN_KEY = "wechat:access_token:APP_ID";
+    private static final String TOKEN_KEY = "wechat:access_token:wx1111111111111111";
 
     @Mock StringRedisTemplate redisTemplate;
     @Mock ValueOperations<String, String> valueOps;
-    @Mock RestTemplate restTemplate;
+    @Mock WechatApiClient api;
+    private WechatAccessTokenService tokens;
 
     private WechatSubscribeMessageService service;
 
     @BeforeEach
     void setUp() {
-        service = new WechatSubscribeMessageService(redisTemplate);
-        ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
-        ReflectionTestUtils.setField(service, "appId", "APP_ID");
-        ReflectionTestUtils.setField(service, "appSecret", "APP_SECRET");
+        tokens=new WechatAccessTokenService(redisTemplate,api);
+        ReflectionTestUtils.setField(tokens,"appId","wx1111111111111111");ReflectionTestUtils.setField(tokens,"secret","IT_SECRET");
+        service = new WechatSubscribeMessageService(tokens,api);
         when(redisTemplate.opsForValue()).thenReturn(valueOps);
     }
 
-    private TokenResponse tokenResponse(String token, long expiresIn) {
-        TokenResponse r = new TokenResponse();
-        r.setAccess_token(token);
-        r.setExpires_in(expiresIn);
-        return r;
+    private JsonNode tokenResponse(String token,long expiresIn) {
+        var node=new ObjectMapper().createObjectNode();if(token==null)node.putNull("access_token");else node.put("access_token",token);node.put("expires_in",expiresIn);return node;
     }
-
-    private SendResponse sendResponse(int errcode, String errmsg) {
-        SendResponse r = new SendResponse();
-        r.setErrcode(errcode);
-        r.setErrmsg(errmsg);
-        return r;
-    }
+    private JsonNode sendResponse(int errcode,String errmsg){return new ObjectMapper().createObjectNode().put("errcode",errcode).put("errmsg",errmsg);}
 
     @Test
     @DisplayName("缓存未命中：调微信刷新并回写 Redis（TTL = expires_in - 200s）")
     void cacheMissRefreshes() {
         when(valueOps.get(TOKEN_KEY)).thenReturn(null);
-        when(restTemplate.getForObject(anyString(), eq(TokenResponse.class)))
+        when(api.accessToken(anyString(),anyString()))
                 .thenReturn(tokenResponse("TOKEN_1", 7200));
 
         String token = service.getAccessToken();
@@ -86,7 +78,7 @@ class WechatSubscribeMessageServiceTest {
         String token = service.getAccessToken();
 
         assertEquals("TOKEN_CACHED", token);
-        verify(restTemplate, never()).getForObject(anyString(), any());
+        verify(api, never()).accessToken(anyString(),anyString());
         verify(valueOps, never()).set(anyString(), anyString(), any(Duration.class));
     }
 
@@ -94,7 +86,7 @@ class WechatSubscribeMessageServiceTest {
     @DisplayName("微信刷新失败(errcode 非空)：返回 null，不回写缓存")
     void refreshFailureReturnsNull() {
         when(valueOps.get(TOKEN_KEY)).thenReturn(null);
-        when(restTemplate.getForObject(anyString(), eq(TokenResponse.class)))
+        when(api.accessToken(anyString(),anyString()))
                 .thenReturn(tokenResponse(null, 0));
 
         String token = service.getAccessToken();
@@ -107,21 +99,21 @@ class WechatSubscribeMessageServiceTest {
     @DisplayName("正常发送：缓存命中 + POST 成功，单次调用，不失效缓存")
     void sendSuccess() {
         when(valueOps.get(TOKEN_KEY)).thenReturn("TOKEN_OK");
-        when(restTemplate.postForObject(anyString(), any(), eq(SendResponse.class)))
+        when(api.subscription(anyString(),anyMap()))
                 .thenReturn(sendResponse(0, "ok"));
 
         SendResult result = service.send("OPENID", "TPL", "p", Map.of("thing1", "v"), "formal");
 
         assertTrue(result.isSuccess());
         verify(redisTemplate, never()).delete(anyString());
-        verify(restTemplate, times(1)).postForObject(anyString(), any(), eq(SendResponse.class));
+        verify(api, times(1)).subscription(anyString(),anyMap());
     }
 
     @Test
     @DisplayName("发送遇 40001(token 失效)：失效缓存后重试一次并成功")
     void sendRetriesOn40001() {
         when(valueOps.get(TOKEN_KEY)).thenReturn("TOKEN_OLD");
-        when(restTemplate.postForObject(anyString(), any(), eq(SendResponse.class)))
+        when(api.subscription(anyString(),anyMap()))
                 .thenReturn(sendResponse(40001, "invalid token"))
                 .thenReturn(sendResponse(0, "ok"));
 
@@ -129,18 +121,24 @@ class WechatSubscribeMessageServiceTest {
 
         assertTrue(result.isSuccess());
         verify(redisTemplate).delete(TOKEN_KEY); // 失效缓存
-        verify(restTemplate, times(2)).postForObject(anyString(), any(), eq(SendResponse.class));
+        verify(api, times(2)).subscription(anyString(),anyMap());
     }
 
     @Test
     @DisplayName("access_token 获取失败(appId 为空)：send 直接返回失败，不发起 POST")
     void sendFailsWhenNoAppId() {
-        WechatSubscribeMessageService blank = new WechatSubscribeMessageService(redisTemplate);
-        ReflectionTestUtils.setField(blank, "appId", "");
+        ReflectionTestUtils.setField(tokens,"appId","");
+        WechatSubscribeMessageService blank = new WechatSubscribeMessageService(tokens,api);
         SendResult result = blank.send("OPENID", "TPL", "p", Map.of("thing1", "v"), "formal");
 
         assertFalse(result.isSuccess());
-        verify(restTemplate, never()).postForObject(anyString(), any(), any());
+        verify(api, never()).subscription(anyString(),anyMap());
+    }
+
+    @Test void sendFailureNeverLeaksAccessTokenOrProviderUrl() {
+        when(valueOps.get(TOKEN_KEY)).thenReturn("IT_PRIVATE_ACCESS_TOKEN");
+        when(api.subscription(anyString(),anyMap())).thenThrow(new RuntimeException("https://api.weixin.qq.com?access_token=IT_PRIVATE_ACCESS_TOKEN"));
+        var result=service.send("OPENID","TPL",null,Map.of(),null);assertFalse(result.getMessage().contains("IT_PRIVATE_ACCESS_TOKEN"));
     }
 
     private static void assertNullToken(String token) {
