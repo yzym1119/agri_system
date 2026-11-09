@@ -20,10 +20,10 @@ async function fixture(permissions = ['pos:order:create']) {
     data: req.url.endsWith('/login') ? { tokenName: 'Authorization', tokenValue: 'test', userInfo: user } : user }));
   await auth.login('test', 'pass');
   let catalog = [product], priceQuote = quote, submit = async () => ({ status: 'COMPLETED', orderId: '900' }), restore = null;
-  let customers = [customer77], searchOverride = null;
+  let customers = [customer77], searchOverride = null, stockPreview = {storeId:"3",sufficient:true,issues:[]};
   let packageList = [pkg], packageQuote = pkgQuote, packageFailure = false;
   const calls = { catalog: 0, search: [], quote: [], submit: [], customerSearch: [], finish: [],
-    packages: 0, packageQuote: [] };
+    packages: 0, packageQuote: [], stockChecks: [] };
   const p = setupPage('sale', auth, true, {
     '../../services/sale': {
       readCatalog: async () => { calls.catalog++; return catalog; },
@@ -44,6 +44,7 @@ async function fixture(permissions = ['pos:order:create']) {
         return built instanceof Promise ? built : { ...built, quantity: packages,
           totalAmount: (Number(built.suggestedUnitPrice) * Number(packages)).toFixed(2) };
       },
+      checkSaleStock: async (lines,epoch,options) => { calls.stockChecks.push({lines,options}); return typeof stockPreview === "function" ? stockPreview() : stockPreview; },
       submitSale: async (lines, epoch, options) => { calls.submit.push({ lines, epoch, options }); return submit(); },
     },
     '../../services/pos-recovery': { readPOSResult: async () => ({}),
@@ -53,7 +54,7 @@ async function fixture(permissions = ['pos:order:create']) {
   });
   return { p, auth, calls, setCatalog: v => catalog = v, setQuote: v => priceQuote = v,
     setSubmit: v => submit = v, setRestore: v => restore = v, setUser: v => Object.assign(user, v),
-    setCustomers: v => customers = v, setSearch: v => searchOverride = v,
+    setStockPreview: v => stockPreview = v, setCustomers: v => customers = v, setSearch: v => searchOverride = v,
     setPackages: v => packageList = v, setPackageQuote: v => packageQuote = v,
     failPackages: () => { packageFailure = true; } };
 }
@@ -460,4 +461,19 @@ test('切换商品/套餐会清掉上一类的搜索词与提示，套餐筛选�
   assert.deepEqual(f.p.state.filteredPackages.value.map(p => p.id), ['501']);
   f.p.state.keyword.value = '不存在';
   assert.equal(f.p.state.filteredPackages.value.length, 0);
+});
+
+
+test('整单物料不足先显示核对原因，不产生收银提交或恢复记录',async()=>{
+ const f=await fixture();await f.p.hooks.show();f.p.state.choose(product);await f.p.state.addLine();
+ f.setStockPreview({storeId:'3',sufficient:false,issues:['肥料：整单需要15，本店可售12袋']});
+ await f.p.state.checkout();assert.equal(f.calls.stockChecks.length,1);assert.equal(f.calls.submit.length,0);
+ assert.match(f.p.state.message.value,/15/);assert.equal(f.calls.finish.length,0);
+ f.setStockPreview(()=>Promise.reject(Error('offline')));await f.p.state.checkout();assert.equal(f.calls.submit.length,0);assert.match(f.p.state.message.value,/库存核对|物料核对/);
+});
+test('库存核对期间客户或清单变化，不得提交另一份内容',async()=>{
+ const f=await fixture();await f.p.hooks.show();f.p.state.choose(product);await f.p.state.addLine();
+ let resolve;f.setStockPreview(()=>new Promise(done=>resolve=done));const pending=f.p.state.checkout();
+ f.p.state.lines.value=[{...f.p.state.lines.value[0],quantity:'2'}];resolve({storeId:'3',sufficient:true,issues:[]});await pending;
+ assert.equal(f.calls.submit.length,0);assert.match(f.p.state.message.value,/变化|变更/);
 });

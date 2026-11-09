@@ -32,7 +32,7 @@ class InventorySaleablePageTest {
     }
     void page(List<InventoryPageVO> rows) {
         Page<InventoryPageVO> p=new Page<>(1,10);p.setRecords(rows);p.setTotalRow(rows.size());
-        when(inventoryRepository.findPage(any(),any(),any(),any(),any())).thenReturn(p);
+        when(inventoryRepository.findPage(any(),any(),any(),any(),any(),any())).thenReturn(p);
         when(productUnitService.getUnits(10L)).thenReturn(List.of(unit(11,"瓶","1",true),unit(12,"箱","12",false)));
     }
     @Test void keepsOnHandAndReadsEachStoreOnlyForCurrentPageWithExactUnit() {

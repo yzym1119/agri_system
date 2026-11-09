@@ -430,7 +430,7 @@ public class InventoryApplicationService {
                 query.getPageSize(),
                 query.getStoreId(),
                 query.getProductName(),
-                query.getOnlyHasStock());
+                query.getOnlyHasStock(), query.getOnlyHasSaleableStock());
         // 按返回页的实际门店分组读取，未指定店/无库存投影的行保持未知。
         var stores = page.getRecords().stream().filter(r -> r.getStoreId() != null && r.getStoreId() > 0)
                 .collect(java.util.stream.Collectors.groupingBy(InventoryPageVO::getStoreId));

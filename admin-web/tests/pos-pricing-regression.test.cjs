@@ -68,6 +68,7 @@ function createPOS(overrides = {}) {
     fetchServerPackageQuote(params) {
       return new Promise((resolve, reject) => requests.push({ params, resolve, reject }))
     },
+    checkPosStock: async()=>({storeId:"1",sufficient:true,issues:[]}),
     resolvePackageUnitPrice: ({ packagePrice }) => packagePrice,
     ...overrides
   })
@@ -154,13 +155,13 @@ test('商品报价失败必须阻止结算，成功重试后才可以收款', as
   const failed = pos.recalculateCartPrices()
   pos.requests.shift().reject(new Error('报价服务不可用'))
   await failed
-  pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
+  await pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
   assert.equal(pos.hasPriceFallback.value, true)
   assert.equal(pos.checkoutVisible.value, false)
   const retry = pos.recalculateCartPrices()
   finishQuote(pos.requests.shift())
   await retry
-  pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
+  await pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
   assert.equal(pos.hasPriceFallback.value, false)
   assert.equal(pos.checkoutVisible.value, true)
 })
@@ -265,13 +266,13 @@ test('有议价权限的员工可改价，低于最低价时保留提醒', () =>
   assert.equal(item.belowReference, true)
 })
 
-test('人工议价缺少原因不能结算，填写原因后可以打开结算', () => {
+test('人工议价缺少原因不能结算，填写原因后可以打开结算', async () => {
   const pos = createPOS()
   pos.cartItems.value = [cartLine({ unitPrice: 8, subtotal: 8 })]
-  pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
+  await pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
   assert.equal(pos.checkoutVisible.value, false)
   pos.cartItems.value[0].priceChangeReason = '老客户优惠'
-  pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
+  await pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
   assert.equal(pos.checkoutVisible.value, true)
 })
 
@@ -342,7 +343,7 @@ test('套餐套数变更后，金额、物料和专用金均使用新的后端�
   assert.equal(pos.cartItems.value[0].subtotal, 160)
   assert.equal(pos.cartItems.value[0].packageItems[0].quantity, 4)
   assert.equal(pos.cartItems.value[0].specialFundEligibleAmount, 80)
-  pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
+  await pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
   assert.equal(pos.checkoutVisible.value, true)
 })
 
@@ -355,7 +356,7 @@ test('套餐报价失败阻止结算，不得采用旧套餐本地价格', async
   assert.ok(request)
   request.reject(new Error('套餐报价服务不可用'))
   await pending
-  pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
+  await pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
   assert.equal(pos.checkoutVisible.value, false)
   assert.equal(pos.cartItems.value[0].priceFallback, true)
 })
@@ -530,7 +531,7 @@ test('套餐数量变化事件必须触发后端预览，预览失败立即阻�
   assert.equal(pos.requests[0].params.quantity, 2)
   pos.requests.shift().reject(new Error('报价服务不可用'))
   await Promise.all(pending)
-  pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
+  await pos.handleCheckout({ paymentType: 1, discountAmount: 0 })
   assert.equal(pos.checkoutVisible.value, false)
 })
 
@@ -644,3 +645,23 @@ test('手工四位数量后连续扫码，同商品合并仍为准确四位数�
   const pending=pos.handleAddToCart(cartLine({id:''}));finishQuote(pos.requests.shift());await pending
   assert.equal(pos.cartItems.value.length,1);assert.equal(pos.cartItems.value[0].quantity,2.0001)
 })
+
+
+test('整单物料不足不开结算，预检期间变化的购物车不能使用旧结果',async()=>{
+ const pos=createPOS({checkPosStock:async()=>({storeId:'1',sufficient:false,issues:['物料合计不足']})});pos.cartItems.value=[cartLine()];
+ await pos.handleCheckout({paymentType:1,discountAmount:0});assert.equal(pos.checkoutVisible.value,false);assert.ok(pos.messages.some(m=>/物料合计不足/.test(m.text)));
+ let resolve;const next=createPOS({checkPosStock:()=>new Promise(done=>resolve=done)});next.cartItems.value=[cartLine()];
+ const pending=next.handleCheckout({paymentType:1,discountAmount:0});next.cartItems.value[0].quantity=2;resolve({storeId:'1',sufficient:true,issues:[]});await pending;
+ assert.equal(next.checkoutVisible.value,false);
+});
+
+test('离开PC收银页后，在途库存预检不能打开弹窗或提示旧错误',async()=>{
+ for(const outcome of ['success','failure']) {
+  let resolve,reject,dispose;
+  const pos=createPOS({window:{removeEventListener(){}},onUnmounted:fn=>dispose=fn,
+   checkPosStock:()=>new Promise((ok,fail)=>{resolve=ok;reject=fail})});pos.cartItems.value=[cartLine()];
+  const pending=pos.handleCheckout({paymentType:1,discountAmount:0});dispose();
+  if(outcome==='success')resolve({storeId:'1',sufficient:true,issues:[]});else reject(Error('offline'));
+  await pending;assert.equal(pos.checkoutVisible.value,false);assert.equal(pos.messages.length,0);
+ }
+});

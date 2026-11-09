@@ -1,5 +1,6 @@
 <template>
   <div class="pos-page">
+    <el-alert v-if="checkingStock" title="正在核对整单物料库存，请稍候" type="info" :closable="false" />
     <section v-if="pendingSale || saleStorageError" class="sale-pending" aria-live="polite">
       <el-alert type="warning" :closable="false" show-icon title="本单正在提交或结果待核对，请勿再次收款" />
       <template v-if="pendingSale">
@@ -149,6 +150,7 @@ import {ElMessage} from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 import { createPickupRequest, createPOSOrder, getOrderDetail, getOrderList, getPOSSubmission, cancelPOSSubmission } from '@/api/order'
 import {useUserStore} from '@/store/user'
+import {checkPosStock} from '@/api/pos-catalog'
 import CategorySidebar from './components/CategorySidebar.vue'
 import ModernGoodsPanel from './components/ModernGoodsPanel.vue'
 import ModernCartList from './components/ModernCartList.vue'
@@ -192,6 +194,7 @@ const categoryTree = ref<any[]>([])
 
 // 结算弹窗
 const checkoutVisible = ref(false)
+const checkingStock = ref(false)
 const submittingOrder = ref(false)
 type SaleLine = { productId: number; packageId: number | null; unit: string; quantity: number; totalPrice: number }
 type PendingSale = { version: 1; requestKey?: string; storeId: number; staffId: number; customerId: number | null;
@@ -207,7 +210,7 @@ const recoveryResult = ref<{requestKey: string; status: string; orderId: number 
 const recoveryEndConfirmed = ref(false)
 const actorKey = () => `pos_pending_sale_v1_${userStore.userInfo?.id || 0}_${getUserStoreId() || 0}`
 const actorSession = () => `${userStore.token || ''}|${actorKey()}`
-const saleLocked = () => !!pendingSale.value || saleStorageError.value || submittingOrder.value
+const saleLocked = () => !!pendingSale.value || saleStorageError.value || submittingOrder.value || checkingStock.value
 const loadPendingSale = () => {
   pendingSale.value = null
   saleStorageError.value = false
@@ -231,6 +234,7 @@ watch(() => actorSession(), () => {
   cartItems.value = []
   selectedCustomer.value = null
   submittingOrder.value = false
+  checkingStock.value = false
   checkoutVisible.value = false
   pickupVisible.value = false
   recoveryCandidate.value = null
@@ -461,6 +465,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  cartGeneration++
   window.removeEventListener('keydown', handleKeydown)
 })
 
@@ -696,7 +701,7 @@ const handleClearCart = () => {
 }
 
 // 结算
-const handleCheckout = (data: {
+const handleCheckout = async (data: {
   paymentType: number
   discountAmount: number
   walletAuthCode?: string
@@ -719,8 +724,24 @@ const handleCheckout = (data: {
     ElMessage.error('请填写议价或低于最低价的原因')
     return
   }
-  checkoutData.value = data
-  checkoutVisible.value = true
+  if (!storeId.value) { ElMessage.warning('请先确认当前门店'); return }
+  const session=actorSession(), generation=cartGeneration
+  const state=()=>JSON.stringify({cart:cartItems.value,customer:selectedCustomer.value?.id||null,store:storeId.value})
+  const snapshot=state(), options=JSON.parse(JSON.stringify(data))
+  checkingStock.value=true
+  try {
+    const result=await checkPosStock({storeId:storeId.value,customerId:selectedCustomer.value?.id||null,
+      items:cartItems.value.map(item=>item.itemType===2
+        ? {itemType:2,packageId:item.packageId,quantity:item.quantity,packageQuoteId:item.quoteId}
+        : {itemType:1,productId:item.productId,quantity:item.quantity,unit:item.currentUnit})})
+    if(session!==actorSession()||generation!==cartGeneration)return
+    if(snapshot!==state()||hasPriceFallback.value) {ElMessage.warning('库存核对期间清单或客户发生变化，请重新核对');return}
+    if(!result.sufficient) {ElMessage.warning(result.issues.slice(0,3).join('；'));return}
+    checkoutData.value=options
+    checkoutVisible.value=true
+  } catch {
+    if(session===actorSession()&&generation===cartGeneration)ElMessage.warning('整单库存核对未完成，请刷新商品后重试；尚未提交收款')
+  } finally {if(session===actorSession())checkingStock.value=false}
 }
 
 // 提交订单

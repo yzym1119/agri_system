@@ -2,7 +2,7 @@ import { staffAuth } from './auth';
 import { posRecovery } from './pos-recovery';
 import {
   isCatalogEnvelope, decodeCatalog, decodeCustomers, decodeQuote, decodePackages, decodePackageQuote,
-  toSaleSummary, buildSaleCommand, isOrderId, resolveSaleOptions,
+  toSaleSummary, buildSaleCommand, isOrderId, resolveSaleOptions, buildStockCheckCommand, isStockPreview,
   type CatalogProduct, type PosCustomer, type SaleLine, type PriceQuote, type SaleOptions,
   type PosPackage, type PackageQuote,
 } from '@agri/mobile-contracts/sale';
@@ -91,4 +91,12 @@ export function submitSale(lines: SaleLine[], epoch: number, options: Partial<Sa
     url: '/api/admin/orders/pos', method: 'POST',
     data: buildSaleCommand(requestKey, recoveryActor, lines, resolved),
   }, isOrderId, recoveryActor.epoch));
+}
+
+/** 预检只读，失败不生成新的收款UUID或恢复记录。 */
+export async function checkSaleStock(lines:SaleLine[],epoch:number,options:Partial<SaleOptions>={}) {
+  const actor=staffAuth.current();if(!actor||actor.epoch!==epoch)throw Error('STALE_SESSION');
+  const command=buildStockCheckCommand(actor,lines,resolveSaleOptions(options).customerId);
+  const result=await staffAuth.request({url:'/api/admin/pos/catalog/stock-preview',method:'POST',data:command},isStockPreview,epoch);
+  if(result.storeId!==actor.storeId)throw Error('STORE_MISMATCH');return result;
 }

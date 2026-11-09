@@ -24,5 +24,8 @@ public class InventoryQuery {
 
     @Schema(description = "是否仅显示有库存记录", example = "true")
     private Boolean onlyHasStock;
+
+    @Schema(description = "仅显示本店有可售库存，按真实批次在分页前筛选")
+    private Boolean onlyHasSaleableStock;
 }
 

@@ -2,7 +2,7 @@
 import { ref, computed, watch } from 'vue';
 import { onShow, onHide } from '@dcloudio/uni-app';
 import { staffAuth } from '../../services/auth';
-import { readCatalog, searchCatalog, searchCustomers, quoteProduct, readPackages, quotePackage, submitSale } from '../../services/sale';
+import { readCatalog, searchCatalog, searchCustomers, quoteProduct, readPackages, quotePackage, submitSale, checkSaleStock } from '../../services/sale';
 import { posRecovery, readPOSResult } from '../../services/pos-recovery';
 import { lineCents, isPackageLine, type CatalogProduct, type PosCustomer, type PosPackage, type SaleLine } from '@agri/mobile-contracts/sale';
 import { money, preciseDecimal } from '../../utils/money';
@@ -370,10 +370,17 @@ async function checkout() {
   if (requoting.value) { message.value = '正在按最新客户重新报价，请稍候再结算。'; return; }
   if (customerId.value.trim() !== quotedUnderCustomer) { void requoteAllLines(); return; }
   if (!validateOptions()) return;
+  const ticket=generation, snapshot=JSON.stringify({lines:lines.value,options:saleOptions()});
+  let submitting=false;
   busy.value = true; message.value = ''; orderId.value = '';
   try {
+    const preview=await checkSaleStock(lines.value,epoch.value,saleOptions());
+    if(!current(ticket))return;
+    if(snapshot!==JSON.stringify({lines:lines.value,options:saleOptions()}) || requoting.value) {message.value='库存核对期间清单或客户发生变化，请重新核对';return;}
+    if(!preview.sufficient) {message.value=preview.issues.slice(0,3).join('；');return;}
+    submitting=true;
     const result = await submitSale(lines.value, epoch.value, saleOptions());
-    if (!current()) return;
+    if (!current(ticket)) return;
     if (result.status === 'COMPLETED' && result.orderId) {
       orderId.value = result.orderId; lines.value = [];
       message.value = '开单完成，收款与库存由后端一次写入。';
@@ -387,11 +394,12 @@ async function checkout() {
       uni.navigateTo({ url: '/pages/recovery/index' });
     }
   } catch (failure) {
-    if (!current()) return;
+    if (!current(ticket)) return;
+    if(!submitting) {message.value='整单库存核对未完成，请检查网络和商品资料后重试；尚未提交收款';return;}
     message.value = failure instanceof Error && failure.message === 'RECOVERY_REQUIRED'
       ? '已有未核对的原请求，请先核对上次收银。'
       : '本机核对记录未能确认，已停止提交，请到「核对上次收银」核对。';
-  } finally { busy.value = false; }
+  } finally { if(ticket===generation)busy.value = false; }
 }
 const openRecovery = () => uni.navigateTo({ url: '/pages/recovery/index' });
 const back = () => uni.redirectTo({ url: '/pages/workbench/index' });

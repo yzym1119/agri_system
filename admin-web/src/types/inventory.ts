@@ -6,6 +6,7 @@ export interface InventoryQuery {
   storeId?: number
   productName?: string
   onlyHasStock?: boolean
+  onlyHasSaleableStock?: boolean
   pageNum?: number
   pageSize?: number
 }

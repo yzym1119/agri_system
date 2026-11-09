@@ -13,6 +13,9 @@
         <el-form-item label="仅显示有在手库存">
           <el-switch v-model="queryParams.onlyHasStock" />
         </el-form-item>
+        <el-form-item label="仅显示有可售库存">
+          <el-switch v-model="queryParams.onlyHasSaleableStock" />
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="loading" :icon="Search" @click="handleSearch">查询</el-button>
           <el-button :icon="Refresh" @click="handleReset">重置</el-button>
@@ -188,7 +191,8 @@ import {formatQuantity} from '@/utils/number'
 const queryParams = reactive<InventoryQuery>({
   pageNum: 1,
   pageSize: 10,
-  onlyHasStock: true
+  onlyHasStock: true,
+  onlyHasSaleableStock: false
 })
 const loading = ref(false)
 const tableData = ref<InventoryPageVO[]>([])
@@ -274,6 +278,7 @@ const handleReset = () => {
   queryParams.storeId = undefined
   queryParams.productName = ''
   queryParams.onlyHasStock = true
+  queryParams.onlyHasSaleableStock = false
   queryParams.pageNum = 1
   queryParams.pageSize = 10
   loadTable()

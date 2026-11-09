@@ -249,13 +249,29 @@ export function buildSaleCommand(requestKey: string, actor: RecoveryActor, lines
     paymentType: options.paymentType, customerId: options.customerId,
     deliveryType: options.deliveryType,
     receiverName: null, receiverPhone: null, receiverAddress: null, remark: options.remark,
-    items: lines.map(line => (isPackageLine(line)
-      ? { packageId: line.packageId, itemType: 2, quantity: line.quantity, unit: '套',
-          quotedUnitPrice: line.quotedUnitPrice, packageQuoteId: line.packageQuoteId }
-      : { productId: line.productId, itemType: 1, quantity: line.quantity,
-          unit: line.unit, quotedUnitPrice: line.quotedUnitPrice })),
+    items: saleItems(lines),
   };
 }
 
 export const isOrderId = (v: unknown): v is unknown =>
   v !== null && v !== undefined && normalizeLongId(v) !== null;
+
+
+function saleItems(lines: SaleLine[]): Record<string, unknown>[] {
+  if (!Array.isArray(lines) || !lines.length || lines.length > 500) throw Error('SUMMARY_INVALID');
+  lines.forEach(assertSaleLine);
+  return lines.map(line => isPackageLine(line)
+    ? {packageId:line.packageId,itemType:2,quantity:line.quantity,unit:'套',quotedUnitPrice:line.quotedUnitPrice,packageQuoteId:line.packageQuoteId}
+    : {productId:line.productId,itemType:1,quantity:line.quantity,unit:line.unit,quotedUnitPrice:line.quotedUnitPrice});
+}
+export type StockPreview = {storeId:string;sufficient:boolean;issues:string[]};
+export function isStockPreview(value: unknown): value is StockPreview {
+  if (!object(value) || typeof value.storeId !== 'string' || !isPositiveLongId(value.storeId)
+      || typeof value.sufficient !== 'boolean' || !Array.isArray(value.issues) || value.issues.length > 1000
+      || !value.issues.every(issue => text(issue,1000))) return false;
+  return value.sufficient === (value.issues.length === 0);
+}
+export function buildStockCheckCommand(actor:RecoveryActor,lines:SaleLine[],customerId:string|null):Record<string,unknown> {
+  if (!isPositiveLongId(actor.staffId)||!isPositiveLongId(actor.storeId)||(customerId!==null&&!isPositiveLongId(customerId))) throw Error('UNAUTHORIZED');
+  return {storeId:actor.storeId,customerId,items:saleItems(lines)};
+}

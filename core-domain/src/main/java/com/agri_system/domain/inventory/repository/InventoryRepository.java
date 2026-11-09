@@ -60,7 +60,7 @@ public interface InventoryRepository {
     /**
      * 分页查询库存快照（含商品、门店信息）
      */
-    Page<InventoryPageVO> findPage(Integer pageNum, Integer pageSize, Long storeId, String productName, Boolean onlyHasStock);
+    Page<InventoryPageVO> findPage(Integer pageNum, Integer pageSize, Long storeId, String productName, Boolean onlyHasStock, Boolean onlyHasSaleableStock);
     
     /**
      * 批量查询指定门店和商品列表的库存

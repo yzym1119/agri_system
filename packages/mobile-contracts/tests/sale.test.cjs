@@ -169,3 +169,13 @@ test('半套套餐与缺报价的套餐行在契约层就被拒绝', () => {
   assert.throws(() => sale.buildSaleCommand('k', actor, [{ ...pkgLine, quantity: '2.5' }]), /SUMMARY_INVALID/);
   assert.throws(() => sale.toSaleSummary([pkgLine, { ...pkgLine, quantity: '100000' }]), /SUMMARY_INVALID/);
 });
+
+test('整单库存预检只提交销售意图，读取合同区分不足与失败',()=>{
+ const s=require('../dist/sale.js');
+ assert.equal(s.isStockPreview({storeId:'3',sufficient:true,issues:[]}),true);
+ assert.equal(s.isStockPreview({storeId:'3',sufficient:true,issues:['不足']}),false);
+ assert.equal(s.isStockPreview({storeId:'3',sufficient:false,issues:[]}),false);
+ assert.equal(s.isStockPreview({storeId:3,sufficient:true,issues:[]}),false);
+ const c=s.buildStockCheckCommand({staffId:'8',storeId:'3',epoch:1},[{productId:'11',name:'肥料',unit:'袋',quantity:'2',quotedUnitPrice:'12.34'}],null);
+ assert.equal(c.storeId,'3');assert.equal(c.items[0].quantity,'2');assert.equal('requestKey' in c,false);assert.equal('paymentType' in c,false);
+});

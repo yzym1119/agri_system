@@ -78,7 +78,7 @@ public class InventoryRepositoryImpl implements InventoryRepository {
     }
 
     @Override
-    public Page<InventoryPageVO> findPage(Integer pageNum, Integer pageSize, Long storeId, String productName, Boolean onlyHasStock) {
+    public Page<InventoryPageVO> findPage(Integer pageNum, Integer pageSize, Long storeId, String productName, Boolean onlyHasStock, Boolean onlyHasSaleableStock) {
         // 修复：从 product 表开始，LEFT JOIN inventory，确保无库存商品也可见
         QueryWrapper qw = QueryWrapper.create()
                 .select("p.id AS productId",
@@ -109,6 +109,22 @@ public class InventoryRepositoryImpl implements InventoryRepository {
 
         if (Boolean.TRUE.equals(onlyHasStock)) {
             qw.where("COALESCE(i.quantity, 0) > 0");
+        }
+
+        if (Boolean.TRUE.equals(onlyHasSaleableStock)) {
+            String store = storeId == null ? "i.store_id" : storeId.toString();
+            String validUnit = " FROM product_unit su WHERE su.product_id=p.id AND su.id IS NOT NULL"
+                    + " AND su.status=1 AND su.is_base_unit=1 AND su.base_quantity_per_unit=1"
+                    + " AND su.unit_name IS NOT NULL AND TRIM(su.unit_name)<>''";
+            String candidates = " FROM inventory_batch_balance sb JOIN inventory_receipt_batch sr ON sr.id=sb.batch_id"
+                    + " WHERE sb.product_id=p.id AND sb.store_id=" + store
+                    + " AND sb.base_quantity>sb.reserved_base_quantity"
+                    + " AND EXISTS(SELECT 1 FROM inventory_location sl WHERE sl.id=sb.location_id AND sl.status=1)";
+            // 与目录的原批次单位核对一致；未知不算有可售。必须在COUNT与LIMIT前筛选。
+            qw.where("(SELECT COUNT(*)" + validUnit + ")=1"
+                    + " AND EXISTS(SELECT 1" + candidates + ")"
+                    + " AND NOT EXISTS(SELECT 1" + candidates
+                    + " AND (sr.base_unit_id IS NULL OR sr.base_unit_id<>(SELECT MAX(su.id)" + validUnit + ")))" );
         }
 
         qw.orderBy("p.name asc");
