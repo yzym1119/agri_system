@@ -18,6 +18,9 @@ export interface InventoryPageVO {
   storeId?: number
   storeName?: string
   totalQuantity?: number
+  saleableQuantity?: string | null
+  saleableUnit?: string | null
+  availableBaseQuantity?: string | null
   unit?: string
   mainUnit?: string
   auxUnit?: string

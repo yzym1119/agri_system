@@ -51,7 +51,7 @@
         class="goods-card"
         role="button"
         tabindex="0"
-        :aria-label="`${item.name}，${(item.stock || 0) > 0 ? '加入购物车' : '缺货'}`"
+        :aria-label="`${item.name}，${item.stock == null ? '库存待核对' : item.stock > 0 ? '加入购物车' : '无可售库存'}`"
         :aria-disabled="(item.stock || 0) <= 0"
         @keydown.enter.prevent="handleCardClick(item)"
         @keydown.space.prevent="handleCardClick(item)"
@@ -77,7 +77,7 @@
           <div v-if="item.type === 'package'" class="package-badge">套餐</div>
           <!-- 缺货蒙层 -->
           <div v-if="(item.type === 'product' || item.type === 'package') && (item.stock || 0) <= 0" class="out-of-stock-overlay">
-            <span>缺货</span>
+            <span>{{ item.stock == null ? '待核对' : '无可售库存' }}</span>
           </div>
         </div>
 
@@ -96,9 +96,9 @@
               <span class="card-manufacturer">{{ item.manufacturer || '暂无' }}</span>
             </div>
             <div class="card-stock-line">
-              <span class="card-label">库存：</span>
+              <span class="card-label">本店可售：</span>
               <span :class="{ 'stock-zero': (item.stock || 0) <= 0, 'stock-value': true }">
-                {{ formatStock(item.stock) || 0 }} {{ item.product?.mainUnit || '个' }}
+                {{ stockText(item) }} {{ item.stock == null ? '' : item.product?.baseUnitName }}
               </span>
             </div>
           </div>
@@ -113,9 +113,9 @@
             </div>
             <div v-if="item.package.items.length > 4" class="package-more">另有{{ item.package.items.length - 4 }}种商品</div>
               <div class="card-stock-line">
-              <span class="card-label">库存：</span>
+              <span class="card-label">本店可售：</span>
               <span :class="{ 'stock-zero': (item.stock || 0) <= 0, 'stock-value': true }">
-                {{ formatStock(item.stock) || 0 }} 套
+                {{ stockText(item) }} {{ item.stock == null ? '' : '套' }}
               </span>
             </div>
           </div>
@@ -136,15 +136,14 @@
 </template>
 
 <script setup lang="ts">
-import {computed, onMounted, ref, watch} from 'vue'
+import {computed, onMounted, onUnmounted, ref, watch} from 'vue'
 import {ElMessage} from 'element-plus'
 import {Box, Picture, Search} from '@element-plus/icons-vue'
-import {getPosProductList as getProductList, getPosPackageList as getPackageList, getPosInventoryList as getInventoryList} from '@/api/pos-catalog'
+import {getPosProductList as getProductList, getPosPackageList as getPackageList} from '@/api/pos-catalog'
 import type {ProductDetailVO} from '@/types/product'
 import type {ProductPackageDetailVO} from '@/types/package'
-import type {InventoryPageVO} from '@/types/inventory'
 import type {CartItem, GoodsCard, POSCustomerInfo} from '@/types/pos'
-import { formatStock } from '@/utils/number'
+import {useUserStore} from '@/store/user'
 
 const props = defineProps<{
   storeId: number | null
@@ -170,7 +169,18 @@ const tabs = [{ label: '全部', value: 'all' }, { label: '单品', value: 'prod
 // 数据
 const products = ref<ProductDetailVO[]>([])
 const packages = ref<ProductPackageDetailVO[]>([])
-const inventoryMap = ref<Record<number, number>>({})
+const userStore = useUserStore()
+let loadGeneration = 0
+const knownStock = (value: unknown): number | null => {
+  if (value == null || value === '' || !/^(0|[1-9]\d*)(\.\d+)?$/.test(String(value))) return null
+  const result = Number(value)
+  return Number.isFinite(result) && result >= 0 ? result : null
+}
+const stockText = (item: GoodsCard): string => {
+  if (item.stock == null) return '待核对'
+  const raw = item.type === 'product' ? item.product?.availableBaseQuantity : item.package?.stock
+  return String(raw).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
+}
 
 // 合并后的商品/套餐列表
 const allGoods = computed<GoodsCard[]>(() => {
@@ -178,7 +188,7 @@ const allGoods = computed<GoodsCard[]>(() => {
 
   // 商品
   products.value.forEach((product) => {
-    const stock = inventoryMap.value[product.id] || 0
+    const stock = String(product.availabilityStoreId) === String(props.storeId) && product.baseUnitName ? knownStock(product.availableBaseQuantity) : null
     // 处理价格：优先使用 suggestedRetailPrice，支持字符串和数字类型
     let price: number = 0
     const parsePrice = (value: any): number => {
@@ -224,7 +234,7 @@ const allGoods = computed<GoodsCard[]>(() => {
       id: pkg.id,
       type: 'package',
       name: pkg.name || '未命名套餐',
-      stock: pkg.stock || 0, // 套餐库存（由后端计算）
+      stock: knownStock(pkg.stock), // 套餐库存（由后端计算）
       price: price,
       package: pkg
     })
@@ -369,51 +379,24 @@ const filteredGoods = computed(() => {
 
 // 加载数据
 const loadData = async () => {
-  loading.value = true
+  const ticket = ++loadGeneration, storeId = props.storeId, token = userStore.token
+  loading.value = true; products.value = []; packages.value = []
+  const current = () => ticket === loadGeneration && props.storeId === storeId && userStore.token === token
+  if (!storeId) { loading.value = false; return }
   try {
     const [productRes, packageRes] = await Promise.all([
       getProductList({ status: 1, pageNum: 1, pageSize: 1000 }),
-      getPackageList({ status: 1, storeId: props.storeId || undefined, pageNum: 1, pageSize: 1000 })
+      getPackageList({ status: 1, storeId, pageNum: 1, pageSize: 1000 })
     ])
-    products.value = productRes.records || []
-    packages.value = packageRes.records || []
-
-    // 如果有门店，则加载库存
-    if (props.storeId) {
-      await loadInventory()
-    }
-  } catch (error) {
-    console.error('加载商品/套餐失败:', error)
-    ElMessage.error('加载商品/套餐失败')
-  } finally {
-    loading.value = false
-  }
+    if (!current()) return
+    products.value = productRes.records || []; packages.value = packageRes.records || []
+  } catch {
+    if (current()) ElMessage.error('商品和可售量读取失败，请刷新后重试')
+  } finally { if (current()) loading.value = false }
 }
+onUnmounted(() => { loadGeneration++; products.value = []; packages.value = [] })
+watch(() => userStore.token, () => { void loadData() })
 
-// 加载库存
-const loadInventory = async () => {
-  if (!props.storeId) return
-
-  try {
-    const inventoryRes = await getInventoryList({
-      storeId: props.storeId,
-      pageNum: 1,
-      pageSize: 10000
-    })
-
-    const map: Record<number, number> = {}
-    inventoryRes.records.forEach((item: InventoryPageVO) => {
-      if (item.productId) {
-        map[item.productId] = (item.totalQuantity || 0) as number
-      }
-    })
-    inventoryMap.value = map
-  } catch (error) {
-    console.error('加载库存失败:', error)
-  }
-}
-
-// 扫码/搜索解析结果（编码类型：商品编码 / 内部批次标签 / 货位编码）
 const BATCH_LABEL_PREFIX = 'INTERNAL-RECEIPT-'
 const scanResult = ref<{
   type: 'SKU' | 'BATCH' | 'LOCATION'
@@ -453,7 +436,7 @@ const handleSearch = () => {
   if (exact.length === 1) {
     const item = exact[0]
     handleCardClick(item)
-    scanResult.value = { type: 'SKU', typeText: '商品编码（SKU）', text: (item.stock || 0) > 0 ? `已发送加购：${item.name}，成交价以后台报价为准` : `${item.name} 缺货，未加入购物车` }
+    scanResult.value = { type: 'SKU', typeText: '商品编码（SKU）', text: item.stock == null ? `${item.name} 可售量待核对，未加入购物车` : item.stock > 0 ? `已发送加购：${item.name}，成交价以后台报价为准` : `${item.name} 无可售库存，未加入购物车` }
     searchKeyword.value = ''
     return
   }
@@ -509,6 +492,8 @@ const switchToProductTab = () => {
 
 // 卡片点击
 const handleCardClick = (item: GoodsCard) => {
+  if (loading.value) return
+  if (item.stock == null) { ElMessage.warning('可售量或单位资料待核对，请刷新商品或联系老板'); return }
   // 商品/套餐库存为0时不可点击
   if ((item.stock || 0) <= 0) {
     ElMessage.warning(item.type === 'package' ? '该套餐库存不足' : '该商品库存不足')
@@ -577,7 +562,7 @@ const refresh = () => {
 watch(
   () => props.storeId,
   (val, oldVal) => {
-    if (val && val !== oldVal) {
+    if (val !== oldVal) {
       // storeId变化时，重新加载所有数据（包括套餐库存）
       loadData()
     }

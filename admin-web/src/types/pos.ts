@@ -115,7 +115,7 @@ export interface GoodsCard {
   specification?: string
   manufacturer?: string
   price: number
-  stock?: number // 仅商品有库存
+  stock?: number | null // null means availability is unknown
   product?: ProductDetailVO
   package?: ProductPackageDetailVO
 }

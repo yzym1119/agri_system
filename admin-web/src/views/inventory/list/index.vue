@@ -10,7 +10,7 @@
         <el-form-item label="商品名称">
           <el-input v-model="queryParams.productName" placeholder="商品名称" clearable style="width: 200px" />
         </el-form-item>
-        <el-form-item label="仅显示有库存">
+        <el-form-item label="仅显示有在手库存">
           <el-switch v-model="queryParams.onlyHasStock" />
         </el-form-item>
         <el-form-item>
@@ -35,16 +35,19 @@
           </template>
         </el-table-column>
         <el-table-column prop="storeName" label="门店" width="150" />
-        <el-table-column prop="totalQuantity" label="总库存" width="150" align="right">
+        <el-table-column prop="totalQuantity" label="在手量" width="150" align="right">
           <template #default="{ row }">
             <div>
               <div style="font-weight: 600">
                 {{ formatNumber(row.totalQuantity) }} {{ row.mainUnit || row.unit || '' }}
               </div>
-              <div v-if="row.auxUnit && row.mainToAuxRatio" style="font-size: 12px; color: #909399">
-                (折合 {{ formatNumber((row.totalQuantity || 0) * row.mainToAuxRatio) }} {{ row.auxUnit }})
-              </div>
             </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="当前可售量" min-width="160" align="right">
+          <template #default="{ row }">
+            <span v-if="row.saleableQuantity != null">{{ row.saleableQuantity }} {{ row.saleableUnit }}</span>
+            <span v-else>待核对</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="240" fixed="right">
@@ -180,6 +183,7 @@ import type {
 import type {StoreDetailVO} from '@/types/store'
 import type {FormInstance, FormRules} from 'element-plus'
 import {ElMessage} from 'element-plus'
+import {formatQuantity} from '@/utils/number'
 
 const queryParams = reactive<InventoryQuery>({
   pageNum: 1,
@@ -245,7 +249,7 @@ const adjustRules: FormRules = {
 const adjustLoading = ref(false)
 
 const formatMoney = (val?: number) => (val || 0).toFixed(2)
-const formatNumber = (val?: number) => (val ?? 0).toFixed(2)
+const formatNumber = (val?: number | string | null) => formatQuantity(val)
 
 const loadOptions = async () => {
   storeOptions.value = await getAllStores()

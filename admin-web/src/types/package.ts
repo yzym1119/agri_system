@@ -48,7 +48,7 @@ export interface ProductPackageDetailVO {
   createdAt?: string
   updatedAt?: string
   items: ProductPackageItemVO[]
-  stock?: number // 可销售库存数（理论最大库存，基于子商品库存计算）
+  stock?: number | null // 本店可售套数；null 表示单位或库存资料待核对
 }
 
 /**

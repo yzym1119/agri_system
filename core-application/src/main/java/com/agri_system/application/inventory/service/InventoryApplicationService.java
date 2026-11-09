@@ -35,11 +35,13 @@ import com.agri_system.domain.inventory.repository.InventoryLocationRepository;
 import com.agri_system.domain.inventory.repository.InventoryReceiptBatchRepository;
 import com.agri_system.domain.inventory.service.BatchBalanceService;
 import com.agri_system.application.product.service.ProductUnitService;
+import com.agri_system.domain.inventory.repository.InventoryBatchBalanceRepository;
 import com.agri_system.application.product.service.UnitConversionSnapshot;
 import com.agri_system.domain.inventory.service.InventoryDomainService;
 import com.agri_system.domain.inventory.vo.InventoryPageVO;
 import com.agri_system.domain.order.repository.OrderRepository;
 import com.agri_system.domain.product.model.Product;
+import com.agri_system.domain.product.model.ProductUnit;
 import com.agri_system.domain.product.repository.ProductRepository;
 import com.agri_system.domain.purchase.repository.PurchaseRepository;
 import com.agri_system.domain.store.model.Staff;
@@ -88,6 +90,7 @@ public class InventoryApplicationService {
     private final InventoryLocationRepository locationRepository;
     private final InventoryReceiptBatchRepository receiptBatchRepository;
     private final ProductUnitService productUnitService;
+    private final InventoryBatchBalanceRepository batchBalances;
 
     @Transactional(rollbackFor = Exception.class)
     public Long createLocation(InventoryLocationCommand command) {
@@ -422,12 +425,48 @@ public class InventoryApplicationService {
      * @return 分页结果
      */
     public Page<InventoryPageVO> queryInventoryPage(InventoryQuery query) {
-        return inventoryRepository.findPage(
+        var page = inventoryRepository.findPage(
                 query.getPageNum(),
                 query.getPageSize(),
                 query.getStoreId(),
                 query.getProductName(),
                 query.getOnlyHasStock());
+        // 按返回页的实际门店分组读取，未指定店/无库存投影的行保持未知。
+        var stores = page.getRecords().stream().filter(r -> r.getStoreId() != null && r.getStoreId() > 0)
+                .collect(java.util.stream.Collectors.groupingBy(InventoryPageVO::getStoreId));
+        java.util.Map<Long, List<ProductUnit>> cachedUnits = new java.util.HashMap<>();
+        for (var store : stores.entrySet()) {
+            var ids = store.getValue().stream().map(InventoryPageVO::getProductId).distinct().toList();
+            var balances = batchBalances.findSaleableStock(store.getKey(), ids).stream()
+                    .collect(java.util.stream.Collectors.groupingBy(com.agri_system.domain.inventory.vo.SaleableStock::productId));
+            for (var row : store.getValue()) {
+                try {
+                    var units = cachedUnits.computeIfAbsent(row.getProductId(), productUnitService::getUnits);
+                    var bases = units.stream().filter(u -> u.getId() != null && Integer.valueOf(1).equals(u.getStatus())
+                            && Integer.valueOf(1).equals(u.getIsBaseUnit()) && BigDecimal.ONE.equals(u.getBaseQuantityPerUnit()==null?null:u.getBaseQuantityPerUnit().stripTrailingZeros())
+                            && u.getUnitName() != null && !u.getUnitName().isBlank()).toList();
+                    if (bases.size() != 1) continue;
+                    var base = bases.get(0);
+                    var rows = balances.getOrDefault(row.getProductId(), List.of());
+                    if (rows.stream().anyMatch(b -> !base.getId().equals(b.baseUnitId()) || b.availableBaseQuantity() == null || b.availableBaseQuantity().signum() < 0)) continue;
+                    BigDecimal quantity = rows.stream().map(com.agri_system.domain.inventory.vo.SaleableStock::availableBaseQuantity).reduce(BigDecimal.ZERO, BigDecimal::add);
+                    row.setAvailableBaseQuantity(quantity.stripTrailingZeros().toPlainString());
+                    row.setSaleableQuantity(quantity.stripTrailingZeros().toPlainString());row.setSaleableUnit(base.getUnitName());
+                    var main = units.stream().filter(u -> Integer.valueOf(1).equals(u.getStatus()) && java.util.Objects.equals(u.getUnitName(), row.getMainUnit())
+                            && u.getBaseQuantityPerUnit() != null && u.getBaseQuantityPerUnit().signum() > 0).toList();
+                    if (main.size() == 1) {
+                        // 只能精确显示的换算才使用主单位；无限小数保持基准单位，不悄悄舍入。
+                        try {
+                            row.setSaleableQuantity(quantity.divide(main.get(0).getBaseQuantityPerUnit()).stripTrailingZeros().toPlainString());
+                            row.setSaleableUnit(main.get(0).getUnitName());
+                        } catch (ArithmeticException repeatingDecimal) { /* 保留原精确基准量 */ }
+                    }
+                } catch (IllegalArgumentException | IllegalStateException missingUnitEvidence) {
+                    // 单位资料未知不当作0，也不改变原在手投影。
+                }
+            }
+        }
+        return page;
     }
     
     /**
