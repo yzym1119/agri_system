@@ -35,7 +35,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
- * 微信自动注册测试
+ * 微信身份登录与禁止空档案自动注册回归
  * 
  * @author AI Generated
  */
@@ -76,10 +76,12 @@ class WechatAutoRegisterTest {
 
         // Mock微信服务返回
         WechatService.WechatLoginResult wechatResult = new WechatService.WechatLoginResult();
+        wechatResult.setAppId("wx1111111111111111");
+        org.springframework.test.util.ReflectionTestUtils.setField(authService,"wechatAppId","wx1111111111111111");
         wechatResult.setOpenId(openId);
         wechatResult.setSessionKey(sessionKey);
         
-        when(wechatService.jscode2session(anyString())).thenReturn(wechatResult);
+        lenient().when(wechatService.jscode2session(anyString())).thenReturn(wechatResult);
     }
 
     @AfterEach
@@ -88,117 +90,39 @@ class WechatAutoRegisterTest {
     }
     
     @Test
-    void testWechatAutoRegister() {
-        // 准备：新用户，不存在身份
-        ClientWechatLoginCommand command = new ClientWechatLoginCommand();
-        command.setCode("test_code");
-        
-        when(identityRepository.findByTypeAndValue("WECHAT_OPENID", openId))
-                .thenReturn(Optional.empty());
-        
-        // Mock保存操作
-        when(customerRepository.save(any(Customer.class))).thenAnswer(invocation -> {
-            Customer customer = invocation.getArgument(0);
-            customer.setId(1L);
-            return customer;
-        });
-        
-        when(identityRepository.save(any(CustomerIdentity.class))).thenAnswer(invocation -> {
-            CustomerIdentity identity = invocation.getArgument(0);
-            identity.setId(1L);
-            return identity;
-        });
-        
-        when(walletRepository.save(any(CustomerWallet.class))).thenAnswer(invocation -> {
-            CustomerWallet wallet = invocation.getArgument(0);
-            wallet.setId(1L);
-            return wallet;
-        });
-        
-        // 执行
-        LoginResultVO result = authService.clientWechatLogin(command);
-        
-        // 验证
-        assertNotNull(result);
-        assertNotNull(result.getTokenValue());
-        assertNotNull(result.getUserInfo());
-        assertEquals(1L, result.getUserInfo().getId());
-        
-        // 验证创建了客户
-        ArgumentCaptor<Customer> customerCaptor = ArgumentCaptor.forClass(Customer.class);
-        verify(customerRepository, times(1)).save(customerCaptor.capture());
-        Customer savedCustomer = customerCaptor.getValue();
-        assertNotNull(savedCustomer.getCode());
-        assertTrue(savedCustomer.getCode().startsWith("CUST_"));
-        assertEquals(1, savedCustomer.getType());
-        assertEquals(1, savedCustomer.getStatus());
-        
-        // 验证创建了身份
-        ArgumentCaptor<CustomerIdentity> identityCaptor = ArgumentCaptor.forClass(CustomerIdentity.class);
-        verify(identityRepository, times(1)).save(identityCaptor.capture());
-        CustomerIdentity savedIdentity = identityCaptor.getValue();
-        assertEquals("WECHAT_OPENID", savedIdentity.getIdentityType());
-        assertEquals(openId, savedIdentity.getIdentityValue());
-        assertEquals(sessionKey, savedIdentity.getSessionKey());
-        
-        // 验证创建了三钱包
-        ArgumentCaptor<CustomerWallet> walletCaptor = ArgumentCaptor.forClass(CustomerWallet.class);
-        verify(walletRepository, times(3)).save(walletCaptor.capture());
-        
-        walletCaptor.getAllValues().forEach(wallet -> {
-            assertEquals(1L, wallet.getCustomerId());
-            assertNotNull(wallet.getWalletType());
-            assertTrue(wallet.getWalletType() >= 1 && wallet.getWalletType() <= 3);
-            assertEquals(BigDecimal.ZERO, wallet.getBalance());
-            assertEquals(BigDecimal.ZERO, wallet.getFrozenBalance());
-        });
+    void newWechatIdentityMustNotCreateAnEmptyPhoneCustomerOrWallet() {
+        ClientWechatLoginCommand command=new ClientWechatLoginCommand();command.setCode("test_code");
+        assertThrows(IllegalStateException.class,()->authService.clientWechatLogin(command));
+        verify(identityRepository).findWechatByAppAndOpenIdForUpdate("wx1111111111111111",openId);
+        verify(customerRepository,never()).save(any());verify(walletRepository,never()).save(any());verify(identityRepository,never()).save(any());
     }
-    
-    @Test
-    void testWechatLoginExistingUser() {
-        // 准备：已存在用户
-        ClientWechatLoginCommand command = new ClientWechatLoginCommand();
-        command.setCode("test_code");
-        
-        CustomerIdentity existingIdentity = new CustomerIdentity();
-        existingIdentity.setId(1L);
-        existingIdentity.setCustomerId(1L);
-        existingIdentity.setIdentityType("WECHAT_OPENID");
-        existingIdentity.setIdentityValue(openId);
-        existingIdentity.setSessionKey("old_session_key");
-        
-        Customer existingCustomer = new Customer();
-        existingCustomer.setId(1L);
-        existingCustomer.setCode("CUST_EXISTING");
-        existingCustomer.setName("已存在用户");
-        existingCustomer.setType(1);
-        existingCustomer.setStatus(1);
-        
-        when(identityRepository.findByTypeAndValue("WECHAT_OPENID", openId))
-                .thenReturn(Optional.of(existingIdentity));
-        when(customerRepository.findById(1L))
-                .thenReturn(Optional.of(existingCustomer));
-        when(identityRepository.save(any(CustomerIdentity.class))).thenReturn(existingIdentity);
-        
-        // 执行
-        LoginResultVO result = authService.clientWechatLogin(command);
-        
-        // 验证
-        assertNotNull(result);
-        assertNotNull(result.getTokenValue());
-        assertEquals(1L, result.getUserInfo().getId());
-        
-        // 验证更新了SessionKey
-        ArgumentCaptor<CustomerIdentity> identityCaptor = ArgumentCaptor.forClass(CustomerIdentity.class);
-        verify(identityRepository, times(1)).save(identityCaptor.capture());
-        assertEquals(sessionKey, identityCaptor.getValue().getSessionKey());
-        
-        // 验证没有创建新客户
-        verify(customerRepository, never()).save(any(Customer.class));
-        
-        // 验证没有创建新钱包
-        verify(walletRepository, never()).save(any(CustomerWallet.class));
+
+    private ClientWechatLoginCommand command(){var c=new ClientWechatLoginCommand();c.setCode("test_code");return c;}
+    private CustomerIdentity identity(){var i=new CustomerIdentity();i.setId(1L);i.setCustomerId(1L);i.setAppId("wx1111111111111111");i.setIdentityType("WECHAT_OPENID");i.setIdentityValue(openId);i.setStatus(1);return i;}
+    private CustomerIdentity bindExisting(){
+        var i=identity();var c=new Customer();c.setId(1L);c.setName("已核验客户");c.setPhone("13800000000");c.setStatus(1);c.setDeleted(0);
+        when(identityRepository.findWechatByAppAndOpenIdForUpdate("wx1111111111111111",openId)).thenReturn(Optional.of(i));
+        when(customerRepository.findById(1L)).thenReturn(Optional.of(c));
+        lenient().when(identityRepository.findById(1L)).thenReturn(Optional.of(i));return i;
     }
+    @Test void existingWechatLoginBindsIndependentTokenAndChecksCurrentIdentityEveryTime(){
+        var i=bindExisting();var first=authService.clientWechatLogin(command());assertNotNull(first.getTokenValue());assertEquals(1L,authService.getCurrentCustomerId());
+        var second=authService.clientWechatLogin(command());assertNotEquals(first.getTokenValue(),second.getTokenValue());
+        assertEquals("138****0000",authService.getCurrentClientProfile().phoneMasked());
+        i.setStatus(2);assertThrows(IllegalArgumentException.class,()->authService.getCurrentCustomerId());
+        i.setStatus(1);i.setCustomerId(2L);assertThrows(IllegalArgumentException.class,()->authService.getCurrentCustomerId());
+        i.setCustomerId(1L);org.springframework.test.util.ReflectionTestUtils.setField(authService,"wechatAppId","wx2222222222222222");assertThrows(IllegalArgumentException.class,()->authService.getCurrentCustomerId());
+        verify(customerRepository,never()).save(any());verify(walletRepository,never()).save(any());
+    }
+    @Test void disabledWechatIdentityDoesNotUpdateSessionOrIssueCustomerLogin(){
+        var i=identity();i.setStatus(2);when(identityRepository.findWechatByAppAndOpenIdForUpdate("wx1111111111111111",openId)).thenReturn(Optional.of(i));
+        assertThrows(IllegalArgumentException.class,()->authService.clientWechatLogin(command()));verify(identityRepository,never()).save(any());verifyNoInteractions(customerRepository,walletRepository);
+    }
+    @Test void oldCustomerTokenWithoutVerifiedSourceCannotReadCustomerResources(){
+        StpUtilLoginProbe.login();assertThrows(IllegalArgumentException.class,()->authService.getCurrentCustomerId());
+        verifyNoInteractions(customerRepository,walletRepository);
+    }
+    private static class StpUtilLoginProbe {static void login(){cn.dev33.satoken.stp.StpUtil.login("CUST_1",new cn.dev33.satoken.stp.SaLoginModel().setToken(java.util.UUID.randomUUID().toString()));}}
 
     private static class MockSaStorage implements SaStorage {
         private final Map<String, Object> storage = new HashMap<>();

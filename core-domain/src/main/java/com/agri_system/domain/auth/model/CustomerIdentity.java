@@ -25,6 +25,9 @@ public class CustomerIdentity {
     
     /** 身份类型：WECHAT_OPENID-微信OpenID，PHONE-手机号，OTHER-其他 */
     private String identityType;
+
+    /** 微信AppID命名空间；空串仅保留未知历史，不能猜成当前应用。 */
+    private String appId;
     
     /** 身份值（OpenID/手机号等） */
     private String identityValue;

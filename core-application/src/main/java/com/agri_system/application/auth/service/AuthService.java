@@ -13,15 +13,12 @@ import com.agri_system.domain.customer.repository.CustomerRepository;
 import com.agri_system.domain.store.model.Staff;
 import com.agri_system.domain.store.repository.StaffRepository;
 import com.agri_system.domain.system.auth.repository.SysRoleRepository;
-import com.agri_system.domain.wallet.model.CustomerWallet;
-import com.agri_system.domain.wallet.repository.CustomerWalletRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -41,7 +38,6 @@ public class AuthService {
     private final StaffRepository staffRepository;
     private final CustomerRepository customerRepository;
     private final CustomerIdentityRepository identityRepository;
-    private final CustomerWalletRepository walletRepository;
     private final WechatService wechatService;
     private final SysRoleRepository roleRepository;
     private final StaffAuthorityService authorityService;
@@ -129,62 +125,27 @@ public class AuthService {
      * @param command 微信登录命令
      * @return 登录结果
      */
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public LoginResultVO clientWechatLogin(ClientWechatLoginCommand command) {
-        // 1. 调用微信API获取OpenID
-        WechatService.WechatLoginResult wechatResult = wechatService.jscode2session(command.getCode());
-        String openId = wechatResult.getOpenId();
-        String sessionKey = wechatResult.getSessionKey();
-        
-        // 2. 查询是否已存在该OpenID的身份
-        CustomerIdentity identity = identityRepository.findByTypeAndValue("WECHAT_OPENID", openId)
-                .orElse(null);
-        
-        Customer customer;
-        
-        if (identity != null) {
-            // 3. 已存在：获取客户信息
-            customer = customerRepository.findById(identity.getCustomerId())
-                    .orElseThrow(() -> new IllegalArgumentException("客户不存在"));
-            
-            // 更新SessionKey
-            identity.setSessionKey(sessionKey);
-            identity.setUpdatedAt(LocalDateTime.now());
-            identityRepository.save(identity);
-        } else {
-            // 4. 不存在：自动注册
-            customer = createCustomerFromWechat(openId, sessionKey);
-        }
-        
-        // 5. 校验客户状态
-        if (customer.getStatus() == null || customer.getStatus() != 1) {
-            throw new IllegalArgumentException("客户账号已停用");
-        }
-        
-        // 6. 执行登录（使用前缀区分）
-        String loginId = "CUST_" + customer.getId();
-        StpUtil.login(loginId);
-        String tokenValue = StpUtil.getTokenValue();
-        
-        // 7. 构建返回结果
-        LoginResultVO result = new LoginResultVO();
-        result.setTokenName(StpUtil.getTokenName());
-        result.setTokenValue(tokenValue);
-        
-        LoginResultVO.UserInfo userInfo = new LoginResultVO.UserInfo();
-        userInfo.setId(customer.getId());
-        userInfo.setName(customer.getName());
-        userInfo.setRole(customer.getType() != null && customer.getType() == 2 ? "VIP" : "NORMAL");
-        
-        Map<String, Object> extra = new HashMap<>();
-        extra.put("code", customer.getCode());
-        extra.put("phone", customer.getPhone());
-        extra.put("vipLevel", customer.getVipLevel());
-        userInfo.setExtra(extra);
-        
-        result.setUserInfo(userInfo);
-
-        return result;
+        var result=wechatService.jscode2session(command.getCode());
+        if(result==null||wechatAppId==null||!wechatAppId.matches("wx[a-zA-Z0-9]{16}")||!wechatAppId.equals(result.getAppId())
+                ||result.getOpenId()==null||result.getOpenId().isBlank()||result.getSessionKey()==null||result.getSessionKey().isBlank())
+            throw new IllegalStateException("微信登录身份或应用配置无效");
+        var identity=identityRepository.findWechatByAppAndOpenIdForUpdate(wechatAppId,result.getOpenId())
+                .orElseThrow(()->new IllegalStateException("暂时无法登录，请联系门店核对客户档案；系统不会自动新建空档案"));
+        if(!identity.isActive()||identity.getId()==null||!identity.isWechatOpenId()||!wechatAppId.equals(identity.getAppId())
+                ||!result.getOpenId().equals(identity.getIdentityValue())||identity.getCustomerId()==null)
+            throw new IllegalArgumentException("微信身份已停用或尚未完成关联核验");
+        Customer customer=customerRepository.findById(identity.getCustomerId()).filter(AuthService::activeCustomer)
+                .orElseThrow(()->new IllegalArgumentException("客户不存在或已停用"));
+        if(!identity.getCustomerId().equals(customer.getId()))throw new IllegalArgumentException("客户身份资料待核验");
+        identity.setSessionKey(result.getSessionKey());identity.setUpdatedAt(LocalDateTime.now());identityRepository.save(identity);
+        StpUtil.login("CUST_"+customer.getId(),new cn.dev33.satoken.stp.SaLoginModel().setToken(UUID.randomUUID().toString()));
+        StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","WECHAT","identityId",identity.getId().toString(),"appId",wechatAppId));
+        LoginResultVO login=new LoginResultVO();login.setTokenName(StpUtil.getTokenName());login.setTokenValue(StpUtil.getTokenValue());
+        LoginResultVO.UserInfo user=new LoginResultVO.UserInfo();user.setId(customer.getId());user.setName(customer.getName());user.setRole(customer.isVip()?"VIP":"NORMAL");
+        Map<String,Object> extra=new HashMap<>();extra.put("code",customer.getCode());extra.put("phone",customer.getPhone());extra.put("vipLevel",customer.getVipLevel());extra.put("bindingState","LINKED");user.setExtra(extra);login.setUserInfo(user);
+        return login;
     }
 
     /**
@@ -207,12 +168,13 @@ public class AuthService {
         Customer customer = customerRepository.findByPhone(phone)
                 .orElseThrow(() -> new IllegalArgumentException("客户不存在: " + phone));
 
-        if (customer.getStatus() == null || customer.getStatus() != 1) {
+        if (!activeCustomer(customer)) {
             throw new IllegalArgumentException("客户账号已停用");
         }
 
         String loginId = "CUST_" + customer.getId();
-        StpUtil.login(loginId);
+        StpUtil.login(loginId,new cn.dev33.satoken.stp.SaLoginModel().setToken(UUID.randomUUID().toString()));
+        StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","DEV"));
 
         LoginResultVO result = new LoginResultVO();
         result.setTokenName(StpUtil.getTokenName());
@@ -227,52 +189,6 @@ public class AuthService {
         return result;
     }
 
-    /**
-     * 从微信创建客户（自动注册）
-     *
-     * @param openId 微信OpenID
-     * @param sessionKey 微信SessionKey
-     * @return 客户
-     */
-    private Customer createCustomerFromWechat(String openId, String sessionKey) {
-        // 1. 创建客户
-        Customer customer = new Customer();
-        customer.setCode("CUST_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
-        customer.setName("微信用户_" + openId.substring(0, 8));
-        customer.setPhone(""); // 微信登录时手机号为空，后续可绑定
-        customer.setType(1); // 普通客户
-        customer.setStatus(1); // 正常
-        customer.setCreatedAt(LocalDateTime.now());
-        customer.setUpdatedAt(LocalDateTime.now());
-        customer = customerRepository.save(customer);
-        
-        // 2. 创建客户身份
-        CustomerIdentity identity = new CustomerIdentity();
-        identity.setCustomerId(customer.getId());
-        identity.setIdentityType("WECHAT_OPENID");
-        identity.setIdentityValue(openId);
-        identity.setSessionKey(sessionKey);
-        identity.setStatus(1);
-        identity.setCreatedAt(LocalDateTime.now());
-        identity.setUpdatedAt(LocalDateTime.now());
-        identityRepository.save(identity);
-        
-        // 3. 初始化三钱包
-        for (int walletType = 1; walletType <= 3; walletType++) {
-            CustomerWallet wallet = new CustomerWallet();
-            wallet.setCustomerId(customer.getId());
-            wallet.setWalletType(walletType);
-            wallet.setBalance(BigDecimal.ZERO);
-            wallet.setFrozenBalance(BigDecimal.ZERO);
-            wallet.setVersion(0);
-            wallet.setCreatedAt(LocalDateTime.now());
-            wallet.setUpdatedAt(LocalDateTime.now());
-            walletRepository.save(wallet);
-        }
-        
-        return customer;
-    }
-    
     /**
      * 员工登出
      */
@@ -332,21 +248,37 @@ public class AuthService {
      * @return 客户ID
      */
     public Long getCurrentCustomerId() {
-        if (!StpUtil.isLogin()) {
-            throw new IllegalArgumentException("未登录");
-        }
-
-        String loginId = StpUtil.getLoginIdAsString();
-        if (loginId == null || !loginId.startsWith("CUST_")) {
-            throw new IllegalArgumentException("当前登录用户不是客户");
-        }
-
-        Long customerId = Long.parseLong(loginId.substring("CUST_".length()));
-        Customer customer = customerRepository.findById(customerId)
-                .orElseThrow(() -> new IllegalArgumentException("客户不存在"));
-        if (!customer.isActive()) {
-            throw new IllegalArgumentException("客户账号已停用");
-        }
+        if(!StpUtil.isLogin())throw new IllegalArgumentException("未登录");
+        String loginId=StpUtil.getLoginIdAsString();
+        if(loginId==null||!loginId.matches("CUST_[1-9]\\d{0,18}"))throw new IllegalArgumentException("当前登录用户不是客户");
+        Long customerId;
+        try{customerId=Long.valueOf(loginId.substring(5));}catch(NumberFormatException invalid){throw new IllegalArgumentException("客户登录已失效");}
+        Object raw=StpUtil.getTokenSession().get("clientAuthV1");
+        if(!(raw instanceof Map<?,?> binding))throw new IllegalArgumentException("客户登录需重新核验");
+        if("DEV".equals(binding.get("kind"))) {
+            if(!devLoginEnabled||(wechatAppId!=null&&!wechatAppId.isEmpty())||(environment!=null&&java.util.Arrays.asList(environment.getActiveProfiles()).contains("prod")))
+                throw new IllegalArgumentException("开发客户会话已失效");
+        } else if("WECHAT".equals(binding.get("kind"))) {
+            if(wechatAppId==null||!wechatAppId.matches("wx[a-zA-Z0-9]{16}")||!wechatAppId.equals(binding.get("appId")))throw new IllegalArgumentException("微信应用登录已失效");
+            Long identityId;
+            try{identityId=Long.valueOf(String.valueOf(binding.get("identityId")));}catch(NumberFormatException invalid){throw new IllegalArgumentException("微信身份登录已失效");}
+            if(identityId<=0)throw new IllegalArgumentException("微信身份登录已失效");
+            var identity=identityRepository.findById(identityId).orElse(null);
+            if(identity==null||!identity.isActive()||!identity.isWechatOpenId()||!wechatAppId.equals(identity.getAppId())||!customerId.equals(identity.getCustomerId()))
+                throw new IllegalArgumentException("微信身份已停用或关联已变更，请重新核验");
+        } else throw new IllegalArgumentException("客户登录来源无效");
+        var customer=customerRepository.findById(customerId).orElseThrow(()->new IllegalArgumentException("客户不存在"));
+        if(!activeCustomer(customer))throw new IllegalArgumentException("客户账号已停用");
+        if(!customerId.equals(customer.getId()))throw new IllegalArgumentException("客户身份资料待核验");
         return customerId;
+    }
+    private static boolean activeCustomer(Customer c){return c!=null&&c.isActive()&&!Integer.valueOf(1).equals(c.getDeleted());}
+    public record ClientProfile(String customerId,String name,String phoneMasked,String bindingState) {}
+    public ClientProfile getCurrentClientProfile(){
+        Long id=getCurrentCustomerId();var c=customerRepository.findById(id).filter(AuthService::activeCustomer).orElseThrow(()->new IllegalArgumentException("客户登录已失效"));
+        String phone=c.getPhone();String masked=phone==null||phone.isBlank()?null:phone.length()<7?"已登记联系方式":phone.substring(0,3)+"****"+phone.substring(phone.length()-4);
+        Object marker=StpUtil.getTokenSession().get("clientAuthV1");
+        String state=marker instanceof Map<?,?> m&&"DEV".equals(m.get("kind"))?"DEV_ONLY":"LINKED";
+        return new ClientProfile(id.toString(),c.getName(),masked,state);
     }
 }

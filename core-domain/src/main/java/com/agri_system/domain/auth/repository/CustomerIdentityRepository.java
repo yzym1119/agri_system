@@ -10,6 +10,11 @@ import java.util.Optional;
  * @author AI Generated
  */
 public interface CustomerIdentityRepository {
+    /** 仅授权元数据，不加载sessionKey；登录只能写本次真实平台返回的新凭据。 */
+    Optional<CustomerIdentity> findById(Long id);
+    /** 同样不读取旧凭据，原身份行锁保持至调用事务结束。 */
+    Optional<CustomerIdentity> findWechatByAppAndOpenIdForUpdate(String appId, String openId);
+    java.util.List<CustomerIdentity> findActiveWechatByCustomerAndApp(Long customerId, String appId);
     
     /**
      * 保存身份

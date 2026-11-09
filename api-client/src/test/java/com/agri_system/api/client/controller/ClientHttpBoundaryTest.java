@@ -61,7 +61,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
                 + "org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration,"
                 + "org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration,"
                 + "com.mybatisflex.spring.boot.MybatisFlexAutoConfiguration",
-        "spring.flyway.enabled=false", "sa-token.is-print=false", "payment.callback.secret=测试回调密钥"})
+        "spring.flyway.enabled=false", "sa-token.is-print=false", "payment.callback.secret=测试回调密钥",
+        "auth.dev-login.enabled=true", "wechat.app-id="})
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class ClientHttpBoundaryTest {
@@ -77,6 +78,7 @@ class ClientHttpBoundaryTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
     @Autowired OrderPaymentPublicController callbacks;
+    @Autowired AuthService authentication;
     @MockBean OrderApplicationService orders;
     @MockBean AfterSalesApplicationService afterSales;
     @MockBean CustomerRepository customers;
@@ -87,12 +89,13 @@ class ClientHttpBoundaryTest {
     @MockBean SysRoleRepository roles;
     @MockBean StaffAuthorityService authority;
     @MockBean StringRedisTemplate redis;
+    @MockBean com.agri_system.application.performance.service.OneTimeQrService oldQr;
 
     @SpringBootConfiguration
     @EnableAutoConfiguration
     @Import({SaTokenConfigure.class, AuthService.class, GlobalExceptionHandler.class,
             OrderClientController.class, AfterSalesClientController.class,
-            OrderPaymentPublicController.class, LoginProbe.class})
+            OrderPaymentPublicController.class, AuthClientController.class, QrClientController.class, LoginProbe.class})
     static class Config {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
     }
@@ -101,17 +104,40 @@ class ClientHttpBoundaryTest {
     static class LoginProbe {
         @GetMapping("/auth/__client_test__/login")
         Map<String, String> login(@RequestParam String id) {
-            StpUtil.login(id);
+            StpUtil.login(id,new cn.dev33.satoken.stp.SaLoginModel().setToken(java.util.UUID.randomUUID().toString()));
+            // 仅此隔离测试配置的显式开发身份；不伪装真实微信登录。
+            StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","DEV"));
             return Map.of("token", StpUtil.getTokenValue());
         }
     }
 
     @BeforeEach void customerAndCallback() {
+        ReflectionTestUtils.setField(authentication,"wechatAppId","");
         Customer active = new Customer(); active.setId(101L); active.setStatus(1);
         Customer disabled = new Customer(); disabled.setId(303L); disabled.setStatus(2);
         when(customers.findById(101L)).thenReturn(Optional.of(active));
         when(customers.findById(303L)).thenReturn(Optional.of(disabled));
         ReflectionTestUtils.setField(callbacks, "callbackSecret", "测试回调密钥");
+    }
+
+    @Test void actualWechatLoginAndCurrentProfileRejectRevokedOrReconfiguredIdentity() throws Exception {
+        String app="wx1111111111111111";ReflectionTestUtils.setField(authentication,"wechatAppId",app);
+        var platform=new WechatService.WechatLoginResult();platform.setAppId(app);platform.setOpenId("TEST_OPEN_ID");platform.setSessionKey("TEST_SESSION_KEY");when(wechat.jscode2session("test-code")).thenReturn(platform);
+        var identity=new com.agri_system.domain.auth.model.CustomerIdentity();identity.setId(7L);identity.setAppId(app);identity.setCustomerId(101L);identity.setIdentityType("WECHAT_OPENID");identity.setIdentityValue("TEST_OPEN_ID");identity.setStatus(1);
+        when(identities.findWechatByAppAndOpenIdForUpdate(app,"TEST_OPEN_ID")).thenReturn(Optional.of(identity));when(identities.findById(7L)).thenReturn(Optional.of(identity));
+        var response=mvc.perform(post("/auth/client/login/wechat").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"test-code\"}"))
+                .andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andReturn();
+        String token=json.readTree(response.getResponse().getContentAsString()).path("tokenValue").asText();assertFalse(token.isBlank());
+        mvc.perform(get("/auth/client/info").header("Authorization",token)).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store"))
+                .andExpect(jsonPath("$.customerId").value("101")).andExpect(jsonPath("$.bindingState").value("LINKED")).andExpect(jsonPath("$.sessionKey").doesNotExist()).andExpect(jsonPath("$.openid").doesNotExist());
+        identity.setStatus(2);businessFailure(request(get("/api/client/orders/77"),token,null),10001);verifyNoInteractions(orders);
+        identity.setStatus(1);ReflectionTestUtils.setField(authentication,"wechatAppId","wx2222222222222222");
+        businessFailure(request(get("/auth/client/info"),token,null),10001);
+    }
+
+    @Test void oldQrCannotChangeCustomerOwnershipFromSelfReportedIdsOrOpenId() throws Exception {
+        businessFailure(request(post("/api/client/auth/qrBind"),login("CUST_101"),"{\"qrToken\":\"TEST-QR\",\"customerId\":202,\"openid\":\"FAKE\"}"),10001);
+        verifyNoInteractions(oldQr);
     }
 
     @ParameterizedTest

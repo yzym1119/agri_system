@@ -22,9 +22,16 @@ class WechatServiceRedactionTest {
 
     private WechatService serviceWith(RestTemplate restTemplate) {
         WechatService service = new WechatService();
+        ReflectionTestUtils.setField(service, "appId", "wx1111111111111111");
         ReflectionTestUtils.setField(service, "appSecret", SECRET);
         ReflectionTestUtils.setField(service, "restTemplate", restTemplate);
         return service;
+    }
+
+    @Test void incompleteSuccessfulResponseMustNotBecomeAnAuthenticatedIdentity() {
+        var http=mock(RestTemplate.class);var response=new WechatService.WechatResponse();response.setErrcode(0);
+        when(http.getForObject(anyString(),eq(WechatService.WechatResponse.class))).thenReturn(response);
+        assertThrows(IllegalStateException.class,()->serviceWith(http).jscode2session(CODE));
     }
 
     @Test

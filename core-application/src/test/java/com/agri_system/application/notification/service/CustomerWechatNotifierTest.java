@@ -16,7 +16,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
 import java.util.Map;
-import java.util.Optional;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -31,6 +31,15 @@ import static org.mockito.Mockito.*;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class CustomerWechatNotifierTest {
 
+    @Test void foreignDisabledOrAmbiguousWechatIdentityIsNeverChosenForNotification() {
+        properties.setTemplates(Map.of("order-finished",template("TPL_1","p",Map.of("thing1","orderNo"))));
+        var i=new CustomerIdentity();i.setCustomerId(1L);i.setIdentityType("WECHAT_OPENID");i.setAppId("wx2222222222222222");i.setStatus(1);i.setIdentityValue("OTHER_APP");
+        when(identityRepository.findActiveWechatByCustomerAndApp(1L,"wx1111111111111111")).thenReturn(List.of(i));
+        notifier.notify("order-finished",1L,Map.of());i.setAppId("wx1111111111111111");i.setStatus(2);notifier.notify("order-finished",1L,Map.of());
+        i.setStatus(1);when(identityRepository.findActiveWechatByCustomerAndApp(1L,"wx1111111111111111")).thenReturn(List.of(i,i));notifier.notify("order-finished",1L,Map.of());
+        verifyNoInteractions(messageService);
+    }
+
     @Mock CustomerIdentityRepository identityRepository;
     @Mock WechatSubscribeMessageService messageService;
 
@@ -43,6 +52,7 @@ class CustomerWechatNotifierTest {
         properties.setEnabled(true);
         properties.setMiniprogramState("formal");
         notifier = new CustomerWechatNotifier(properties, identityRepository, messageService);
+        org.springframework.test.util.ReflectionTestUtils.setField(notifier,"appId","wx1111111111111111");
     }
 
     private Template template(String id, String page, Map<String, String> fields) {
@@ -55,9 +65,9 @@ class CustomerWechatNotifierTest {
 
     private void bindOpenid(Long customerId, String openid) {
         CustomerIdentity identity = new CustomerIdentity();
-        identity.setIdentityValue(openid);
-        when(identityRepository.findByCustomerIdAndType(customerId, CustomerWechatNotifier.IDENTITY_WECHAT_OPENID))
-                .thenReturn(Optional.of(identity));
+        identity.setIdentityValue(openid);identity.setCustomerId(customerId);identity.setAppId("wx1111111111111111");identity.setIdentityType("WECHAT_OPENID");identity.setStatus(1);
+        when(identityRepository.findActiveWechatByCustomerAndApp(customerId,"wx1111111111111111"))
+                .thenReturn(List.of(identity));
     }
 
     @Test
@@ -97,8 +107,8 @@ class CustomerWechatNotifierTest {
     void noOpenidSkipped() {
         properties.setTemplates(Map.of("order-finished",
                 template("TPL_1", "p", Map.of("thing1", "orderNo"))));
-        when(identityRepository.findByCustomerIdAndType(1L, CustomerWechatNotifier.IDENTITY_WECHAT_OPENID))
-                .thenReturn(Optional.empty());
+        when(identityRepository.findActiveWechatByCustomerAndApp(1L,"wx1111111111111111"))
+                .thenReturn(List.of());
         notifier.notify("order-finished", 1L, Map.of("orderNo", "NO1"));
         verify(messageService, never()).send(any(), any(), any(), any(), any());
     }

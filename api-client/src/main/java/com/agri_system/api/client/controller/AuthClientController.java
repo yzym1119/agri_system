@@ -9,6 +9,8 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -26,15 +28,22 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthClientController {
     
     private final AuthService authService;
+    @ModelAttribute
+    public void noCache(jakarta.servlet.http.HttpServletResponse response){response.setHeader("Cache-Control","no-store");}
     
     /**
      * 客户微信登录
      */
     @PostMapping("/login/wechat")
-    @Operation(summary = "客户微信登录", description = "通过微信code登录，自动注册新用户")
+    @Operation(summary = "客户微信登录", description = "按实际AppID校验既有启用绑定；首次手机号授权与档案核验尚未接通，不自动建空档案")
     public ResponseEntity<LoginResultVO> wechatLogin(@Valid @RequestBody ClientWechatLoginCommand command) {
         LoginResultVO result = authService.clientWechatLogin(command);
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore()).body(result);
+    }
+
+    @GetMapping("/info")
+    public ResponseEntity<AuthService.ClientProfile> info(){
+        return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore()).body(authService.getCurrentClientProfile());
     }
     
     /**

@@ -28,6 +28,8 @@ public class CustomerWechatNotifier {
 
     static final String IDENTITY_WECHAT_OPENID = "WECHAT_OPENID";
 
+    @org.springframework.beans.factory.annotation.Value("${wechat.app-id:}")
+    private String appId;
     private final WechatSubscribeMessageProperties properties;
     private final CustomerIdentityRepository identityRepository;
     private final WechatSubscribeMessageService messageService;
@@ -78,10 +80,13 @@ public class CustomerWechatNotifier {
     }
 
     private String resolveOpenid(Long customerId) {
-        return identityRepository.findByCustomerIdAndType(customerId, IDENTITY_WECHAT_OPENID)
-                .map(CustomerIdentity::getIdentityValue)
-                .filter(v -> v != null && !v.isBlank())
-                .orElse(null);
+        if(appId==null||!appId.matches("wx[a-zA-Z0-9]{16}"))return null;
+        try {
+            var identities=identityRepository.findActiveWechatByCustomerAndApp(customerId,appId).stream()
+                    .filter(i->i.isActive()&&i.isWechatOpenId()&&appId.equals(i.getAppId())&&customerId.equals(i.getCustomerId())
+                            &&i.getIdentityValue()!=null&&!i.getIdentityValue().isBlank()).toList();
+            return identities.size()==1?identities.get(0).getIdentityValue():null;
+        } catch(Exception error){log.warn("微信通知身份读取失败，已跳过：errorType={}",error.getClass().getName());return null;}
     }
 
     /** 按模板 fields 映射，把语义数据转成微信模板字段 → 值。缺失的语义值跳过该字段。 */

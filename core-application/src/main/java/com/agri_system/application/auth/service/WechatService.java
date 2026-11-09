@@ -26,7 +26,8 @@ public class WechatService {
     private final RestTemplate restTemplate;
     
     public WechatService() {
-        this.restTemplate = new RestTemplate();
+        var factory=new org.springframework.http.client.SimpleClientHttpRequestFactory();factory.setConnectTimeout(5000);factory.setReadTimeout(10000);
+        this.restTemplate = new RestTemplate(factory);
     }
     
     /**
@@ -36,6 +37,8 @@ public class WechatService {
      * @return 微信登录结果
      */
     public WechatLoginResult jscode2session(String code) {
+        if(appId==null||!appId.matches("wx[a-zA-Z0-9]{16}")||appSecret==null||appSecret.isBlank())throw new IllegalStateException("微信登录配置未完成");
+        if(code==null||code.isBlank()||code.length()>512)throw new IllegalArgumentException("微信登录凭证无效");
         // appid/secret/js_code 走参数化拼接，避免 code 含 & 等字符时改写查询串或污染日志
         String url = UriComponentsBuilder.fromUriString("https://api.weixin.qq.com/sns/jscode2session")
                 .queryParam("appid", appId)
@@ -67,7 +70,11 @@ public class WechatService {
             throw new RuntimeException("微信登录失败：微信接口返回错误码 " + response.getErrcode());
         }
 
+        if(response.getOpenid()==null||response.getOpenid().isBlank()||response.getOpenid().length()>128||response.getSession_key()==null||response.getSession_key().isBlank()||response.getSession_key().length()>255)
+            throw new IllegalStateException("微信登录失败：身份信息不完整");
+
         WechatLoginResult result = new WechatLoginResult();
+        result.setAppId(appId);
         result.setOpenId(response.getOpenid());
         result.setSessionKey(response.getSession_key());
         result.setUnionId(response.getUnionid());
@@ -95,6 +102,7 @@ public class WechatService {
      */
     @Data
     public static class WechatLoginResult {
+        private String appId;
         private String openId;
         private String sessionKey;
         private String unionId;
