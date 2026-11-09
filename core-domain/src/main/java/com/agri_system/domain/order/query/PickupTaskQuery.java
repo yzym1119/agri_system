@@ -21,4 +21,7 @@ public interface PickupTaskQuery {
      * <p>after 是排他游标，比较订单 ID 而不是请求 ID，订单边界不会截断同一订单的明细行。</p>
      */
     List<OrderLine> findOrderLines(Long storeId, String state, Long after);
+
+    /** 本店指定原单的全部提货请求；不受列表页游标或状态裁剪。 */
+    List<OrderLine> findOrderLinesForOrder(Long storeId, Long orderId);
 }

@@ -1,4 +1,9 @@
 const test=require('node:test'),assert=require('node:assert/strict');
+test('整单列表支持合法51项物料，不把50当业务上限',async()=>{
+ const {isPickupOrders}=await import('../dist/pickup.js');
+ const lines=Array.from({length:51},(_,n)=>({requestId:String(n+1),productName:'肥料',unit:'袋',remainingQuantity:'1',status:'PENDING',canConfirm:true,blockReason:null,fulfilledAt:null}));
+ assert.equal(isPickupOrders({storeId:'3',state:'PENDING',orders:[{orderId:'50',orderNo:'O50',customerLabel:null,pendingCount:51,fulfilledCount:0,lines}],nextCursor:null}),true);
+});
 test('提货详情保留精确编号和数量，拒绝重复分配、未知单位与完成时伪造余量',async()=>{
  const {isPickupPreview}=await import('../dist/pickup.js');
  const p={storeId:'3',requestId:'9223372036854775807',orderId:'50',orderNo:'ORDER50',productName:'肥料',status:'PENDING',canConfirm:true,blockReason:null,confirmationKey:'a'.repeat(64),fulfilledAt:null,

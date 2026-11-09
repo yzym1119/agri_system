@@ -15,7 +15,8 @@
     "./fulfillment": "./src/fulfillment.ts",
     "./pickup": "./src/pickup.ts",
     "./sale": "./src/sale.ts",
-    "./staff-orders": "./src/staff-orders.ts"
+    "./staff-orders": "./src/staff-orders.ts",
+    "./pickup-preparation": "./src/pickup-preparation.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

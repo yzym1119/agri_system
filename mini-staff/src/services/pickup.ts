@@ -1,3 +1,5 @@
+import { isPickupPreparation } from '@agri/mobile-contracts/pickup-preparation';
+import { isPositiveLongId } from '@agri/mobile-contracts/ids';
 import { isPickupOrders,isPickupPreview,type PickupOrders } from '@agri/mobile-contracts/pickup';
 import { staffAuth } from './auth';
 async function own<T extends {storeId:string}>(url:string,validate:(v:unknown)=>v is T,epoch:number){
@@ -14,3 +16,9 @@ const empty=(v:unknown):v is null|undefined|''=>v===null||v===undefined||v==='';
 export const confirmPickup=(id:string,confirmationKey:string,allocationIds:string[],epoch:number)=>staffAuth.request({
  url:'/api/admin/orders/pickup/requests/'+encodeURIComponent(id)+'/fulfill',method:'POST',data:{confirmationKey,allocationIds:[...allocationIds]},
 },empty,epoch);
+
+export async function readPickupPreparation(orderId:string,epoch:number) {
+ if(!isPositiveLongId(orderId))throw Error('ORDER_ID_INVALID');
+ const answer=await own('/api/admin/mobile/pickup/orders/'+encodeURIComponent(orderId),isPickupPreparation,epoch);
+ if(answer.orderId!==orderId)throw Error('RESPONSE_INVALID');return answer;
+}

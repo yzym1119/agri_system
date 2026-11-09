@@ -84,6 +84,11 @@ public class MobilePickupTaskService {
         var actor=actor(employeeId);
         var source=pickup.previewPickupRequest(requestId,employeeId);
         if(!Objects.equals(actor.getStoreId(),source.getStoreId())) throw new IllegalArgumentException("不能读取其他门店的提货请求");
+        return view(source);
+    }
+
+    /** 共用原工作项到移动批次视图的校验，不重新计算余量。 */
+    Preview view(PickupWorkItemVO source) {
         boolean completed="FULFILLED".equals(source.getStatus());
         boolean ready=!completed && "PENDING".equals(source.getStatus()) && source.isCanFulfill();
         String blocked=completed?null:source.getFulfillmentBlockReason();
@@ -108,7 +113,7 @@ public class MobilePickupTaskService {
     }
 
     /** 客户只给首字加星，不返回手机号、地址或客户编号。 */
-    private static String customer(List<PickupTaskQuery.OrderLine> lines) {
+    static String customer(List<PickupTaskQuery.OrderLine> lines) {
         return lines.stream().map(PickupTaskQuery.OrderLine::customerName).filter(StringUtils::hasText)
                 .findFirst().map(name->{
                     String value=name.trim();

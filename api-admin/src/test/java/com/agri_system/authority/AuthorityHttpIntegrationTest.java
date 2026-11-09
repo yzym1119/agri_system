@@ -100,6 +100,7 @@ class AuthorityHttpIntegrationTest {
     @MockBean com.agri_system.application.inventory.service.MobileScanQueryService mobileInventory;
     @MockBean com.agri_system.application.order.service.DeliveryTaskService assignedTasks;
     @MockBean com.agri_system.application.order.service.MobilePickupTaskService mobilePickup;
+    @MockBean com.agri_system.application.order.service.MobilePickupPreparationService pickupPreparation;
     @MockBean com.agri_system.application.order.service.MobileOwnOrderService ownOrders;
     @MockBean com.agri_system.application.order.service.OrderApplicationService assignedOrders;
     @MockBean com.agri_system.application.order.service.PickupFulfillmentService pickupFulfillment;
@@ -141,6 +142,7 @@ class AuthorityHttpIntegrationTest {
             com.agri_system.api.admin.controller.MobileDeliveryController.class,
             com.agri_system.api.admin.controller.DeliveryReassignmentController.class,
             com.agri_system.api.admin.controller.MobilePickupController.class,
+            com.agri_system.api.admin.controller.MobilePickupPreparationController.class,
             com.agri_system.api.admin.controller.MobileOwnOrderController.class,
             com.agri_system.api.admin.controller.MenuController.class,
             com.agri_system.api.admin.controller.OrderAdminController.class,
@@ -414,13 +416,17 @@ class AuthorityHttpIntegrationTest {
     @Test void 手机提货沿用原权限且撤销立即生效() throws Exception {
         String token=login(4),base="/api/admin/mobile/pickup/orders",preview="/api/admin/mobile/pickup/tasks";
         reject(call(null,"GET",base,null));reject(call(loginId("CUST_1"),"GET",base,null));reject(call(token,"GET",base,null));
+        reject(call(token,"GET",base+"/50",null));
         businessPermission(102,"order:pickup:verify");
         when(mobilePickup.listOrders(4L,"PENDING",null)).thenReturn(new com.agri_system.application.order.service.MobilePickupTaskService.Orders("1","PENDING",List.of(),null));
         assertEquals("1",call(token,"GET",base+"?storeId=2&staffId=99",null).path("storeId").asText());
         org.mockito.Mockito.verify(mobilePickup).listOrders(4L,"PENDING",null);
+        when(pickupPreparation.read(50L,4L)).thenReturn(new com.agri_system.application.order.service.MobilePickupPreparationService.Preparation("1","50","O50",null,0,0,List.of()));
+        assertEquals("50",call(token,"GET",base+"/50?staffId=99&storeId=2",null).path("orderId").asText());
+        org.mockito.Mockito.verify(pickupPreparation).read(50L,4L);
         reject(call(token,"GET","/api/admin/orders/42",null));reject(call(token,"GET","/api/admin/staff",null));
         jdbc.update("DELETE FROM sys_role_menu WHERE role_id=4 AND menu_id=102");
-        reject(call(token,"GET",base,null));reject(call(token,"GET",preview+"/42",null));
+        reject(call(token,"GET",base,null));reject(call(token,"GET",preview+"/42",null));reject(call(token,"GET",base+"/50",null));
         reject(call(token,"POST","/api/admin/orders/pickup/requests/42/fulfill","{\"confirmationKey\":\""+"a".repeat(64)+"\",\"allocationIds\":[1]}"));
     }
 

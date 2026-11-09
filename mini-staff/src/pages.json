@@ -89,6 +89,12 @@
       "style": {
         "navigationBarTitleText": "订单详情"
       }
+    },
+    {
+      "path": "pages/pickup/order/index",
+      "style": {
+        "navigationBarTitleText": "整单备货"
+      }
     }
   ],
   "globalStyle": {

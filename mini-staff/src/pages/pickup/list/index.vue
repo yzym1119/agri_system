@@ -29,6 +29,7 @@ async function load(after:string|null){
 }
 async function chooseState(value:PickupOrders['state']){if(!current())return;state.value=value;await load(null);}
 const more=()=>current()&&!loading.value&&nextCursor.value?load(nextCursor.value):undefined;
+function openOrder(order:PickupOrder){if(current()&&!loading.value&&orders.value.includes(order))uni.navigateTo({url:'/pages/pickup/order/index?orderId='+encodeURIComponent(order.orderId)});}
 function open(line:PickupOrderLine){if(!current()||loading.value||!orders.value.some(order=>order.lines.includes(line)))return;
  uni.navigateTo({url:'/pages/pickup/detail/index?requestId='+encodeURIComponent(line.requestId)});}
 const lineText=(line:PickupOrderLine)=>line.status==='FULFILLED'?'已交货':line.canConfirm?(line.remainingQuantity??'数量待核对')+' '+(line.unit??''):'待核对';
@@ -47,6 +48,7 @@ const lineText=(line:PickupOrderLine)=>line.status==='FULFILLED'?'已交货':lin
      <text class="chip chip-sm" :class="order.pendingCount ? 'chip-warn' : 'chip-ok'">{{ order.pendingCount ? '待交 ' + order.pendingCount + ' 项' : '整单已交完' }}</text>
     </view>
     <text class="t-meta mt4">客户 {{ order.customerLabel || '散客' }} · 待交 {{ order.pendingCount }} 项 · 已交 {{ order.fulfilledCount }} 项</text>
+    <button class="btn btn-primary btn-sm mt12" @click="openOrder(order)">打开整单备货清单</button>
     <view v-for="line in order.lines" :key="line.requestId" hover-class="tap-hover" hover-stay-time="80" class="line tap" :class="{ 'line-done': line.status === 'FULFILLED' }" @click="open(line)">
      <view class="grow">
       <text class="t-body">{{ line.productName || '商品资料待核对' }}</text>

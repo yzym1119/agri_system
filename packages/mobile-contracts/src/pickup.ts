@@ -10,7 +10,7 @@ const text=(v:unknown,max=200):v is string=>typeof v==='string'&&!!v.trim()&&v.l
 const label=(v:unknown)=>v===null||text(v);
 const time=(v:unknown)=>v===null||(typeof v==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?$/.test(v));
 const state=(v:unknown):v is PickupOrders['state']=>v==='PENDING'||v==='FULFILLED';
-const count=(v:unknown):v is number=>typeof v==='number'&&Number.isInteger(v)&&v>=0&&v<=50;
+const count=(v:unknown):v is number=>typeof v==='number'&&Number.isInteger(v)&&v>=0&&v<=1000;
 const greater=(a:string,b:string)=>a.length===b.length?a>b:a.length>b.length;
 const quantity=(v:unknown)=>typeof v==='string'&&/^(0|[1-9]\d{0,11})(\.\d{1,8})?$/.test(v)&&/[1-9]/.test(v);
 function allocation(v:unknown):v is PickupAllocation {
@@ -28,7 +28,7 @@ function orderLine(v:unknown):v is PickupOrderLine {
 function order(v:unknown):v is PickupOrder {
  if(!object(v)||!id(v.orderId)||!label(v.orderNo)||!count(v.pendingCount)||!count(v.fulfilledCount)
   ||(v.customerLabel!==null&&!text(v.customerLabel,100))
-  ||!Array.isArray(v.lines)||!v.lines.length||v.lines.length>50||!v.lines.every(orderLine))return false;
+  ||!Array.isArray(v.lines)||!v.lines.length||v.lines.length>1000||!v.lines.every(orderLine))return false;
  if(new Set(v.lines.map(line=>line.requestId)).size!==v.lines.length)return false;
  const pending=v.lines.filter(line=>line.status==='PENDING').length;
  return v.pendingCount===pending&&v.fulfilledCount===v.lines.length-pending;
