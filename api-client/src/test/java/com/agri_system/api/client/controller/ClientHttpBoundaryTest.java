@@ -123,14 +123,19 @@ class ClientHttpBoundaryTest {
     @Test void actualWechatLoginAndCurrentProfileRejectRevokedOrReconfiguredIdentity() throws Exception {
         String app="wx1111111111111111";ReflectionTestUtils.setField(authentication,"wechatAppId",app);
         var platform=new WechatService.WechatLoginResult();platform.setAppId(app);platform.setOpenId("TEST_OPEN_ID");platform.setSessionKey("TEST_SESSION_KEY");when(wechat.jscode2session("test-code")).thenReturn(platform);
-        var identity=new com.agri_system.domain.auth.model.CustomerIdentity();identity.setId(7L);identity.setAppId(app);identity.setCustomerId(101L);identity.setIdentityType("WECHAT_OPENID");identity.setIdentityValue("TEST_OPEN_ID");identity.setStatus(1);
+        var identity=new com.agri_system.domain.auth.model.CustomerIdentity();identity.setId(7L);identity.setAppId(app);identity.setCustomerId(101L);identity.setIdentityType("WECHAT_OPENID");identity.setIdentityValue("TEST_OPEN_ID");identity.setStatus(1);identity.setAuthVersion(1L);
         when(identities.findWechatByAppAndOpenIdForUpdate(app,"TEST_OPEN_ID")).thenReturn(Optional.of(identity));when(identities.findById(7L)).thenReturn(Optional.of(identity));
         var response=mvc.perform(post("/auth/client/login/wechat").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"test-code\"}"))
                 .andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andReturn();
         String token=json.readTree(response.getResponse().getContentAsString()).path("tokenValue").asText();assertFalse(token.isBlank());
         mvc.perform(get("/auth/client/info").header("Authorization",token)).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store"))
                 .andExpect(jsonPath("$.customerId").value("101")).andExpect(jsonPath("$.bindingState").value("LINKED")).andExpect(jsonPath("$.sessionKey").doesNotExist()).andExpect(jsonPath("$.openid").doesNotExist());
-        identity.setStatus(2);businessFailure(request(get("/api/client/orders/77"),token,null),10001);verifyNoInteractions(orders);
+        identity.setStatus(2);identity.setAuthVersion(2L);businessFailure(request(get("/api/client/orders/77"),token,null),10001);verifyNoInteractions(orders);
+        identity.setStatus(1);identity.setAuthVersion(3L);businessFailure(request(get("/auth/client/info"),token,null),10001);
+        var relogin=mvc.perform(post("/auth/client/login/wechat").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"test-code\"}" )).andExpect(status().isOk()).andReturn();
+        String fresh=json.readTree(relogin.getResponse().getContentAsString()).path("tokenValue").asText();assertNotEquals(token,fresh);
+        mvc.perform(get("/auth/client/info").header("Authorization",fresh)).andExpect(status().isOk()).andExpect(jsonPath("$.customerId").value("101"));
+        businessFailure(request(get("/api/client/orders/77"),token,null),10001);verifyNoInteractions(orders);
         identity.setStatus(1);ReflectionTestUtils.setField(authentication,"wechatAppId","wx2222222222222222");
         businessFailure(request(get("/auth/client/info"),token,null),10001);
     }

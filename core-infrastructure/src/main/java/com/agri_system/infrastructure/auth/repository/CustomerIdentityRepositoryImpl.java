@@ -18,7 +18,7 @@ import java.sql.Timestamp;
 public class CustomerIdentityRepositoryImpl implements CustomerIdentityRepository {
     private final JdbcTemplate jdbc;
     /** 会话和通知无需读取已有sessionKey。 */
-    private static final String FIELDS="id,customer_id,identity_type,app_id,identity_value,status,created_at,updated_at";
+    private static final String FIELDS="id,customer_id,identity_type,app_id,identity_value,status,auth_version,created_at,updated_at";
 
     @Override public Optional<CustomerIdentity> findById(Long id) {
         if(id==null||id<=0)throw new IllegalArgumentException("身份编号无效");
@@ -56,6 +56,7 @@ public class CustomerIdentityRepositoryImpl implements CustomerIdentityRepositor
         var identity=new CustomerIdentity();identity.setId(row.getLong("id"));long customer=row.getLong("customer_id");identity.setCustomerId(row.wasNull()?null:customer);
         identity.setIdentityType(row.getString("identity_type"));identity.setAppId(row.getString("app_id"));identity.setIdentityValue(row.getString("identity_value"));
         int status=row.getInt("status");identity.setStatus(row.wasNull()?null:status);
+        long version=row.getLong("auth_version");identity.setAuthVersion(row.wasNull()?null:version);
         var created=row.getTimestamp("created_at");var updated=row.getTimestamp("updated_at");identity.setCreatedAt(created==null?null:created.toLocalDateTime());identity.setUpdatedAt(updated==null?null:updated.toLocalDateTime());return identity;
     }
     @Override public CustomerIdentity save(CustomerIdentity identity) {
@@ -66,20 +67,37 @@ public class CustomerIdentityRepositoryImpl implements CustomerIdentityRepositor
         String app=identity.getAppId()==null?"":identity.getAppId();
         if(identity.isWechatOpenId()&&(identity.getId()==null||!app.isEmpty()))requireApp(app);
         if(identity.getId()!=null&&identity.getId()<=0)throw new IllegalArgumentException("身份编号无效");
+        boolean insert=identity.getId()==null;
+        if(identity.getAuthVersion()!=null&&identity.getAuthVersion()<=0||!insert&&identity.getAuthVersion()==null
+                ||insert&&identity.getAuthVersion()!=null&&identity.getAuthVersion()!=1L)
+            throw new IllegalArgumentException("身份授权版本无效，请重新读取");
+        // 凭据刷新保持版本；授权变更单调递增。即使调用方没有外层事务，后续CAS也拒绝陈旧快照。
+        long expected=insert?1L:identity.getAuthVersion();
+        CustomerIdentity previous=insert?null:one(query("id=? FOR UPDATE",identity.getId()))
+                .orElseThrow(()->new IllegalStateException("身份记录已不存在"));
+        if(previous!=null&&!Long.valueOf(expected).equals(previous.getAuthVersion()))throw stale();
+        boolean authorizationChanged=previous!=null&&(!java.util.Objects.equals(previous.getCustomerId(),identity.getCustomerId())
+                ||!java.util.Objects.equals(previous.getIdentityType(),identity.getIdentityType())
+                ||!java.util.Objects.equals(previous.getAppId(),app)
+                ||!java.util.Objects.equals(previous.getIdentityValue(),identity.getIdentityValue())
+                ||!java.util.Objects.equals(previous.getStatus(),identity.getStatus()));
+        if(authorizationChanged&&expected==Long.MAX_VALUE)throw new IllegalStateException("身份授权版本已达上限，请人工处理");
+        long next=authorizationChanged?expected+1:expected;
         return jdbc.execute((ConnectionCallback<CustomerIdentity>) connection->{
-            boolean insert=identity.getId()==null;
-            String sql=insert?"INSERT INTO customer_identity(customer_id,identity_type,app_id,identity_value,session_key,status,created_at,updated_at) VALUES(?,?,?,?,?,?,COALESCE(?,CURRENT_TIMESTAMP),COALESCE(?,CURRENT_TIMESTAMP))"
-                    :"UPDATE customer_identity SET customer_id=?,identity_type=?,app_id=?,identity_value=?,session_key=COALESCE(?,session_key),status=?,updated_at=COALESCE(?,CURRENT_TIMESTAMP) WHERE id=?";
+            String sql=insert?"INSERT INTO customer_identity(customer_id,identity_type,app_id,identity_value,session_key,status,auth_version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,COALESCE(?,CURRENT_TIMESTAMP),COALESCE(?,CURRENT_TIMESTAMP))"
+                    :"UPDATE customer_identity SET customer_id=?,identity_type=?,app_id=?,identity_value=?,session_key=COALESCE(?,session_key),status=?,auth_version=?,updated_at=COALESCE(?,CURRENT_TIMESTAMP) WHERE id=? AND auth_version=?";
             try(var statement=insert?connection.prepareStatement(sql,java.sql.Statement.RETURN_GENERATED_KEYS):connection.prepareStatement(sql)){
                 statement.setLong(1,identity.getCustomerId());statement.setString(2,identity.getIdentityType());statement.setString(3,app);statement.setString(4,identity.getIdentityValue());statement.setString(5,identity.getSessionKey());statement.setInt(6,identity.getStatus());
-                if(insert){statement.setTimestamp(7,timestamp(identity.getCreatedAt()));statement.setTimestamp(8,timestamp(identity.getUpdatedAt()));}
-                else{statement.setTimestamp(7,timestamp(identity.getUpdatedAt()));statement.setLong(8,identity.getId());}
+                statement.setLong(7,next);
+                if(insert){statement.setTimestamp(8,timestamp(identity.getCreatedAt()));statement.setTimestamp(9,timestamp(identity.getUpdatedAt()));}
+                else{statement.setTimestamp(8,timestamp(identity.getUpdatedAt()));statement.setLong(9,identity.getId());statement.setLong(10,expected);}
                 int changed=statement.executeUpdate();
                 if(insert){try(var keys=statement.getGeneratedKeys()){if(!keys.next())throw new IllegalStateException("身份保存未返回编号");identity.setId(keys.getLong(1));}}
-                else if(changed==0){try(var check=connection.prepareStatement("SELECT id FROM customer_identity WHERE id=?")){check.setLong(1,identity.getId());try(var row=check.executeQuery()){if(!row.next())throw new IllegalStateException("身份记录已不存在");}}}
-                identity.setAppId(app);return identity;
+                else if(changed==0){try(var check=connection.prepareStatement("SELECT id FROM customer_identity WHERE id=? AND auth_version=?")){check.setLong(1,identity.getId());check.setLong(2,expected);try(var row=check.executeQuery()){if(authorizationChanged||!row.next())throw stale();}}}
+                identity.setAppId(app);identity.setAuthVersion(next);return identity;
             }
         });
     }
+    private static IllegalStateException stale(){return new IllegalStateException("身份关联或授权版本已改变，请重新读取核验");}
     private static Timestamp timestamp(java.time.LocalDateTime time){return time==null?null:Timestamp.valueOf(time);}
 }

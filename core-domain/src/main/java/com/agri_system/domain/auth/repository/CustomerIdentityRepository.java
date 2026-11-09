@@ -17,7 +17,8 @@ public interface CustomerIdentityRepository {
     java.util.List<CustomerIdentity> findActiveWechatByCustomerAndApp(Long customerId, String appId);
     
     /**
-     * 保存身份
+     * 保存身份。更新必须携带实际读取的authVersion；授权字段变化递增版本，
+     * 陈旧快照拒绝，凭据刷新不撤销其他有效会话。治理写入不得绕过本入口。
      */
     CustomerIdentity save(CustomerIdentity identity);
     

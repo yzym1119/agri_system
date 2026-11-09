@@ -37,6 +37,9 @@ public class CustomerIdentity {
     
     /** 状态：1-正常，2-停用 */
     private Integer status;
+
+    /** 持久授权版本；关联或状态改变单调递增，禁止旧会话复活。 */
+    private Long authVersion;
     
     /** 创建时间 */
     private LocalDateTime createdAt;

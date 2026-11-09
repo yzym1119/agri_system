@@ -27,7 +27,7 @@ class CustomerIdentityScopeMysqlTest {
         var ds=new DriverManagerDataSource(base+schema+options,user,password);jdbc=new JdbcTemplate(ds);
         jdbc.execute("CREATE TABLE customer_identity(id BIGINT AUTO_INCREMENT PRIMARY KEY,customer_id BIGINT NOT NULL,identity_type VARCHAR(20) NOT NULL,identity_value VARCHAR(200) NOT NULL,session_key VARCHAR(255),status INT,created_at DATETIME,updated_at DATETIME,UNIQUE KEY uk_identity_type_value(identity_type,identity_value))");
         jdbc.execute("INSERT INTO customer_identity(customer_id,identity_type,identity_value,status) VALUES(7,'WECHAT_OPENID','LegacyOpenId',1)");
-        try(var c=ds.getConnection()){ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V143__wechat_identity_app_scope.sql"));}
+        try(var c=ds.getConnection()){ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V143__wechat_identity_app_scope.sql"));ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V144__customer_identity_auth_version.sql"));}
         var config=new FlexConfiguration(new Environment("identity",new JdbcTransactionFactory(),new FlexDataSource("identity",ds,false)));config.setMapUnderscoreToCamelCase(true);config.setLogImpl(org.apache.ibatis.logging.stdout.StdOutImpl.class);config.addMapper(CustomerIdentityMapper.class);
         session=new FlexSqlSessionFactoryBuilder().build(config).openSession(true);repository=new CustomerIdentityRepositoryImpl(new JdbcTemplate(config.getEnvironment().getDataSource()));
     }
@@ -75,4 +75,61 @@ class CustomerIdentityScopeMysqlTest {
         assertFalse(logs.contains(before)||logs.contains(after),"身份凭据不得出现在开发SQL日志中");assertTrue(projected,"会话核验无需读取已有sessionKey");
         assertTrue(after.equals(jdbc.queryForObject("SELECT session_key FROM customer_identity WHERE identity_value='LOG_TARGET'",String.class)));
     }
+    @Test void migrationInitializesExistingIdentityWithoutReassigningOrEnablingIt() {
+        var legacy=repository.findById(1L).orElseThrow();
+        assertEquals(1L,legacy.getAuthVersion());assertEquals(7L,legacy.getCustomerId());
+        assertEquals("",legacy.getAppId());assertEquals("LegacyOpenId",legacy.getIdentityValue());
+        assertEquals(1,legacy.getStatus());
+    }
+    @Test void statusAndOwnershipRoundTripsNeverRestoreOldAuthorizationVersion() {
+        identity(APP,"LIFECYCLE",1);var row=repository.findWechatByAppAndOpenIdForUpdate(APP,"LIFECYCLE").orElseThrow();
+        assertEquals(1L,row.getAuthVersion());
+        row.setStatus(2);repository.save(row);assertEquals(2L,row.getAuthVersion());
+        row.setStatus(1);repository.save(row);assertEquals(3L,row.getAuthVersion());
+        row.setCustomerId(9L);repository.save(row);assertEquals(4L,row.getAuthVersion());
+        row.setCustomerId(7L);repository.save(row);assertEquals(5L,row.getAuthVersion());
+        assertEquals(5L,repository.findById(row.getId()).orElseThrow().getAuthVersion());
+    }
+    @Test void changingApplicationTypeOrOpenIdRevokesButCredentialRefreshKeepsOtherDevicesValid() {
+        identity(APP,"FIELDS",1);var row=repository.findWechatByAppAndOpenIdForUpdate(APP,"FIELDS").orElseThrow();
+        row.setSessionKey("IT_NEW_CREDENTIAL");repository.save(row);assertEquals(1L,row.getAuthVersion());
+        row.setUpdatedAt(java.time.LocalDateTime.now());repository.save(row);assertEquals(1L,row.getAuthVersion());
+        row.setAppId(OTHER);repository.save(row);assertEquals(2L,row.getAuthVersion());
+        row.setIdentityValue("FIELDS_NEW");repository.save(row);assertEquals(3L,row.getAuthVersion());
+        row.setIdentityType("OTHER");repository.save(row);assertEquals(4L,row.getAuthVersion());
+    }
+    @Test void staleOrUnknownSnapshotsCannotUndoRevocationOrChangeCredential() {
+        identity(APP,"STALE",1);var old=repository.findWechatByAppAndOpenIdForUpdate(APP,"STALE").orElseThrow();
+        var current=repository.findById(old.getId()).orElseThrow();current.setStatus(2);repository.save(current);
+        old.setSessionKey("IT_STALE_CREDENTIAL");assertThrows(IllegalStateException.class,()->repository.save(old));
+        assertEquals(2,repository.findById(old.getId()).orElseThrow().getStatus());
+        assertEquals(2L,repository.findById(old.getId()).orElseThrow().getAuthVersion());
+        current.setAuthVersion(null);assertThrows(IllegalArgumentException.class,()->repository.save(current));
+        current.setAuthVersion(0L);assertThrows(IllegalArgumentException.class,()->repository.save(current));
+        assertNull(jdbc.queryForObject("SELECT session_key FROM customer_identity WHERE identity_value='STALE'",String.class));
+    }
+    @Test void concurrentLifecycleWritesShareOnePersistedVersionAndRejectTheStaleWriter() throws Exception {
+        identity(APP,"RACE",1);var first=repository.findWechatByAppAndOpenIdForUpdate(APP,"RACE").orElseThrow();
+        var second=repository.findById(first.getId()).orElseThrow();first.setStatus(2);second.setCustomerId(9L);
+        var gate=new java.util.concurrent.CyclicBarrier(2);var executor=java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var a=executor.submit(()->{gate.await(5,java.util.concurrent.TimeUnit.SECONDS);try{repository.save(first);return true;}catch(IllegalStateException stale){return false;}});
+            var b=executor.submit(()->{gate.await(5,java.util.concurrent.TimeUnit.SECONDS);try{repository.save(second);return true;}catch(IllegalStateException stale){return false;}});
+            assertNotEquals(a.get(10,java.util.concurrent.TimeUnit.SECONDS),b.get(10,java.util.concurrent.TimeUnit.SECONDS),"同一版本只能有一次授权变更");
+            var actual=repository.findById(first.getId()).orElseThrow();assertEquals(2L,actual.getAuthVersion());
+            assertTrue(actual.getStatus()==2&&actual.getCustomerId()==7L||actual.getStatus()==1&&actual.getCustomerId()==9L);
+        }finally{executor.shutdownNow();}
+    }
+    @Test void epochChangeParticipatesInOriginalFlexRollbackAndNeverWrapsOnOverflow() {
+        identity(APP,"ROLLBACK_EPOCH",1);var row=repository.findWechatByAppAndOpenIdForUpdate(APP,"ROLLBACK_EPOCH").orElseThrow();
+        String xid=com.mybatisflex.core.transaction.TransactionalManager.startTransactional();
+        try{row.setStatus(2);repository.save(row);assertEquals(2L,repository.findById(row.getId()).orElseThrow().getAuthVersion());}
+        finally{com.mybatisflex.core.transaction.TransactionalManager.rollback(xid);}
+        var restored=repository.findById(row.getId()).orElseThrow();assertEquals(1L,restored.getAuthVersion());assertEquals(1,restored.getStatus());
+        jdbc.update("UPDATE customer_identity SET auth_version=? WHERE id=?",Long.MAX_VALUE,row.getId());
+        var overflow=repository.findById(row.getId()).orElseThrow();overflow.setStatus(2);
+        assertThrows(IllegalStateException.class,()->repository.save(overflow));
+        assertEquals(Long.MAX_VALUE,repository.findById(row.getId()).orElseThrow().getAuthVersion());assertEquals(1,repository.findById(row.getId()).orElseThrow().getStatus());
+    }
+
 }

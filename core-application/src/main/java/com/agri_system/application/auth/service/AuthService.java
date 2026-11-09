@@ -134,14 +134,16 @@ public class AuthService {
         var identity=identityRepository.findWechatByAppAndOpenIdForUpdate(wechatAppId,result.getOpenId())
                 .orElseThrow(()->new IllegalStateException("暂时无法登录，请联系门店核对客户档案；系统不会自动新建空档案"));
         if(!identity.isActive()||identity.getId()==null||!identity.isWechatOpenId()||!wechatAppId.equals(identity.getAppId())
-                ||!result.getOpenId().equals(identity.getIdentityValue())||identity.getCustomerId()==null)
+                ||!result.getOpenId().equals(identity.getIdentityValue())||identity.getCustomerId()==null
+                ||identity.getAuthVersion()==null||identity.getAuthVersion()<=0)
             throw new IllegalArgumentException("微信身份已停用或尚未完成关联核验");
         Customer customer=customerRepository.findById(identity.getCustomerId()).filter(AuthService::activeCustomer)
                 .orElseThrow(()->new IllegalArgumentException("客户不存在或已停用"));
         if(!identity.getCustomerId().equals(customer.getId()))throw new IllegalArgumentException("客户身份资料待核验");
         identity.setSessionKey(result.getSessionKey());identity.setUpdatedAt(LocalDateTime.now());identityRepository.save(identity);
         StpUtil.login("CUST_"+customer.getId(),new cn.dev33.satoken.stp.SaLoginModel().setToken(UUID.randomUUID().toString()));
-        StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","WECHAT","identityId",identity.getId().toString(),"appId",wechatAppId));
+        StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","WECHAT","identityId",identity.getId().toString(),"appId",wechatAppId,
+                "authVersion",identity.getAuthVersion().toString()));
         LoginResultVO login=new LoginResultVO();login.setTokenName(StpUtil.getTokenName());login.setTokenValue(StpUtil.getTokenValue());
         LoginResultVO.UserInfo user=new LoginResultVO.UserInfo();user.setId(customer.getId());user.setName(customer.getName());user.setRole(customer.isVip()?"VIP":"NORMAL");
         Map<String,Object> extra=new HashMap<>();extra.put("code",customer.getCode());extra.put("phone",customer.getPhone());extra.put("vipLevel",customer.getVipLevel());extra.put("bindingState","LINKED");user.setExtra(extra);login.setUserInfo(user);
@@ -260,11 +262,13 @@ public class AuthService {
                 throw new IllegalArgumentException("开发客户会话已失效");
         } else if("WECHAT".equals(binding.get("kind"))) {
             if(wechatAppId==null||!wechatAppId.matches("wx[a-zA-Z0-9]{16}")||!wechatAppId.equals(binding.get("appId")))throw new IllegalArgumentException("微信应用登录已失效");
-            Long identityId;
-            try{identityId=Long.valueOf(String.valueOf(binding.get("identityId")));}catch(NumberFormatException invalid){throw new IllegalArgumentException("微信身份登录已失效");}
-            if(identityId<=0)throw new IllegalArgumentException("微信身份登录已失效");
+            Long identityId,authVersion;
+            try{identityId=Long.valueOf(String.valueOf(binding.get("identityId")));authVersion=Long.valueOf(String.valueOf(binding.get("authVersion")));}
+            catch(NumberFormatException invalid){throw new IllegalArgumentException("微信身份登录已失效，请重新核验");}
+            if(identityId<=0||authVersion<=0)throw new IllegalArgumentException("微信身份登录已失效");
             var identity=identityRepository.findById(identityId).orElse(null);
-            if(identity==null||!identity.isActive()||!identity.isWechatOpenId()||!wechatAppId.equals(identity.getAppId())||!customerId.equals(identity.getCustomerId()))
+            if(identity==null||!identity.isActive()||!identity.isWechatOpenId()||!wechatAppId.equals(identity.getAppId())||!customerId.equals(identity.getCustomerId())
+                    ||!authVersion.equals(identity.getAuthVersion()))
                 throw new IllegalArgumentException("微信身份已停用或关联已变更，请重新核验");
         } else throw new IllegalArgumentException("客户登录来源无效");
         var customer=customerRepository.findById(customerId).orElseThrow(()->new IllegalArgumentException("客户不存在"));

@@ -98,7 +98,7 @@ class WechatAutoRegisterTest {
     }
 
     private ClientWechatLoginCommand command(){var c=new ClientWechatLoginCommand();c.setCode("test_code");return c;}
-    private CustomerIdentity identity(){var i=new CustomerIdentity();i.setId(1L);i.setCustomerId(1L);i.setAppId("wx1111111111111111");i.setIdentityType("WECHAT_OPENID");i.setIdentityValue(openId);i.setStatus(1);return i;}
+    private CustomerIdentity identity(){var i=new CustomerIdentity();i.setId(1L);i.setCustomerId(1L);i.setAppId("wx1111111111111111");i.setIdentityType("WECHAT_OPENID");i.setIdentityValue(openId);i.setStatus(1);i.setAuthVersion(1L);return i;}
     private CustomerIdentity bindExisting(){
         var i=identity();var c=new Customer();c.setId(1L);c.setName("已核验客户");c.setPhone("13800000000");c.setStatus(1);c.setDeleted(0);
         when(identityRepository.findWechatByAppAndOpenIdForUpdate("wx1111111111111111",openId)).thenReturn(Optional.of(i));
@@ -108,6 +108,8 @@ class WechatAutoRegisterTest {
     @Test void existingWechatLoginBindsIndependentTokenAndChecksCurrentIdentityEveryTime(){
         var i=bindExisting();var first=authService.clientWechatLogin(command());assertNotNull(first.getTokenValue());assertEquals(1L,authService.getCurrentCustomerId());
         var second=authService.clientWechatLogin(command());assertNotEquals(first.getTokenValue(),second.getTokenValue());
+        cn.dev33.satoken.stp.StpUtil.setTokenValue(first.getTokenValue());assertEquals(1L,authService.getCurrentCustomerId(),"普通登录不撤销另一有效设备");
+        cn.dev33.satoken.stp.StpUtil.setTokenValue(second.getTokenValue());
         assertEquals("138****0000",authService.getCurrentClientProfile().phoneMasked());
         i.setStatus(2);assertThrows(IllegalArgumentException.class,()->authService.getCurrentCustomerId());
         i.setStatus(1);i.setCustomerId(2L);assertThrows(IllegalArgumentException.class,()->authService.getCurrentCustomerId());
@@ -121,6 +123,32 @@ class WechatAutoRegisterTest {
     @Test void oldCustomerTokenWithoutVerifiedSourceCannotReadCustomerResources(){
         StpUtilLoginProbe.login();assertThrows(IllegalArgumentException.class,()->authService.getCurrentCustomerId());
         verifyNoInteractions(customerRepository,walletRepository);
+    }
+    @Test void identityVersionChangePermanentlyRevokesOldTokenEvenWhenAssociationReturns() {
+        var identity=bindExisting();
+        authService.clientWechatLogin(command());
+        assertEquals(1L,authService.getCurrentCustomerId());
+        identity.setStatus(2);identity.setAuthVersion(2L);
+        assertThrows(IllegalArgumentException.class,authService::getCurrentCustomerId);
+        identity.setStatus(1);identity.setAuthVersion(3L);
+        assertThrows(IllegalArgumentException.class,authService::getCurrentCustomerId,"恢复启用不能恢复旧会话");
+        authService.clientWechatLogin(command());
+        assertEquals(1L,authService.getCurrentCustomerId(),"重新平台登录使用当前版本");
+        identity.setCustomerId(2L);identity.setAuthVersion(4L);
+        assertThrows(IllegalArgumentException.class,authService::getCurrentCustomerId);
+        identity.setCustomerId(1L);identity.setAuthVersion(5L);
+        assertThrows(IllegalArgumentException.class,authService::getCurrentCustomerId,"改回同人不恢复旧会话");
+    }
+    @Test void sourceMarkedWechatTokenWithoutEpochMustNotBorrowCurrentDatabaseVersion() {
+        bindExisting();authService.clientWechatLogin(command());
+        cn.dev33.satoken.stp.StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","WECHAT","identityId","1","appId","wx1111111111111111"));
+        assertThrows(IllegalArgumentException.class,authService::getCurrentCustomerId);
+    }
+    @Test void malformedOrMissingPersistedVersionCannotIssueAWechatSession() {
+        var identity=identity();when(identityRepository.findWechatByAppAndOpenIdForUpdate("wx1111111111111111",openId)).thenReturn(Optional.of(identity));identity.setAuthVersion(null);
+        assertThrows(IllegalArgumentException.class,()->authService.clientWechatLogin(command()));
+        identity.setAuthVersion(0L);assertThrows(IllegalArgumentException.class,()->authService.clientWechatLogin(command()));
+        verify(identityRepository,never()).save(any());
     }
     private static class StpUtilLoginProbe {static void login(){cn.dev33.satoken.stp.StpUtil.login("CUST_1",new cn.dev33.satoken.stp.SaLoginModel().setToken(java.util.UUID.randomUUID().toString()));}}
 
