@@ -47,6 +47,30 @@ public class ClientOnboardingService {
         return issue(Map.copyOf(next));
     }
     public Reply info(){return view(requireFlow(),null);}
+    public record VerifiedPhone(String appId,String openId,String phone,long verifiedAt){
+        @Override public String toString(){return "VerifiedPhone[核验内容隐藏]";}
+    }
+    /** 应用层核验入口，不接受客户端自报号码或身份。 */
+    public VerifiedPhone requireVerifiedPhone(){
+        var source=requireFlow();if(!"PHONE_VERIFIED".equals(source.get("state")))throw invalid();
+        long verified=((Number)source.get("verifiedAt")).longValue(),now=Instant.now().getEpochSecond();
+        if(verified<=0||verified<now-600||verified>now+60)throw invalid();
+        return new VerifiedPhone(appId,(String)source.get("openId"),(String)source.get("phone"),verified);
+    }
+    public record RegistrationSubject(String appId,String openId){}
+    /** 查原申请只需真实同微信身份；重登后不要求重复付出手机号授权。 */
+    public RegistrationSubject requireRegistrationSubject(){
+        if(StpUtil.isLogin()&&StpUtil.getLoginIdAsString().startsWith("ONBOARDING_")){
+            var source=requireFlow();return new RegistrationSubject((String)source.get("appId"),(String)source.get("openId"));
+        }
+        Long customerId=authentication.getCurrentCustomerId();Object marker=StpUtil.getTokenSession().get("clientAuthV1");
+        if(!(marker instanceof Map<?,?> binding)||!"WECHAT".equals(binding.get("kind"))||!validApp()||!appId.equals(binding.get("appId")))throw invalid();
+        Long id,version;try{id=Long.valueOf(String.valueOf(binding.get("identityId")));version=Long.valueOf(String.valueOf(binding.get("authVersion")));}catch(NumberFormatException malformed){throw invalid();}
+        var identity=identities.findById(id).orElseThrow(ClientOnboardingService::invalid);
+        if(id<=0||version<=0||!identity.isActive()||!customerId.equals(identity.getCustomerId())||!appId.equals(identity.getAppId())||!identity.isWechatOpenId()
+                ||!version.equals(identity.getAuthVersion())||identity.getIdentityValue()==null||identity.getIdentityValue().isBlank())throw invalid();
+        return new RegistrationSubject(appId,identity.getIdentityValue());
+    }
     private Reply issue(Map<String,Object> evidence){
         long remaining=((Number)evidence.get("expiresAt")).longValue()-Instant.now().getEpochSecond();if(remaining<=0||remaining>600)throw invalid();
         String token=UUID.randomUUID().toString();StpUtil.login("ONBOARDING_"+UUID.randomUUID(),new SaLoginModel().setToken(token).setTimeout(remaining));

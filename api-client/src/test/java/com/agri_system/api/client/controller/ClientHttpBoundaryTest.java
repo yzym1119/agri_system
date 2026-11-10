@@ -43,6 +43,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -87,6 +88,9 @@ class ClientHttpBoundaryTest {
     @MockBean StaffRepository staff;
     @MockBean CustomerIdentityRepository identities;
     @MockBean CustomerWalletRepository wallets;
+    @MockBean com.agri_system.domain.auth.repository.CustomerIdentityEnrollmentRepository enrollments;
+    @MockBean com.agri_system.application.customer.service.CustomerRegistrationService registration;
+    @MockBean org.springframework.transaction.PlatformTransactionManager registrationTransactions;
     @MockBean WechatService wechat;
     @MockBean SysRoleRepository roles;
     @MockBean StaffAuthorityService authority;
@@ -97,7 +101,7 @@ class ClientHttpBoundaryTest {
     @EnableAutoConfiguration
     @Import({SaTokenConfigure.class, AuthService.class, GlobalExceptionHandler.class,
             OrderClientController.class, AfterSalesClientController.class,
-            OrderPaymentPublicController.class, AuthClientController.class, ClientOnboardingController.class, com.agri_system.application.auth.service.ClientOnboardingService.class, QrClientController.class, LoginProbe.class})
+            OrderPaymentPublicController.class, AuthClientController.class, ClientOnboardingController.class, com.agri_system.application.auth.service.ClientOnboardingService.class, com.agri_system.application.auth.service.CustomerEnrollmentService.class, QrClientController.class, LoginProbe.class})
     static class Config {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
     }
@@ -114,6 +118,7 @@ class ClientHttpBoundaryTest {
     }
 
     @BeforeEach void customerAndCallback() {
+        when(registrationTransactions.getTransaction(any())).thenAnswer(call->new org.springframework.transaction.support.SimpleTransactionStatus());
         ReflectionTestUtils.setField(authentication,"wechatAppId","");
         ReflectionTestUtils.setField(onboarding,"appId","");
         Customer active = new Customer(); active.setId(101L); active.setStatus(1);
@@ -166,6 +171,31 @@ class ClientHttpBoundaryTest {
         mvc.perform(get("/auth/client/onboarding/info").header("Authorization",token)).andExpect(status().isOk()).andExpect(jsonPath("$.state").value("PHONE_REQUIRED"));
         businessFailure(request(get("/api/client/orders/77"),verified,null),10003);verifyNoInteractions(customers,wallets,orders);
         verify(identities,never()).save(any());
+    }
+    @Test void verifiedPhoneOnlyCreatesPendingClaimAndCurrentWechatCanRecoverOriginalRequest() throws Exception {
+        String token=prepareOnboarding(),key="33333333-3333-4333-8333-333333333333";
+        businessFailure(request(post("/auth/client/onboarding/registration"),token,"{\"requestKey\":\""+key+"\"}"),10001);
+        when(phoneAuthorization.authorize("wx1111111111111111","IT_ONBOARDING_OPEN","phone-code")).thenReturn(new com.agri_system.application.auth.service.WechatPhoneAuthorizationService.PhoneEvidence("wx1111111111111111","IT_ONBOARDING_OPEN","13800000000",java.time.Instant.now().getEpochSecond()));
+        var authorized=mvc.perform(post("/auth/client/onboarding/phone").header("Authorization",token).contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"phone-code\"}")).andExpect(status().isOk()).andReturn();
+        String verified=json.readTree(authorized.getResponse().getContentAsString()).path("tokenValue").asText();
+        var saved=new java.util.concurrent.atomic.AtomicReference<com.agri_system.domain.auth.model.CustomerIdentityEnrollment>();
+        when(enrollments.acquire(any())).thenAnswer(call->{com.agri_system.domain.auth.model.CustomerIdentityEnrollment row=call.getArgument(0);row.setId(7L);saved.set(row);return row;});when(customers.findIdsByPhoneIncludingDeleted("13800000000")).thenReturn(List.of(101L));
+        mvc.perform(post("/auth/client/onboarding/registration").header("Authorization",verified).contentType(MediaType.APPLICATION_JSON).content("{\"requestKey\":\""+key+"\",\"customerId\":202,\"phone\":\"13900000000\"}"))
+            .andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andExpect(jsonPath("$.status").value("REVIEW_REQUIRED")).andExpect(jsonPath("$.nextAction").value("CONTACT_STORE")).andExpect(jsonPath("$.customerId").doesNotExist());
+        when(enrollments.findByRequestKey(key,false)).thenAnswer(call->Optional.of(saved.get()));
+        mvc.perform(get("/auth/client/onboarding/registration/"+key).header("Authorization",token)).andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REVIEW_REQUIRED"));
+        businessFailure(request(get("/api/client/orders/77"),verified,null),10003);verifyNoInteractions(registration,wallets,orders);verify(identities,never()).save(any());
+    }
+    @Test void customerTokenCannotDeriveChangedOpenIdBetweenAuthenticationAndSubjectRead() throws Exception {
+        preparePlatform();String app="wx1111111111111111",key="44444444-4444-4444-8444-444444444444";
+        var original=new com.agri_system.domain.auth.model.CustomerIdentity();original.setId(9L);original.setCustomerId(101L);original.setIdentityType("WECHAT_OPENID");original.setAppId(app);original.setIdentityValue("IT_ONBOARDING_OPEN");original.setStatus(1);original.setAuthVersion(1L);
+        when(identities.findWechatByAppAndOpenIdForUpdate(app,"IT_ONBOARDING_OPEN")).thenReturn(Optional.of(original));
+        var response=mvc.perform(post("/auth/client/onboarding/wechat").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"prepare-code\"}")).andExpect(status().isOk()).andReturn();
+        String token=json.readTree(response.getResponse().getContentAsString()).path("login").path("tokenValue").asText();
+        var changed=new com.agri_system.domain.auth.model.CustomerIdentity();org.springframework.beans.BeanUtils.copyProperties(original,changed);changed.setIdentityValue("IT_NEW_OPEN");changed.setAuthVersion(2L);
+        when(identities.findById(9L)).thenReturn(Optional.of(original),Optional.of(changed));
+        var foreign=new com.agri_system.domain.auth.model.CustomerIdentityEnrollment();foreign.setRequestKey(key);foreign.setAppId(app);foreign.setOpenId("IT_NEW_OPEN");foreign.setStatus("REVIEW_REQUIRED");when(enrollments.findByRequestKey(key,false)).thenReturn(Optional.of(foreign));
+        businessFailure(request(get("/auth/client/onboarding/registration/"+key),token,null),10001);
     }
     @Test void cancellingTemporaryFlowDuringPlatformCallCannotIssueAnotherProof() throws Exception {
         String token=prepareOnboarding();

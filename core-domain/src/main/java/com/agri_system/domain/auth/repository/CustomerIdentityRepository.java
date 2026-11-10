@@ -15,6 +15,8 @@ public interface CustomerIdentityRepository {
     /** 同样不读取旧凭据，原身份行锁保持至调用事务结束。 */
     Optional<CustomerIdentity> findWechatByAppAndOpenIdForUpdate(String appId, String openId);
     java.util.List<CustomerIdentity> findActiveWechatByCustomerAndApp(Long customerId, String appId);
+    /** 初次人工关联须识别停用但未解除的同应用身份，不静默覆盖。 */
+    java.util.List<CustomerIdentity> findWechatByCustomerAndApp(Long customerId, String appId);
     
     /**
      * 保存身份。更新必须携带实际读取的authVersion；授权字段变化递增版本，

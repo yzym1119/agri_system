@@ -19,11 +19,11 @@ interface RoutableMenuMeta {
   permissionSet: Set<string>
 }
 
-export function hasPermission(required: string | string[] | undefined, owned: string[] = []): boolean {
+export function hasPermission(required: string | string[] | undefined, owned: string[] = [], mode?: 'all'): boolean {
   if (!required) return true
   const requiredList = Array.isArray(required) ? required : [required]
   if (requiredList.length === 0) return true
-  return requiredList.some(permission => owned.includes(permission))
+  return mode === 'all' ? requiredList.every(permission => owned.includes(permission)) : requiredList.some(permission => owned.includes(permission))
 }
 
 export function filterRoutesByPermissions(routes: RouteRecordRaw[], owned: string[]): RouteRecordRaw[] {
@@ -39,7 +39,7 @@ export function filterRoutesByPermissions(routes: RouteRecordRaw[], owned: strin
     }
 
     const routePermissions = (route.meta as any)?.permissions as string[] | undefined
-    const allowed = hasPermission(routePermissions, owned)
+    const allowed = hasPermission(routePermissions, owned, (route.meta as any)?.permissionMode)
     const keepRoute = allowed || filteredChildren.length > 0 || route.path === '/'
 
     if (keepRoute) {

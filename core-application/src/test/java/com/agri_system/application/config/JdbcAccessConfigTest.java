@@ -68,4 +68,31 @@ class JdbcAccessConfigTest {
             if (TransactionContext.getXID() != null) TransactionalManager.rollback(TransactionContext.getXID());
         }
     }
+    @Test void actualFlexDatasourceCommitFailureIsUnknownAndNeverReturnedAsBusinessSuccess() throws Exception {
+        for(boolean commitBeforeFailure:new boolean[]{false,true}){
+            var physical=new org.h2.jdbcx.JdbcDataSource();physical.setURL("jdbc:h2:mem:commit_unknown_"+java.util.UUID.randomUUID()+";DB_CLOSE_DELAY=-1");
+            var originalJdbc=new org.springframework.jdbc.core.JdbcTemplate(physical);originalJdbc.execute("CREATE TABLE fact(id INT PRIMARY KEY)");
+            var fail=new AtomicBoolean(true);var commits=new java.util.concurrent.atomic.AtomicInteger();
+            var failing=new AbstractDataSource(){
+                public Connection getConnection()throws SQLException{
+                    Connection original=physical.getConnection();
+                    return (Connection)Proxy.newProxyInstance(Connection.class.getClassLoader(),new Class[]{Connection.class},(p,method,args)->{
+                        if(method.getName().equals("commit")){commits.incrementAndGet();if(fail.get()){if(commitBeforeFailure)original.commit();throw new SQLException("IT_COMMIT_UNKNOWN","08S01",0);}}
+                        try{return method.invoke(original,args);}catch(InvocationTargetException wrapped){throw wrapped.getCause();}
+                    });
+                }
+                public Connection getConnection(String user,String password)throws SQLException{return getConnection();}
+            };
+            var flex=new FlexDataSource("actual_commit",failing,false);
+            var config=new Configuration(new Environment("actual_commit",new JdbcTransactionFactory(),flex));
+            var tx=new TransactionTemplate(new JdbcAccessConfig().transactionManager(new SqlSessionFactoryBuilder().build(config)));tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+            var jdbc=new org.springframework.jdbc.core.JdbcTemplate(flex);var success=new AtomicBoolean(false);
+            var error=assertThrows(RuntimeException.class,()->{tx.execute(status->{jdbc.update("INSERT INTO fact VALUES(1)");return "CREATED";});success.set(true);});
+            boolean sqlUnknown=false;for(Throwable cause=error;cause!=null;cause=cause.getCause())if(cause instanceof SQLException sql&&"08S01".equals(sql.getSQLState()))sqlUnknown=true;
+            assertTrue(sqlUnknown,"必须保留真实提交未知异常链");assertFalse(success.get());assertEquals(1,commits.get());assertNull(TransactionContext.getXID());
+            if(commitBeforeFailure)assertEquals(1,originalJdbc.queryForObject("SELECT COUNT(*) FROM fact WHERE id=1",Integer.class));
+            fail.set(false);tx.execute(status->{jdbc.update("INSERT INTO fact VALUES(2)");return null;});assertEquals(1,originalJdbc.queryForObject("SELECT COUNT(*) FROM fact WHERE id=2",Integer.class));assertNull(TransactionContext.getXID());originalJdbc.execute("SHUTDOWN");
+        }
+    }
+
 }

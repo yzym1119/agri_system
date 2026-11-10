@@ -32,6 +32,10 @@ public class CustomerIdentityRepositoryImpl implements CustomerIdentityRepositor
         requireApp(appId);if(customerId==null||customerId<=0)throw new IllegalArgumentException("客户编号无效");
         return query("customer_id=? AND identity_type='WECHAT_OPENID' AND app_id=? AND status=1",customerId,appId);
     }
+    @Override public List<CustomerIdentity> findWechatByCustomerAndApp(Long customerId,String appId) {
+        requireApp(appId);if(customerId==null||customerId<=0)throw new IllegalArgumentException("客户编号无效");
+        return query("customer_id=? AND identity_type='WECHAT_OPENID' AND app_id=?",customerId,appId);
+    }
     @Override public Optional<CustomerIdentity> findByTypeAndValue(String type,String value) {
         requireNonWechat(type);return one(query("identity_type=? AND identity_value=? AND app_id=''",type,value));
     }

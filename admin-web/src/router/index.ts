@@ -123,7 +123,7 @@ router.beforeEach(async (to, from, next) => {
   }
 
   const requiredPermissions = to.meta?.permissions as string[] | undefined
-  if (!hasPermission(requiredPermissions, permissionStore.permissions)) {
+  if (!hasPermission(requiredPermissions, permissionStore.permissions, to.meta?.permissionMode as 'all' | undefined)) {
     ElMessage.error('没有权限访问该页面')
     next(findFirstAccessiblePath(permissionStore.routes, permissionStore.permissions, permissionStore.menuTree))
     return

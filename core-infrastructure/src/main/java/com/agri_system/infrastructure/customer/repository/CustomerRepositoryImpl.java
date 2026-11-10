@@ -96,6 +96,11 @@ public class CustomerRepositoryImpl implements CustomerRepository {
         return Optional.ofNullable(customer);
     }
 
+    @Override public List<Long> findIdsByPhoneIncludingDeleted(String phone) {
+        if(phone==null||!phone.matches("1[3-9][0-9]{9}"))throw new IllegalArgumentException("核验手机号无效");
+        return mapper.selectIdsByPhoneIncludingDeleted(phone);
+    }
+
     @Override
     public List<Customer> findActiveByKeyword(String keyword, int limit) {
         String trimmed = keyword == null ? "" : keyword.trim();

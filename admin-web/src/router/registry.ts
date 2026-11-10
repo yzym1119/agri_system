@@ -10,6 +10,7 @@ interface RouteDefinition {
   path: string
   component: RouteComponent
   permissions?: string[]
+  permissionMode?: 'all'
   title: string
   icon?: string
   menuPath?: string
@@ -264,6 +265,17 @@ const routeDefinitions: RouteDefinition[] = [
     menuPath: '/marketing/customer/list'
   },
   {
+    name: 'CustomerIdentityEnrollments',
+    path: 'customer/identity-enrollments',
+    component: () => import('@/views/customer/identity-enrollments/index.vue'),
+    permissions: ['customer:query', 'customer:identity:query'],
+    permissionMode: 'all',
+    title: '微信关联核验',
+    icon: 'Connection',
+    parentKey: 'marketing',
+    menuPath: '/marketing/customer/identity-enrollments'
+  },
+  {
     name: 'CustomerFollowUp',
     path: 'customer/follow-up',
     component: () => import('@/views/customer/follow-up/index.vue'),
@@ -409,7 +421,9 @@ export function buildAppChildRoutes(owned: string[], menuTree: MenuTreeNode[] = 
   const groups = new Map<ParentKey, RouteRecordRaw>()
 
   routeDefinitions.forEach(definition => {
-    if (!hasAnyPermission(definition.permissions, owned)) {
+    if (!(definition.permissionMode === 'all'
+      ? definition.permissions?.every(permission => owned.includes(permission))
+      : hasAnyPermission(definition.permissions, owned))) {
       return
     }
 
@@ -425,6 +439,7 @@ export function buildAppChildRoutes(owned: string[], menuTree: MenuTreeNode[] = 
         title: definition.title,
         icon: definition.icon,
         permissions: definition.permissions,
+        permissionMode: definition.permissionMode,
         menuPath: definition.menuPath
       }
     }

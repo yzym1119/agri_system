@@ -66,6 +66,9 @@ public interface CustomerRepository {
      */
     Optional<Customer> findByPhone(String phone);
 
+    /** 身份开户匹配包括停用/已删除，最多2条；不能把不可用旧档案当无人。 */
+    java.util.List<Long> findIdsByPhoneIncludingDeleted(String phone);
+
     /**
      * 按姓名/编码/手机号关键字查询正常状态客户（收银选客户用，按创建时间倒序）
      *

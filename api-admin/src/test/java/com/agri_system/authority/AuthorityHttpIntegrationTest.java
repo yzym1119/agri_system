@@ -102,6 +102,7 @@ class AuthorityHttpIntegrationTest {
     @MockBean com.agri_system.application.order.service.MobilePickupTaskService mobilePickup;
     @MockBean com.agri_system.application.order.service.MobilePickupPreparationService pickupPreparation;
     @MockBean com.agri_system.application.order.service.MobileOwnOrderService ownOrders;
+    @MockBean com.agri_system.application.auth.service.CustomerEnrollmentReviewService identityReviews;
     @MockBean com.agri_system.application.order.service.OrderApplicationService assignedOrders;
     @MockBean com.agri_system.application.order.service.PickupFulfillmentService pickupFulfillment;
     @MockBean com.agri_system.application.order.service.PosSaleSubmissionService posSubmissions;
@@ -144,6 +145,7 @@ class AuthorityHttpIntegrationTest {
             com.agri_system.api.admin.controller.MobilePickupController.class,
             com.agri_system.api.admin.controller.MobilePickupPreparationController.class,
             com.agri_system.api.admin.controller.MobileOwnOrderController.class,
+            com.agri_system.api.admin.controller.CustomerIdentityEnrollmentController.class,
             com.agri_system.api.admin.controller.MenuController.class,
             com.agri_system.api.admin.controller.OrderAdminController.class,
             com.agri_system.api.admin.controller.ProductController.class,
@@ -239,7 +241,7 @@ class AuthorityHttpIntegrationTest {
         CurrentUser.clearRequestCache();
         assertSame(stpInterface, SaManager.getStpInterface(), "必须使用生产权限解析器");
         assertTrue(TenantManager.getTenantFactory().getClass().getName().contains("DataScopeConfig"));
-        for(String table:List.of("sys_role_menu","sys_staff_role","sys_menu","sys_role","staff","store"))
+        for(String table:List.of("customer_identity_enrollment","sys_role_menu","sys_staff_role","sys_menu","sys_role","staff","store"))
             jdbc.execute("DROP TABLE IF EXISTS "+table);
         jdbc.execute("CREATE TABLE staff(id BIGINT AUTO_INCREMENT PRIMARY KEY,code VARCHAR(40),name VARCHAR(80),phone VARCHAR(40),store_id BIGINT,password VARCHAR(100),role VARCHAR(40),position VARCHAR(40),shift_type VARCHAR(40),salary_base DECIMAL(12,2),status INT,deleted INT,hire_date DATE,contract_end_date DATE,emergency_contact VARCHAR(80),emergency_phone VARCHAR(40),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
         jdbc.execute("CREATE TABLE store(id BIGINT PRIMARY KEY,code VARCHAR(40),name VARCHAR(80),phone VARCHAR(40),address VARCHAR(100),manager_id BIGINT,status INT,support_pickup INT,remark VARCHAR(100),created_at TIMESTAMP,updated_at TIMESTAMP,created_by BIGINT,updated_by BIGINT,deleted INT)");
@@ -328,6 +330,34 @@ class AuthorityHttpIntegrationTest {
         reject(call(token,"GET","/api/admin/mobile/inventory/1",null));
         reject(call(token,"GET","/api/admin/mobile/inventory/products?keyword=x",null));
         reject(call(token,"GET","/api/admin/mobile/locations/1/products",null));
+    }
+
+    @Test @EnabledIfSystemProperty(named="authority.mysql.it",matches="true")
+    void 初次关联权限随迁移出现且必须同时拥有原客户查询权限() throws Exception {
+        String token=login(4),base="/api/admin/customer-identities/enrollments";
+        String recovery=base+"/7/decisions/22222222-2222-4222-8222-222222222222";
+        reject(call(null,"GET",base,null));reject(call(loginId("CUST_1"),"GET",base,null));reject(call(token,"GET",base,null));reject(call(token,"GET",recovery,null));
+        businessPermission(9190,"customer:query");
+        try(var c=jdbc.getDataSource().getConnection()){org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(c,new org.springframework.core.io.ClassPathResource("db/migration/V145__customer_identity_enrollment.sql"));}
+        long query=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='customer:identity:query'",Long.class),bind=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='customer:identity:bind'",Long.class);
+        assertEquals("/marketing/customer/identity-enrollments",jdbc.queryForObject("SELECT path FROM sys_menu WHERE id=?",String.class,query));
+        assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM sys_role_menu WHERE menu_id IN (?,?)",Integer.class,query,bind));reject(call(token,"GET",base,null));
+        String admin=login(1);
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query)))));reject(call(token,"GET",base,null));
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(9190,query)))));
+        when(identityReviews.list(4L,null,null)).thenReturn(new com.agri_system.application.auth.service.CustomerEnrollmentReviewService.Page(List.of(),null));
+        assertTrue(call(token,"GET",base+"?staffId=99",null).path("rows").isArray());org.mockito.Mockito.verify(identityReviews).list(4L,null,null);
+        when(identityReviews.searchCandidates(4L,"original")).thenReturn(List.of(new com.agri_system.application.auth.service.CustomerEnrollmentReviewService.Candidate("99","原客户","138****0000",1,0)));
+        assertEquals("138****0000",call(token,"GET",base+"/candidates?keyword=original&staffId=99",null).get(0).path("phoneMasked").asText());
+        org.mockito.Mockito.verify(identityReviews).searchCandidates(4L,"original");
+        when(identityReviews.decisionResult(4L,7L,"22222222-2222-4222-8222-222222222222")).thenReturn(new com.agri_system.application.auth.service.CustomerEnrollmentReviewService.DecisionResult("7","22222222-2222-4222-8222-222222222222","UNKNOWN",null,null,null,null));
+        assertEquals("UNKNOWN",call(token,"GET",recovery+"?staffId=99",null).path("status").asText());org.mockito.Mockito.verify(identityReviews).decisionResult(4L,7L,"22222222-2222-4222-8222-222222222222");
+        String body="{\"requestKey\":\"22222222-2222-4222-8222-222222222222\",\"action\":\"REJECT\",\"verificationMethod\":\"UNCONFIRMED\",\"reason\":\"无法确认\"}";
+        reject(call(token,"POST",base+"/7/decision",body));
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(9190,query,bind)))));
+        when(identityReviews.decide(org.mockito.ArgumentMatchers.eq(4L),org.mockito.ArgumentMatchers.eq(7L),any())).thenReturn(new com.agri_system.application.auth.service.CustomerEnrollmentService.Result("22222222-2222-4222-8222-222222222222","REJECTED","RESTART"));
+        assertEquals("REJECTED",call(token,"POST",base+"/7/decision",body).path("status").asText());
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of()))));reject(call(token,"GET",base,null));reject(call(token,"GET",recovery,null));reject(call(token,"POST",base+"/7/decision",body));
     }
 
     @Test void 本人订单迁移不自动授权且实际管理员可单独授予撤销() throws Exception {

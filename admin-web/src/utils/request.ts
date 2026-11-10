@@ -4,6 +4,10 @@ import {useUserStore} from '@/store/user'
 import router from '@/router'
 import type {ApiResponse} from '@/types/api'
 
+declare module 'axios' {
+  interface AxiosRequestConfig { expectedSessionToken?: string }
+}
+
 // 创建 axios 实例
 const service: AxiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080',
@@ -18,6 +22,9 @@ service.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const userStore = useUserStore()
     const token = userStore.token
+    if (config.expectedSessionToken !== undefined && (!config.expectedSessionToken || config.expectedSessionToken !== token)) {
+      throw new Error('会话已变化，原操作未发送，请重新核对当前身份')
+    }
     
     // 如果有 token，添加到请求头
     if (token) {

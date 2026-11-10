@@ -44,6 +44,7 @@ import com.agri_system.application.credit.dto.CreditDebtVO;
 public class CustomerApplicationService {
     
     private final CustomerRepository customerRepository;
+    private final CustomerRegistrationService registrationService;
     private final StaffRepository staffRepository;
     private final CustomerWalletRepository walletRepository;
     private final WalletTransactionRepository transactionRepository;
@@ -294,42 +295,8 @@ public class CustomerApplicationService {
      */
     @Transactional(rollbackFor = Exception.class)
     public CustomerDetailVO createCustomer(CustomerCreateCommand command) {
-        // 检查手机号是否已存在
-        customerRepository.findByPhone(command.getPhone())
-                .ifPresent(c -> {
-                    throw new IllegalArgumentException("手机号已存在");
-                });
-        
-        // 创建客户
-        Customer customer = new Customer();
-        customer.setCode("CUST_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16));
-        customer.setName(command.getName());
-        customer.setPhone(command.getPhone());
-        customer.setIdCard(command.getIdCard());
-        customer.setType(1); // 普通客户
-        customer.setStatus(1); // 正常
-        customer.setAddress(command.getAddress());
-        customer.setBindStaffId(command.getBindStaffId());
-        customer.setRemark(command.getRemark());
-        customer.setVersion(0); // 初始化乐观锁版本号
-        customer.setCreatedAt(LocalDateTime.now());
-        customer.setUpdatedAt(LocalDateTime.now());
-        customer.setCreatedBy(command.getCreatedBy());
-        customer = customerRepository.save(customer);
-        
-        // 初始化三钱包
-        for (int walletType = 1; walletType <= 3; walletType++) {
-            CustomerWallet wallet = new CustomerWallet();
-            wallet.setCustomerId(customer.getId());
-            wallet.setWalletType(walletType);
-            wallet.setBalance(BigDecimal.ZERO);
-            wallet.setFrozenBalance(BigDecimal.ZERO);
-            wallet.setVersion(0);
-            wallet.setCreatedAt(LocalDateTime.now());
-            wallet.setUpdatedAt(LocalDateTime.now());
-            walletRepository.save(wallet);
-        }
-        
+        Customer customer = registrationService.create(command);
+
         // 返回详情
         return getCustomerDetail(customer.getId());
     }

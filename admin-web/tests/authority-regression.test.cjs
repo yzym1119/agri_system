@@ -149,6 +149,13 @@ function requestHarness() {
   return {...interceptors,logs,messages,routes,store}
 }
 
+test('固定原会话的关联请求不能在拦截器调度时借用新员工令牌',()=>{
+  const p=requestHarness();p.store.token='new-session';
+  assert.throws(()=>p.request.ok({method:'post',url:'/api/admin/customer-identities/enrollments/7/decision',headers:{},expectedSessionToken:'sensitive-token',data:{requestKey:'original'}}));
+  assert.equal(p.store.token,'new-session');assert.equal(p.store.resetCalls,0);
+  const accepted=p.request.ok({method:'post',headers:{},expectedSessionToken:'new-session'});assert.equal(accepted.headers.Authorization,'new-session');
+});
+
 test('登录、钱包请求与响应日志不泄露密码、token、验证码及成功响应正文',()=>{
   const p=requestHarness()
   p.request.ok({method:'post',url:'/api/auth/staff/login',headers:{},data:{password:'sensitive-password',walletAuthCode:'sensitive-wallet'},params:{token:'sensitive-query'}})
