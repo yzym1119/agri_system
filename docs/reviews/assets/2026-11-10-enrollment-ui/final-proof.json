@@ -1,0 +1,109 @@
+{
+  "schema": "agri_enrollment_ui_c49fa72ccfc44e78a9ca575959180ca6",
+  "git": "59f79d11a5f4fdae263475b3a615c34915617c92",
+  "jarSha256": "1a64859b975fbb592a14543bf5502d52337e01c0d97349f727202f374087cb7b",
+  "migration": {
+    "version": "145",
+    "success": 1
+  },
+  "enrollments": [
+    {
+      "id": 1,
+      "status": "LINKED",
+      "customer_id": 1,
+      "identity_id": 1,
+      "reviewed_by": 3,
+      "verification_method": "IN_PERSON",
+      "anchor_released": 0,
+      "decision_request_key": "53b23342-eb90-4a0e-aef9-42a8e2eb3a27"
+    },
+    {
+      "id": 2,
+      "status": "REJECTED",
+      "customer_id": null,
+      "identity_id": null,
+      "reviewed_by": 3,
+      "verification_method": "UNCONFIRMED",
+      "anchor_released": 1,
+      "decision_request_key": "3fa5a742-bebd-460e-9f16-86c06d7c9500"
+    },
+    {
+      "id": 3,
+      "status": "REJECTED",
+      "customer_id": null,
+      "identity_id": null,
+      "reviewed_by": 3,
+      "verification_method": "UNCONFIRMED",
+      "anchor_released": 1,
+      "decision_request_key": "851687f7-ff96-425e-86c4-387554fcf6ff"
+    },
+    {
+      "id": 4,
+      "status": "LINKED",
+      "customer_id": 3,
+      "identity_id": 2,
+      "reviewed_by": 3,
+      "verification_method": "KNOWN_CONTACT_CALLBACK",
+      "anchor_released": 0,
+      "decision_request_key": "5832b826-1233-48f4-b985-0a8cb8ad4eb8"
+    },
+    {
+      "id": 5,
+      "status": "LINKED",
+      "customer_id": 2,
+      "identity_id": 3,
+      "reviewed_by": 3,
+      "verification_method": "IN_PERSON",
+      "anchor_released": 0,
+      "decision_request_key": "31cd6bf4-0eb0-4410-94a1-fae53ebafe55"
+    }
+  ],
+  "identities": [
+    {
+      "customer_id": 1,
+      "app_id": "wx1111111111111111",
+      "identity_value": "IT_UI_ENROLLMENT_1",
+      "auth_version": 1
+    },
+    {
+      "customer_id": 2,
+      "app_id": "wx1111111111111111",
+      "identity_value": "IT_UI_ENROLLMENT_5",
+      "auth_version": 1
+    },
+    {
+      "customer_id": 3,
+      "app_id": "wx1111111111111111",
+      "identity_value": "IT_UI_ENROLLMENT_4",
+      "auth_version": 1
+    }
+  ],
+  "customerContactsUnchanged": true,
+  "customerCount": 4,
+  "walletCount": 12,
+  "walletTotal": "123.45",
+  "frozenTotal": "0.00",
+  "otherBusinessCounts": {
+    "wallet_transaction": 0,
+    "order": 0,
+    "inventory_movement": 0
+  },
+  "faultDecisionPosts": [
+    {
+      "at": "2026-11-10T02:11:43.509Z",
+      "event": "decisionForwarded",
+      "id": "5",
+      "requestKey": "31cd6bf4-0eb0-4410-94a1-fae53ebafe55",
+      "status": "LINKED"
+    },
+    {
+      "at": "2026-11-10T02:15:48.087Z",
+      "event": "decisionForwarded",
+      "id": "5",
+      "requestKey": "2562cecc-ab27-4196-b064-8b0d2590e802",
+      "status": 10001
+    }
+  ],
+  "completedResponseDropCount": 1,
+  "heldReadCount": 6
+}

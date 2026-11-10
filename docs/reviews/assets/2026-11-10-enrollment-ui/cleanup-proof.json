@@ -1,0 +1,9 @@
+{
+  "listeningAfterCleanup": {
+    "3097": false,
+    "9087": false,
+    "9089": false,
+    "6397": false
+  },
+  "isolatedDatabaseRetainedForAudit": true
+}

@@ -1,0 +1,12 @@
+{
+  "application": 1,
+  "state": "LINKED",
+  "target": 1,
+  "reviewer": 3,
+  "ownResult": "LINKED",
+  "foreignResult": "CONFLICT",
+  "identityCount": 1,
+  "walletCount": 12,
+  "walletTotal": "123.45",
+  "replay": "LINKED"
+}

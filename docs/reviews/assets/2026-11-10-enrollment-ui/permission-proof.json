@@ -1,0 +1,12 @@
+[
+  {
+    "actor": "ENR_READ",
+    "read": "allowed",
+    "writeCode": 10004
+  },
+  {
+    "actor": "ENR_INCOMPLETE",
+    "read": "forbidden",
+    "writeCode": 10004
+  }
+]
