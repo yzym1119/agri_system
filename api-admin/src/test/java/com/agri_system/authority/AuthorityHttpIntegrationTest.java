@@ -96,6 +96,7 @@ class AuthorityHttpIntegrationTest {
     @MockBean com.agri_system.application.order.service.PosCatalogApplicationService posCatalog;
     @MockBean com.agri_system.application.store.service.StoreApplicationService businessStores;
     @MockBean com.agri_system.application.store.service.StorePublicationService publicStores;
+    @MockBean com.agri_system.application.agronomy.service.KnowledgeRevisionService knowledge;
     @MockBean com.agri_system.application.purchase.service.PurchaseApplicationService receiving;
     @MockBean com.agri_system.application.product.service.ProductApplicationService productCatalogAdmin;
     @MockBean com.agri_system.application.inventory.service.MobileScanQueryService mobileInventory;
@@ -140,6 +141,7 @@ class AuthorityHttpIntegrationTest {
             com.agri_system.api.admin.controller.PosCatalogController.class,
             com.agri_system.api.admin.controller.StoreController.class,
             com.agri_system.api.admin.controller.StorePublicationController.class,
+            com.agri_system.api.admin.controller.KnowledgeAdminController.class,
             com.agri_system.api.admin.controller.PurchaseController.class,
             com.agri_system.api.admin.controller.MobileScanController.class,
             com.agri_system.api.admin.controller.MobileDeliveryController.class,
@@ -374,6 +376,32 @@ class AuthorityHttpIntegrationTest {
         when(identityReviews.decide(org.mockito.ArgumentMatchers.eq(4L),org.mockito.ArgumentMatchers.eq(7L),any())).thenReturn(new com.agri_system.application.auth.service.CustomerEnrollmentService.Result("22222222-2222-4222-8222-222222222222","REJECTED","RESTART"));
         assertEquals("REJECTED",call(token,"POST",base+"/7/decision",body).path("status").asText());
         ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of()))));reject(call(token,"GET",base,null));reject(call(token,"GET",recovery,null));reject(call(token,"POST",base+"/7/decision",body));
+    }
+
+    @Test void 知识真实菜单不自动授权且保存审核发布分别叠加查询权限() throws Exception {
+        String base="/api/admin/agronomy/knowledge",token=login(4),admin=login(1),key="11111111-1111-4111-8111-111111111111";
+        reject(call(token,"GET",base,null));reject(call(loginId("CUST_1"),"GET",base,null));
+        String menuSql;
+        try(var input=new org.springframework.core.io.ClassPathResource("db/migration/V148__agronomy_knowledge_revision.sql").getInputStream()){menuSql=new String(input.readAllBytes(),StandardCharsets.UTF_8).split("-- 单独真实菜单",2)[1];}
+        // 同一迁移的菜单语句：权限HTTP兼容H2与MySQL；完整DDL另由真实随机MySQL迁移测试执行。
+        menuSql="-- 单独真实菜单"+menuSql;
+        try(var c=jdbc.getDataSource().getConnection()){var script=new org.springframework.core.io.ByteArrayResource(menuSql.getBytes(StandardCharsets.UTF_8));org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(c,script);org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(c,script);}
+        var ids=jdbc.queryForList("SELECT id FROM sys_menu WHERE permission LIKE 'agronomy:knowledge:%'",Long.class);assertEquals(4,ids.size());
+        assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM sys_role_menu WHERE menu_id IN (SELECT id FROM sys_menu WHERE permission LIKE 'agronomy:knowledge:%')",Integer.class));
+        long query=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='agronomy:knowledge:query'",Long.class),write=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='agronomy:knowledge:write'",Long.class),review=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='agronomy:knowledge:review'",Long.class),publish=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='agronomy:knowledge:publish'",Long.class);
+        String draft="{\"requestKey\":\""+key+"\",\"storeId\":1,\"expectedLatestRevision\":0,\"content\":{\"title\":\"fixture\"}}",decision="{\"expectedVersion\":\"1\",\"reason\":\"test review\"}",target=base+"/"+key+"/revisions/1";
+        when(knowledge.page(4L,null,null)).thenReturn(new com.agri_system.application.agronomy.service.KnowledgeRevisionService.Page(List.of(),null));
+        var detail=new com.agri_system.application.agronomy.service.KnowledgeRevisionService.Detail("1",key,1,"1",null,"0".repeat(64),"DRAFT","DRAFT","1",null);
+        when(knowledge.create(org.mockito.ArgumentMatchers.eq(4L),org.mockito.ArgumentMatchers.isNull(),any())).thenReturn(detail);
+        when(knowledge.change(org.mockito.ArgumentMatchers.eq(4L),org.mockito.ArgumentMatchers.eq(key),org.mockito.ArgumentMatchers.eq(1),org.mockito.ArgumentMatchers.eq("1"),any(),org.mockito.ArgumentMatchers.eq("test review"))).thenReturn(detail);
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query,write)))));
+        assertTrue(call(token,"GET",base+"?staffId=99",null).path("rows").isArray());assertEquals("1",call(token,"POST",base,draft).path("id").asText());reject(call(token,"POST",target+"/review",decision));reject(call(token,"POST",target+"/publish",decision));
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query,review)))));
+        assertEquals("1",call(token,"POST",target+"/review",decision).path("id").asText());reject(call(token,"POST",base,draft));reject(call(token,"POST",target+"/publish",decision));
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query,publish)))));
+        assertEquals("1",call(token,"POST",target+"/publish",decision).path("id").asText());assertEquals("1",call(token,"POST",target+"/withdraw",decision).path("id").asText());
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(publish)))));reject(call(token,"GET",base,null));reject(call(token,"POST",target+"/publish",decision));
+        org.mockito.Mockito.verify(knowledge).page(4L,null,null);org.mockito.Mockito.verify(knowledge).change(4L,key,1,"1","REVIEW","test review");
     }
 
     @Test void 本人订单迁移不自动授权且实际管理员可单独授予撤销() throws Exception {

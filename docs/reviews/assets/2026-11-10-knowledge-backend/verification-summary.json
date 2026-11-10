@@ -1,0 +1,66 @@
+{
+  "base": "d4c0893",
+  "scope": "C1-B backend tasks 1/2; frontend tasks 3/4 pending",
+  "fullCleanVerify": {
+    "finishedAt": "2026-11-10 17:25:51 CST",
+    "reports": 178,
+    "tests": 1154,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "additionalMysqlAppendTest": true,
+  "finalReportTotals": {
+    "reports": 178,
+    "tests": 1155,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "selected": {
+    "com.agri_system.application.agronomy.service.KnowledgeRevisionMysqlTest": {
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.application.agronomy.service.KnowledgeRevisionServiceTest": {
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.application.agronomy.service.PublicKnowledgeServiceTest": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.authority.AuthorityHttpIntegrationTest": {
+      "tests": 49,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.api.client.controller.ClientHttpBoundaryTest": {
+      "tests": 58,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "frontendSourceChanged": false,
+  "nativeWechatOrMobileTested": false,
+  "independentReview": "read-only backend; no new confirmed P0/P1/P2; logging fix by author RED→GREEN",
+  "originalEnvironmentChanged": false,
+  "isolatedCleanup": {
+    "observedAt": "2026-11-10 17:29 CST",
+    "portsWithoutListeners": [
+      9094,
+      9095,
+      6404
+    ],
+    "rolesRestored": true,
+    "publicKnowledgeEmpty": true
+  }
+}

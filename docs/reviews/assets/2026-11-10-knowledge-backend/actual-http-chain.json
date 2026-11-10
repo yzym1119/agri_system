@@ -1,0 +1,93 @@
+{
+  "actualHttpToRealKnowledgeTable": true,
+  "states": [
+    {
+      "action": "review",
+      "logicalKey": "cb29ff5c-924c-4c00-a3e1-6dfdd4385419",
+      "revision": 1,
+      "state": "REVIEWED"
+    },
+    {
+      "action": "publish",
+      "logicalKey": "cb29ff5c-924c-4c00-a3e1-6dfdd4385419",
+      "revision": 1,
+      "state": "PUBLISHED"
+    },
+    {
+      "action": "review",
+      "logicalKey": "43258f36-68f4-4a84-953b-b30b70c0a302",
+      "revision": 1,
+      "state": "REVIEWED"
+    },
+    {
+      "action": "publish",
+      "logicalKey": "43258f36-68f4-4a84-953b-b30b70c0a302",
+      "revision": 1,
+      "state": "PUBLISHED"
+    },
+    {
+      "action": "review",
+      "logicalKey": "cb29ff5c-924c-4c00-a3e1-6dfdd4385419",
+      "revision": 2,
+      "state": "REVIEWED"
+    },
+    {
+      "action": "publish",
+      "logicalKey": "cb29ff5c-924c-4c00-a3e1-6dfdd4385419",
+      "revision": 2,
+      "state": "PUBLISHED"
+    },
+    {
+      "action": "withdraw",
+      "logicalKey": "cb29ff5c-924c-4c00-a3e1-6dfdd4385419",
+      "revision": 2,
+      "state": "WITHDRAWN"
+    }
+  ],
+  "publishedRead": {
+    "article": {
+      "id": "3",
+      "logicalKey": "cb29ff5c-924c-4c00-a3e1-6dfdd4385419",
+      "revision": 2,
+      "title": "虚构软件流程知识",
+      "summary": "仅软件验收，不构成农技指导",
+      "scope": {
+        "region": "虚构地区",
+        "crop": "测试作物",
+        "growthStage": "测试阶段"
+      },
+      "effectiveUntil": "2026-12-10",
+      "reviewedAt": "2026-11-10T17:28:41"
+    },
+    "body": "第二版虚构软件流程正文。",
+    "appliesTo": "仅用于本地软件验收",
+    "exclusions": "不适用于真实农事操作",
+    "sourceText": "虚构软件测试来源",
+    "effectiveFrom": "2026-11-10",
+    "contentHash": "44e59c13519d046a723eee19f91f801ea17c9aa356dfbae1fd181d4b62147735"
+  },
+  "oldRevisionRejected": true,
+  "internalNotPublic": true,
+  "draftDidNotReplacePublished": true,
+  "sameCreateRequestOneRevision": true,
+  "changedBodyRejected": true,
+  "urlAndActualActorAuthoritative": true,
+  "publicEmptyAfterWithdrawal": true,
+  "history": [
+    "1\tWITHDRAWN\t1\t1\t4",
+    "2\tWITHDRAWN\t1\t1\t4"
+  ],
+  "baseline": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0,
+    "customer_wallet": 0
+  },
+  "after": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0,
+    "customer_wallet": 0
+  },
+  "nativeWechatOrPhoneAcceptance": false
+}

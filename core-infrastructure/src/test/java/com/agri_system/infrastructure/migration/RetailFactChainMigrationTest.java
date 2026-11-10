@@ -282,8 +282,8 @@ class RetailFactChainMigrationTest {
         assertEquals(migrationFiles.size(), versions.size(), "所有 V*.sql 文件都必须被枚举和解析");
         assertEquals(versions.size(), versions.stream().distinct().count(), "迁移版本号必须唯一");
         assertTrue(versions.stream().allMatch(version -> version.compareTo(MigrationVersion.fromVersion("1")) >= 0
-                        && version.compareTo(MigrationVersion.fromVersion("147")) <= 0),
-                "存在超出 V1..V147 范围的迁移版本");
+                        && version.compareTo(MigrationVersion.fromVersion("148")) <= 0),
+                "存在超出 V1..V148 范围的迁移版本");
         assertTrue(versions.containsAll(List.of(MigrationVersion.fromVersion("119"),
                 MigrationVersion.fromVersion("120"), MigrationVersion.fromVersion("121"),
                 MigrationVersion.fromVersion("123"), MigrationVersion.fromVersion("124"),
@@ -291,7 +291,7 @@ class RetailFactChainMigrationTest {
                 MigrationVersion.fromVersion("127"), MigrationVersion.fromVersion("128"), MigrationVersion.fromVersion("131"),MigrationVersion.fromVersion("134"),MigrationVersion.fromVersion("135"),
                 MigrationVersion.fromVersion("136"), MigrationVersion.fromVersion("137"), MigrationVersion.fromVersion("138"),
                 MigrationVersion.fromVersion("139"), MigrationVersion.fromVersion("140"),
-                MigrationVersion.fromVersion("141"), MigrationVersion.fromVersion("142"), MigrationVersion.fromVersion("143"), MigrationVersion.fromVersion("144"), MigrationVersion.fromVersion("145"), MigrationVersion.fromVersion("146"), MigrationVersion.fromVersion("147"))),
+                MigrationVersion.fromVersion("141"), MigrationVersion.fromVersion("142"), MigrationVersion.fromVersion("143"), MigrationVersion.fromVersion("144"), MigrationVersion.fromVersion("145"), MigrationVersion.fromVersion("146"), MigrationVersion.fromVersion("147"), MigrationVersion.fromVersion("148"))),
                 "缺少 V119/V120/V121/V123/V124/V125/V126/V127/V128/V131/V134/V135/V136/V137/V138/V139/V140/V141/V142/V143/V144/V145/V146");
         assertEquals("128", flyway.info().current().getVersion().getVersion());
     }

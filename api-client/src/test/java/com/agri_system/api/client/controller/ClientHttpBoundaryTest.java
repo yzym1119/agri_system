@@ -94,6 +94,7 @@ class ClientHttpBoundaryTest {
     @MockBean WechatService wechat;
     @MockBean SysRoleRepository roles;
     @MockBean com.agri_system.application.catalog.service.ClientCatalogService publicCatalog;
+    @MockBean com.agri_system.application.agronomy.service.PublicKnowledgeService publicKnowledge;
     @MockBean StaffAuthorityService authority;
     @MockBean StringRedisTemplate redis;
     @MockBean com.agri_system.application.performance.service.OneTimeQrService oldQr;
@@ -101,7 +102,7 @@ class ClientHttpBoundaryTest {
     @SpringBootConfiguration
     @EnableAutoConfiguration
     @Import({SaTokenConfigure.class, AuthService.class, GlobalExceptionHandler.class,
-            OrderClientController.class, AfterSalesClientController.class, ClientCatalogController.class,
+            OrderClientController.class, AfterSalesClientController.class, ClientCatalogController.class, PublicKnowledgeController.class,
             OrderPaymentPublicController.class, AuthClientController.class, ClientOnboardingController.class, com.agri_system.application.auth.service.ClientOnboardingService.class, com.agri_system.application.auth.service.CustomerEnrollmentService.class, QrClientController.class, LoginProbe.class})
     static class Config {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
@@ -125,6 +126,17 @@ class ClientHttpBoundaryTest {
         when(publicCatalog.products(null,"corn")).thenReturn(new com.agri_system.application.catalog.service.ClientCatalogService.Products(List.of(),null));
         mvc.perform(get("/api/public/catalog/products").param("keyword","corn").param("customerId","999")).andExpect(status().isOk()).andExpect(jsonPath("$.rows").isArray());
         verify(publicCatalog).products(null,"corn");
+    }
+    @Test void publicKnowledgeNeedsExplicitScopeButNeverCustomerCredentials() throws Exception {
+        var scope=new com.agri_system.domain.agronomy.repository.KnowledgeRevisionRepository.Scope("daqing","corn","seedling");
+        when(publicKnowledge.scopes()).thenReturn(List.of(scope));
+        mvc.perform(get("/api/public/agronomy/knowledge/scopes").header("Authorization","invalid-token")).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andExpect(jsonPath("$[0].region").value("daqing"));
+        when(publicKnowledge.page("daqing","corn","seedling",null,null)).thenReturn(new com.agri_system.application.agronomy.service.PublicKnowledgeService.Page(List.of(),null));
+        mvc.perform(get("/api/public/agronomy/knowledge").param("region","daqing").param("crop","corn").param("growthStage","seedling").param("customerId","999")).andExpect(status().isOk()).andExpect(jsonPath("$.rows").isArray());
+        verify(publicKnowledge).page("daqing","corn","seedling",null,null);
+        mvc.perform(get("/api/public/agronomy/knowledge").param("region","daqing")).andExpect(jsonPath("$.code").value(10001));
+        mvc.perform(get("/api/public/agronomy/knowledge/11111111-1111-4111-8111-111111111111").param("region","daqing").param("crop","corn").param("growthStage","seedling")).andExpect(jsonPath("$.code").value(10001));
+        mvc.perform(get("/api/public/agronomy/knowledge/11111111-1111-4111-8111-111111111111").param("region","daqing").param("crop","corn").param("growthStage","seedling").param("expectedRevision","1.5")).andExpect(jsonPath("$.code").value(10001));
     }
 
     @BeforeEach void customerAndCallback() {
