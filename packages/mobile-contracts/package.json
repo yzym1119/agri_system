@@ -8,6 +8,7 @@
     "./recorder": "./src/recorder.ts",
     "./session": "./src/session.ts",
     "./staff-auth": "./src/staff-auth.ts",
+    "./customer-auth": "./src/customer-auth.ts",
     "./submission": "./src/submission.ts",
     "./inventory": "./src/inventory.ts",
     "./receipt": "./src/receipt.ts",
