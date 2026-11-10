@@ -123,12 +123,8 @@ public class CustomerDomainService {
         List<com.agri_system.domain.credit.model.CreditAccount> outstandingAccounts = 
                 creditAccountRepository.findOutstandingAccounts(customerId);
         if (outstandingAccounts != null && !outstandingAccounts.isEmpty()) {
-            // 检查是否有未还清的记录（status = 1）
-            boolean hasUnpaidDebt = outstandingAccounts.stream()
-                    .anyMatch(account -> account.getStatus() != null && account.getStatus() == 1);
-            if (hasUnpaidDebt) {
-                throw new IllegalArgumentException("customer-2002: 客户存在未结赊销款，禁止删除");
-            }
+            // 仓储已按remaining_amount>0查询；逾期或状态异常不能让真实欠款消失。
+            throw new IllegalArgumentException("customer-2002: 客户存在未结赊销款，禁止删除");
         }
 
         long activeOrderCount = orderRepository.countActiveOrdersByCustomerId(customerId);

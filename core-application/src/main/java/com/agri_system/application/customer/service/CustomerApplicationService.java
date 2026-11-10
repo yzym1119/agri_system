@@ -431,8 +431,10 @@ public class CustomerApplicationService {
     /**
      * 删除客户（逻辑删除）
      */
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public void deleteCustomer(Long id) {
+        // 先与入账共用原客户锁，再读取余额等资格；不能用等待锁之前的旧余额删除。
+        if(customerRepository.findByIdWithLock(id).isEmpty())return;
         // 验证是否可以删除
         customerDomainService.validateDelete(id);
         

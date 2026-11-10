@@ -22,6 +22,9 @@ public interface CustomerRepository {
      */
     Optional<Customer> findById(Long id);
 
+    /** 当前主档授权状态，含已删除行；不能用会话中的状态或版本替代。 */
+    Optional<com.agri_system.domain.customer.model.CustomerAuthState> findAuthStateById(Long id);
+
     /**
      * 根据ID查询客户（包含已逻辑删除）
      */

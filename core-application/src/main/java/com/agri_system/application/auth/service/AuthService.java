@@ -145,10 +145,11 @@ public class AuthService {
         Customer customer=customerRepository.findById(identity.getCustomerId()).filter(AuthService::activeCustomer)
                 .orElseThrow(()->new IllegalArgumentException("客户不存在或已停用"));
         if(!identity.getCustomerId().equals(customer.getId()))throw new IllegalArgumentException("客户身份资料待核验");
+        requireCustomerAccess(customer,customer.getAuthVersion());
         identity.setSessionKey(result.getSessionKey());identity.setUpdatedAt(LocalDateTime.now());identityRepository.save(identity);
         StpUtil.login("CUST_"+customer.getId(),new cn.dev33.satoken.stp.SaLoginModel().setToken(UUID.randomUUID().toString()));
         StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","WECHAT","identityId",identity.getId().toString(),"appId",wechatAppId,
-                "authVersion",identity.getAuthVersion().toString()));
+                "authVersion",identity.getAuthVersion().toString(),"customerAuthVersion",customer.getAuthVersion().toString()));
         LoginResultVO login=new LoginResultVO();login.setTokenName(StpUtil.getTokenName());login.setTokenValue(StpUtil.getTokenValue());
         LoginResultVO.UserInfo user=new LoginResultVO.UserInfo();user.setId(customer.getId());user.setName(customer.getName());user.setRole(customer.isVip()?"VIP":"NORMAL");
         Map<String,Object> extra=new HashMap<>();extra.put("code",customer.getCode());extra.put("phone",customer.getPhone());extra.put("vipLevel",customer.getVipLevel());extra.put("bindingState","LINKED");user.setExtra(extra);login.setUserInfo(user);
@@ -178,10 +179,11 @@ public class AuthService {
         if (!activeCustomer(customer)) {
             throw new IllegalArgumentException("客户账号已停用");
         }
+        requireCustomerAccess(customer,customer.getAuthVersion());
 
         String loginId = "CUST_" + customer.getId();
         StpUtil.login(loginId,new cn.dev33.satoken.stp.SaLoginModel().setToken(UUID.randomUUID().toString()));
-        StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","DEV"));
+        StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","DEV","customerAuthVersion",customer.getAuthVersion().toString()));
 
         LoginResultVO result = new LoginResultVO();
         result.setTokenName(StpUtil.getTokenName());
@@ -262,6 +264,7 @@ public class AuthService {
         try{customerId=Long.valueOf(loginId.substring(5));}catch(NumberFormatException invalid){throw new IllegalArgumentException("客户登录已失效");}
         Object raw=StpUtil.getTokenSession().get("clientAuthV1");
         if(!(raw instanceof Map<?,?> binding))throw new IllegalArgumentException("客户登录需重新核验");
+        Long customerVersion=customerVersion(binding);
         if("DEV".equals(binding.get("kind"))) {
             if(!devLoginEnabled||(wechatAppId!=null&&!wechatAppId.isEmpty())||(environment!=null&&java.util.Arrays.asList(environment.getActiveProfiles()).contains("prod")))
                 throw new IllegalArgumentException("开发客户会话已失效");
@@ -277,14 +280,30 @@ public class AuthService {
                 throw new IllegalArgumentException("微信身份已停用或关联已变更，请重新核验");
         } else throw new IllegalArgumentException("客户登录来源无效");
         var customer=customerRepository.findById(customerId).orElseThrow(()->new IllegalArgumentException("客户不存在"));
-        if(!activeCustomer(customer))throw new IllegalArgumentException("客户账号已停用");
         if(!customerId.equals(customer.getId()))throw new IllegalArgumentException("客户身份资料待核验");
+        requireCustomerAccess(customer,customerVersion);
         return customerId;
+    }
+    private static Long customerVersion(Object binding){
+        if(!(binding instanceof Map<?,?> values))throw new IllegalArgumentException("客户登录需重新核验");
+        try{Long version=Long.valueOf(String.valueOf(values.get("customerAuthVersion")));if(version>0)return version;}
+        catch(NumberFormatException invalid){throw new IllegalArgumentException("客户登录版本已失效，请重新登录");}
+        throw new IllegalArgumentException("客户登录版本已失效，请重新登录");
+    }
+    private void requireCustomerAccess(Customer customer,Long expected){
+        if(!activeCustomer(customer))throw new IllegalArgumentException("客户账号已停用");
+        if(customer.getId()==null||customer.getAuthVersion()==null||expected==null||expected<=0||!expected.equals(customer.getAuthVersion()))
+            throw new IllegalArgumentException("客户账号或登录版本已失效，请重新登录");
+        var current=customerRepository.findAuthStateById(customer.getId()).orElse(null);
+        if(current==null||!current.active()||!customer.getId().equals(current.id())||!expected.equals(current.authVersion()))
+            throw new IllegalArgumentException("客户账号或登录版本已失效，请重新登录");
     }
     private static boolean activeCustomer(Customer c){return c!=null&&c.isActive()&&!Integer.valueOf(1).equals(c.getDeleted());}
     public record ClientProfile(String customerId,String name,String phoneMasked,String bindingState) {}
     public ClientProfile getCurrentClientProfile(){
         Long id=getCurrentCustomerId();var c=customerRepository.findById(id).filter(AuthService::activeCustomer).orElseThrow(()->new IllegalArgumentException("客户登录已失效"));
+        if(!id.equals(c.getId()))throw new IllegalArgumentException("客户身份资料待核验");
+        requireCustomerAccess(c,customerVersion(StpUtil.getTokenSession().get("clientAuthV1")));
         String phone=c.getPhone();String masked=phone==null||phone.isBlank()?null:phone.length()<7?"已登记联系方式":phone.substring(0,3)+"****"+phone.substring(phone.length()-4);
         Object marker=StpUtil.getTokenSession().get("clientAuthV1");
         String state=marker instanceof Map<?,?> m&&"DEV".equals(m.get("kind"))?"DEV_ONLY":"LINKED";

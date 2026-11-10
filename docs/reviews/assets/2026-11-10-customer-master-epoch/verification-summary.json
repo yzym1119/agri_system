@@ -1,0 +1,53 @@
+{
+  "source_base": "8559e49",
+  "full_verify_finished": "2026-11-10T11:29:12+08:00",
+  "reports": 171,
+  "totals": {
+    "tests": 1114,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "last_targeted_test": "WechatAutoRegisterTest: 2026-11-10T11:35:40+08:00",
+  "selected": {
+    "com.agri_system.domain.customer.service.CustomerDeletionDebtTest": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.infrastructure.migration.RetailFactChainMigrationTest": {
+      "tests": 16,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.application.auth.service.WechatAutoRegisterTest": {
+      "tests": 10,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.application.auth.service.CustomerEnrollmentMysqlTest": {
+      "tests": 27,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.api.client.controller.ClientHttpBoundaryTest": {
+      "tests": 56,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.authority.AuthorityHttpIntegrationTest": {
+      "tests": 47,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "independent_review": "unavailable: reviewer service usage limit; no review result",
+  "original_environment_upgraded": false,
+  "real_wechat_or_device_tested": false
+}

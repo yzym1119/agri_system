@@ -22,16 +22,53 @@ import java.util.Optional;
 public class CustomerRepositoryImpl implements CustomerRepository {
     
     private final CustomerMapper mapper;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     
     @Override
     public Customer save(Customer customer) {
+        if(customer==null)throw new IllegalArgumentException("客户资料不能为空");
         if (customer.getId() == null) {
+            if(customer.getAuthVersion()!=null&&customer.getAuthVersion()!=1L)throw stale();
+            customer.setAuthVersion(1L);
             mapper.insert(customer);
         } else {
-            mapper.update(customer);
+            Long expected=customer.getAuthVersion();if(expected==null||expected<=0)throw stale();
+            var current=authState(customer.getId(),true).orElseThrow(CustomerRepositoryImpl::stale);
+            if(!expected.equals(current.authVersion())||!Integer.valueOf(0).equals(current.deleted()))throw stale();
+            if(customer.getDeleted()!=null&&!java.util.Objects.equals(customer.getDeleted(),current.deleted()))
+                throw new IllegalArgumentException("删除客户须走原删除入口，不能通过普通资料保存改变");
+            Integer status=customer.getStatus()==null?current.status():customer.getStatus();
+            if(status==null||status!=1&&status!=2)throw new IllegalArgumentException("客户状态无效");
+            boolean changed=!java.util.Objects.equals(status,current.status());
+            if(changed&&expected==Long.MAX_VALUE)throw new IllegalStateException("客户授权版本已达上限，请人工处理");
+            long next=changed?expected+1:expected;
+            customer.setAuthVersion(next);
+            try {
+                int updated=mapper.updateByQuery(customer,QueryWrapper.create().where("id = ?",customer.getId()).and("auth_version = ?",expected));
+                if(updated!=1){
+                    // useAffectedRows=true时未修改任何字段可返回0；仅普通无变化保存可核当前版本后接受。
+                    var after=updated==0&&!changed?authState(customer.getId(),false).orElse(null):null;
+                    if(after==null||!expected.equals(after.authVersion())||!Integer.valueOf(0).equals(after.deleted()))throw stale();
+                }
+            } catch(RuntimeException error){customer.setAuthVersion(expected);throw error;}
         }
         return customer;
     }
+
+    @Override public Optional<com.agri_system.domain.customer.model.CustomerAuthState> findAuthStateById(Long id){return authState(id,false);}
+    private Optional<com.agri_system.domain.customer.model.CustomerAuthState> authState(Long id,boolean lock){
+        if(id==null||id<=0)throw new IllegalArgumentException("客户编号无效");
+        return jdbc.execute((org.springframework.jdbc.core.ConnectionCallback<Optional<com.agri_system.domain.customer.model.CustomerAuthState>>) connection->{
+            try(var statement=connection.prepareStatement("SELECT id,status,deleted,auth_version FROM customer WHERE id=?"+(lock?" FOR UPDATE":""))){
+                statement.setLong(1,id);try(var row=statement.executeQuery()){
+                    if(!row.next())return Optional.empty();long actual=row.getLong("id");int status=row.getInt("status");Integer state=row.wasNull()?null:status;
+                    int deleted=row.getInt("deleted");Integer removed=row.wasNull()?null:deleted;long version=row.getLong("auth_version");Long epoch=row.wasNull()?null:version;
+                    return Optional.of(new com.agri_system.domain.customer.model.CustomerAuthState(actual,state,removed,epoch));
+                }
+            }
+        });
+    }
+    private static IllegalStateException stale(){return new IllegalStateException("客户授权状态或版本已改变，请重新读取客户资料");}
     
     @Override
     public Optional<Customer> findById(Long id) {
@@ -117,11 +154,12 @@ public class CustomerRepositoryImpl implements CustomerRepository {
     
     @Override
     public void logicDelete(Long id) {
-        Customer customer = mapper.selectOneById(id);
-        if (customer != null) {
-            customer.setDeleted(1);
-            mapper.update(customer);
-        }
+        var current=authState(id,true).orElse(null);if(current==null||Integer.valueOf(1).equals(current.deleted()))return;
+        if(!Integer.valueOf(0).equals(current.deleted()))throw stale();
+        Long expected=current.authVersion();if(expected==null||expected<=0)throw stale();
+        if(expected==Long.MAX_VALUE)throw new IllegalStateException("客户授权版本已达上限，请人工处理");
+        int changed=jdbc.update("UPDATE customer SET deleted=1,auth_version=auth_version+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND auth_version=? AND (deleted=0 OR deleted IS NULL)",id,expected);
+        if(changed!=1)throw stale();
     }
 
     @Override

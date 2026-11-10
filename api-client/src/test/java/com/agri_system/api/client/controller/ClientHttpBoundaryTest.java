@@ -112,7 +112,7 @@ class ClientHttpBoundaryTest {
         Map<String, String> login(@RequestParam String id) {
             StpUtil.login(id,new cn.dev33.satoken.stp.SaLoginModel().setToken(java.util.UUID.randomUUID().toString()));
             // 仅此隔离测试配置的显式开发身份；不伪装真实微信登录。
-            StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","DEV"));
+            StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","DEV","customerAuthVersion","1"));
             return Map.of("token", StpUtil.getTokenValue());
         }
     }
@@ -121,8 +121,9 @@ class ClientHttpBoundaryTest {
         when(registrationTransactions.getTransaction(any())).thenAnswer(call->new org.springframework.transaction.support.SimpleTransactionStatus());
         ReflectionTestUtils.setField(authentication,"wechatAppId","");
         ReflectionTestUtils.setField(onboarding,"appId","");
-        Customer active = new Customer(); active.setId(101L); active.setStatus(1);
-        Customer disabled = new Customer(); disabled.setId(303L); disabled.setStatus(2);
+        Customer active = new Customer(); active.setId(101L); active.setStatus(1);active.setAuthVersion(1L);active.setDeleted(0);
+        Customer disabled = new Customer(); disabled.setId(303L); disabled.setStatus(2);disabled.setAuthVersion(1L);disabled.setDeleted(0);
+        when(customers.findAuthStateById(101L)).thenAnswer(call->Optional.of(new com.agri_system.domain.customer.model.CustomerAuthState(active.getId(),active.getStatus(),active.getDeleted(),active.getAuthVersion())));
         when(customers.findById(101L)).thenReturn(Optional.of(active));
         when(customers.findById(303L)).thenReturn(Optional.of(disabled));
         ReflectionTestUtils.setField(callbacks, "callbackSecret", "测试回调密钥");
@@ -146,6 +147,19 @@ class ClientHttpBoundaryTest {
         businessFailure(request(get("/api/client/orders/77"),token,null),10001);verifyNoInteractions(orders);
         identity.setStatus(1);ReflectionTestUtils.setField(authentication,"wechatAppId","wx2222222222222222");
         businessFailure(request(get("/auth/client/info"),token,null),10001);
+    }
+    @Test void actualWechatProfileRejectsOldCustomerGenerationEvenAfterReenabled()throws Exception {
+        String app="wx1111111111111111";ReflectionTestUtils.setField(authentication,"wechatAppId",app);
+        var platform=new WechatService.WechatLoginResult();platform.setAppId(app);platform.setOpenId("IT_CUSTOMER_EPOCH");platform.setSessionKey("IT_SESSION");when(wechat.jscode2session("epoch-code")).thenReturn(platform);
+        var identity=new com.agri_system.domain.auth.model.CustomerIdentity();identity.setId(17L);identity.setAppId(app);identity.setCustomerId(101L);identity.setIdentityType("WECHAT_OPENID");identity.setIdentityValue("IT_CUSTOMER_EPOCH");identity.setStatus(1);identity.setAuthVersion(1L);
+        when(identities.findWechatByAppAndOpenIdForUpdate(app,"IT_CUSTOMER_EPOCH")).thenReturn(Optional.of(identity));when(identities.findById(17L)).thenReturn(Optional.of(identity));
+        var customer=customers.findById(101L).orElseThrow();
+        String first=json.readTree(mvc.perform(post("/auth/client/login/wechat").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"epoch-code\"}")).andExpect(status().isOk()).andReturn().getResponse().getContentAsString()).path("tokenValue").asText();assertFalse(first.isBlank());
+        customer.setStatus(2);customer.setAuthVersion(2L);mvc.perform(get("/auth/client/info").header("Authorization",first)).andExpect(jsonPath("$.code").value(10001));
+        customer.setStatus(1);customer.setAuthVersion(3L);mvc.perform(get("/auth/client/info").header("Authorization",first)).andExpect(jsonPath("$.code").value(10001));
+        String fresh=json.readTree(mvc.perform(post("/auth/client/login/wechat").contentType(MediaType.APPLICATION_JSON).content("{\"code\":\"epoch-code\"}")).andReturn().getResponse().getContentAsString()).path("tokenValue").asText();assertFalse(fresh.isBlank());
+        mvc.perform(get("/auth/client/info").header("Authorization",fresh)).andExpect(jsonPath("$.customerId").value("101"));
+        mvc.perform(get("/auth/client/info").header("Authorization",first)).andExpect(jsonPath("$.code").value(10001));
     }
 
     private void preparePlatform() {

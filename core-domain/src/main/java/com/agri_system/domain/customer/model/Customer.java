@@ -79,6 +79,9 @@ public class Customer {
     
     /** 状态：1-正常，2-停用 */
     private Integer status;
+
+    /** 客户级登录撤销版本；与普通业务version、身份行auth_version分别维护。 */
+    private Long authVersion;
     
     /** 备注 */
     private String remark;

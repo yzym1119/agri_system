@@ -291,7 +291,7 @@ class AuthorityHttpIntegrationTest {
                 CREATE TABLE customer(id BIGINT PRIMARY KEY,code VARCHAR(50),name VARCHAR(100),company_name VARCHAR(100),tax_id VARCHAR(100),
                 invoice_title VARCHAR(100),invoice_bank VARCHAR(100),invoice_address VARCHAR(100),invoice_phone VARCHAR(50),phone VARCHAR(50),type INT,vip_level INT,
                 vip_start_date DATE,vip_end_date DATE,address VARCHAR(200),land_area DECIMAL(18,4),crop_type VARCHAR(100),id_card VARCHAR(50),credit_limit DECIMAL(18,2),
-                status INT,remark VARCHAR(200),created_at TIMESTAMP,updated_at TIMESTAMP,created_by BIGINT,updated_by BIGINT,total_order_count INT,
+                status INT,auth_version BIGINT NOT NULL DEFAULT 1,remark VARCHAR(200),created_at TIMESTAMP,updated_at TIMESTAMP,created_by BIGINT,updated_by BIGINT,total_order_count INT,
                 total_order_amount DECIMAL(18,2),last_order_time TIMESTAMP,bind_staff_id BIGINT,version INT,deleted INT)
                 """);
             jdbc.execute("CREATE TABLE `order`(id BIGINT PRIMARY KEY,store_id BIGINT,customer_id BIGINT,deleted INT)");

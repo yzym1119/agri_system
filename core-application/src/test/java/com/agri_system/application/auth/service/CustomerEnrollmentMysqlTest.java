@@ -43,7 +43,7 @@ class CustomerEnrollmentMysqlTest {
     @BeforeEach void setup()throws Exception {
         previous=TenantManager.getTenantFactory();TenantManager.setTenantFactory(null);
         String base="jdbc:mysql://"+System.getProperty("mysql.it.host","127.0.0.1")+":"+System.getProperty("mysql.it.port","3306")+"/";
-        String options="?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai",user=System.getProperty("mysql.it.user","root"),password=System.getProperty("mysql.it.password","");
+        String options="?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&useAffectedRows="+System.getProperty("mysql.it.useAffectedRows","false"),user=System.getProperty("mysql.it.user","root"),password=System.getProperty("mysql.it.password","");
         server=new JdbcTemplate(new DriverManagerDataSource(base+options,user,password));schema="agri_enrollment_it_"+UUID.randomUUID().toString().replace("-","");server.execute("CREATE DATABASE `"+schema+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");created=true;
         var source=new DriverManagerDataSource(base+schema+options,user,password);jdbc=new JdbcTemplate(source);
         try(var c=source.getConnection()){ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V3__customer.sql"));ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V8__wallet.sql"));}
@@ -51,12 +51,12 @@ class CustomerEnrollmentMysqlTest {
         jdbc.execute("ALTER TABLE customer_wallet ADD frozen_balance DECIMAL(10,2) NOT NULL DEFAULT 0");
         jdbc.execute("CREATE TABLE customer_identity(id BIGINT AUTO_INCREMENT PRIMARY KEY,customer_id BIGINT NOT NULL,identity_type VARCHAR(20) NOT NULL,identity_value VARCHAR(200) NOT NULL,session_key VARCHAR(255),status INT NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,UNIQUE KEY uk_identity_type_value(identity_type,identity_value),FOREIGN KEY(customer_id) REFERENCES customer(id))");
         jdbc.execute("CREATE TABLE sys_menu(id BIGINT AUTO_INCREMENT PRIMARY KEY,parent_id BIGINT,name VARCHAR(80),permission VARCHAR(80),type INT,path VARCHAR(100),icon VARCHAR(40),sort_order INT,visible INT)");
-        try(var c=source.getConnection()){for(String file:List.of("V143__wechat_identity_app_scope.sql","V144__customer_identity_auth_version.sql","V145__customer_identity_enrollment.sql"))ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/"+file));}
+        try(var c=source.getConnection()){for(String file:List.of("V143__wechat_identity_app_scope.sql","V144__customer_identity_auth_version.sql","V145__customer_identity_enrollment.sql","V146__customer_auth_version.sql"))ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/"+file));}
         var config=new FlexConfiguration(new Environment("enrollment",new SpringManagedTransactionFactory(),new FlexDataSource("enrollment",source,false)));config.setMapUnderscoreToCamelCase(true);
         // 与生产一样先初始化Flex全局配置，再注册实体Mapper；否则首次mapper得到NoKeyGenerator。
         var factory=new FlexSqlSessionFactoryBuilder().build(config);config.addMapper(CustomerMapper.class);config.addMapper(CustomerWalletMapper.class);config.addMapper(ConnectionProbe.class);var mapper=new SqlSessionTemplate(factory);jdbc=new JdbcTemplate(config.getEnvironment().getDataSource());
         tx=new TransactionTemplate(new JdbcAccessConfig().transactionManager(factory));tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-        customers=new CustomerRepositoryImpl(mapper.getMapper(CustomerMapper.class));creator=new CustomerRegistrationService(customers,new CustomerWalletRepositoryImpl(mapper.getMapper(CustomerWalletMapper.class)));
+        customers=new CustomerRepositoryImpl(mapper.getMapper(CustomerMapper.class),jdbc);creator=new CustomerRegistrationService(customers,new CustomerWalletRepositoryImpl(mapper.getMapper(CustomerWalletMapper.class)));
         identities=new CustomerIdentityRepositoryImpl(jdbc);requests=new CustomerIdentityEnrollmentRepositoryImpl(jdbc);staff=mock(StaffRepository.class);
         for(long id:new long[]{1,2}){var actor=new Staff();actor.setId(id);actor.setStatus(1);actor.setDeleted(0);when(staff.findIdentityById(id)).thenReturn(Optional.of(actor));}
         tx.execute(status->{assertEquals(jdbc.queryForObject("SELECT CONNECTION_ID()",Long.class),mapper.getMapper(ConnectionProbe.class).id());assertEquals("READ-COMMITTED",jdbc.queryForObject("SELECT @@transaction_isolation",String.class));return null;});
@@ -70,6 +70,83 @@ class CustomerEnrollmentMysqlTest {
     CustomerEnrollmentReviewService review(){return new CustomerEnrollmentReviewService(requests,identities,customers,staff);}
     long existing(String phone){var command=new CustomerCreateCommand();command.setName("原农户");command.setPhone(phone);return tx.execute(status->creator.create(command).getId());}
     int count(String table){return jdbc.queryForObject("SELECT COUNT(*) FROM "+table,Integer.class);}
+    @Test void customerDisableAndRestoreMustNotResurrectOldWechatSession(){
+        var input=command();register("CUSTOMER_LIFECYCLE",input);
+        var oldContext=cn.dev33.satoken.SaManager.getSaTokenContext();com.agri_system.application.support.SaTokenTestContext.setUp();
+        try {
+            var auth=new AuthService(staff,customers,identities,mock(WechatService.class),mock(com.agri_system.domain.system.auth.repository.SysRoleRepository.class),mock(com.agri_system.application.staff.service.StaffAuthorityService.class),mock(org.springframework.data.redis.core.StringRedisTemplate.class),new org.springframework.mock.env.MockEnvironment().withProperty("spring.profiles.active","test"));
+            org.springframework.test.util.ReflectionTestUtils.setField(auth,"wechatAppId",APP);
+            var platform=new WechatService.WechatLoginResult();platform.setAppId(APP);platform.setOpenId("CUSTOMER_LIFECYCLE");platform.setSessionKey("IT_SESSION_KEY");
+            tx.execute(status->auth.loginVerifiedWechat(platform));assertEquals(1L,auth.getCurrentCustomerId());
+            tx.execute(status->{var customer=customers.findById(1L).orElseThrow();customer.setStatus(2);customers.save(customer);return null;});
+            assertThrows(IllegalArgumentException.class,auth::getCurrentCustomerId);
+            tx.execute(status->{var customer=customers.findById(1L).orElseThrow();customer.setStatus(1);customers.save(customer);return null;});
+            assertThrows(IllegalArgumentException.class,auth::getCurrentCustomerId,"主档恢复启用不能复活停用前token");
+            tx.execute(status->auth.loginVerifiedWechat(platform));assertEquals(1L,auth.getCurrentCustomerId());assertEquals(1L,identities.findById(1L).orElseThrow().getAuthVersion());assertEquals(3,count("customer_wallet"));
+        } finally {com.agri_system.application.support.SaTokenTestContext.tearDown();cn.dev33.satoken.SaManager.setSaTokenContext(oldContext);}
+    }
+    @Test void customerMetadataDoesNotRevokeDevicesButStaleSnapshotCannotUndoDisable(){
+        long id=existing(PHONE);var stale=customers.findById(id).orElseThrow();assertEquals(1L,stale.getAuthVersion());
+        tx.execute(status->{var current=customers.findById(id).orElseThrow();current.setName("新资料");customers.save(current);return null;});assertEquals(1L,customers.findAuthStateById(id).orElseThrow().authVersion());
+        tx.execute(status->{var current=customers.findById(id).orElseThrow();current.setStatus(2);customers.save(current);return null;});
+        stale.setName("陈旧覆盖");assertThrows(IllegalStateException.class,()->tx.execute(status->customers.save(stale)));
+        var current=customers.findById(id).orElseThrow();assertEquals(2,current.getStatus());assertEquals(2L,current.getAuthVersion());assertEquals("新资料",current.getName());
+    }
+    @Test void logicalDeletionRevokesOnceAndCannotBeUndoneByOrdinarySave(){
+        long id=existing(PHONE);var stale=customers.findById(id).orElseThrow();
+        tx.execute(status->{customers.logicDelete(id);return null;});var state=customers.findAuthStateById(id).orElseThrow();assertEquals(1,state.deleted());assertEquals(2L,state.authVersion());assertTrue(customers.findById(id).isEmpty());
+        tx.execute(status->{customers.logicDelete(id);return null;});assertEquals(2L,customers.findAuthStateById(id).orElseThrow().authVersion());
+        assertThrows(IllegalStateException.class,()->tx.execute(status->customers.save(stale)));assertEquals(3,count("customer_wallet"));
+    }
+    @Test void authorityChangeAndOrdinaryMetadataRollBackTogetherOnActualFlexConnection(){
+        long id=existing(PHONE);
+        assertThrows(IllegalStateException.class,()->tx.execute(status->{var c=customers.findById(id).orElseThrow();c.setStatus(2);c.setName("不能提交的修改");customers.save(c);assertEquals(2L,customers.findAuthStateById(id).orElseThrow().authVersion());throw new IllegalStateException("IT_AUTHORITY_ROLLBACK");}));
+        var c=customers.findById(id).orElseThrow();assertEquals(1,c.getStatus());assertEquals(1L,c.getAuthVersion());assertEquals("原农户",c.getName());
+    }
+    @Test void missingStaleAndOverflowEpochNeverBecomeAnotherAuthorizationGeneration(){
+        long id=existing(PHONE);var missing=customers.findById(id).orElseThrow();missing.setAuthVersion(null);assertThrows(IllegalStateException.class,()->tx.execute(status->customers.save(missing)));
+        jdbc.update("UPDATE customer SET auth_version=? WHERE id=?",Long.MAX_VALUE,id);var full=customers.findById(id).orElseThrow();full.setStatus(2);assertThrows(IllegalStateException.class,()->tx.execute(status->customers.save(full)));
+        assertThrows(IllegalStateException.class,()->tx.execute(status->{customers.logicDelete(id);return null;}));assertEquals(1,customers.findAuthStateById(id).orElseThrow().status());assertEquals(Long.MAX_VALUE,customers.findAuthStateById(id).orElseThrow().authVersion());
+    }
+    @Test void V146AddsInitialEpochWithoutChangingLegacyCustomerOrWalletFacts()throws Exception {
+        long id=existing(PHONE);jdbc.update("UPDATE customer_wallet SET balance=123.45 WHERE customer_id=? AND wallet_type=1",id);
+        jdbc.execute("ALTER TABLE customer DROP COLUMN auth_version");try(var c=jdbc.getDataSource().getConnection()){ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V146__customer_auth_version.sql"));}
+        var original=customers.findById(id).orElseThrow();assertEquals(1L,original.getAuthVersion());assertEquals(1,original.getStatus());assertEquals(PHONE,original.getPhone());assertEquals(3,count("customer_wallet"));assertEquals(0,new java.math.BigDecimal("123.45").compareTo(jdbc.queryForObject("SELECT SUM(balance) FROM customer_wallet",java.math.BigDecimal.class)));
+    }
+    @Test void unchangedCustomerSaveIsValidWithAffectedRowsDriverSemantics(){
+        long id=existing(PHONE);var c=customers.findById(id).orElseThrow();tx.execute(status->customers.save(c));assertEquals(1L,customers.findAuthStateById(id).orElseThrow().authVersion());
+    }
+    @Test void unknownDeletionStateCannotBeMistakenForAnUnchangedSuccessfulSave(){
+        long id=existing(PHONE);jdbc.update("UPDATE customer SET deleted=NULL WHERE id=?",id);var unknown=customers.findByIdIncludingDeleted(id).orElseThrow();unknown.setName("不能静默假保存");
+        assertThrows(IllegalStateException.class,()->tx.execute(status->customers.save(unknown)));assertEquals("原农户",jdbc.queryForObject("SELECT name FROM customer WHERE id=?",String.class,id));
+    }
+    @Test void concurrentAuthoritySnapshotsHaveOneWinnerAndNeverRestoreOldState()throws Exception {
+        long id=existing(PHONE);var a=customers.findById(id).orElseThrow();var b=customers.findById(id).orElseThrow();a.setStatus(2);b.setStatus(2);
+        var executor=Executors.newFixedThreadPool(2);var gate=new CyclicBarrier(2);
+        try {
+            java.util.function.Function<com.agri_system.domain.customer.model.Customer,Callable<String>> run=c->()->{gate.await(10,TimeUnit.SECONDS);try{tx.execute(status->customers.save(c));return "SAVED";}catch(IllegalStateException stale){if(!stale.getMessage().startsWith("客户授权状态或版本已改变"))throw stale;return "STALE";}};
+            var first=executor.submit(run.apply(a));var second=executor.submit(run.apply(b));var results=List.of(first.get(20,TimeUnit.SECONDS),second.get(20,TimeUnit.SECONDS));assertEquals(1,results.stream().filter("SAVED"::equals).count());assertEquals(1,results.stream().filter("STALE"::equals).count());
+            var current=customers.findAuthStateById(id).orElseThrow();assertEquals(2,current.status());assertEquals(2L,current.authVersion());
+        }finally{executor.shutdownNow();executor.awaitTermination(10,TimeUnit.SECONDS);}
+    }
+    @Test void deletionMustWaitForOriginalCustomerLockBeforeCheckingConcurrentBalance()throws Exception {
+        long id=existing(PHONE);var walletRepo=mock(com.agri_system.domain.wallet.repository.CustomerWalletRepository.class);
+        when(walletRepo.findByCustomerIdAndWalletType(eq(id),anyInt())).thenAnswer(call->{
+            int type=call.getArgument(1);var w=new com.agri_system.domain.wallet.model.CustomerWallet();w.setCustomerId(id);w.setWalletType(type);w.setFrozenBalance(java.math.BigDecimal.ZERO);w.setBalance(jdbc.queryForObject("SELECT balance FROM customer_wallet WHERE customer_id=? AND wallet_type=?",java.math.BigDecimal.class,id,type));return Optional.of(w);
+        });
+        var domain=new com.agri_system.domain.customer.service.CustomerDomainService(walletRepo,mock(com.agri_system.domain.credit.repository.CreditAccountRepository.class),mock(com.agri_system.domain.order.repository.OrderRepository.class),mock(com.agri_system.domain.after_sales.repository.AfterSalesRepository.class),mock(com.agri_system.domain.marketing.points.repository.PointsExchangeOrderRepository.class));
+        var application=new com.agri_system.application.customer.service.CustomerApplicationService(customers,creator,staff,walletRepo,mock(com.agri_system.domain.wallet.repository.WalletTransactionRepository.class),mock(com.agri_system.domain.customer.repository.VipMonthlyRecordRepository.class),mock(com.agri_system.domain.customer.repository.CustomerBenefitLogRepository.class),mock(com.agri_system.domain.coupon.repository.CustomerCouponRepository.class),mock(com.agri_system.domain.product.repository.ProductCategoryRepository.class),domain,mock(com.agri_system.application.credit.service.CreditApplicationService.class));
+        var executor=Executors.newFixedThreadPool(2);var locked=new CountDownLatch(1);var release=new CountDownLatch(1);
+        try {
+            var credit=executor.submit(()->tx.execute(status->{customers.findByIdWithLock(id).orElseThrow();jdbc.update("UPDATE customer_wallet SET balance=123.45 WHERE customer_id=? AND wallet_type=1",id);locked.countDown();try{if(!release.await(10,TimeUnit.SECONDS))throw new IllegalStateException("IT_RELEASE_TIMEOUT");}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException(e);}return null;}));
+            assertTrue(locked.await(5,TimeUnit.SECONDS));
+            var deletion=executor.submit(()->{try{tx.execute(status->{application.deleteCustomer(id);return null;});return (Throwable)null;}catch(RuntimeException error){return error;}});
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(5);boolean waiting=false;
+            while(System.nanoTime()<deadline){if(server.queryForObject("SELECT COUNT(*) FROM performance_schema.data_locks WHERE OBJECT_SCHEMA=? AND OBJECT_NAME='customer' AND LOCK_STATUS='WAITING'",Integer.class,schema)>0){waiting=true;break;}Thread.sleep(10);}
+            assertTrue(waiting,"删除流程必须实际等待原客户锁，不以固定睡眠猜并发时机");release.countDown();credit.get(5,TimeUnit.SECONDS);
+            assertInstanceOf(IllegalArgumentException.class,deletion.get(5,TimeUnit.SECONDS));var current=customers.findAuthStateById(id).orElseThrow();assertEquals(0,current.deleted());assertEquals(1L,current.authVersion());
+        }finally{release.countDown();executor.shutdownNow();executor.awaitTermination(10,TimeUnit.SECONDS);}
+    }
     @Test void unmatchedPhoneCreatesExactlyOneOrdinaryCustomerThreeZeroWalletsIdentityAndResult(){
         var input=command();assertEquals("CREATED",register("NEW",input).status());assertEquals("CREATED",register("NEW",input).status());
         assertEquals(1,count("customer"));assertEquals(3,count("customer_wallet"));assertEquals(1,count("customer_identity"));assertEquals(1,count("customer_identity_enrollment"));assertEquals(0,count("wallet_transaction"));
