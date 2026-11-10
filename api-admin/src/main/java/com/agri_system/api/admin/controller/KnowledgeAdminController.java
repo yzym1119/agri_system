@@ -27,6 +27,7 @@ public class KnowledgeAdminController {
     public record Decision(@NotBlank @Pattern(regexp="[1-9][0-9]{0,18}") String expectedVersion,@NotBlank @Size(max=500) String reason) {}
     @ModelAttribute public void noCache(jakarta.servlet.http.HttpServletResponse response){response.setHeader("Cache-Control","no-store");}
     @GetMapping public KnowledgeRevisionService.Page page(@RequestParam(required=false) Long storeId,@RequestParam(required=false) Long after){return service.page(CurrentUser.staffId(),storeId,after);}
+    @GetMapping("/{logicalKey}/latest") public KnowledgeRevisionService.Detail latest(@PathVariable String logicalKey){return service.latest(CurrentUser.staffId(),logicalKey);}
     @GetMapping("/{logicalKey}/revisions/{revision}") public KnowledgeRevisionService.Detail detail(@PathVariable String logicalKey,@PathVariable int revision){return service.detail(CurrentUser.staffId(),logicalKey,revision);}
     @GetMapping("/submissions/{requestKey}") public KnowledgeRevisionService.Submission submission(@PathVariable String requestKey){return service.submission(CurrentUser.staffId(),requestKey);}
     @PostMapping

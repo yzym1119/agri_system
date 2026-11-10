@@ -1,0 +1,36 @@
+{
+  "actualBrowserUi": true,
+  "actualSharedClientHttp": true,
+  "fixedCreateUnknownAfterActualCommit": true,
+  "pageReloadRecoveredOriginal": true,
+  "originalRequestUnchanged": true,
+  "actualAppendHandlerCount": 1,
+  "allAspectEntries": 2,
+  "extraNoCacheAspectEntries": 1,
+  "history": [
+    "1\tWITHDRAWN\t4\ta269345606689dc34e6b8d392c522a1248dbbc4966092f6d3e8573a5bc479d9f",
+    "2\tDRAFT\t1\te323e2f70977364ef675dbfb05b9f06f037187a9977722a78a9feab1a0f66ead"
+  ],
+  "businessAuditActions": [
+    "保存知识草稿",
+    "审核知识",
+    "发布知识",
+    "保存知识草稿",
+    "撤回知识"
+  ],
+  "baseline": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0,
+    "customer_wallet": 0
+  },
+  "after": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0,
+    "customer_wallet": 0
+  },
+  "rolesRestored": true,
+  "finalPublicKnowledgeEmpty": true,
+  "nativeWechatOrPhoneAcceptance": false
+}

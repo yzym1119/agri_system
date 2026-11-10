@@ -1,0 +1,17 @@
+<script setup lang="ts">
+import {ref} from 'vue';import {onLoad,onShow,onHide,onUnload} from '@dcloudio/uni-app';
+import {knowledgeScope,isKnowledgeKey} from '@agri/mobile-contracts/customer-knowledge';import type {KnowledgeScope,KnowledgeArticle} from '@agri/mobile-contracts/customer-knowledge';
+import {publicKnowledge,serviceConfigured} from '../../../services/runtime';import {largeText} from '../../../services/preferences';
+const article=ref<KnowledgeArticle|null>(null),busy=ref(false),error=ref('');let visible=false,generation=0,key='',revision=0,scope:KnowledgeScope|null=null;
+onLoad(options=>{key='';revision=0;scope=null;article.value=null;++generation;try{if(!isKnowledgeKey(options?.logicalKey)||typeof options?.revision!=='string'||! /^[1-9][0-9]{0,9}$/.test(options.revision)||Number(options.revision)>2147483647||typeof options.scope!=='string'||options.scope.length>4096)throw Error();const raw=options.scope.startsWith('{')?options.scope:decodeURIComponent(options.scope);scope=knowledgeScope(JSON.parse(raw));key=options.logicalKey;revision=Number(options.revision)}catch{error.value='知识链接或适用范围无效，请返回列表重新选择。'}});
+async function load(){if(!visible)return;article.value=null;if(!key||!revision||!scope){error.value='知识链接或适用范围无效，请返回列表重新选择。';return}if(!serviceConfigured){error.value='门店服务暂未连接，请稍后再试。';return}const ticket=++generation,original={...scope};busy.value=true;error.value='';try{const value=await publicKnowledge.detail(key,revision,original);if(visible&&ticket===generation)article.value=value}catch{if(visible&&ticket===generation){article.value=null;error.value='这份知识可能已更新、撤回或超过适用期限，请返回列表重新选择。'}}finally{if(visible&&ticket===generation)busy.value=false}}
+function list(){uni.redirectTo({url:'/pages/knowledge/list/index'})}function home(){uni.reLaunch({url:'/pages/home/index'})}
+onShow(async()=>{visible=true;await load()});function hide(){visible=false;++generation;busy.value=false;article.value=null}onHide(hide);onUnload(hide);
+</script>
+<template>
+ <view class="customer-page" :class="{'large-text':largeText}"><ReadingHeader title="知识详情"/><text v-if="busy" class="loading">正在核对这份知识…</text><view v-if="error" class="notice" role="alert">{{error}}</view>
+  <template v-if="article"><text class="title">{{article.article.title}}</text><text class="paragraph secondary">{{article.article.summary}}</text><view class="panel"><text class="panel-title">先确认适用范围</text><text class="paragraph">地区：{{article.article.scope.region}}</text><text class="paragraph">作物：{{article.article.scope.crop}}</text><text class="paragraph">阶段：{{article.article.scope.growthStage}}</text><text class="help">与您的实际情况不一致，或拿不准时，请联系门店。</text></view>
+   <view class="section"><text class="panel-title">什么情况下适用</text><text class="multiline">{{article.appliesTo}}</text></view><view class="section"><text class="panel-title">什么情况下不适用</text><text class="multiline">{{article.exclusions}}</text></view><view class="section"><text class="panel-title">具体内容与步骤</text><text class="multiline">{{article.body}}</text></view><view class="section"><text class="panel-title">依据与来源</text><text class="multiline secondary">{{article.sourceText}}</text></view><text class="help">第{{article.article.revision}}版 · 审核日期 {{article.article.reviewedAt.slice(0,10)}}</text><text class="help">适用期限：{{article.effectiveFrom}} 至 {{article.article.effectiveUntil}}</text>
+  </template><button class="button button-secondary" @tap="list">返回知识列表</button><button class="button button-secondary" @tap="home">返回首页联系门店</button>
+ </view>
+</template>

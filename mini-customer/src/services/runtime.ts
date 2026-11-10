@@ -1,6 +1,7 @@
 import { createCustomerAuth } from '@agri/mobile-contracts/customer-session';
 import { createCustomerEnrollment } from '@agri/mobile-contracts/customer-enrollment';
 import { createPublicCatalog } from '@agri/mobile-contracts/customer-catalog';
+import { createPublicKnowledge } from '@agri/mobile-contracts/customer-knowledge';
 import { createMobilePlatform, type SecureRandomPort } from '@agri/mobile-contracts';
 import { createCustomerTransport } from './transport';
 
@@ -8,6 +9,7 @@ declare const wx: SecureRandomPort & { getAccountInfoSync(): { miniProgram: { ap
 const transport = createCustomerTransport(import.meta.env.VITE_API_BASE_URL ?? '', import.meta.env.DEV, options => uni.request(options));
 export const serviceConfigured = transport.configured;
 export const publicCatalog = createPublicCatalog(transport.sendPublic);
+export const publicKnowledge = createPublicKnowledge(transport.sendPublic);
 export const customerAuth = createCustomerAuth(transport.send, () => {
   if (!serviceConfigured) return Promise.reject(Error('SERVICE_NOT_CONFIGURED'));
   return new Promise((resolve, reject) => uni.login({ provider: 'weixin', timeout: 10000,

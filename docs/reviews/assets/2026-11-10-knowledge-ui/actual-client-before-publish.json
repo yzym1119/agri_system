@@ -1,0 +1,29 @@
+{
+  "phase": "before-publish",
+  "actualSharedClientHttp": true,
+  "scopes": [],
+  "page": {
+    "rows": [],
+    "nextAfter": null
+  },
+  "detail": null,
+  "requests": [
+    {
+      "path": "/api/public/agronomy/knowledge/scopes",
+      "query": {},
+      "status": 200,
+      "authorizationSent": false
+    },
+    {
+      "path": "/api/public/agronomy/knowledge",
+      "query": {
+        "region": "虚构页面地区",
+        "crop": "测试作物",
+        "growthStage": "测试阶段"
+      },
+      "status": 200,
+      "authorizationSent": false
+    }
+  ],
+  "internalFieldsAbsent": true
+}

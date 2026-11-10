@@ -17,6 +17,7 @@ async function loadStores(more=false){
 onShow(async()=>{visible=true;snapshot.value=customerAuth.current();await loadStores();});
 function hide(){visible=false;++generation;storeLoading.value=false;}onHide(hide);onUnload(hide);
 function openCatalog(){uni.navigateTo({url:'/pages/catalog/list/index'});}
+function openKnowledge(){uni.navigateTo({url:'/pages/knowledge/list/index'});}
 function dialable(phone:string){const n=phone.replace(/[() -]/g,'');return /^\+?[0-9]{7,20}$/.test(n)?n:'';}
 function callStore(store:PublicStore){const phoneNumber=dialable(store.phone);if(!phoneNumber)return;const ticket=generation;uni.makePhoneCall({phoneNumber,fail:()=>{if(visible&&ticket===generation)storeError.value='未能拨打电话，您也可以先查看门店地址。';}});}
 function copyAddress(store:PublicStore){const ticket=generation;uni.setClipboardData({data:store.address,fail:()=>{if(visible&&ticket===generation)storeError.value='地址没有复制成功，请重试。';}});}
@@ -29,8 +30,8 @@ function openAccount() {
   <view class="customer-page with-navigation" :class="{ 'large-text': largeText }">
     <CustomerNavigation active="home" />
     <ReadingHeader title="门店服务" />
-    <view class="title"><text>先看商品，</text><text class="title-line">有事找门店。</text></view>
-    <text class="paragraph secondary">商品资料可以直接查看，不用先登录。</text>
+    <view class="title"><text>门店资料随手查，</text><text class="title-line">有事直接联系。</text></view>
+    <text class="paragraph secondary">商品资料可以直接查看，不用先登录。种植情况拿不准时，请联系门店。</text>
     <button class="button" hover-class="button-pressed" @tap="openCatalog">查询商品</button>
     <view v-if="!serviceConfigured" class="notice">门店服务暂未连接。您可以先了解登录流程，稍后再试。</view>
     <view class="section">
@@ -41,6 +42,7 @@ function openAccount() {
       <view v-for="store in stores" :key="store.storeId" class="panel"><text class="panel-title">{{ store.name }}</text><text class="paragraph">{{ store.phone }}</text><text class="paragraph secondary">{{ store.address }}</text><button v-if="dialable(store.phone)" class="button" hover-class="button-pressed" @tap="callStore(store)">拨打门店电话</button><button class="button button-secondary" hover-class="button-pressed" @tap="copyAddress(store)">复制地址</button></view>
       <button v-if="nextAfter" class="button button-secondary" hover-class="button-pressed" :disabled="storeLoading" @tap="loadStores(true)">更多门店</button>
     </view>
+    <button class="button button-secondary" hover-class="button-pressed" @tap="openKnowledge">查看门店已审核资料</button>
     <button class="button button-secondary" hover-class="button-pressed" @tap="openAccount">{{ snapshot.kind === 'CUSTOMER' ? '查看我的资料' : '登录核对本人档案' }}</button>
     <text class="help">如需农技咨询或核对订单、账款，请联系门店。进入首页不会自动开通客户档案。</text>
   </view>

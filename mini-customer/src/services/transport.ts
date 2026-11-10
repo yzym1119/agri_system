@@ -27,7 +27,9 @@ export function createCustomerTransport(value: string, development: boolean, req
       if (!base) throw Error('SERVICE_NOT_CONFIGURED');
       const list=input.path==='/api/public/catalog/products',stores=input.path==='/api/public/stores';
       const detail=/^\/api\/public\/catalog\/products\/[1-9][0-9]{0,18}$/.test(input.path);
-      if(!list&&!stores&&!detail||!input.query||Object.entries(input.query).some(([key,value])=>typeof value!=='string'||value.length>100||/[\u0000-\u001f\u007f]/.test(value)||!(key==='after'&&(list||stores)||key==='keyword'&&list||key==='unit'&&detail)))throw Error('PUBLIC_REQUEST_INVALID');
+      const knowledgeList=input.path==='/api/public/agronomy/knowledge',knowledgeScopes=input.path==='/api/public/agronomy/knowledge/scopes';
+      const knowledgeDetail=/^\/api\/public\/agronomy\/knowledge\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(input.path);
+      if(!list&&!stores&&!detail&&!knowledgeList&&!knowledgeScopes&&!knowledgeDetail||!input.query||Object.entries(input.query).some(([key,value])=>typeof value!=='string'||value.length>100||/[\u0000-\u001f\u007f]/.test(value)||!(key==='after'&&(list||stores||knowledgeList)||key==='keyword'&&(list||knowledgeList)||key==='unit'&&detail||['region','crop','growthStage'].includes(key)&&(knowledgeList||knowledgeDetail)||key==='expectedRevision'&&knowledgeDetail)))throw Error('PUBLIC_REQUEST_INVALID');
       const query=Object.entries(input.query).map(([key,value])=>encodeURIComponent(key)+'='+encodeURIComponent(value)).join('&');
       return new Promise((resolve,reject)=>{
         try{request({url:base+input.path+(query?'?'+query:''),method:'GET',header:{'Content-Type':'application/json'},timeout:10000,success:response=>resolve({statusCode:response.statusCode,data:response.data}),fail:()=>reject(Error('NETWORK_FAILED'))});}

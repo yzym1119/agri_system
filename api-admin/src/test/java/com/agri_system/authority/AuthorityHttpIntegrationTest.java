@@ -393,14 +393,15 @@ class AuthorityHttpIntegrationTest {
         when(knowledge.page(4L,null,null)).thenReturn(new com.agri_system.application.agronomy.service.KnowledgeRevisionService.Page(List.of(),null));
         var detail=new com.agri_system.application.agronomy.service.KnowledgeRevisionService.Detail("1",key,1,"1",null,"0".repeat(64),"DRAFT","DRAFT","1",null);
         when(knowledge.create(org.mockito.ArgumentMatchers.eq(4L),org.mockito.ArgumentMatchers.isNull(),any())).thenReturn(detail);
+        when(knowledge.latest(4L,key)).thenReturn(detail);
         when(knowledge.change(org.mockito.ArgumentMatchers.eq(4L),org.mockito.ArgumentMatchers.eq(key),org.mockito.ArgumentMatchers.eq(1),org.mockito.ArgumentMatchers.eq("1"),any(),org.mockito.ArgumentMatchers.eq("test review"))).thenReturn(detail);
         ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query,write)))));
-        assertTrue(call(token,"GET",base+"?staffId=99",null).path("rows").isArray());assertEquals("1",call(token,"POST",base,draft).path("id").asText());reject(call(token,"POST",target+"/review",decision));reject(call(token,"POST",target+"/publish",decision));
+        assertTrue(call(token,"GET",base+"?staffId=99",null).path("rows").isArray());assertEquals("1",call(token,"GET",base+"/"+key+"/latest?staffId=99",null).path("id").asText());assertEquals("1",call(token,"POST",base,draft).path("id").asText());reject(call(token,"POST",target+"/review",decision));reject(call(token,"POST",target+"/publish",decision));
         ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query,review)))));
         assertEquals("1",call(token,"POST",target+"/review",decision).path("id").asText());reject(call(token,"POST",base,draft));reject(call(token,"POST",target+"/publish",decision));
         ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query,publish)))));
         assertEquals("1",call(token,"POST",target+"/publish",decision).path("id").asText());assertEquals("1",call(token,"POST",target+"/withdraw",decision).path("id").asText());
-        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(publish)))));reject(call(token,"GET",base,null));reject(call(token,"POST",target+"/publish",decision));
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(publish)))));reject(call(token,"GET",base,null));reject(call(token,"GET",base+"/"+key+"/latest",null));reject(call(token,"POST",target+"/publish",decision));
         org.mockito.Mockito.verify(knowledge).page(4L,null,null);org.mockito.Mockito.verify(knowledge).change(4L,key,1,"1","REVIEW","test review");
     }
 

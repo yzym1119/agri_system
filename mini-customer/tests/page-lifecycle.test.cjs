@@ -3,12 +3,12 @@ const {parse,compileScript}=require('@vue/compiler-sfc');const vue=require('vue'
 const {createCustomerAuth}=require('../../packages/mobile-contracts/dist/customer-session.js');
 const linked=(id=7)=>({state:'LINKED',login:{tokenName:'Authorization',tokenValue:'fictional-'+id,userInfo:{id,name:'验收农户',role:'NORMAL',extra:{bindingState:'LINKED'}}}});
 const ok=data=>({statusCode:200,data});const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{promise,resolve}};
-function page(name,auth,enrollment={},configured=true,catalog={stores:async()=>({rows:[],nextAfter:null})},platform={}){
+function page(name,auth,enrollment={},configured=true,catalog={stores:async()=>({rows:[],nextAfter:null})},platform={},knowledge={scopes:async()=>[]}){
  const file=path.join(__dirname,'../src/pages',name,'index.vue'),{descriptor}=parse(fs.readFileSync(file,'utf8')),script=compileScript(descriptor,{id:name}),module={exports:{}},hooks={},routes=[];
- const runtime={customerAuth:auth,customerEnrollment:enrollment,publicCatalog:catalog,serviceConfigured:configured,errorText:()=> '网络或资料暂未确认'};
- const imports={vue,'@dcloudio/uni-app':{onShow:cb=>hooks.show=cb,onHide:cb=>hooks.hide=cb,onUnload:cb=>hooks.unload=cb,onLoad:cb=>hooks.load=cb},'@agri/mobile-contracts/ids':require('../../packages/mobile-contracts/dist/ids.js'),'../../services/runtime':runtime,'../../../services/runtime':runtime,'../../services/preferences':{largeText:vue.ref(false)},'../../../services/preferences':{largeText:vue.ref(false)}};
+ const runtime={customerAuth:auth,customerEnrollment:enrollment,publicCatalog:catalog,publicKnowledge:knowledge,serviceConfigured:configured,errorText:()=> '网络或资料暂未确认'};
+ const imports={vue,'@dcloudio/uni-app':{onShow:cb=>hooks.show=cb,onHide:cb=>hooks.hide=cb,onUnload:cb=>hooks.unload=cb,onLoad:cb=>hooks.load=cb},'@agri/mobile-contracts/ids':require('../../packages/mobile-contracts/dist/ids.js'),'@agri/mobile-contracts/customer-knowledge':require('../../packages/mobile-contracts/dist/customer-knowledge.js'),'../../services/runtime':runtime,'../../../services/runtime':runtime,'../../services/preferences':{largeText:vue.ref(false)},'../../../services/preferences':{largeText:vue.ref(false)}};
  const config=JSON.parse(fs.readFileSync(path.join(__dirname,'../src/pages.json'),'utf8'));
- const route=(options,tab=false)=>{assert.ok((tab?config.tabBar?.list||[]:config.pages).some(p=>'/'+(p.pagePath||p.path)===options.url),'unregistered route '+options.url);routes.push(options.url)};
+ const route=(options,tab=false)=>{assert.ok((tab?config.tabBar?.list||[]:config.pages).some(p=>'/'+(p.pagePath||p.path)===options.url.split('?')[0]),'unregistered route '+options.url);routes.push(options.url)};
  vm.runInNewContext(ts.transpileModule(script.content,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,{module,exports:module.exports,Error,console,uni:{navigateTo:o=>route(o),reLaunch:o=>route(o),switchTab:o=>route(o,true),...platform},require:key=>{assert.ok(key in imports,key);return imports[key]}});
  return {state:module.exports.default.setup({}, {expose(){}}),hooks,routes};
 }
@@ -64,4 +64,23 @@ test('切换销售单位的旧参考价不能盖掉当前选择，无效商品ID
  const auth=createCustomerAuth(async()=>{throw Error()},async()=> 'wx'),catalog={product:()=>++reads===1?Promise.resolve(sample('瓶')):reads===2?a.promise:b.promise};
  const view=page('catalog/detail',auth,{},true,catalog);view.hooks.load({productId:'7'});await view.hooks.show();const old=view.state.selectUnit('箱');const latest=view.state.selectUnit('瓶');b.resolve(sample('瓶'));await latest;a.resolve(sample('箱'));await old;assert.equal(view.state.detail.value.referencePrice.unitName,'瓶');
  const bad=page('catalog/detail',auth,{},true,catalog);bad.hooks.load({productId:'90071992547409930000'});await bad.hooks.show();assert.equal(reads,3);
+});
+test('知识必须主动选全范围，切地区后旧结果不得混入，游客不登录',async()=>{
+ const a=deferred(),b=deferred();let calls=0;const scopes=[{region:'大庆',crop:'玉米',growthStage:'苗期'},{region:'外地',crop:'水稻',growthStage:'苗期'}];
+ const auth=createCustomerAuth(async()=>{throw Error('no login')},async()=>{throw Error('no login')}),api={scopes:async()=>scopes,page:()=>++calls===1?a.promise:b.promise};
+ const view=page('knowledge/list',auth,{},true,{}, {},api);await view.hooks.show();assert.equal(calls,0);await view.state.search();assert.equal(calls,0);
+ for(const name of ['selectRegion','selectCrop','selectStage'])view.state[name]({detail:{value:'0'}});const first=view.state.search();
+ view.state.selectRegion({detail:{value:'1'}});view.state.selectCrop({detail:{value:'0'}});view.state.selectStage({detail:{value:'0'}});const second=view.state.search();
+ b.resolve({rows:[{id:'2',logicalKey:'11111111-1111-4111-8111-111111111111',revision:1,title:'当前地区',scope:scopes[1]}],nextAfter:null});await second;a.resolve({rows:[{id:'1',title:'旧地区',scope:scopes[0]}],nextAfter:null});await first;
+ assert.equal(view.state.rows.value[0].title,'当前地区');assert.equal(auth.current().kind,'GUEST');view.state.open(view.state.rows.value[0]);assert.match(view.routes[0],/pages\/knowledge\/detail\/index\?/);
+});
+test('知识重新进入时重读范围，已撤回的旧范围不保留旧文章',async()=>{
+ const scope={region:'大庆',crop:'玉米',growthStage:'苗期'};let available=true;const auth=createCustomerAuth(async()=>{throw Error()},async()=> 'unused');
+ const view=page('knowledge/list',auth,{},true,{}, {},{scopes:async()=>available?[scope]:[],page:async()=>({rows:[{id:'1',title:'原文章',scope}],nextAfter:null})});await view.hooks.show();for(const name of ['selectRegion','selectCrop','selectStage'])view.state[name]({detail:{value:'0'}});await view.state.search();assert.equal(view.state.rows.value.length,1);view.hooks.hide();available=false;await view.hooks.show();assert.equal(view.state.rows.value.length,0);assert.equal(view.state.region.value,'');
+});
+test('知识详情固定原版本和完整范围，旧失败不留旧正文，非法参数零请求',async()=>{
+ const scope={region:'大庆%20区',crop:'玉米',growthStage:'苗期'},key='11111111-1111-4111-8111-111111111111',auth=createCustomerAuth(async()=>{throw Error()},async()=> 'unused');let calls=0,failed=false;
+ const api={detail:async(k,n,s)=>{calls++;assert.equal(k,key);assert.equal(n,1);assert.equal(s.region,scope.region);if(failed)throw Error('withdrawn');return{article:{id:'1',logicalKey:key,revision:1,title:'文章',scope},body:'原正文'}}};
+ const view=page('knowledge/detail',auth,{},true,{}, {},api);view.hooks.load({logicalKey:key,revision:'1',scope:encodeURIComponent(JSON.stringify(scope))});await view.hooks.show();assert.equal(view.state.article.value.body,'原正文');view.hooks.hide();failed=true;await view.hooks.show();assert.equal(view.state.article.value,null);assert.match(view.state.error.value,/更新|撤回/);
+ const bad=page('knowledge/detail',auth,{},true,{}, {},api);bad.hooks.load({logicalKey:key,revision:'1.5',scope:JSON.stringify(scope)});await bad.hooks.show();assert.equal(calls,2);
 });

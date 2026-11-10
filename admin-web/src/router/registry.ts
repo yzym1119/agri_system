@@ -72,6 +72,15 @@ const parentGroups: Record<ParentKey, RouteRecordRaw> = {
 
 const routeDefinitions: RouteDefinition[] = [
   {
+    name: 'AgronomyKnowledge',
+    path: 'agronomy/knowledge',
+    component: () => import('@/views/agronomy/knowledge/index.vue'),
+    permissions: ['agronomy:knowledge:query'],
+    title: '农技知识',
+    icon: 'Reading',
+    menuPath: '/agronomy/knowledge'
+  },
+  {
     name: 'Dashboard',
     path: 'dashboard',
     component: () => import('@/views/dashboard/index.vue'),

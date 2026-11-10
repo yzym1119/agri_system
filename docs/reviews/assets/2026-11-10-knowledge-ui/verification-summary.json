@@ -1,0 +1,39 @@
+{
+  "date": "2026-11-10",
+  "baseline": "e01339a",
+  "backend": {
+    "reports": 178,
+    "tests": 1156,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "frontend": {
+    "shared": {
+      "tests": 110,
+      "failures": 0
+    },
+    "admin": {
+      "tests": 320,
+      "failures": 0
+    },
+    "customer": {
+      "tests": 19,
+      "failures": 0
+    },
+    "staff": {
+      "tests": 135,
+      "failures": 0
+    }
+  },
+  "acceptance": {
+    "actualAdminBrowser": true,
+    "actualSharedClientHttp": true,
+    "committedResponseLossRecovered": true,
+    "nativeWechat": false,
+    "android": false,
+    "iPhone": false,
+    "aiConnected": false,
+    "originalEnvironmentChanged": false
+  }
+}

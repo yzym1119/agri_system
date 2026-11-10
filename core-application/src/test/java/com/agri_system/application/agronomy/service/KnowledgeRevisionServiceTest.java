@@ -89,4 +89,9 @@ class KnowledgeRevisionServiceTest {
         var command=draft(key,0,content("INTERNAL_BODY_SENTINEL","INTERNAL","REQUIRES_HUMAN"));
         assertFalse(com.agri_system.domain.common.log.LogMaskingUtils.mask(command).contains("INTERNAL_BODY_SENTINEL"));
     }
+    @Test void editingAnOldVersionCanReadActualLatestRevisionWithoutChangingTheOldBody(){
+        service.create(9L,null,draft(key,0,content("原文","PUBLIC","LOW")));service.create(9L,key,draft(next,1,content("新版","PUBLIC","LOW")));
+        assertEquals(2,service.latest(9L,key).revision());assertEquals("原文",service.detail(9L,key,1).content().body());
+        var moved=new Staff();moved.setId(9L);moved.setStoreId(2L);moved.setStatus(1);moved.setDeleted(0);when(staff.findIdentityById(9L)).thenReturn(Optional.of(moved));assertThrows(IllegalArgumentException.class,()->service.latest(9L,key));
+    }
 }

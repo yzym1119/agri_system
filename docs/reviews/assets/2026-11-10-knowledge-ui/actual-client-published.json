@@ -1,0 +1,82 @@
+{
+  "phase": "published",
+  "actualSharedClientHttp": true,
+  "scopes": [
+    {
+      "region": "虚构页面地区",
+      "crop": "测试作物",
+      "growthStage": "测试阶段"
+    }
+  ],
+  "page": {
+    "rows": [
+      {
+        "id": "4",
+        "logicalKey": "1aad1be9-9b69-4714-982e-a52f9c0c19f2",
+        "revision": 1,
+        "title": "虚构页面验收知识-20261110",
+        "summary": "仅验证页面保存、审核与发布，不构成农技建议。",
+        "scope": {
+          "region": "虚构页面地区",
+          "crop": "测试作物",
+          "growthStage": "测试阶段"
+        },
+        "effectiveUntil": "2026-12-10",
+        "reviewedAt": "2026-11-10T18:15"
+      }
+    ],
+    "nextAfter": null
+  },
+  "detail": {
+    "article": {
+      "id": "4",
+      "logicalKey": "1aad1be9-9b69-4714-982e-a52f9c0c19f2",
+      "revision": 1,
+      "title": "虚构页面验收知识-20261110",
+      "summary": "仅验证页面保存、审核与发布，不构成农技建议。",
+      "scope": {
+        "region": "虚构页面地区",
+        "crop": "测试作物",
+        "growthStage": "测试阶段"
+      },
+      "effectiveUntil": "2026-12-10",
+      "reviewedAt": "2026-11-10T18:15"
+    },
+    "body": "虚构页面流程第一行。\n第二行用于验证正文换行。",
+    "appliesTo": "仅限本机软件验收。\n用于验证换行保留。",
+    "exclusions": "不适用于任何真实农事操作，不作为农技处方。",
+    "sourceText": "虚构软件流程来源，仅用于本轮本机验收。",
+    "effectiveFrom": "2026-11-10",
+    "contentHash": "a269345606689dc34e6b8d392c522a1248dbbc4966092f6d3e8573a5bc479d9f"
+  },
+  "requests": [
+    {
+      "path": "/api/public/agronomy/knowledge/scopes",
+      "query": {},
+      "status": 200,
+      "authorizationSent": false
+    },
+    {
+      "path": "/api/public/agronomy/knowledge",
+      "query": {
+        "region": "虚构页面地区",
+        "crop": "测试作物",
+        "growthStage": "测试阶段"
+      },
+      "status": 200,
+      "authorizationSent": false
+    },
+    {
+      "path": "/api/public/agronomy/knowledge/1aad1be9-9b69-4714-982e-a52f9c0c19f2",
+      "query": {
+        "region": "虚构页面地区",
+        "crop": "测试作物",
+        "growthStage": "测试阶段",
+        "expectedRevision": "1"
+      },
+      "status": 200,
+      "authorizationSent": false
+    }
+  ],
+  "internalFieldsAbsent": true
+}

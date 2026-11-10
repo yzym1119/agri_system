@@ -24,3 +24,11 @@ test('公开请求独立白名单且不带登录凭据，不能借公开路径�
  for(const request of [{path:'/api/admin/stores',query:{}},{path:'/auth/client/info',query:{}},{path:'/api/public/catalog/products',query:{customerId:'7'}},{path:'/api/public/stores?token=x',query:{}}])await assert.rejects(source.sendPublic(request),/PUBLIC_REQUEST_INVALID/);
  assert.equal(calls.length,1);
 });
+test('知识匿名查询只允许固定只读路径和完整白名单参数，不携带客户凭据',async()=>{
+ const {createCustomerTransport}=transport();const requests=[];const source=createCustomerTransport('https://example.test',false,o=>{requests.push(o);o.success({statusCode:200,data:[]})});
+ await source.sendPublic({path:'/api/public/agronomy/knowledge/scopes',query:{},header:{Authorization:'must-not-send'}});
+ await source.sendPublic({path:'/api/public/agronomy/knowledge',query:{region:'大庆',crop:'玉米',growthStage:'苗期'}});
+ await source.sendPublic({path:'/api/public/agronomy/knowledge/11111111-1111-4111-8111-111111111111',query:{region:'大庆',crop:'玉米',growthStage:'苗期',expectedRevision:'1'}});
+ assert.equal(requests.every(r=>r.method==='GET'&&!r.header.Authorization),true);
+ await assert.rejects(source.sendPublic({path:'/api/public/agronomy/knowledge/scopes',query:{customerId:'1'}}));await assert.rejects(source.sendPublic({path:'/api/public/agronomy/knowledge/11111111-1111-4111-8111-111111111111/publish',query:{}}));assert.equal(requests.length,3);
+});

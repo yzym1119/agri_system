@@ -12,6 +12,7 @@
     "./customer-session": "./src/customer-session.ts",
     "./customer-enrollment": "./src/customer-enrollment.ts",
     "./customer-catalog": "./src/customer-catalog.ts",
+    "./customer-knowledge": "./src/customer-knowledge.ts",
     "./submission": "./src/submission.ts",
     "./inventory": "./src/inventory.ts",
     "./receipt": "./src/receipt.ts",

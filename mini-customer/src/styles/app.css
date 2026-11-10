@@ -46,4 +46,7 @@ button::after { border:0; }
 .price { display:block; font-weight:600; margin-top:20px; }
 .multiline { display:block; white-space:pre-wrap; }
 .product-image { display:block; width:100%; height:auto; margin:20px 0; border-radius:12px; }
+.scope-picker { display:flex; justify-content:space-between; align-items:center; gap:12px; min-height:58px; padding:14px; border:1px solid var(--c-line); border-radius:10px; background:var(--c-surface); }
+.picker-hint { color:var(--c-primary); flex-shrink:0; font-size:16px; }
+.scope-disabled { opacity:.6; }
 @media (max-width:350px) { .customer-page { padding-left:16px; padding-right:16px; } .panel { padding:16px; } }
