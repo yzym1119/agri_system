@@ -95,6 +95,7 @@ class ClientHttpBoundaryTest {
     @MockBean SysRoleRepository roles;
     @MockBean com.agri_system.application.catalog.service.ClientCatalogService publicCatalog;
     @MockBean com.agri_system.application.agronomy.service.PublicKnowledgeService publicKnowledge;
+    @MockBean com.agri_system.application.agronomy.service.AgronomyCaseService agronomyCases;
     @MockBean StaffAuthorityService authority;
     @MockBean StringRedisTemplate redis;
     @MockBean com.agri_system.application.performance.service.OneTimeQrService oldQr;
@@ -102,7 +103,7 @@ class ClientHttpBoundaryTest {
     @SpringBootConfiguration
     @EnableAutoConfiguration
     @Import({SaTokenConfigure.class, AuthService.class, GlobalExceptionHandler.class,
-            OrderClientController.class, AfterSalesClientController.class, ClientCatalogController.class, PublicKnowledgeController.class,
+            OrderClientController.class, AfterSalesClientController.class, ClientCatalogController.class, PublicKnowledgeController.class, AgronomyCaseClientController.class,
             OrderPaymentPublicController.class, AuthClientController.class, ClientOnboardingController.class, com.agri_system.application.auth.service.ClientOnboardingService.class, com.agri_system.application.auth.service.CustomerEnrollmentService.class, QrClientController.class, LoginProbe.class})
     static class Config {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
@@ -137,6 +138,34 @@ class ClientHttpBoundaryTest {
         mvc.perform(get("/api/public/agronomy/knowledge").param("region","daqing")).andExpect(jsonPath("$.code").value(10001));
         mvc.perform(get("/api/public/agronomy/knowledge/11111111-1111-4111-8111-111111111111").param("region","daqing").param("crop","corn").param("growthStage","seedling")).andExpect(jsonPath("$.code").value(10001));
         mvc.perform(get("/api/public/agronomy/knowledge/11111111-1111-4111-8111-111111111111").param("region","daqing").param("crop","corn").param("growthStage","seedling").param("expectedRevision","1.5")).andExpect(jsonPath("$.code").value(10001));
+    }
+
+    @Test void agronomyPrivateRoutesUseCurrentCustomerAndUrlNeverBodyActorOrAction() throws Exception {
+        String base="/api/client/agronomy/cases",key="11111111-1111-4111-8111-111111111111";
+        String body="{\"requestKey\":\""+key+"\",\"storeId\":1,\"question\":\"test question\",\"customerId\":202,\"actorId\":202,\"status\":\"CLOSED\"}";
+        businessFailure(request(post(base),null,body),10003);
+        businessFailure(request(post(base),login("STAFF_1"),body),10003);
+        businessFailure(request(post(base),login("CUST_303"),body),10001);
+        var receipt=new com.agri_system.application.agronomy.service.AgronomyCaseService.Receipt(key,"7","1","1","1","COLLECTING");
+        when(agronomyCases.create(org.mockito.ArgumentMatchers.eq(101L),any())).thenReturn(receipt);
+        String token=login("CUST_101");
+        request(post(base),token,body).andExpect(header().string("Cache-Control","no-store")).andExpect(jsonPath("$.caseId").value("7"));
+        var create=org.mockito.ArgumentCaptor.forClass(com.agri_system.application.agronomy.service.AgronomyCaseService.Create.class);
+        verify(agronomyCases).create(org.mockito.ArgumentMatchers.eq(101L),create.capture());assertEquals("test question",create.getValue().question());
+        when(agronomyCases.pageCustomer(101L,null,null)).thenReturn(new com.agri_system.application.agronomy.service.AgronomyCaseService.Page(List.of(),null));
+        request(get(base).param("customerId","202"),token,null).andExpect(jsonPath("$.rows").isArray());verify(agronomyCases).pageCustomer(101L,null,null);
+        when(agronomyCases.changeCustomer(org.mockito.ArgumentMatchers.eq(101L),org.mockito.ArgumentMatchers.eq(7L),org.mockito.ArgumentMatchers.eq("SUPPLEMENT"),any())).thenReturn(receipt);
+        request(post(base+"/7/supplements"),token,"{\"requestKey\":\""+key+"\",\"expectedVersion\":\"1\",\"body\":\"test facts\",\"caseId\":999,\"customerId\":202,\"action\":\"HUMAN_REPLY\"}").andExpect(jsonPath("$.caseId").value("7"));
+        verify(agronomyCases).changeCustomer(org.mockito.ArgumentMatchers.eq(101L),org.mockito.ArgumentMatchers.eq(7L),org.mockito.ArgumentMatchers.eq("SUPPLEMENT"),any());
+        request(get(base).param("after","1.5"),token,null).andExpect(jsonPath("$.code").value(10001));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings={"1.9","1.0","1e0","\"01\"","-1","9223372036854775808"})
+    void agronomyCreateRejectsNoncanonicalStoreIdBeforeCallingService(String invalid) throws Exception {
+        String body="{\"requestKey\":\"11111111-1111-4111-8111-111111111111\",\"storeId\":"+invalid+",\"question\":\"test\"}";
+        request(post("/api/client/agronomy/cases"),login("CUST_101"),body).andExpect(jsonPath("$.code").value(10001));
+        org.mockito.Mockito.verifyNoInteractions(agronomyCases);
     }
 
     @BeforeEach void customerAndCallback() {

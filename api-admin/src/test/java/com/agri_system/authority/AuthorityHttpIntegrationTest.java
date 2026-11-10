@@ -97,6 +97,7 @@ class AuthorityHttpIntegrationTest {
     @MockBean com.agri_system.application.store.service.StoreApplicationService businessStores;
     @MockBean com.agri_system.application.store.service.StorePublicationService publicStores;
     @MockBean com.agri_system.application.agronomy.service.KnowledgeRevisionService knowledge;
+    @MockBean com.agri_system.application.agronomy.service.AgronomyCaseService agronomyCases;
     @MockBean com.agri_system.application.purchase.service.PurchaseApplicationService receiving;
     @MockBean com.agri_system.application.product.service.ProductApplicationService productCatalogAdmin;
     @MockBean com.agri_system.application.inventory.service.MobileScanQueryService mobileInventory;
@@ -142,6 +143,7 @@ class AuthorityHttpIntegrationTest {
             com.agri_system.api.admin.controller.StoreController.class,
             com.agri_system.api.admin.controller.StorePublicationController.class,
             com.agri_system.api.admin.controller.KnowledgeAdminController.class,
+            com.agri_system.api.admin.controller.AgronomyCaseAdminController.class,
             com.agri_system.api.admin.controller.PurchaseController.class,
             com.agri_system.api.admin.controller.MobileScanController.class,
             com.agri_system.api.admin.controller.MobileDeliveryController.class,
@@ -403,6 +405,36 @@ class AuthorityHttpIntegrationTest {
         assertEquals("1",call(token,"POST",target+"/publish",decision).path("id").asText());assertEquals("1",call(token,"POST",target+"/withdraw",decision).path("id").asText());
         ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(publish)))));reject(call(token,"GET",base,null));reject(call(token,"GET",base+"/"+key+"/latest",null));reject(call(token,"POST",target+"/publish",decision));
         org.mockito.Mockito.verify(knowledge).page(4L,null,null);org.mockito.Mockito.verify(knowledge).change(4L,key,1,"1","REVIEW","test review");
+    }
+
+    @Test void 农技问题查询分配回复真实菜单独立授权与撤权() throws Exception {
+        String base="/api/admin/agronomy/cases",token=login(4),admin=login(1),key="11111111-1111-4111-8111-111111111111";
+        reject(call(null,"GET",base,null));reject(call(loginId("CUST_1"),"GET",base,null));reject(call(token,"GET",base,null));
+        String menu;
+        try(var input=new org.springframework.core.io.ClassPathResource("db/migration/V149__agronomy_case.sql").getInputStream()){menu="-- 独立真实菜单"+new String(input.readAllBytes(),StandardCharsets.UTF_8).split("-- 独立真实菜单",2)[1];}
+        try(var c=jdbc.getDataSource().getConnection()){var resource=new org.springframework.core.io.ByteArrayResource(menu.getBytes(StandardCharsets.UTF_8));org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(c,resource);org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(c,resource);}
+        assertEquals(3,jdbc.queryForObject("SELECT COUNT(*) FROM sys_menu WHERE permission LIKE 'agronomy:case:%'",Integer.class));
+        assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM sys_role_menu WHERE menu_id IN (SELECT id FROM sys_menu WHERE permission LIKE 'agronomy:case:%')",Integer.class));
+        long query=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='agronomy:case:query'",Long.class),manage=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='agronomy:case:manage'",Long.class),review=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='agronomy:case:review'",Long.class);
+        var receipt=new com.agri_system.application.agronomy.service.AgronomyCaseService.Receipt(key,"7","1","2","1","ACTIVE");
+        when(agronomyCases.pageStaff(4L,null,null,null)).thenReturn(new com.agri_system.application.agronomy.service.AgronomyCaseService.WorkPage(List.of(),null));
+        when(agronomyCases.changeStaff(org.mockito.ArgumentMatchers.eq(4L),org.mockito.ArgumentMatchers.eq(7L),any(),any())).thenReturn(receipt);
+        String command="{\"requestKey\":\""+key+"\",\"expectedVersion\":\"1\",\"body\":\"test reply\",\"sourceText\":\"test\",\"staffId\":99,\"caseId\":999,\"action\":\"ASSIGN\"}";
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query)))));
+        assertTrue(call(token,"GET",base+"?staffId=99",null).path("rows").isArray());org.mockito.Mockito.verify(agronomyCases).pageStaff(4L,null,null,null);
+        reject(call(token,"POST",base+"/7/replies",command));reject(call(token,"POST",base+"/7/assignment",command));
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query,review)))));
+        assertEquals("7",call(token,"POST",base+"/7/replies",command).path("caseId").asText());reject(call(token,"POST",base+"/7/assignment",command));
+        org.mockito.Mockito.verify(agronomyCases).changeStaff(org.mockito.ArgumentMatchers.eq(4L),org.mockito.ArgumentMatchers.eq(7L),org.mockito.ArgumentMatchers.eq("HUMAN_REPLY"),any());
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query,manage)))));
+        for(String bad:List.of("10.9","1e1","\"010\"")) {
+            var error=call(token,"POST",base+"/7/assignment","{\"requestKey\":\""+key+"\",\"expectedVersion\":\"1\",\"assignedStaffId\":"+bad+"}");
+            assertEquals(10001,error.path("code").asInt());
+        }
+        org.mockito.Mockito.verify(agronomyCases,org.mockito.Mockito.never()).changeStaff(org.mockito.ArgumentMatchers.eq(4L),org.mockito.ArgumentMatchers.eq(7L),org.mockito.ArgumentMatchers.eq("ASSIGN"),any());
+        assertEquals("7",call(token,"POST",base+"/7/assignment",command).path("caseId").asText());reject(call(token,"POST",base+"/7/replies",command));
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(manage,review)))));
+        reject(call(token,"GET",base,null));reject(call(token,"POST",base+"/7/replies",command));reject(call(token,"POST",base+"/7/assignment",command));
     }
 
     @Test void 本人订单迁移不自动授权且实际管理员可单独授予撤销() throws Exception {

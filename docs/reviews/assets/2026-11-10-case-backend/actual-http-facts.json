@@ -1,0 +1,49 @@
+{
+  "actualAdminAndClientHttp": true,
+  "actualDatabase": true,
+  "developmentIdentityOnly": true,
+  "caseId": "1",
+  "onlyOriginalCase": true,
+  "entries": 7,
+  "customerVisibleEntries": 6,
+  "finalVersion": "7",
+  "finalFactsVersion": "2",
+  "bodyCustomerIgnored": true,
+  "crossCustomerRejected": true,
+  "queryOnlyEmployeeAssignedScope": true,
+  "unreviewedEmployeeReplyRejected": true,
+  "revocationEffective": true,
+  "oldFactsReplyRejected": true,
+  "decimalObjectIdsRejected": true,
+  "originalReplyReceiptImmutable": true,
+  "businessAudits": [
+    "分配农技问题",
+    "人工回复农技问题",
+    "人工回复农技问题"
+  ],
+  "moneyInventoryBaselineAfterFixture": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0,
+    "customer_wallet": 6
+  },
+  "moneyInventoryAfter": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0,
+    "customer_wallet": 6
+  },
+  "nativeWechatOrPhone": false,
+  "realAiOrPaidCall": false,
+  "originalRolePermissionsRestored": true,
+  "storeVisibilityRestored": true,
+  "testEmployeeDisabled": true,
+  "successfulMigrations": 105,
+  "migrationVersion": "149",
+  "artifacts": {
+    "admin": "b104a2d3e6cd6e709ae4f6937a41fa53201a9ba0853ad13db83597b64d06ea36",
+    "client": "c1ba514dfbb652e34f39d842cc8846bbf90b6f7bdb116e3fab49ca8799f968d5"
+  },
+  "servicesStopped": true,
+  "originalEnvironmentChanged": false
+}

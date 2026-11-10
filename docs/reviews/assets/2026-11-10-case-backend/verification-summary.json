@@ -1,0 +1,21 @@
+{
+  "date": "2026-11-10",
+  "baseline": "26f16d7",
+  "backend": {
+    "reports": 180,
+    "tests": 1179,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "newSuites": {
+    "AgronomyCaseServiceTest": 9,
+    "AgronomyCaseMysqlTest": 6
+  },
+  "actualHttp": true,
+  "nativeWechat": false,
+  "android": false,
+  "iPhone": false,
+  "modelConnected": false,
+  "frontendChanged": false
+}
