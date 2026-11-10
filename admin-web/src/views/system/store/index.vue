@@ -72,10 +72,11 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" align="center" fixed="right">
+        <el-table-column label="操作" width="290" align="center" fixed="right">
           <template #default="{ row }">
             <el-button v-permission="'store:update'" type="primary" link :icon="Edit" @click="handleEdit(row)">编辑</el-button>
             <el-button v-permission="'store:delete'" type="danger" link :icon="Delete" @click="handleDelete(row)">删除</el-button>
+            <el-button v-if="canPublish" type="primary" link @click="openPublication(row)">公开资料</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -94,6 +95,7 @@
       </div>
     </el-card>
 
+    <StorePublicationDialog v-model="publicationOpen" :store-id="publicationStoreId" />
     <!-- 新增/编辑对话框 -->
     <el-dialog
       v-model="dialogVisible"
@@ -175,6 +177,11 @@ import {ElMessage, ElMessageBox, type FormInstance, type FormRules} from 'elemen
 import {Delete, Edit, Plus, Refresh, Search} from '@element-plus/icons-vue'
 import {createStore, deleteStore, getStoreDetail, getStoreList, updateStore} from '@/api/store'
 import type {StoreCreateRequest, StoreDetailVO, StoreQueryParams, StoreUpdateRequest} from '@/types/store'
+import StorePublicationDialog from './StorePublicationDialog.vue'
+import {usePermissionStore} from '@/store/permission'
+const permissions=usePermissionStore(),publicationOpen=ref(false),publicationStoreId=ref('')
+const canPublish=computed(()=>permissions.permissions.includes('store:view')&&permissions.permissions.includes('store:publish'))
+function openPublication(row:StoreDetailVO){if(typeof row.id==='number'&&!Number.isSafeInteger(row.id))return;publicationStoreId.value=String(row.id);publicationOpen.value=true}
 
 // 加载状态
 const loading = ref(false)

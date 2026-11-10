@@ -1,0 +1,9 @@
+{
+  "browserAction": "撤回公开资料",
+  "actualHttpSharedClient": true,
+  "stores": {
+    "rows": [],
+    "nextAfter": null
+  },
+  "authorizationSent": false
+}

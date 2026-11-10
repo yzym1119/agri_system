@@ -95,6 +95,7 @@ class AuthorityHttpIntegrationTest {
     @MockBean StaffPerformanceApplicationService performance;
     @MockBean com.agri_system.application.order.service.PosCatalogApplicationService posCatalog;
     @MockBean com.agri_system.application.store.service.StoreApplicationService businessStores;
+    @MockBean com.agri_system.application.store.service.StorePublicationService publicStores;
     @MockBean com.agri_system.application.purchase.service.PurchaseApplicationService receiving;
     @MockBean com.agri_system.application.product.service.ProductApplicationService productCatalogAdmin;
     @MockBean com.agri_system.application.inventory.service.MobileScanQueryService mobileInventory;
@@ -138,6 +139,7 @@ class AuthorityHttpIntegrationTest {
             JdbcAccessConfig.class, Probe.class,
             com.agri_system.api.admin.controller.PosCatalogController.class,
             com.agri_system.api.admin.controller.StoreController.class,
+            com.agri_system.api.admin.controller.StorePublicationController.class,
             com.agri_system.api.admin.controller.PurchaseController.class,
             com.agri_system.api.admin.controller.MobileScanController.class,
             com.agri_system.api.admin.controller.MobileDeliveryController.class,
@@ -282,6 +284,20 @@ class AuthorityHttpIntegrationTest {
     void businessPermission(int menuId,String permission) {
         jdbc.update("INSERT INTO sys_menu(id,parent_id,name,permission,type,sort_order,visible) VALUES(?,0,?,?,2,0,1)",menuId,permission,permission);
         jdbc.update("INSERT INTO sys_role_menu(role_id,menu_id) VALUES(4,?)",menuId);
+    }
+
+    @Test void publicationRequiresRealMigratedPermissionAndOriginalStoreView() throws Exception {
+        try(var c=jdbc.getDataSource().getConnection()){org.springframework.jdbc.datasource.init.ScriptUtils.executeSqlScript(c,new org.springframework.core.io.ClassPathResource("db/migration/V147__client_store_publication.sql"));}
+        long permission=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='store:publish'",Long.class);
+        assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM sys_role_menu WHERE menu_id=?",Integer.class,permission));
+        jdbc.update("INSERT INTO sys_menu(parent_id,name,permission,type,sort_order,visible) SELECT 0,'门店资料','store:view',2,1,1 WHERE NOT EXISTS(SELECT 1 FROM sys_menu WHERE permission='store:view')");
+        long view=jdbc.queryForObject("SELECT id FROM sys_menu WHERE permission='store:view'",Long.class);
+        String actor=login(4),admin=login(1),path="/api/admin/stores/1/publication";reject(call(actor,"GET",path,null));
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(permission)))));reject(call(actor,"GET",path,null));
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(permission,view)))));
+        when(publicStores.preview(4L,1L)).thenReturn(new com.agri_system.application.store.service.StorePublicationService.Preview("1","公开门店","13800000000","地址",false,"1","0".repeat(64),true));
+        assertEquals("1",call(actor,"GET",path,null).path("storeId").asText());
+        ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(view)))));reject(call(actor,"GET",path,null));
     }
 
     @Test void 客户报表未传门店仍受真实员工门店与权限约束() throws Exception {

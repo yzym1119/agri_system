@@ -1,0 +1,121 @@
+{
+  "actualHttpSharedClient": true,
+  "stores": {
+    "rows": [
+      {
+        "storeId": "1",
+        "name": "虚构C1验收-d93d088b",
+        "phone": "13800000000",
+        "address": "虚构公开地址，仅限本地验收"
+      }
+    ],
+    "nextAfter": null
+  },
+  "products": {
+    "rows": [
+      {
+        "productId": "1",
+        "name": "虚构C1-公开验收-d93d088b",
+        "specification": "12瓶/箱",
+        "manufacturer": "虚构厂家，仅限本地验收",
+        "imageUrl": null
+      }
+    ],
+    "nextAfter": null
+  },
+  "box": {
+    "product": {
+      "productId": "1",
+      "name": "虚构C1-公开验收-d93d088b",
+      "specification": "12瓶/箱",
+      "manufacturer": "虚构厂家，仅限本地验收",
+      "imageUrl": null,
+      "registrationNo": null,
+      "detailText": "虚构商品资料，仅验证软件流程，不构成实际农技建议。",
+      "storageConditions": null,
+      "shelfLifeDays": null
+    },
+    "baseUnitName": "瓶",
+    "allowFractionalBaseQuantity": false,
+    "saleUnits": [
+      {
+        "unitName": "瓶",
+        "baseQuantityPerUnit": "1"
+      },
+      {
+        "unitName": "箱",
+        "baseQuantityPerUnit": "12"
+      }
+    ],
+    "referencePrice": {
+      "productId": "1",
+      "unitName": "箱",
+      "unitPrice": "120.00",
+      "state": "AVAILABLE"
+    }
+  },
+  "bottle": {
+    "product": {
+      "productId": "1",
+      "name": "虚构C1-公开验收-d93d088b",
+      "specification": "12瓶/箱",
+      "manufacturer": "虚构厂家，仅限本地验收",
+      "imageUrl": null,
+      "registrationNo": null,
+      "detailText": "虚构商品资料，仅验证软件流程，不构成实际农技建议。",
+      "storageConditions": null,
+      "shelfLifeDays": null
+    },
+    "baseUnitName": "瓶",
+    "allowFractionalBaseQuantity": false,
+    "saleUnits": [
+      {
+        "unitName": "瓶",
+        "baseQuantityPerUnit": "1"
+      },
+      {
+        "unitName": "箱",
+        "baseQuantityPerUnit": "12"
+      }
+    ],
+    "referencePrice": {
+      "productId": "1",
+      "unitName": "瓶",
+      "unitPrice": "10.00",
+      "state": "AVAILABLE"
+    }
+  },
+  "requests": [
+    {
+      "path": "/api/public/stores",
+      "query": {},
+      "status": 200,
+      "authorizationSent": false
+    },
+    {
+      "path": "/api/public/catalog/products",
+      "query": {
+        "keyword": "虚构C1"
+      },
+      "status": 200,
+      "authorizationSent": false
+    },
+    {
+      "path": "/api/public/catalog/products/1",
+      "query": {
+        "unit": "箱"
+      },
+      "status": 200,
+      "authorizationSent": false
+    },
+    {
+      "path": "/api/public/catalog/products/1",
+      "query": {
+        "unit": "瓶"
+      },
+      "status": 200,
+      "authorizationSent": false
+    }
+  ],
+  "internalFieldsAbsent": true
+}

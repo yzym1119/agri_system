@@ -3,7 +3,9 @@
     { "path": "pages/home/index", "style": { "navigationBarTitleText": "门店服务" } },
     { "path": "pages/profile/index", "style": { "navigationBarTitleText": "我的" } },
     { "path": "pages/login/index", "style": { "navigationBarTitleText": "微信登录" } },
-    { "path": "pages/identity/claim/index", "style": { "navigationBarTitleText": "核对门店档案" } }
+    { "path": "pages/identity/claim/index", "style": { "navigationBarTitleText": "核对门店档案" } },
+    { "path": "pages/catalog/list/index", "style": { "navigationBarTitleText": "商品资料" } },
+    { "path": "pages/catalog/detail/index", "style": { "navigationBarTitleText": "商品详情" } }
   ],
   "globalStyle": { "navigationBarTextStyle": "black", "navigationBarBackgroundColor": "#f4f6f4", "backgroundColor": "#f4f6f4" }
 }

@@ -1,0 +1,21 @@
+{
+  "baseline": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0,
+    "customer_wallet": 0
+  },
+  "actual": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0,
+    "customer_wallet": 0
+  },
+  "moneyAndStockCountsUnchanged": true,
+  "storePublic": false,
+  "publicationVersion": "3",
+  "publicationAuditActions": [
+    "公开门店资料",
+    "撤回门店资料"
+  ]
+}

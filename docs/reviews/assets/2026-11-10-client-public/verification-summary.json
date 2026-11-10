@@ -1,0 +1,108 @@
+{
+  "base": "1f758d2",
+  "backend": {
+    "reports": 175,
+    "tests": 1135,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "selected": {
+    "com.agri_system.infrastructure.catalog.query.PublicCatalogQuerySqlTest": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.application.catalog.service.ClientCatalogServiceTest": {
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.application.store.service.StorePublicationServiceTest": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.application.store.service.StorePublicationMysqlTest": {
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.api.client.controller.ClientHttpBoundaryTest": {
+      "tests": 57,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.agri_system.authority.AuthorityHttpIntegrationTest": {
+      "tests": 48,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "frontend": {
+    "shared": 106,
+    "customer": 15,
+    "admin": 304,
+    "staff": 135
+  },
+  "customerTypeCheck": true,
+  "customerWechatBuild": true,
+  "adminBuild": true,
+  "realHttpObserved": [
+    "new store initially not public",
+    "draft products not visible",
+    "explicit product online becomes listed",
+    "new permission initially rejected 10004; actual role API granted; original token accepted",
+    "actual shared client HTTP: one public store / one product; box 120.00 bottle 10.00; internal fields absent",
+    "after browser withdrawal: actual shared client stores rows empty"
+  ],
+  "browserObserved": [
+    "real store preview",
+    "unchecked confirm disabled",
+    "explicit confirm publishes and clears checkbox",
+    "actual withdrawal requires checkbox; result private and checkbox cleared"
+  ],
+  "unperformed": [
+    "real WeChat authorization and Android/iPhone devices",
+    "C1-B knowledge publication and real owner-reviewed content"
+  ],
+  "originalEnvironmentChanged": false,
+  "isolatedServicesCleanup": {
+    "observedAt": "2026-11-10 16:53 CST",
+    "portsWithoutListeners": [
+      9094,
+      9095,
+      3104,
+      6404
+    ],
+    "browserRecordClosed": true,
+    "allFourOwnedServicesTerminatedThisResume": true,
+    "finalStorePublic": false
+  },
+  "independentReview": {
+    "scope": "current C1-A production changes and tests, read-only",
+    "confirmedP0P1": 0,
+    "confirmedP2": 1,
+    "finding": "multi-line store address caused whole public store page decode failure",
+    "fix": "address alone permits CR/LF; original formatting retained; other controls rejected",
+    "red": {
+      "tests": 5,
+      "passed": 4,
+      "failed": 1,
+      "error": "PUBLIC_RESPONSE_INVALID"
+    },
+    "green": {
+      "shared": 106,
+      "customer": 15,
+      "staff": 135
+    },
+    "nativePhoneOrClipboardTest": false,
+    "otherPreviousBatchesReviewed": false
+  }
+}

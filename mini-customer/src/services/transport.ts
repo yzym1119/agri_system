@@ -1,5 +1,6 @@
 import type { CustomerRequest } from '@agri/mobile-contracts/customer-session';
 import type { HttpResponse } from '@agri/mobile-contracts/session';
+import type { PublicRequest } from '@agri/mobile-contracts/customer-catalog';
 type Options = CustomerRequest & { timeout: number; success(response: HttpResponse): void; fail(error: unknown): void };
 
 function origin(value: string, development: boolean): string | null {
@@ -22,6 +23,17 @@ export function createCustomerTransport(value: string, development: boolean, req
   return {
     configured: base !== null,
     origin: base,
+    async sendPublic(input: PublicRequest): Promise<HttpResponse> {
+      if (!base) throw Error('SERVICE_NOT_CONFIGURED');
+      const list=input.path==='/api/public/catalog/products',stores=input.path==='/api/public/stores';
+      const detail=/^\/api\/public\/catalog\/products\/[1-9][0-9]{0,18}$/.test(input.path);
+      if(!list&&!stores&&!detail||!input.query||Object.entries(input.query).some(([key,value])=>typeof value!=='string'||value.length>100||/[\u0000-\u001f\u007f]/.test(value)||!(key==='after'&&(list||stores)||key==='keyword'&&list||key==='unit'&&detail)))throw Error('PUBLIC_REQUEST_INVALID');
+      const query=Object.entries(input.query).map(([key,value])=>encodeURIComponent(key)+'='+encodeURIComponent(value)).join('&');
+      return new Promise((resolve,reject)=>{
+        try{request({url:base+input.path+(query?'?'+query:''),method:'GET',header:{'Content-Type':'application/json'},timeout:10000,success:response=>resolve({statusCode:response.statusCode,data:response.data}),fail:()=>reject(Error('NETWORK_FAILED'))});}
+        catch{reject(Error('NETWORK_FAILED'));}
+      });
+    },
     async send(input: CustomerRequest): Promise<HttpResponse> {
       if (!base) throw Error('SERVICE_NOT_CONFIGURED');
       const post = /^\/auth\/client\/(?:logout|onboarding\/(?:wechat|phone|registration))$/;

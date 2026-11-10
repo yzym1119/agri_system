@@ -93,6 +93,7 @@ class ClientHttpBoundaryTest {
     @MockBean org.springframework.transaction.PlatformTransactionManager registrationTransactions;
     @MockBean WechatService wechat;
     @MockBean SysRoleRepository roles;
+    @MockBean com.agri_system.application.catalog.service.ClientCatalogService publicCatalog;
     @MockBean StaffAuthorityService authority;
     @MockBean StringRedisTemplate redis;
     @MockBean com.agri_system.application.performance.service.OneTimeQrService oldQr;
@@ -100,7 +101,7 @@ class ClientHttpBoundaryTest {
     @SpringBootConfiguration
     @EnableAutoConfiguration
     @Import({SaTokenConfigure.class, AuthService.class, GlobalExceptionHandler.class,
-            OrderClientController.class, AfterSalesClientController.class,
+            OrderClientController.class, AfterSalesClientController.class, ClientCatalogController.class,
             OrderPaymentPublicController.class, AuthClientController.class, ClientOnboardingController.class, com.agri_system.application.auth.service.ClientOnboardingService.class, com.agri_system.application.auth.service.CustomerEnrollmentService.class, QrClientController.class, LoginProbe.class})
     static class Config {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
@@ -115,6 +116,15 @@ class ClientHttpBoundaryTest {
             StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","DEV","customerAuthVersion","1"));
             return Map.of("token", StpUtil.getTokenValue());
         }
+    }
+
+    @Test void publicStoreAndProductReadsNeedNoCustomerOrEmployeeCredentials() throws Exception {
+        when(publicCatalog.stores(null)).thenReturn(new com.agri_system.application.catalog.service.ClientCatalogService.Stores(List.of(new com.agri_system.domain.catalog.query.PublicCatalogQuery.StoreView("1","公开门店","13800000000","已确认地址")),null));
+        mvc.perform(get("/api/public/stores")).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store")).andExpect(jsonPath("$.rows[0].storeId").value("1")).andExpect(jsonPath("$.rows[0].managerId").doesNotExist());
+        mvc.perform(get("/api/public/stores").header("Authorization","invalid-token")).andExpect(status().isOk()).andExpect(jsonPath("$.rows[0].name").value("公开门店"));
+        when(publicCatalog.products(null,"corn")).thenReturn(new com.agri_system.application.catalog.service.ClientCatalogService.Products(List.of(),null));
+        mvc.perform(get("/api/public/catalog/products").param("keyword","corn").param("customerId","999")).andExpect(status().isOk()).andExpect(jsonPath("$.rows").isArray());
+        verify(publicCatalog).products(null,"corn");
     }
 
     @BeforeEach void customerAndCallback() {

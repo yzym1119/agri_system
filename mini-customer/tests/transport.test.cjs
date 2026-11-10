@@ -17,3 +17,10 @@ test('平台网络错误只回固定错误，不回传原错误或凭据',async(
  const {createCustomerTransport}=transport();const source=createCustomerTransport('https://example.test',false,o=>o.fail({errMsg:'secret URL and credential'}));
  await assert.rejects(source.send({url:'/auth/client/info',method:'GET'}),e=>e.message==='NETWORK_FAILED');
 });
+test('公开请求独立白名单且不带登录凭据，不能借公开路径访问后台或私有接口',async()=>{
+ const {createCustomerTransport}=transport();const calls=[],source=createCustomerTransport('https://example.test',false,o=>{calls.push(o);o.success({statusCode:200,data:{rows:[],nextAfter:null}})});
+ await source.sendPublic({path:'/api/public/catalog/products',query:{keyword:'玉米',after:'9'},header:{Authorization:'must-not-send'}});
+ assert.equal(calls[0].header.Authorization,undefined);assert.equal(calls[0].method,'GET');assert.match(calls[0].url,/keyword=%E7%8E%89%E7%B1%B3/);
+ for(const request of [{path:'/api/admin/stores',query:{}},{path:'/auth/client/info',query:{}},{path:'/api/public/catalog/products',query:{customerId:'7'}},{path:'/api/public/stores?token=x',query:{}}])await assert.rejects(source.sendPublic(request),/PUBLIC_REQUEST_INVALID/);
+ assert.equal(calls.length,1);
+});
