@@ -1,0 +1,33 @@
+{
+  "base": "e6b6c96",
+  "tests": {
+    "shared": {
+      "tests": 101,
+      "pass": 101,
+      "fail": 0,
+      "skipped": 0
+    },
+    "customer": {
+      "tests": 11,
+      "pass": 11,
+      "fail": 0,
+      "skipped": 0
+    },
+    "staff": {
+      "tests": 135,
+      "pass": 135,
+      "fail": 0,
+      "skipped": 0
+    },
+    "admin": {
+      "tests": 301,
+      "pass": 301,
+      "fail": 0,
+      "skipped": 0
+    }
+  },
+  "typeCheck": "passed",
+  "wechatProductionBuild": "DONE",
+  "independentReview": "service usage limit: no result",
+  "realWechatPhoneOrDeviceTest": false
+}

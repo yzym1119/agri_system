@@ -1,0 +1,38 @@
+/* 沿05现有青绿令牌；客户按07采用18px/大字22px，不改变员工与后台字号。 */
+page { --c-primary:#0e6b5a; --c-primary-strong:#0a4c41; --c-bg:#f4f6f4; --c-surface:#fff; --c-text:#18211e; --c-text-2:#4a5450; --c-line:#e3e7e4; --c-warn:#96601a; --c-warn-bg:#fdf6e7; background:var(--c-bg); color:var(--c-text); font-family:-apple-system,"PingFang SC",system-ui,sans-serif; line-height:1.65; }
+view,text,button { box-sizing:border-box; }
+button { font:inherit; margin:0; line-height:1.5; }
+button::after { border:0; }
+.customer-page { max-width:600px; margin:0 auto; padding:16px 20px calc(28px + env(safe-area-inset-bottom)); font-size:18px; overflow-wrap:anywhere; }
+.large-text { font-size:22px; }
+.with-navigation { padding-bottom:calc(110px + env(safe-area-inset-bottom)); }
+.customer-nav { position:fixed; z-index:10; left:0; right:0; bottom:0; font-size:18px; background:var(--c-surface); border-top:1px solid var(--c-line); padding-bottom:env(safe-area-inset-bottom); }
+.customer-nav.large-text { font-size:22px; }
+.nav-inner { display:flex; max-width:600px; margin:0 auto; }
+.nav-button { flex:1; min-height:64px; padding:16px; border-radius:0; color:var(--c-text-2); background:var(--c-surface); }
+.nav-active { color:var(--c-primary); font-weight:600; }
+.reading-header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:24px; }
+.section-title { font-size:1em; font-weight:600; min-width:0; }
+.text-button { display:flex; align-items:center; justify-content:center; flex-shrink:0; min-height:48px; min-width:80px; padding:8px 12px; font-size:16px; background:var(--c-surface); color:var(--c-primary); border:1px solid var(--c-line); border-radius:10px; }
+.title { display:block; font-size:1.55em; font-weight:650; line-height:1.4; margin:0 0 16px; }
+.title-line { display:block; }
+.paragraph { display:block; margin-bottom:16px; }
+.secondary { color:var(--c-text-2); }
+.help { display:block; font-size:16px; color:var(--c-text-2); margin-top:16px; }
+.large-text .help { font-size:18px; }
+.section { margin:28px 0; }
+.panel { background:var(--c-surface); border:1px solid var(--c-line); border-radius:16px; padding:20px; margin:20px 0; }
+.panel-title { display:block; font-weight:600; margin-bottom:12px; }
+.row { padding:16px 0; border-bottom:1px solid var(--c-line); }
+.row:last-child { border-bottom:0; padding-bottom:0; }
+.row-label { display:block; color:var(--c-text-2); font-size:16px; }
+.large-text .row-label { font-size:18px; }
+.row-value { display:block; margin-top:4px; }
+.button { display:flex; align-items:center; justify-content:center; width:100%; min-height:54px; padding:14px 18px; border-radius:12px; text-align:center; font-weight:600; background:var(--c-primary); color:#fff; margin-top:16px; }
+.button-secondary { color:var(--c-primary); background:var(--c-surface); border:1px solid var(--c-line); }
+.button-pressed { background:var(--c-primary-strong); color:#fff; }
+.button.button-disabled { background:var(--c-primary); color:#fff; opacity:.6; }
+.notice { padding:16px; background:var(--c-warn-bg); color:var(--c-warn); border-radius:12px; margin:16px 0; }
+.status { display:block; font-weight:600; margin-bottom:8px; }
+.loading { display:block; padding:20px 0; color:var(--c-text-2); }
+@media (max-width:350px) { .customer-page { padding-left:16px; padding-right:16px; } .panel { padding:16px; } }

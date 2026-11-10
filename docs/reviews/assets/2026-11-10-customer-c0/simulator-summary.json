@@ -1,0 +1,20 @@
+{
+  "routes": [
+    "pages/login/index",
+    "pages/profile/index",
+    "pages/identity/claim/index"
+  ],
+  "exceptions": 0,
+  "consoleErrors": 0,
+  "urlCheck": true,
+  "serviceConfigured": false,
+  "realWechatAuthorization": false,
+  "closed": true,
+  "beforeFont": "22px",
+  "afterFont": "18px",
+  "fontTogglePassed": true,
+  "homeProfileNavigation": true,
+  "profileHomeNavigation": true,
+  "homeLoginNavigation": true,
+  "fontStorage": false
+}
