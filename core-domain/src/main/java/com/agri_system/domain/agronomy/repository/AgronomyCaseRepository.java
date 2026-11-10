@@ -18,4 +18,5 @@ public interface AgronomyCaseRepository {
                    long factsVersion, Long assignedStaffId, LocalDateTime at);
     List<AgronomyCase> page(Long customerId, Long storeId, Long assignedStaffId, String status, Long before);
     List<AgronomyCaseEntry> entries(Long caseId, boolean customerVisible, long snapshotVersion, Long before);
+    Optional<AgronomyCaseEntry> latestHumanReply(Long caseId, long snapshotVersion);
 }

@@ -7,7 +7,10 @@
     { "path": "pages/catalog/list/index", "style": { "navigationBarTitleText": "商品资料" } },
     { "path": "pages/catalog/detail/index", "style": { "navigationBarTitleText": "商品详情" } },
     { "path": "pages/knowledge/list/index", "style": { "navigationBarTitleText": "农技知识" } },
-    { "path": "pages/knowledge/detail/index", "style": { "navigationBarTitleText": "知识详情" } }
+    { "path": "pages/knowledge/detail/index", "style": { "navigationBarTitleText": "知识详情" } },
+    { "path": "pages/ask/index", "style": { "navigationBarTitleText": "问农技" } },
+    { "path": "pages/cases/list/index", "style": { "navigationBarTitleText": "我问过的问题" } },
+    { "path": "pages/cases/detail/index", "style": { "navigationBarTitleText": "问题与回复" } }
   ],
   "globalStyle": { "navigationBarTextStyle": "black", "navigationBarBackgroundColor": "#f4f6f4", "backgroundColor": "#f4f6f4" }
 }

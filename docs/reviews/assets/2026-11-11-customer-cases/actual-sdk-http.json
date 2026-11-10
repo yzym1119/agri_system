@@ -1,0 +1,47 @@
+{
+  "actualApiHttp": true,
+  "productionTransport": true,
+  "productionCaseSdkAndJournal": true,
+  "customerIdentityPort": "test adapter with actual DEV_ONLY token",
+  "nativeUniRequest": false,
+  "nativeStorage": false,
+  "legacyFalseOriginalReceiptCompatible": true,
+  "oneClickWaitingReview": true,
+  "committedResponseDeliveryLossCount": 1,
+  "sameOriginalQueryAndContentReplayRecovered": true,
+  "sharedSettlementAfterClear": true,
+  "caseId": "2",
+  "finalVersion": "23",
+  "finalFactsVersion": "2",
+  "entries": 23,
+  "firstPageEntries": 20,
+  "olderPageEntries": 3,
+  "latestReplyOutsideFirstPage": true,
+  "latestReplyFactsVersion": "1",
+  "privateFieldsDropped": true,
+  "invalidHumanFlagRejected": true,
+  "realWechatOrPhone": false,
+  "modelOrPaidCall": false,
+  "requestCounts": {
+    "total": 30,
+    "createPosts": 4
+  },
+  "onlyOneNewCase": true,
+  "moneyInventoryBaselineAfterFixture": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0,
+    "customer_wallet": 6
+  },
+  "moneyInventoryUnchanged": true,
+  "originalRolePermissionsRestored": true,
+  "storeVisibilityRestored": true,
+  "migrationVersion": "149",
+  "successfulMigrations": 105,
+  "artifacts": {
+    "admin": "43e55de015ace4cf7205c321e05fc1e1219cf3eca5da39ce779772caddae82f6",
+    "client": "2fd21ab7154c983767e1d401ccceed00441b6582d9e04d5ad8b702fbddefb59a"
+  },
+  "servicesStopped": true,
+  "originalEnvironmentChanged": false
+}

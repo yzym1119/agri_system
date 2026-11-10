@@ -112,4 +112,43 @@ class AgronomyCaseServiceTest {
             assertThrows(com.fasterxml.jackson.core.JsonProcessingException.class,()->json.readValue("{\"storeId\":"+invalid+"}",AgronomyCaseService.Create.class));
         }
     }
+    @Test void explicitInitialHumanRequestWaitsInOneCommitAndCannotChangeTheOriginalIntent() {
+        var command=new AgronomyCaseService.Create(key,1L,"请门店协助，纯软件测试",facts,true);
+        var first=tx.execute(s->service.create(101L,command));assertEquals("WAITING_REVIEW",first.status());assertEquals("1",first.version());
+        assertEquals(1,service.detailCustomer(101L,Long.valueOf(first.caseId()),null).entries().size());
+        assertEquals(first,tx.execute(s->service.create(101L,command)));
+        assertThrows(IllegalArgumentException.class,()->tx.execute(s->service.create(101L,new AgronomyCaseService.Create(key,1L,"请门店协助，纯软件测试",facts,false))));
+    }
+    @Test void missingOrFalseHumanFlagPreservesAlreadySavedLegacyCreationFingerprint() {
+        // 摘要取自上一已提交版本的真实虚构问题，不能用新实现生成期望值。
+        String oldHash="8bd7c7615335bac954c37c7d60665e8f62b61deff36ff293cf3e6115c2f90575";
+        var f=new Facts("虚构地区","虚构作物","");String question="虚构软件联动问题，不是农技咨询";
+        var original=tx.execute(s->service.create(101L,new AgronomyCaseService.Create(key,1L,question,f)));
+        jdbc.update("UPDATE agronomy_case SET request_hash=? WHERE id=?",oldHash,Long.valueOf(original.caseId()));
+        jdbc.update("UPDATE agronomy_case_entry SET request_hash=? WHERE case_id=?",oldHash,Long.valueOf(original.caseId()));
+        assertEquals(original,tx.execute(s->service.create(101L,new AgronomyCaseService.Create(key,1L,question,f,false))));
+        assertEquals(original,tx.execute(s->service.create(101L,new AgronomyCaseService.Create(key,1L,question,f,null))));
+    }
+    @Test void explicitHumanIntentDoesNotCoerceTextOrIntegerIntoCustomerConsent() throws Exception {
+        var json=new com.fasterxml.jackson.databind.ObjectMapper();
+        assertTrue(json.readValue("{\"requestHuman\":true}",AgronomyCaseService.Create.class).requestHuman());
+        assertFalse(json.readValue("{\"requestHuman\":false}",AgronomyCaseService.Create.class).requestHuman());
+        for(String raw:List.of("1","0","\"true\"","\"false\"")) assertThrows(com.fasterxml.jackson.core.JsonProcessingException.class,()->json.readValue("{\"requestHuman\":"+raw+"}",AgronomyCaseService.Create.class));
+    }
+    @Test void latestRealReplyRemainsAvailableBeyondFirstHistoryPageAndRetainsItsOriginalFactsVersion() {
+        var a=create();staffChange(a.caseId(),"HUMAN_REPLY",UUID.randomUUID().toString(),"1","虚构上次答复","软件测试依据",null);
+        for(int v=2;v<=26;v++)change(101,a.caseId(),"SUPPLEMENT",UUID.randomUUID().toString(),Integer.toString(v),"补充虚构情况",facts);
+        var detail=service.detailCustomer(101L,Long.valueOf(a.caseId()),null);
+        assertEquals(20,detail.entries().size());assertTrue(detail.entries().stream().noneMatch(e->e.type().equals("HUMAN_REPLY")));
+        assertEquals("虚构上次答复",detail.latestReply().body());assertEquals("1",detail.latestReply().factsVersion());assertEquals("26",detail.problem().factsVersion());
+        assertTrue(rows.latestHumanReply(Long.valueOf(a.caseId()),1).isEmpty());
+    }
+    @Test void customerHistoryUsesPositiveVisibilityNotOnlyExcludingAssignment() {
+        var a=create();
+        for(var pair:List.of(List.of("STAFF","INTERNAL_NOTE"),List.of("STAFF","QUESTION"),List.of("CUSTOMER","HUMAN_REPLY"))) {
+            jdbc.update("INSERT INTO agronomy_case_entry(case_id,actor_type,actor_id,request_key,request_hash,type,body,source_text,region,crop,growth_stage,assigned_staff_id,expected_version,result_version,result_facts_version,result_status,created_at) SELECT case_id,?,9,?,request_hash,?,'PRIVATE_TEST_NOTE','',region,crop,growth_stage,NULL,expected_version,result_version,result_facts_version,result_status,created_at FROM agronomy_case_entry WHERE id=?",pair.get(0),UUID.randomUUID().toString(),pair.get(1),Long.valueOf(a.entryId()));
+        }
+        var detail=service.detailCustomer(101L,Long.valueOf(a.caseId()),null);
+        assertEquals(1,detail.entries().size());assertNull(detail.latestReply());assertEquals("QUESTION",detail.entries().get(0).type());
+    }
 }

@@ -68,11 +68,15 @@ public class AgronomyCaseRepositoryImpl implements AgronomyCaseRepository {
     }
     @Override public List<AgronomyCaseEntry> entries(Long id, boolean customer, long version, Long before) {
         var args = new ArrayList<Object>(); args.add(id); args.add(version);
-        String filter = customer ? " AND type<>'ASSIGN'" : "";
+        String filter = customer ? " AND ((actor_type='CUSTOMER' AND type IN ('QUESTION','SUPPLEMENT','HUMAN_REQUEST')) OR (actor_type='STAFF' AND type='HUMAN_REPLY'))" : "";
         if (before != null) { filter += " AND id<?"; args.add(before); }
         // 只读该主档快照对应的追加，避免两次读取间新回复与旧version混装。
         return jdbc.query("SELECT " + ENTRY_COLUMNS + " FROM agronomy_case_entry WHERE case_id=? AND result_version<=?"
                 + filter + " ORDER BY id DESC LIMIT 21", AgronomyCaseRepositoryImpl::mapEntry, args.toArray());
+    }
+    @Override public Optional<AgronomyCaseEntry> latestHumanReply(Long id, long version) {
+        return jdbc.query("SELECT " + ENTRY_COLUMNS + " FROM agronomy_case_entry WHERE case_id=? AND type='HUMAN_REPLY' AND actor_type='STAFF' AND result_version<=? ORDER BY id DESC LIMIT 1",
+                AgronomyCaseRepositoryImpl::mapEntry, id, version).stream().findFirst();
     }
     private static Facts facts(ResultSet r) throws SQLException {
         return new Facts(r.getString("region"), r.getString("crop"), r.getString("growth_stage"));

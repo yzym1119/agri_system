@@ -13,6 +13,8 @@
     "./customer-enrollment": "./src/customer-enrollment.ts",
     "./customer-catalog": "./src/customer-catalog.ts",
     "./customer-knowledge": "./src/customer-knowledge.ts",
+    "./customer-cases": "./src/customer-cases.ts",
+    "./customer-case-submission": "./src/customer-case-submission.ts",
     "./submission": "./src/submission.ts",
     "./inventory": "./src/inventory.ts",
     "./receipt": "./src/receipt.ts",

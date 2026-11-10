@@ -44,6 +44,6 @@ function openAccount() {
     </view>
     <button class="button button-secondary" hover-class="button-pressed" @tap="openKnowledge">查看门店已审核资料</button>
     <button class="button button-secondary" hover-class="button-pressed" @tap="openAccount">{{ snapshot.kind === 'CUSTOMER' ? '查看我的资料' : '登录核对本人档案' }}</button>
-    <text class="help">如需农技咨询或核对订单、账款，请联系门店。进入首页不会自动开通客户档案。</text>
+    <text class="help">种植问题可在“问农技”提交；订单和账款请联系门店核对。进入首页不会自动开通客户档案。</text>
   </view>
 </template>

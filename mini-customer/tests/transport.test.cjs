@@ -1,5 +1,5 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),ts=require('typescript');
-function transport(){const file=path.join(__dirname,'../src/services/transport.ts'),module={exports:{}};vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,{module,exports:module.exports,Error,Number,RegExp,String});return module.exports;}
+function transport(){const file=path.join(__dirname,'../src/services/transport.ts'),module={exports:{}};vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,{module,exports:module.exports,Error,Number,RegExp,String,require:name=>{assert.equal(name,'@agri/mobile-contracts/ids');return require('../../packages/mobile-contracts/dist/ids.js')}});return module.exports;}
 test('未配置或非法源站不发code，生产拒绝HTTP，开发仅明确内网/回环',async()=>{
  const {createCustomerTransport}=transport();
  for(const [origin,dev,valid] of [['',false,false],['https://example.test/path',false,false],['https://user@example.test',false,false],['https://example.test?token=x',false,false],['https://example.test:99999',false,false],['http://127.0.0.1:9087',false,false],['http://example.test',true,false],['http://192.168.999.1',true,false],['http://192.168.1.2:9087',true,true],['https://example.test:443',false,true]]){
@@ -31,4 +31,11 @@ test('知识匿名查询只允许固定只读路径和完整白名单参数，�
  await source.sendPublic({path:'/api/public/agronomy/knowledge/11111111-1111-4111-8111-111111111111',query:{region:'大庆',crop:'玉米',growthStage:'苗期',expectedRevision:'1'}});
  assert.equal(requests.every(r=>r.method==='GET'&&!r.header.Authorization),true);
  await assert.rejects(source.sendPublic({path:'/api/public/agronomy/knowledge/scopes',query:{customerId:'1'}}));await assert.rejects(source.sendPublic({path:'/api/public/agronomy/knowledge/11111111-1111-4111-8111-111111111111/publish',query:{}}));assert.equal(requests.length,3);
+});
+test('本人农技路径仅正式私有端点与固定分页，不能借URL扩展后台、身份或动作',async()=>{
+ const {createCustomerTransport}=transport(),requests=[];const source=createCustomerTransport('https://client.example.com',false,r=>{requests.push(r);r.success({statusCode:200,data:{}})});
+ for(const url of ['/api/client/agronomy/cases','/api/client/agronomy/cases?after=10&status=WAITING_REVIEW','/api/client/agronomy/cases/7?after=20','/api/client/agronomy/cases/submissions/11111111-1111-4111-8111-111111111111'])await source.send({url,method:'GET',header:{Authorization:'fictional-customer'}});
+ for(const url of ['/api/client/agronomy/cases','/api/client/agronomy/cases/7/supplements','/api/client/agronomy/cases/7/human-requests'])await source.send({url,method:'POST',data:{},header:{Authorization:'fictional-customer'}});
+ const count=requests.length;for(const url of ['/api/client/agronomy/cases?customerId=999','/api/client/agronomy/cases?after=1&after=2','/api/client/agronomy/cases/7?status=ACTIVE','/api/client/agronomy/cases?status=CLOSED','/api/client/agronomy/cases/1.9','/api/client/agronomy/cases/7/replies','https://evil.example.com/api/client/agronomy/cases'])await assert.rejects(source.send({url,method:'GET',header:{Authorization:'fictional-customer'}}));
+ await assert.rejects(source.send({url:'/api/client/agronomy/cases/7/assignment',method:'POST',data:{},header:{Authorization:'fictional-customer'}}));assert.equal(requests.length,count);assert.equal(requests.every(r=>r.url.startsWith('https://client.example.com/api/client/agronomy/cases')),true);
 });

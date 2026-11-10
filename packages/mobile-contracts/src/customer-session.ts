@@ -66,6 +66,11 @@ export function createCustomerAuth(send: (request: CustomerRequest) => Promise<H
   }
   return {
     current, beginWechatLogin, beginPhoneAuthorization,
+    async requestCustomer(request: CustomerRequest, expectedEpoch: number) {
+      same(expectedEpoch);
+      if (state.kind !== 'CUSTOMER') throw Error('CUSTOMER_LOGIN_REQUIRED');
+      return call(request, expectedEpoch, credential());
+    },
     completeEnrollment(expectedEpoch: number) {
       same(expectedEpoch);
       if (state.kind === 'GUEST') throw Error('CUSTOMER_LOGIN_REQUIRED');

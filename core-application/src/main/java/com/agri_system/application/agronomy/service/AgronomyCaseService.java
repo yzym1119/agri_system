@@ -2,6 +2,7 @@ package com.agri_system.application.agronomy.service;
 
 import com.agri_system.application.staff.service.StaffAuthorityService;
 import com.agri_system.application.agronomy.dto.CaseObjectIdDeserializer;
+import com.agri_system.application.agronomy.dto.CaseHumanRequestDeserializer;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.agri_system.domain.agronomy.model.AgronomyCase;
 import com.agri_system.domain.agronomy.model.AgronomyCase.Facts;
@@ -38,7 +39,9 @@ public class AgronomyCaseService {
     private final StorePublicationRepository stores;
     private final SysOperationLogRepository logs;
     private static final Set<String> STATES = Set.of("COLLECTING", "WAITING_REVIEW", "ACTIVE");
-    public record Create(String requestKey, @JsonDeserialize(using=CaseObjectIdDeserializer.class) Long storeId, String question, Facts facts) {
+    public record Create(String requestKey, @JsonDeserialize(using=CaseObjectIdDeserializer.class) Long storeId, String question, Facts facts,
+                         @JsonDeserialize(using=CaseHumanRequestDeserializer.class) Boolean requestHuman) {
+        public Create(String requestKey, Long storeId, String question, Facts facts) { this(requestKey, storeId, question, facts, false); }
         @Override public String toString() { return "CaseCreate[问题原文隐藏]"; }
     }
     public record Change(String requestKey, String expectedVersion, String body, String sourceText,
@@ -53,10 +56,10 @@ public class AgronomyCaseService {
     public record Entry(String id, String type, String actorType, String body, String sourceText,
                         Facts facts, String version, String factsVersion, String createdAt) {}
     public record Page(List<Summary> rows, String nextAfter) {}
-    public record Detail(Summary problem, List<Entry> entries, String nextAfter) {}
+    public record Detail(Summary problem, List<Entry> entries, String nextAfter, Entry latestReply) {}
     public record WorkSummary(Summary problem, String customerId, String assignedStaffId) {}
     public record WorkPage(List<WorkSummary> rows, String nextAfter) {}
-    public record WorkDetail(WorkSummary work, List<Entry> entries, String nextAfter) {}
+    public record WorkDetail(WorkSummary work, List<Entry> entries, String nextAfter, Entry latestReply) {}
     private record Actor(Staff staff, boolean admin, Set<String> permissions) {
         boolean manages() { return permissions.contains("agronomy:case:manage"); }
     }
@@ -68,17 +71,20 @@ public class AgronomyCaseService {
         String key = uuid(command.requestKey()); positive(command.storeId());
         String question = text(command.question(), 2000, true, true);
         Facts facts = facts(command.facts());
-        String hash = digest("CREATE", command.storeId(), question, facts.region(), facts.crop(), facts.growthStage());
+        boolean requestHuman = Boolean.TRUE.equals(command.requestHuman());
+        // 不改变旧未指定/false请求的摘要；明确求人工与原采集请求不能互相重放。
+        String hash = digest(requestHuman ? "CREATE_WITH_HUMAN_REQUEST" : "CREATE", command.storeId(), question, facts.region(), facts.crop(), facts.growthStage());
+        String initialState = requestHuman ? "WAITING_REVIEW" : "COLLECTING";
         var existing = rows.findCreation(customerId, key);
         if (existing.isPresent()) return creationReceipt(existing.get(), hash);
         var now = now();
         boolean inserted = rows.insertCase(new AgronomyCase(null, customerId, command.storeId(), key, hash,
-                question, facts, "COLLECTING", 1, 1, null, now, now));
+                question, facts, initialState, 1, 1, null, now, now));
         var saved = rows.findCreation(customerId, key).orElseThrow(AgronomyCaseService::unavailable);
         if (!inserted) return creationReceipt(saved, hash);
         requireStore(saved.storeId(), true);
         var first = new AgronomyCaseEntry(null, saved.id(), "CUSTOMER", customerId, key, hash,
-                "QUESTION", question, "", facts, null, 0, 1, 1, "COLLECTING", now);
+                "QUESTION", question, "", facts, null, 0, 1, 1, initialState, now);
         if (!rows.insertEntry(first)) throw reused();
         return receipt(rows.findRequest("CUSTOMER", customerId, key).orElseThrow(AgronomyCaseService::unavailable));
     }
@@ -187,13 +193,13 @@ public class AgronomyCaseService {
         positive(customerId); positive(id); cursor(before);
         var row = rows.findOwned(id, customerId, false).orElseThrow(AgronomyCaseService::unavailable);
         var entries = entries(row, true, before);
-        return new Detail(summary(row), entries.values(), entries.next());
+        return new Detail(summary(row), entries.values(), entries.next(), latestReply(row));
     }
     public WorkDetail detailStaff(Long actorId, Long id, Long before) {
         var actor = actor(actorId); positive(id); cursor(before);
         var row = rows.find(id, false).orElseThrow(AgronomyCaseService::unavailable); scope(actor, row);
         var entries = entries(row, false, before);
-        return new WorkDetail(work(row), entries.values(), entries.next());
+        return new WorkDetail(work(row), entries.values(), entries.next(), latestReply(row));
     }
     private record Entries(List<Entry> values, String next) {}
     private Entries entries(AgronomyCase row, boolean customer, Long before) {
@@ -201,10 +207,25 @@ public class AgronomyCaseService {
         var raw = rows.entries(row.id(), customer, row.version(), before);
         var page = raw.subList(0, Math.min(20, raw.size()));
         for (var e : page) if (!e.caseId().equals(row.id()) || e.resultVersion() > row.version()
-                || customer && e.type().equals("ASSIGN")) throw unavailable();
-        return new Entries(page.stream().map(e -> new Entry(e.id().toString(), e.type(), e.actorType(), e.body(),
-                e.sourceText(), e.facts(), Long.toString(e.resultVersion()), Long.toString(e.resultFactsVersion()),
-                e.createdAt().toString())).toList(), raw.size() > 20 ? page.get(19).id().toString() : null);
+                || customer && !customerVisible(e)) throw unavailable();
+        return new Entries(page.stream().map(AgronomyCaseService::entry).toList(), raw.size() > 20 ? page.get(19).id().toString() : null);
+    }
+    private Entry latestReply(AgronomyCase row) {
+        return rows.latestHumanReply(row.id(), row.version()).map(e -> {
+            if (!row.id().equals(e.caseId()) || !e.type().equals("HUMAN_REPLY") || !e.actorType().equals("STAFF")
+                    || e.resultVersion() > row.version() || e.resultFactsVersion() > row.factsVersion()) throw unavailable();
+            return entry(e);
+        }).orElse(null);
+    }
+    private static boolean customerVisible(AgronomyCaseEntry e) {
+        return e.actorType().equals("CUSTOMER") && Set.of("QUESTION", "SUPPLEMENT", "HUMAN_REQUEST").contains(e.type())
+                || e.actorType().equals("STAFF") && e.type().equals("HUMAN_REPLY");
+    }
+    private static Entry entry(AgronomyCaseEntry e) {
+        positive(e.id());
+        if (e.resultVersion() <= 0 || e.resultFactsVersion() <= 0 || e.resultFactsVersion() > e.resultVersion() || e.createdAt() == null) throw unavailable();
+        return new Entry(e.id().toString(), e.type(), e.actorType(), e.body(), e.sourceText(), e.facts(),
+                Long.toString(e.resultVersion()), Long.toString(e.resultFactsVersion()), e.createdAt().toString());
     }
     private Receipt creationReceipt(AgronomyCase row, String hash) {
         integrity(row);

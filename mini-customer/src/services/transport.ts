@@ -1,7 +1,31 @@
 import type { CustomerRequest } from '@agri/mobile-contracts/customer-session';
 import type { HttpResponse } from '@agri/mobile-contracts/session';
 import type { PublicRequest } from '@agri/mobile-contracts/customer-catalog';
+import { isPositiveLongId } from '@agri/mobile-contracts/ids';
 type Options = CustomerRequest & { timeout: number; success(response: HttpResponse): void; fail(error: unknown): void };
+
+function caseRequest(url: string, method: string): boolean {
+  const parts = url.split('?'); if (parts.length > 2) return false;
+  const path = parts[0]!, list = path === '/api/client/agronomy/cases';
+  const detail = /^\/api\/client\/agronomy\/cases\/([^/]+)$/.exec(path);
+  const item = detail !== null && isPositiveLongId(detail[1]);
+  const result = /^\/api\/client\/agronomy\/cases\/submissions\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(path);
+  if (method === 'POST') {
+    const change = /^\/api\/client\/agronomy\/cases\/([^/]+)\/(?:supplements|human-requests)$/.exec(path);
+    return parts.length === 1 && (list || change !== null && isPositiveLongId(change[1]));
+  }
+  if (method !== 'GET' || !list && !item && !result) return false;
+  if (parts.length === 1) return true;
+  if (result || !parts[1]) return false;
+  const seen = new Set<string>();
+  return parts[1].split('&').every(pair => {
+    const [key, value, extra] = pair.split('=');
+    if (!key || !value || extra !== undefined || seen.has(key)) return false;
+    seen.add(key);
+    return key === 'after' && isPositiveLongId(value)
+      || list && key === 'status' && ['COLLECTING', 'WAITING_REVIEW', 'ACTIVE'].includes(value);
+  });
+}
 
 function origin(value: string, development: boolean): string | null {
   const source = value.trim().replace(/\/$/, '');
@@ -40,7 +64,7 @@ export function createCustomerTransport(value: string, development: boolean, req
       if (!base) throw Error('SERVICE_NOT_CONFIGURED');
       const post = /^\/auth\/client\/(?:logout|onboarding\/(?:wechat|phone|registration))$/;
       const get = /^\/auth\/client\/(?:info|onboarding\/info|onboarding\/registration\/[0-9a-f-]{36})$/;
-      if (!(input.method === 'POST' && post.test(input.url) || input.method === 'GET' && get.test(input.url))
+      if (!(input.method === 'POST' && post.test(input.url) || input.method === 'GET' && get.test(input.url) || caseRequest(input.url, input.method))
         || input.header && Object.entries(input.header).some(([key, token]) => key !== 'Authorization' || !/^[\x21-\x7e]{1,1024}$/.test(token)))
         throw Error('CUSTOMER_REQUEST_INVALID');
       return new Promise((resolve, reject) => {

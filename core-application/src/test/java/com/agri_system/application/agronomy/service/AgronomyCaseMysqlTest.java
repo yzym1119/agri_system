@@ -109,4 +109,20 @@ class AgronomyCaseMysqlTest {
         assertEquals(5,service.detailCustomer(101L,Long.valueOf(id),Long.valueOf(first.nextAfter())).entries().size());
         assertEquals(1,rows.entries(Long.valueOf(id),true,1,null).size(),"旧主档只配旧事实，不混入后来追加");
     }
+    @Test void directHumanQuestionIsOneAtomicWaitingCaseAndOneImmutableFirstEntry() {
+        String key=UUID.randomUUID().toString();var command=new AgronomyCaseService.Create(key,1L,"请门店直接处理，纯软件验收",facts,true);
+        var first=tx.execute(s->service.create(101L,command));assertEquals("WAITING_REVIEW",first.status());assertEquals("1",first.version());
+        assertEquals(first,tx.execute(s->service.create(101L,command)));assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM agronomy_case_entry",Integer.class));
+        assertEquals("WAITING_REVIEW",service.pageStaff(9L,null,null,"WAITING_REVIEW").rows().get(0).problem().status());
+    }
+    @Test void latestReplySqlUsesOriginalCaseAndSnapshotInsteadOfFirstTwentyHistoryRows() {
+        String id=create(101,1,UUID.randomUUID().toString()).caseId();
+        tx.execute(s->service.changeStaff(9L,Long.valueOf(id),"HUMAN_REPLY",new AgronomyCaseService.Change(UUID.randomUUID().toString(),"1","虚构旧答复","软件验收来源",null,null)));
+        for(int v=2;v<=26;v++)supplement(id,UUID.randomUUID().toString(),Integer.toString(v));
+        var detail=service.detailCustomer(101L,Long.valueOf(id),null);assertEquals(20,detail.entries().size());assertEquals("虚构旧答复",detail.latestReply().body());
+        tx.execute(s->service.changeStaff(9L,Long.valueOf(id),"HUMAN_REPLY",new AgronomyCaseService.Change(UUID.randomUUID().toString(),"27","虚构新答复","软件验收来源",null,null)));
+        assertEquals("虚构旧答复",rows.latestHumanReply(Long.valueOf(id),27).orElseThrow().body());
+        assertEquals("虚构新答复",service.detailCustomer(101L,Long.valueOf(id),null).latestReply().body());assertTrue(rows.latestHumanReply(Long.valueOf(id),1).isEmpty());
+        String other=create(202,1,UUID.randomUUID().toString()).caseId();assertNull(service.detailCustomer(202L,Long.valueOf(other),null).latestReply());
+    }
 }
