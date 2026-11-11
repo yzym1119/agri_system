@@ -1,0 +1,55 @@
+{
+  "caseId": "3",
+  "initialBrowserVersion": "4",
+  "finalVersion": "9",
+  "entries": 9,
+  "employeePageOnlyAssigned": true,
+  "clientSameLatestReply": true,
+  "clientInternalAssignmentsHidden": true,
+  "originalReplyVersion": "5",
+  "actualCommittedResponseDropped": true,
+  "reassignmentDoesNotBlockOwnCompletedReceipt": true,
+  "originalSameBodyReplay": true,
+  "alteredBodyRejected": true,
+  "newOutOfScopeReplyRejected": true,
+  "otherActorOriginalUnknown": true,
+  "uncommittedUnknownKeptWhileReassigned": true,
+  "explicitVersionBarrierAfterManagerReturns": true,
+  "actualReplyHttpPostCalls": 4,
+  "storagePort": "Map; not native WeChat storage",
+  "identity": "real test staff password session; customer DEV_ONLY; not WeChat login",
+  "moneyInventoryUnchanged": true,
+  "moneyInventoryBaseline": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0,
+    "customer_wallet": 6
+  },
+  "unchangedZeroWalletSums": "0.00\t0.00",
+  "moneyEvidenceBoundary": "empty order/movement tables plus zero wallets only; not populated money conservation",
+  "entryTypes": {
+    "QUESTION": 1,
+    "ASSIGN": 5,
+    "HUMAN_REPLY": 3
+  },
+  "domainStaffAuditCount": 8,
+  "migrationVersion": 149,
+  "successfulMigrations": 105,
+  "finalBackendJarSha256": {
+    "api-admin": "ebbcbffc9cfea4a7ae365302e68649e9933ac996bfac282a7c2e844030f82fa7",
+    "api-client": "6b7c6526459e65a43489e3dfe6eca278bb048b45af04e849b0244f68a7cb6e54"
+  },
+  "originalPermissionsRestored": true,
+  "originalStoreVisibilityRestored": true,
+  "testEmployeeDisabled": true,
+  "originalEmployeeStatusRestored": true,
+  "servicesStopped": true,
+  "portsWithoutListeners": [
+    3104,
+    9094,
+    9095,
+    6404
+  ],
+  "browser": "Codex in-app browser; temporary tab closed after observed result",
+  "browserBackendBoundary": "UI workflow used prior47c backend existingV149 endpoints; final rebuiltJAR API/SDK/SQL verified after service restart"
+}

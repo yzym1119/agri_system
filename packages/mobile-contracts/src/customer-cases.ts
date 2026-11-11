@@ -51,7 +51,7 @@ function versions(v: unknown, f: unknown): { version: string; factsVersion: stri
   if (BigInt(factsVersion) > BigInt(version)) throw Error('CASE_RESPONSE_INVALID');
   return { version, factsVersion };
 }
-function summary(v: unknown): CaseSummary {
+export function decodeCaseSummary(v: unknown): CaseSummary {
   const r = object(v);
   return { id: id(r.id), storeId: id(r.storeId), question: plain(r.question, 2000, true, true), facts: facts(r.facts),
     status: status(r.status), ...versions(r.version, r.factsVersion), createdAt: timestamp(r.createdAt), updatedAt: timestamp(r.updatedAt) };
@@ -65,12 +65,9 @@ function ordered<T>(v: unknown, decode: (row: unknown) => T, getId: (row: T) => 
   return { rows, nextAfter: after };
 }
 export function decodeCasePage(value: unknown): CasePage {
-  const r = object(value); return ordered(r.rows, summary, r => r.id, r.nextAfter);
+  const r = object(value); return ordered(r.rows, decodeCaseSummary, r => r.id, r.nextAfter);
 }
-export function decodeCaseDetail(value: unknown, expectedId: string): CaseDetail {
-  const r = object(value), problem = summary(r.problem);
-  if (problem.id !== id(expectedId)) throw Error('CASE_RESPONSE_INVALID');
-  const decodeEntry = (value: unknown): CaseEntry => {
+export function decodeCaseEntry(value: unknown, problem: CaseSummary): CaseEntry {
     const e = object(value), v = versions(e.version, e.factsVersion);
     if (!['QUESTION', 'SUPPLEMENT', 'HUMAN_REQUEST', 'HUMAN_REPLY'].includes(String(e.type))
         || e.actorType !== (e.type === 'HUMAN_REPLY' ? 'STAFF' : 'CUSTOMER')
@@ -78,9 +75,12 @@ export function decodeCaseDetail(value: unknown, expectedId: string): CaseDetail
     return { id: id(e.id), type: e.type as CaseEntry['type'], actorType: e.actorType as CaseEntry['actorType'],
       body: plain(e.body, 4000, true, true), sourceText: plain(e.sourceText, 2000, true, e.type === 'HUMAN_REPLY'),
       facts: facts(e.facts), ...v, createdAt: timestamp(e.createdAt) };
-  };
-  const page = ordered(r.entries, decodeEntry, r => r.id, r.nextAfter);
-  const latestReply = r.latestReply === null ? null : decodeEntry(r.latestReply);
+}
+export function decodeCaseDetail(value: unknown, expectedId: string): CaseDetail {
+  const r = object(value), problem = decodeCaseSummary(r.problem);
+  if (problem.id !== id(expectedId)) throw Error('CASE_RESPONSE_INVALID');
+  const page = ordered(r.entries, value => decodeCaseEntry(value, problem), r => r.id, r.nextAfter);
+  const latestReply = r.latestReply === null ? null : decodeCaseEntry(r.latestReply, problem);
   if (latestReply && latestReply.type !== 'HUMAN_REPLY'
       || page.rows.some(row => row.type === 'HUMAN_REPLY' && (!latestReply || BigInt(row.version) > BigInt(latestReply.version)
         || row.id === latestReply.id && JSON.stringify(row) !== JSON.stringify(latestReply)))) throw Error('CASE_RESPONSE_INVALID');

@@ -95,6 +95,18 @@
       "style": {
         "navigationBarTitleText": "整单备货"
       }
+    },
+    {
+      "path": "pages/cases/list/index",
+      "style": {
+        "navigationBarTitleText": "农技问题"
+      }
+    },
+    {
+      "path": "pages/cases/detail/index",
+      "style": {
+        "navigationBarTitleText": "农技答复"
+      }
     }
   ],
   "globalStyle": {

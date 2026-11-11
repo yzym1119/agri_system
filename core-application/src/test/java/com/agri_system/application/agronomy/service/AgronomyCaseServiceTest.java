@@ -79,6 +79,26 @@ class AgronomyCaseServiceTest {
         assertEquals(1,service.detailCustomer(101L,Long.valueOf(a.caseId()),null).entries().size(),"内部派给谁不向客户下发");
         when(authority.loadPermissions(9L)).thenReturn(List.of("agronomy:case:query"));assertThrows(IllegalArgumentException.class,()->service.detailStaff(9L,Long.valueOf(b.caseId()),null));
     }
+    @Test void reassignmentPreservesOnlyOriginalActorsImmutableReceiptAndReplayWithoutReopeningProblemScope() {
+        when(authority.loadPermissions(10L)).thenReturn(List.of("agronomy:case:query", "agronomy:case:review"));
+        var first = create();
+        staffChange(first.caseId(), "ASSIGN", UUID.randomUUID().toString(), "1", "交给员工", null, 10L);
+        String replyKey = UUID.randomUUID().toString();
+        var command = new AgronomyCaseService.Change(replyKey, "2", "仅软件核验答复", "软件依据", null, null);
+        var original = tx.execute(s -> service.changeStaff(10L, Long.valueOf(first.caseId()), "HUMAN_REPLY", command));
+        staffChange(first.caseId(), "ASSIGN", UUID.randomUUID().toString(), "3", "重新分配", null, 9L);
+        assertThrows(IllegalArgumentException.class, () -> service.detailStaff(10L, Long.valueOf(first.caseId()), null));
+        assertEquals(original, service.submissionStaff(10L, replyKey).receipt());
+        assertEquals(original, tx.execute(s -> service.changeStaff(10L, Long.valueOf(first.caseId()), "HUMAN_REPLY", command)));
+        assertThrows(IllegalArgumentException.class, () -> tx.execute(s -> service.changeStaff(10L, Long.valueOf(first.caseId()), "HUMAN_REPLY",
+                new AgronomyCaseService.Change(replyKey, "2", "篡改内容", "软件依据", null, null))));
+        assertThrows(IllegalArgumentException.class, () -> tx.execute(s -> service.changeStaff(10L, Long.valueOf(first.caseId()), "HUMAN_REPLY",
+                new AgronomyCaseService.Change(UUID.randomUUID().toString(), "4", "越权新回复", "软件依据", null, null))));
+        assertEquals("UNKNOWN", service.submissionStaff(9L, replyKey).status());
+        when(authority.loadPermissions(10L)).thenReturn(List.of("agronomy:case:query"));
+        assertThrows(IllegalArgumentException.class, () -> service.submissionStaff(10L, replyKey));
+        assertEquals(4, jdbc.queryForObject("SELECT COUNT(*) FROM agronomy_case_entry", Integer.class));
+    }
     @Test void privateOrStoppedStoreRejectsNewQuestionButWithdrawingPublicationKeepsOwnedHistory(){
         var a=create();when(stores.find(eq(1L),anyBoolean())).thenReturn(Optional.of(new StorePublicationRepository.State(1L,"门店",null,null,1,0,0,2L)));
         assertNotNull(service.detailCustomer(101L,Long.valueOf(a.caseId()),null));assertThrows(IllegalArgumentException.class,()->tx.execute(s->service.create(101L,new AgronomyCaseService.Create(UUID.randomUUID().toString(),1L,"新问题",facts))));

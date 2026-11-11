@@ -71,6 +71,7 @@ const parentGroups: Record<ParentKey, RouteRecordRaw> = {
 }
 
 const routeDefinitions: RouteDefinition[] = [
+  {name:'AgronomyCases',path:'agronomy/cases',component:()=>import('@/views/agronomy/cases/index.vue'),permissions:['agronomy:case:query'],title:'农技问题',icon:'ChatDotRound',menuPath:'/agronomy/cases'},
   {
     name: 'AgronomyKnowledge',
     path: 'agronomy/knowledge',

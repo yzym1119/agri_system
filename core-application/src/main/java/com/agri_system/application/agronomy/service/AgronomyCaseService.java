@@ -103,7 +103,13 @@ public class AgronomyCaseService {
         if (!Set.of("ASSIGN", "HUMAN_REPLY").contains(action == null ? "" : action)) throw invalid("员工操作无效");
         requirePermission(actor, action.equals("ASSIGN") ? "agronomy:case:manage" : "agronomy:case:review");
         var row = rows.find(id, true).orElseThrow(AgronomyCaseService::unavailable);
-        scope(actor, row);
+        // 重新分配不抹除本员工的原提交事实。只准核原号、原问题、原动作；
+        // change仍逐项核摘要，原收据分支不会读取后续正文或新增追加。
+        boolean ownsOriginal = command != null && command.requestKey() != null
+                && rows.findRequest("STAFF", actorId, command.requestKey())
+                .filter(e -> e.caseId().equals(id) && e.type().equals(action)).isPresent();
+        if (ownsOriginal) storeScope(actor, row.storeId());
+        else scope(actor, row);
         return change(row, "STAFF", actorId, action, command);
     }
 
@@ -170,7 +176,9 @@ public class AgronomyCaseService {
         var entry = rows.findRequest("STAFF", actorId, key);
         if (entry.isEmpty()) return new Submission(key, "UNKNOWN", null);
         var row = rows.find(entry.get().caseId(), false).orElseThrow(AgronomyCaseService::unavailable);
-        scope(actor, row);
+        // 只返回当前员工自己的不可变收据，不开放重新分配后的问题详情。
+        storeScope(actor, row.storeId());
+        integrity(row);
         requirePermission(actor, entry.get().type().equals("ASSIGN") ? "agronomy:case:manage" : "agronomy:case:review");
         return new Submission(key, "COMPLETED", receipt(entry.get()));
     }

@@ -8,19 +8,21 @@ let epoch = 0;
 const openDeviceCheck = () => uni.navigateTo({ url: '/pages/device-check/index' });
 const openRecovery = () => uni.navigateTo({ url:'/pages/recovery/index' });
 const openSale = () => uni.navigateTo({ url: '/pages/sale/index' });
-const canSale = ref(false);
+const canSale = ref(false),canCases=ref(false);
+const openCases=()=>uni.navigateTo({url:'/pages/cases/list/index'});
 const openInventory = () => uni.navigateTo({ url:'/pages/scan/index' });
 const openReceiving = () => uni.navigateTo({url:'/pages/receipt/list/index'});
 const openDelivery = () => uni.navigateTo({url:'/pages/delivery/list/index'});
 const canPickup=ref(false),canOwnOrders=ref(false);
 const openOrders=()=>uni.navigateTo({url:'/pages/orders/list/index'});
 const openPickup=()=>uni.navigateTo({url:'/pages/pickup/list/index'});
-const featureIcon=(id:string)=>({sale:'bag',inventory:'scan',receipt:'doc',pickup:'box',delivery:'truck',orders:'doc'} as Record<string,string>)[id]??'box';
+const featureIcon=(id:string)=>({sale:'bag',inventory:'scan',receipt:'doc',pickup:'box',delivery:'truck',orders:'doc',cases:'doc'} as Record<string,string>)[id]??'box';
 // 个人常用项只改变布局，实际入口始终取本次刷新后的权限交集。
 const favoriteIds = ref<string[] | null>(null), draftIds = ref<string[]>([]);
 const editing = ref(false), preferenceMessage = ref('');
 let preferenceKey = '', active = false, actorEpoch = -1;
 const features = computed(() => [
+  { id:'cases',name:'农技问题',hint:'查看客户问题与门店答复',mark:'问',allowed:canCases.value,open:openCases },
   { id:'orders', name:'本人订单', hint:'查看自己开出的订单和账款', mark:'单', allowed:canOwnOrders.value, open:openOrders },
   { id:'sale', name:'销售开单', hint:'找商品、选客户，核对现金开单', mark:'售', allowed:canSale.value, open:openSale },
   { id:'inventory', name:'查库存', hint:'扫码找货，核对批次与货位', mark:'查', allowed:canQueryInventory.value, open:openInventory },
@@ -52,7 +54,7 @@ onShow(async () => {
   checking.value = true; error.value = ''; name.value = ''; store.value = '';
   editing.value = false; favoriteIds.value = null; preferenceKey = ''; preferenceMessage.value = '';
   canRecover.value = false;canSale.value=false;canQueryInventory.value=false;canReceive.value=false;canDeliver.value=false;
-  canPickup.value=false;canOwnOrders.value=false;
+  canPickup.value=false;canOwnOrders.value=false;canCases.value=false;
   try {
     await staffAuth.refresh();
     if (epoch !== current) return;
@@ -62,6 +64,7 @@ onShow(async () => {
     name.value = actor.name; store.value = actor.storeId;
     canRecover.value = actor.permissions.includes('*') || actor.permissions.includes('pos:order:create');
     canSale.value = canRecover.value;
+    canCases.value=actor.permissions.includes('agronomy:case:query');
     canOwnOrders.value=actor.permissions.includes('*')||actor.permissions.includes('order:own:query');
     canQueryInventory.value=actor.permissions.includes('*')||actor.permissions.includes('inventory:view');
     canReceive.value=actor.permissions.includes('*')||actor.permissions.includes('purchase:inbound');
@@ -127,7 +130,7 @@ async function logout() {
       <view v-if="features.length" class="section"><text class="section-title">全部业务</text><text class="section-note">按当前权限显示</text></view>
       <view v-if="features.length" class="card card-flat"><view v-for="item in features" :key="item.id" class="list-item row-between" hover-class="tap-hover" @click="item.open"><view class="grow"><text class="t-sub">{{ item.name }}</text><text class="t-cap">{{ item.hint }}</text></view><AppIcon name="chevron" :size="12" /></view></view>
 
-      <view v-if="!canSale && !canReceive && !canQueryInventory && !canPickup && !canDeliver && !canRecover" class="card empty">
+      <view v-if="!features.length" class="card empty">
         <view class="empty-icon"><AppIcon name="user" :size="20" /></view>
         <text class="empty-text">当前账号还没有业务权限，请联系店长分配后再进入。</text>
       </view>

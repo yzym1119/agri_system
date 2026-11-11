@@ -1,0 +1,55 @@
+{
+  "baseCommit": "47c1ec9f2b006146360a71a26eb238b0ee1cc606",
+  "branch": "codex/staff-unified-review",
+  "backend": {
+    "reports": 180,
+    "tests": 1187,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "cleanVerifyFinished": "2026-11-11T09:26:52+08:00"
+  },
+  "shared": 134,
+  "admin": 325,
+  "staff": 141,
+  "customer": 32,
+  "typeAndProductionBuilds": [
+    "admin-web",
+    "mini-staff",
+    "mini-customer"
+  ],
+  "registeredAndCompiledPages": {
+    "mini-staff": 18,
+    "mini-customer": 11
+  },
+  "independentReview": {
+    "count": 1,
+    "confirmedP2": 1,
+    "fixVerifiedRedThenGreen": true
+  },
+  "sourceSha256": {
+    "admin-web/src/api/cases.ts": "b935600210cda3c8981f79472b222e17c943da2254fb549baef0823db24e5226",
+    "admin-web/src/views/agronomy/cases/index.vue": "1beca6be9866bb429502cb5d8b428616838e55f6da77f716defa44edb07d55c4",
+    "admin-web/tests/case-page.test.cjs": "8be5754093d93129b90903665a1995caf7dd00f8527bbae686dd144d286dccab",
+    "mini-staff/src/pages/cases/detail/index.vue": "7c7ce1bc9a8347f6099f34e394535b9ad4f526bbea8f916e7003411b46371493",
+    "mini-staff/src/pages/cases/list/index.vue": "5e54b8fa756585cb8130f0bb05a09a10a2ca1fd3d47e1912869e2e7510730453",
+    "mini-staff/src/services/cases.ts": "e20eba169de08056ea9ecb173e8ca334881ad8473c39875211a6156766586e8c",
+    "mini-staff/tests/cases.test.cjs": "1853a6449cacd714b9553b55a5c161b7292336ba16e1c2d8d222b3db0ae6ec49",
+    "packages/mobile-contracts/src/staff-case-submission.ts": "b779e6a60a3919ccda3e9541d9524c135a9d36b4fede3cb15b088eba135324bf",
+    "packages/mobile-contracts/src/staff-cases.ts": "b4e8311e3bb17e2cbbc0756b4c1279eba291c8c4affb55d59a2fa7458c709657",
+    "packages/mobile-contracts/tests/staff-case-submission.test.cjs": "8e4a6440efe6fe7a76c8a29915a3fab3d0bdf77412b16eef03e6e5cd0f043998",
+    "packages/mobile-contracts/tests/staff-cases.test.cjs": "fd5791aaa689dabed5d8618571b9a2ebec57ec0a34c07aed59f6841e3bde72a1",
+    "admin-web/package.json": "fa11bc324d8f38bc409eeebacbd3205aeb3a36f10a4cf50cf83577230ed7f999",
+    "admin-web/src/router/registry.ts": "86974a63157410238dcece867e588052a998e7d903992edf8d1459894b1157ed",
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyCaseService.java": "0e53fc2e63de547048f4fb7fa949197d4675c4cfbabe4966830f9a81cb2f37e9",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyCaseServiceTest.java": "c609489f7784d58c6fe686da3a10cd3cde2d92abb28e5d5931c63642a0a4ae9e",
+    "mini-staff/src/pages.json": "73dbc485f8c5ed381b130873386414a52a5e54b89eb2243f6fa2c896f6a596f3",
+    "mini-staff/src/pages/workbench/index.vue": "e02a8a144944cec0f7f115d6b29217aaea0fab450180b95d9c92f2313a0f2cea",
+    "packages/mobile-contracts/package.json": "02808f6565ab55f8ed7e64a7d2870fa6692b7f24c84b269e80cf7e85f96019c0",
+    "packages/mobile-contracts/src/customer-cases.ts": "18e8b45de591ec8a2246c0ff3f856081aae8ceefb78798b137f12a711bb08827"
+  },
+  "externalAiCalls": 0,
+  "nativeWechatOrDeviceAcceptance": false,
+  "actualEvidence": "actual-sdk-sql.json",
+  "originalEnvironmentChanged": false
+}

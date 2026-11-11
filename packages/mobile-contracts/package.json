@@ -22,6 +22,8 @@
     "./fulfillment": "./src/fulfillment.ts",
     "./pickup": "./src/pickup.ts",
     "./sale": "./src/sale.ts",
+    "./staff-cases": "./src/staff-cases.ts",
+    "./staff-case-submission": "./src/staff-case-submission.ts",
     "./staff-orders": "./src/staff-orders.ts",
     "./pickup-preparation": "./src/pickup-preparation.ts"
   },
