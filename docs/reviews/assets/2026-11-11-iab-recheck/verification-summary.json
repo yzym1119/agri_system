@@ -1,0 +1,45 @@
+{
+  "scope": "isolated local IAB admin and staff web views plus real customer HTTP and SQL",
+  "caseId": "4",
+  "staffOnlyOwnAssignedCase": true,
+  "staffOtherCaseDenied": true,
+  "permissionsRestored": true,
+  "visibilityRestored": true,
+  "newTestStaffDisabled": true,
+  "customerReplyMatchesBrowserAndSql": true,
+  "customerInternalAssignmentHidden": true,
+  "version": 3,
+  "status": "ACTIVE",
+  "entryTypes": {
+    "QUESTION": 1,
+    "ASSIGN": 1,
+    "HUMAN_REPLY": 1
+  },
+  "refreshDidNotDuplicateWrites": true,
+  "moneyInventoryUnchanged": true,
+  "baselineCounts": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0,
+    "customer_wallet": 6
+  },
+  "moneyEvidenceBoundary": "empty order/movement and zero wallet baseline; no populated conservation claim",
+  "migrationVersion": 150,
+  "successfulMigrations": 106,
+  "sourceCommit": "506e6c970e5d9a76b0f91b684c9b4d46d951049a",
+  "backendJarSha256": {
+    "api-admin": "598ea1dc41e990b888528a05f8155d2934f70f98a9c48c0361b025050a1af754",
+    "api-client": "1366bac83af77b92f70a6cd28cbb7c7d6639ec5f5a6ba4ccfae0f12de04f8c96"
+  },
+  "realWechatOrPhoneTest": false,
+  "realModelOrSearchCall": false,
+  "externalCost": 0,
+  "fixtureCorrection": "initial verification expected nonexistent ANSWERED; actual contract ACTIVE, corrected read-only verification passed",
+  "servicesStopped": true,
+  "portsNoLongerListening": [
+    9094,
+    9095,
+    6404,
+    3104
+  ]
+}
