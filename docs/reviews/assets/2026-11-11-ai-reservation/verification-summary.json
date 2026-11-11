@@ -1,0 +1,48 @@
+{
+  "baseCommit": "937ea1f6f0d3a68f9cc8b6949a0b5569917ba480",
+  "backend": {
+    "reports": 182,
+    "tests": 1223,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "cleanVerifyFinished": "2026-11-11T10:42:27+08:00"
+  },
+  "h2CoordinatorTests": 14,
+  "mysqlAgronomyTests": 12,
+  "mysqlNewCoordinatorTests": 4,
+  "sameOriginalRacers": 10,
+  "sameOriginalExecutions": 1,
+  "finalStoreAllowanceConcurrentCases": 2,
+  "finalStoreAllowanceAccepted": 1,
+  "actualFlexConnectionAndReadCommittedVerified": true,
+  "workflowOutsideSpringAndFlexTransactionVerified": true,
+  "midnightUncheckedBucketReproducedThenFixed": true,
+  "independentReview": {
+    "count": 1,
+    "confirmedP0P1P2": 0,
+    "subsequentMidnightFixIndependentlyReviewed": false
+  },
+  "schemaSourceVersion": 150,
+  "priorMigrationsModified": false,
+  "originalEnvironmentUpgraded": false,
+  "realProviderCalls": 0,
+  "realFees": 0,
+  "workflow": "internal test stub; result staged only, never published",
+  "runtimeBeanOrApiExposed": false,
+  "business50EvaluationComplete": false,
+  "sourceSha256": {
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinator.java": "a5b5d9607bcbe63bf62fc5d339f28f5a3462b844eaea83d4f05a0231473facbe",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinatorTest.java": "8869b08514beb9ea70f8ef28a20c697b28c0063322dd0f3d10bee5ab36420831",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyCaseMysqlTest.java": "d0707a555ba936e2ff96bec3df382b89e42e052fd54059749f8483bce9cb23b7",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AgronomyAssistantRepository.java": "61db8ebdfd0e4effd6d22fde01d19f49fe2e17066e56a4f3139689789b7d4ed9",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AgronomyAssistantWorkflow.java": "c510e4859b3a10990d2a3aabfce3464d83164650cd10ddb0ad4357f042dc7120",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AssistantBudgetPolicy.java": "cbc3d90077fd19d7fb10960c78eb804df228efb5ca780eae82cd2ff6a2a84f7d",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AssistantRequestMetadata.java": "9cf86235fc2140377b73a5b20de6ffb4cbf121e3db52c4094770b23befedaf00",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/repository/AgronomyCaseRepository.java": "a745148783864ecc61f97203d3a6a2528fc61e71c1ca7dd0ecc8b30d26c2cfdb",
+    "core-infrastructure/src/main/java/com/agri_system/infrastructure/agronomy/repository/AgronomyAssistantRepositoryImpl.java": "32b57f7b7255d4421598951e4f8a3074fdc7fac58b1d6ac777444af3d6f2a950",
+    "core-infrastructure/src/main/java/com/agri_system/infrastructure/agronomy/repository/AgronomyCaseRepositoryImpl.java": "cbfd195240e3305d74561d2ee9a598e09575d7ca049b0ac680bf5dea496921e5",
+    "core-infrastructure/src/main/resources/db/migration/V150__agronomy_assistant_processing.sql": "ef2dc08f9d092b025e13f777fb54b85e766603a352a0a81d2a87f99f93b95209",
+    "core-infrastructure/src/test/java/com/agri_system/infrastructure/migration/RetailFactChainMigrationTest.java": "0b9c0031923cb0e41b2da305f83ef23a11c4cb62d4cf177d2ecb221a3771b9d6"
+  }
+}

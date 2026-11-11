@@ -51,6 +51,7 @@ class AgronomyCaseMysqlTest {
             init.execute("ALTER TABLE store ADD deleted INT NOT NULL DEFAULT 0");
             ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V147__client_store_publication.sql"));
             ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V149__agronomy_case.sql"));
+            ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V150__agronomy_assistant_processing.sql"));
         }
         init.update("INSERT INTO store(id,code,name,client_visible) VALUES(1,'VIRTUAL','虚构咨询门店',1),(2,'OTHER','其他虚构门店',1)");
         var config=new FlexConfiguration(new Environment("case",new SpringManagedTransactionFactory(),new FlexDataSource("case",source,false)));config.setMapUnderscoreToCamelCase(true);
@@ -124,5 +125,58 @@ class AgronomyCaseMysqlTest {
         assertEquals("虚构旧答复",rows.latestHumanReply(Long.valueOf(id),27).orElseThrow().body());
         assertEquals("虚构新答复",service.detailCustomer(101L,Long.valueOf(id),null).latestReply().body());assertTrue(rows.latestHumanReply(Long.valueOf(id),1).isEmpty());
         String other=create(202,1,UUID.randomUUID().toString()).caseId();assertNull(service.detailCustomer(202L,Long.valueOf(other),null).latestReply());
+    }
+
+    com.agri_system.domain.agronomy.assistant.AssistantBudgetPolicy assistantPolicy(long calls) {
+        return new com.agri_system.domain.agronomy.assistant.AssistantBudgetPolicy(true,calls,calls,100000,"deepseek-flash",true,1024,300000,1200000,750,"TEST_PRICE");
+    }
+    AgronomyAssistantCoordinator assistant(com.agri_system.domain.agronomy.assistant.AssistantBudgetPolicy policy,
+            com.agri_system.domain.agronomy.assistant.AgronomyAssistantWorkflow work,
+            com.agri_system.domain.agronomy.assistant.AgronomyAssistantRepository assistantRows) {
+        var customers=mock(com.agri_system.domain.customer.repository.CustomerRepository.class);
+        when(customers.findAuthStateById(anyLong())).thenAnswer(a->Optional.of(new com.agri_system.domain.customer.model.CustomerAuthState(a.getArgument(0),1,0,1L)));
+        return new AgronomyAssistantCoordinator(rows,assistantRows,stores,customers,tx.getTransactionManager(),new com.fasterxml.jackson.databind.ObjectMapper(),java.time.Clock.fixed(java.time.Instant.parse("2026-11-11T03:00:00Z"),java.time.ZoneOffset.UTC),policy,work);
+    }
+    @Test void assistantMysqlOneOriginalTenRacesUsesSameFlexConnectionAndOutsideWorkflow() throws Exception {
+        long id=Long.parseLong(create(101,1,UUID.randomUUID().toString()).caseId());String key=UUID.randomUUID().toString();
+        var metadata=spy(new com.agri_system.infrastructure.agronomy.repository.AgronomyAssistantRepositoryImpl(jdbc));rows=spy(rows);
+        var connectionAtInitialize=new java.util.concurrent.atomic.AtomicReference<Long>();var connectionAtUpdate=new java.util.concurrent.atomic.AtomicReference<Long>();
+        doAnswer(a->{assertEquals("READ-COMMITTED",jdbc.queryForObject("SELECT @@transaction_isolation",String.class));connectionAtInitialize.set(jdbc.queryForObject("SELECT CONNECTION_ID()",Long.class));return a.callRealMethod();}).when(metadata).initialize(any());
+        doAnswer(a->{connectionAtUpdate.set(jdbc.queryForObject("SELECT CONNECTION_ID()",Long.class));return a.callRealMethod();}).when(rows).update(anyLong(),anyLong(),any(),anyString(),anyLong(),nullable(Long.class),any());
+        var calls=new java.util.concurrent.atomic.AtomicInteger();var c=assistant(assistantPolicy(10),snapshot->{
+            assertNull(com.mybatisflex.core.transaction.TransactionContext.getXID());assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());calls.incrementAndGet();return "{}";
+        },metadata);
+        var pool=Executors.newFixedThreadPool(10);var start=new CountDownLatch(1);var all=new ArrayList<Future<?>>();
+        try {for(int n=0;n<10;n++)all.add(pool.submit(()->{start.await();return c.submit(101L,1L,id,new AgronomyAssistantCoordinator.Command(key,"1","1",true));}));start.countDown();for(var f:all)f.get(20,TimeUnit.SECONDS);}
+        finally {pool.shutdownNow();}
+        assertEquals(1,calls.get());assertNotNull(connectionAtInitialize.get());assertEquals(connectionAtInitialize.get(),connectionAtUpdate.get());
+        assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM agronomy_case_entry WHERE type='ASSISTANT_REQUEST'",Integer.class));
+        assertEquals("COMPLETED",c.read(101L,1L,id,key).state());assertEquals(11810,metadata.usage(1L,java.time.LocalDate.of(2026,11,11)).reservedMicrousd());
+    }
+    @Test void assistantMysqlDifferentCasesCannotBothConsumeFinalStoreAllowance() throws Exception {
+        long a=Long.parseLong(create(101,1,UUID.randomUUID().toString()).caseId()),b=Long.parseLong(create(202,1,UUID.randomUUID().toString()).caseId());
+        var metadata=new com.agri_system.infrastructure.agronomy.repository.AgronomyAssistantRepositoryImpl(jdbc);var calls=new java.util.concurrent.atomic.AtomicInteger();
+        var c=assistant(assistantPolicy(1),s->{calls.incrementAndGet();return "{}";},metadata);var start=new CountDownLatch(1);var pool=Executors.newFixedThreadPool(2);
+        try {var all=new ArrayList<Future<Boolean>>();for(long id:new long[]{a,b})all.add(pool.submit(()->{start.await();try{c.submit(id==a?101L:202L,1L,id,new AgronomyAssistantCoordinator.Command(UUID.randomUUID().toString(),"1","1",true));return true;}catch(IllegalArgumentException rejected){return false;}}));start.countDown();int accepted=0;for(var f:all)if(f.get(20,TimeUnit.SECONDS))accepted++;assertEquals(1,accepted);}
+        finally {pool.shutdownNow();}
+        assertEquals(1,calls.get());assertEquals(1,metadata.usage(1L,java.time.LocalDate.of(2026,11,11)).modelCalls());
+        assertEquals(3,jdbc.queryForObject("SELECT SUM(version) FROM agronomy_case WHERE id IN (?,?)",Integer.class,a,b));
+    }
+    @Test void assistantMysqlMetadataFailureRollsBackEntryReservationAndCaseVersion() {
+        long id=Long.parseLong(create(101,1,UUID.randomUUID().toString()).caseId());String key=UUID.randomUUID().toString();
+        var metadata=spy(new com.agri_system.infrastructure.agronomy.repository.AgronomyAssistantRepositoryImpl(jdbc));
+        doAnswer(a->{a.callRealMethod();throw new IllegalStateException("软件验收回滚");}).when(metadata).initialize(any());
+        var c=assistant(assistantPolicy(2),s->{throw new AssertionError();},metadata);
+        assertThrows(RuntimeException.class,()->c.submit(101L,1L,id,new AgronomyAssistantCoordinator.Command(key,"1","1",true)));
+        assertTrue(rows.findRequest("CUSTOMER",101L,key).isEmpty());assertEquals(1,rows.find(id,false).orElseThrow().version());
+        assertEquals(0,metadata.usage(1L,java.time.LocalDate.of(2026,11,11)).reservedMicrousd());
+    }
+    @Test void assistantMysqlUnknownSurvivesNewCoordinatorAndDatabaseRejectsNegativeReserve() {
+        long id=Long.parseLong(create(101,1,UUID.randomUUID().toString()).caseId());String key=UUID.randomUUID().toString();var count=new java.util.concurrent.atomic.AtomicInteger();
+        var metadata=new com.agri_system.infrastructure.agronomy.repository.AgronomyAssistantRepositoryImpl(jdbc);var c=assistant(assistantPolicy(2),s->{count.incrementAndGet();throw new IllegalStateException("测试未知");},metadata);
+        var command=new AgronomyAssistantCoordinator.Command(key,"1","1",true);assertEquals("UNKNOWN",c.submit(101L,1L,id,command).state());
+        assertEquals("UNKNOWN",assistant(assistantPolicy(2),s->{throw new AssertionError();},metadata).submit(101L,1L,id,command).state());assertEquals(1,count.get());
+        assertThrows(org.springframework.dao.DataAccessException.class,()->jdbc.update("UPDATE agronomy_case_entry SET assistant_model_reserved_microusd=-1 WHERE request_key=?",key));
+        assertEquals(11810,metadata.usage(1L,java.time.LocalDate.of(2026,11,11)).reservedMicrousd());
     }
 }
