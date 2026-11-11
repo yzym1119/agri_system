@@ -176,6 +176,27 @@ class WechatAutoRegisterTest {
         authService.devClientLogin("13800000000");assertEquals(1L,authService.getCurrentCustomerId());customer.setStatus(2);customer.setAuthVersion(2L);assertThrows(IllegalArgumentException.class,authService::getCurrentCustomerId);
         customer.setStatus(1);customer.setAuthVersion(3L);assertThrows(IllegalArgumentException.class,authService::getCurrentCustomerId);authService.devClientLogin("13800000000");assertEquals(1L,authService.getCurrentCustomerId());
     }
+    @Test void assistantAuthorityIsBoundToActualSessionAndRevokedIdentityNotOnlyCustomer() {
+        var identity=bindExisting();var login=authService.clientWechatLogin(command());
+        var original=authService.getCurrentClientAuthorization();
+        assertEquals(1L,original.customerId());assertEquals(1L,original.customerAuthVersion());
+        assertEquals("WECHAT",original.kind());assertEquals(1L,original.identityId());assertEquals(1L,original.identityAuthVersion());
+        assertEquals("wx1111111111111111",original.appId());assertTrue(authService.isCurrentClientAuthorization(original));
+        assertFalse(original.toString().contains(original.authorizationId()));assertFalse(original.toString().contains(openId));
+        authService.clientWechatLogin(command());
+        assertFalse(authService.isCurrentClientAuthorization(original),"新设备不能接管原会话执行许可");
+        cn.dev33.satoken.stp.StpUtil.setTokenValue(login.getTokenValue());assertTrue(authService.isCurrentClientAuthorization(original));
+        identity.setStatus(2);identity.setAuthVersion(2L);assertFalse(authService.isCurrentClientAuthorization(original));
+        identity.setStatus(1);identity.setAuthVersion(3L);assertFalse(authService.isCurrentClientAuthorization(original));
+    }
+    @Test void assistantAuthorityNeverBorrowsAMissingSessionProofAndLogoutStopsIt() {
+        bindExisting();authService.clientWechatLogin(command());var original=authService.getCurrentClientAuthorization();
+        cn.dev33.satoken.stp.StpUtil.logout();assertFalse(authService.isCurrentClientAuthorization(original));
+        authService.clientWechatLogin(command());
+        cn.dev33.satoken.stp.StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","WECHAT","identityId","1","appId","wx1111111111111111","authVersion","1","customerAuthVersion","1"));
+        assertEquals(1L,authService.getCurrentCustomerId(),"兼容已有普通本人读取，但不补造AI原会话证明");
+        assertThrows(IllegalArgumentException.class,authService::getCurrentClientAuthorization);
+    }
     private static class StpUtilLoginProbe {static void login(){cn.dev33.satoken.stp.StpUtil.login("CUST_1",new cn.dev33.satoken.stp.SaLoginModel().setToken(java.util.UUID.randomUUID().toString()));}}
 
     private static class MockSaStorage implements SaStorage {

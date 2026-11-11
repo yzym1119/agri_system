@@ -1,6 +1,8 @@
 package com.agri_system.application.agronomy.service;
 
 import com.agri_system.domain.agronomy.assistant.AssistantBudgetPolicy;
+import com.agri_system.application.auth.service.AuthService;
+import com.agri_system.domain.auth.model.ClientAuthorization;
 import com.agri_system.domain.agronomy.assistant.AssistantRequestMetadata;
 import com.agri_system.domain.agronomy.assistant.AgronomyAssistantRepository;
 import com.agri_system.domain.agronomy.assistant.AgronomyAssistantWorkflow;
@@ -38,6 +40,7 @@ public final class AgronomyAssistantCoordinator {
     private final AgronomyAssistantRepository requests;
     private final StorePublicationRepository stores;
     private final CustomerRepository customers;
+    private final AuthService authService;
     private final TransactionTemplate tx;
     private final ObjectMapper json;
     private final Clock clock;
@@ -46,25 +49,26 @@ public final class AgronomyAssistantCoordinator {
     private static final ZoneId ZONE=ZoneId.of("Asia/Shanghai");
     public record Command(String requestKey,String expectedVersion,String factsVersion,boolean shareContextConfirmed) {}
     /** 只给出处理状态，未发布草案和私有执行凭证不出现在结果视图。 */
-    public record View(String requestKey,String caseId,String state,String queuedVersion,String factsVersion,String outcomeKind) {}
+    public record View(String requestKey,String caseId,String state,String queuedVersion,String factsVersion,String outcomeKind,String handoffStatus) {}
     private record Original(AgronomyCaseEntry entry,AssistantRequestMetadata metadata,AgronomyAssistantWorkflow.Snapshot snapshot) {}
     private record Dispatch(Original original,String claimKey) {}
 
     public AgronomyAssistantCoordinator(AgronomyCaseRepository cases,AgronomyAssistantRepository requests,
-            StorePublicationRepository stores,CustomerRepository customers,PlatformTransactionManager manager,
+            StorePublicationRepository stores,CustomerRepository customers,AuthService authService,PlatformTransactionManager manager,
             ObjectMapper json,Clock clock,AssistantBudgetPolicy policy,AgronomyAssistantWorkflow workflow) {
-        this.cases=cases;this.requests=requests;this.stores=stores;this.customers=customers;this.clock=clock;this.policy=policy;this.workflow=workflow;
+        this.cases=cases;this.requests=requests;this.stores=stores;this.customers=customers;this.authService=Objects.requireNonNull(authService);this.clock=clock;this.policy=policy;this.workflow=workflow;
         tx=new TransactionTemplate(manager);tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
         this.json=json.copy().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
                 .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
         this.json.getFactory().setStreamReadConstraints(StreamReadConstraints.builder().maxNestingDepth(32).maxStringLength(49152).maxNumberLength(24).build());
     }
-    public View submit(Long customer,Long authVersion,Long caseId,Command command) {
-        outside();validate(command);auth(customer,authVersion);
-        Original reserved=inTx(()->reserve(customer,authVersion,caseId,command));
+    public View submit(ClientAuthorization authorization,Long caseId,Command command) {
+        outside();validate(command);auth(authorization);
+        long customer=authorization.customerId();
+        Original reserved=inTx(()->reserve(authorization,caseId,command));
         if(!"QUEUED".equals(reserved.metadata().state()))return view(reserved);
-        Dispatch dispatch=inTx(()->claim(customer,authVersion,caseId,command));
-        if(dispatch==null)return read(customer,authVersion,caseId,command.requestKey());
+        Dispatch dispatch=inTx(()->claim(authorization,caseId,command));
+        if(dispatch==null)return read(authorization,caseId,command.requestKey());
         String staged;
         try { outside();staged=workflow.stage(dispatch.original().snapshot(),ledger(dispatch));validateStaged(staged,dispatch.original().snapshot()); }
         catch(AssistantCallLedger.Stopped stopped) { return inTx(()->record(dispatch,"COMPLETED","STALE",null)); }
@@ -72,18 +76,20 @@ public final class AgronomyAssistantCoordinator {
         String output=staged;
         return inTx(()->{
             var row=cases.findOwned(caseId,customer,true).orElseThrow(AgronomyAssistantCoordinator::unavailable);
-            boolean fresh=validAuth(customer,authVersion)&&fresh(row,dispatch.original().snapshot())&&activeStore(row.storeId());
+            boolean fresh=validAuthorization(dispatch.original().snapshot().authorization())&&fresh(row,dispatch.original().snapshot())&&activeStore(row.storeId());
             return record(dispatch,"COMPLETED",fresh?"STAGED":"STALE",fresh?output:null);
         });
     }
-    public View read(Long customer,Long authVersion,Long caseId,String key) {
-        outside();auth(customer,authVersion);positive(caseId);uuid(key);
+    public View read(ClientAuthorization authorization,Long caseId,String key) {
+        outside();auth(authorization);positive(caseId);uuid(key);
+        long customer=authorization.customerId();
         cases.findOwned(caseId,customer,false).orElseThrow(AgronomyAssistantCoordinator::unavailable);
         return view(original(customer,caseId,key,null));
     }
     /** 仅标记久未决状态，不重新调用供应商、不释放最大预占。 */
-    public View markUnknown(Long customer,Long authVersion,Long caseId,String key) {
-        outside();auth(customer,authVersion);uuid(key);
+    public View markUnknown(ClientAuthorization authorization,Long caseId,String key) {
+        outside();auth(authorization);positive(caseId);uuid(key);
+        long customer=authorization.customerId();
         return inTx(()->{
             cases.findOwned(caseId,customer,true).orElseThrow(AgronomyAssistantCoordinator::unavailable);
             var o=original(customer,caseId,key,null);
@@ -92,10 +98,11 @@ public final class AgronomyAssistantCoordinator {
             return view(original(customer,caseId,key,null));
         });
     }
-    private Original reserve(Long customer,Long authVersion,Long caseId,Command command) {
+    private Original reserve(ClientAuthorization authorization,Long caseId,Command command) {
+        long customer=authorization.customerId(),authVersion=authorization.customerAuthVersion();
         var row=cases.findOwned(caseId,customer,true).orElseThrow(AgronomyAssistantCoordinator::unavailable);
         if(cases.findRequest("CUSTOMER",customer,command.requestKey()).isPresent())return original(customer,caseId,command.requestKey(),command);
-        policy.requireEnabled();auth(customer,authVersion);requireStore(row.storeId());
+        policy.requireEnabled();requireStore(row.storeId());auth(authorization);
         if(row.version()!=number(command.expectedVersion())||row.factsVersion()!=number(command.factsVersion())||row.version()==Long.MAX_VALUE
                 ||row.factsVersion()<1||row.factsVersion()>row.version()||!Set.of("COLLECTING","WAITING_REVIEW","ACTIVE").contains(row.status()))throw invalid("问题情况已变化，请重新核对");
         if(requests.hasOpen(caseId))throw invalid("此问题还有原AI请求待核对，不能另号调用");
@@ -108,7 +115,7 @@ public final class AgronomyAssistantCoordinator {
         try {if(external&&(used.modelCalls()>=policy.dailyModelCalls()||used.searchCalls()>=policy.dailySearchCalls()
                     ||Math.addExact(used.reservedMicrousd(),Math.addExact(model,search))>policy.dailyMicrousd()))throw invalid("本店今日AI调用额度不足，请联系门店");}
         catch(ArithmeticException overflow){throw invalid("AI预占合计超出支持范围");}
-        var snapshot=new AgronomyAssistantWorkflow.Snapshot(authVersion,row.version(),row.version()+1,row.factsVersion(),row.question(),row.facts(),supplement,policy.execution(),external?"EXTERNAL":"LOCAL");
+        var snapshot=new AgronomyAssistantWorkflow.Snapshot(authVersion,row.version(),row.version()+1,row.factsVersion(),row.question(),row.facts(),supplement,policy.execution(),external?"EXTERNAL":"LOCAL",authorization);
         String saved=encode(snapshot);if(saved.getBytes(StandardCharsets.UTF_8).length>49152)throw invalid("AI上下文超出支持范围");
         var entry=new AgronomyCaseEntry(null,caseId,"CUSTOMER",customer,command.requestKey(),hash(caseId,command,saved),"ASSISTANT_REQUEST","请求AI说明（尚未发布）","",row.facts(),null,row.version(),row.version()+1,row.factsVersion(),row.status(),reservationAt);
         if(!cases.insertEntry(entry))throw invalid("原AI请求身份已被占用，请核对原号");
@@ -117,12 +124,13 @@ public final class AgronomyAssistantCoordinator {
         if(!cases.update(caseId,row.version(),row.facts(),row.status(),row.factsVersion(),row.assignedStaffId(),reservationAt))throw unavailable();
         return original(customer,caseId,command.requestKey(),command);
     }
-    private Dispatch claim(Long customer,Long authVersion,Long caseId,Command command) {
+    private Dispatch claim(ClientAuthorization authorization,Long caseId,Command command) {
+        long customer=authorization.customerId();
         var row=cases.findOwned(caseId,customer,true).orElseThrow(AgronomyAssistantCoordinator::unavailable);
         var o=original(customer,caseId,command.requestKey(),command);
         if(!"QUEUED".equals(o.metadata().state()))return null;
         boolean storeActive=stores.find(row.storeId(),true).filter(s->Integer.valueOf(1).equals(s.status())&&Integer.valueOf(0).equals(s.deleted())).isPresent();
-        if(!storeActive||!validAuth(customer,authVersion)||o.snapshot().customerAuthVersion()!=authVersion||!fresh(row,o.snapshot())
+        if(!storeActive||!Objects.equals(authorization,o.snapshot().authorization())||!validAuthorization(o.snapshot().authorization())||!fresh(row,o.snapshot())
                 ||!policy.enabled()||!policy.execution().equals(o.snapshot().execution())||!day().equals(o.metadata().budgetDay())) {
             if(!requests.failBeforeDispatch(o.entry().id(),encode(java.util.Map.of("kind","NOT_DISPATCHED")),now()))throw unavailable();
             return null;
@@ -134,8 +142,21 @@ public final class AgronomyAssistantCoordinator {
     private View record(Dispatch d,String state,String kind,String staged) {
         // 不覆盖entry的原body/hash/版本收据。仅同一次私有执行凭证可提交处理结果。
         var e=d.original().entry();
-        cases.find(e.caseId(),true).orElseThrow(AgronomyAssistantCoordinator::unavailable);
-        String outcome=staged==null?encode(java.util.Map.of("kind",kind)):encode(java.util.Map.of("kind",kind,"draft",parseTree(staged)));
+        var row=cases.find(e.caseId(),true).orElseThrow(AgronomyAssistantCoordinator::unavailable);
+        var outcomeFields=new java.util.LinkedHashMap<String,Object>();outcomeFields.put("kind",kind);
+        if(staged!=null) {
+            var draft=parseTree(staged);outcomeFields.put("draft",draft);
+            if("COMPLETED".equals(state)&&"STAGED".equals(kind)&&"HUMAN".equals(draft.path("kind").asText())) {
+                long handoffVersion=row.version();
+                if(!"WAITING_REVIEW".equals(row.status())) {
+                    if(row.version()==Long.MAX_VALUE||!cases.update(row.id(),row.version(),row.facts(),"WAITING_REVIEW",row.factsVersion(),row.assignedStaffId(),now()))throw unavailable();
+                    handoffVersion++;
+                }
+                // 原AI请求的处理结果就是转交事实，不伪造客户消息或人工答复，也不改原收据。
+                outcomeFields.put("handoffStatus","WAITING_REVIEW");outcomeFields.put("handoffVersion",Long.toString(handoffVersion));
+            }
+        }
+        String outcome=encode(outcomeFields);
         if(!requests.finish(e.id(),d.claimKey(),state,outcome,now()))throw unavailable();
         return view(original(e.actorId(),e.caseId(),e.requestKey(),null));
     }
@@ -162,7 +183,7 @@ public final class AgronomyAssistantCoordinator {
         };
     }
     private boolean ready(AgronomyCase row,AssistantRequestMetadata m,AgronomyAssistantWorkflow.Snapshot s,Long customer) {
-        return s.externalCallsPlanned()&&"RUNNING".equals(m.state())&&fresh(row,s)&&validAuth(customer,s.customerAuthVersion())
+        return s.externalCallsPlanned()&&"RUNNING".equals(m.state())&&fresh(row,s)&&validAuthorization(s.authorization())&&s.authorization().customerId()==customer
                 &&activeStore(row.storeId())&&policy.enabled()&&policy.execution().equals(s.execution())&&day().equals(m.budgetDay());
     }
     private void changeStep(Dispatch d,AssistantCallLedger.Stage stage,String state,long input,long output) {
@@ -239,6 +260,8 @@ public final class AgronomyAssistantCoordinator {
             s=json.readValue(m.snapshot(),AgronomyAssistantWorkflow.Snapshot.class);
             var canonical=json.valueToTree(s);
             if(s.processingPlan()==null)((com.fasterxml.jackson.databind.node.ObjectNode)canonical).remove("processingPlan");
+            if(s.authorization()==null)((com.fasterxml.jackson.databind.node.ObjectNode)canonical).remove("authorization");
+            if(s.authorization()!=null&&(s.authorization().customerId()!=customer||s.authorization().customerAuthVersion()!=s.customerAuthVersion()))throw unavailable();
             if(!encode(canonical).equals(m.snapshot())||s.processingPlan()!=null&&!Set.of("LOCAL","EXTERNAL").contains(s.processingPlan())
                     ||s.queuedCaseVersion()!=entry.resultVersion()||s.originalCaseVersion()!=entry.expectedVersion()
                     ||s.factsVersion()!=entry.resultFactsVersion()||!s.facts().equals(entry.facts())||s.customerAuthVersion()<1
@@ -257,8 +280,9 @@ public final class AgronomyAssistantCoordinator {
     }
     private static AssistantBudgetPolicy from(AssistantBudgetPolicy.Execution e) {return new AssistantBudgetPolicy(true,1,1,Long.MAX_VALUE,e.model(),e.searchRequired(),e.maxOutputTokens(),e.inputMicrousdPerMillion(),e.outputMicrousdPerMillion(),e.searchMicrousd(),e.priceVersion());}
     private View view(Original o) {
-        String kind="";if(o.metadata().outcome()!=null)kind=parseTree(o.metadata().outcome()).path("kind").asText();
-        return new View(o.entry().requestKey(),o.entry().caseId().toString(),o.metadata().state(),Long.toString(o.entry().resultVersion()),Long.toString(o.entry().resultFactsVersion()),kind);
+        String kind="",handoff="";
+        if(o.metadata().outcome()!=null){var outcome=parseTree(o.metadata().outcome());kind=outcome.path("kind").asText();handoff=outcome.path("handoffStatus").asText();}
+        return new View(o.entry().requestKey(),o.entry().caseId().toString(),o.metadata().state(),Long.toString(o.entry().resultVersion()),Long.toString(o.entry().resultFactsVersion()),kind,handoff);
     }
     private String hash(Long id,Command c,String snapshot) {
         try {return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(encode(java.util.List.of("ASSISTANT_REQUEST",id,c.expectedVersion(),c.factsVersion(),c.shareContextConfirmed(),snapshot)).getBytes(StandardCharsets.UTF_8)));}
@@ -272,7 +296,10 @@ public final class AgronomyAssistantCoordinator {
     }
     private static boolean fresh(AgronomyCase c,AgronomyAssistantWorkflow.Snapshot s) {return c.version()==s.queuedCaseVersion()&&c.factsVersion()==s.factsVersion()&&c.facts().equals(s.facts());}
     private boolean validAuth(Long id,Long version) {return customers.findAuthStateById(id).filter(s->s.active()&&Objects.equals(s.id(),id)&&Objects.equals(s.authVersion(),version)).isPresent();}
-    private void auth(Long id,Long version) {positive(id);positive(version);if(!validAuth(id,version))throw invalid("客户授权已变化，请重新登录");}
+    private boolean validAuthorization(ClientAuthorization value) {
+        return value!=null&&validAuth(value.customerId(),value.customerAuthVersion())&&authService.isCurrentClientAuthorization(value);
+    }
+    private void auth(ClientAuthorization value) {if(!validAuthorization(value))throw invalid("客户授权已变化，请重新登录");}
     private void requireStore(Long id) {var s=stores.find(id,true).orElseThrow(AgronomyAssistantCoordinator::unavailable);if(!Integer.valueOf(1).equals(s.status())||!Integer.valueOf(0).equals(s.deleted()))throw invalid("门店暂不能处理AI请求");}
     private boolean activeStore(Long id) {return stores.find(id,false).filter(s->Integer.valueOf(1).equals(s.status())&&Integer.valueOf(0).equals(s.deleted())).isPresent();}
     private static void validate(Command c) {if(c==null||!c.shareContextConfirmed())throw invalid("请先确认最少上下文发送");uuid(c.requestKey());number(c.expectedVersion());number(c.factsVersion());}

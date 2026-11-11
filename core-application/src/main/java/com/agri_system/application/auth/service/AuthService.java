@@ -7,6 +7,7 @@ import com.agri_system.application.auth.dto.StaffLoginCommand;
 import com.agri_system.application.auth.util.BCryptUtils;
 import com.agri_system.application.staff.service.StaffAuthorityService;
 import com.agri_system.domain.auth.model.CustomerIdentity;
+import com.agri_system.domain.auth.model.ClientAuthorization;
 import com.agri_system.domain.auth.repository.CustomerIdentityRepository;
 import com.agri_system.domain.customer.model.Customer;
 import com.agri_system.domain.customer.repository.CustomerRepository;
@@ -149,7 +150,7 @@ public class AuthService {
         identity.setSessionKey(result.getSessionKey());identity.setUpdatedAt(LocalDateTime.now());identityRepository.save(identity);
         StpUtil.login("CUST_"+customer.getId(),new cn.dev33.satoken.stp.SaLoginModel().setToken(UUID.randomUUID().toString()));
         StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","WECHAT","identityId",identity.getId().toString(),"appId",wechatAppId,
-                "authVersion",identity.getAuthVersion().toString(),"customerAuthVersion",customer.getAuthVersion().toString()));
+                "authVersion",identity.getAuthVersion().toString(),"customerAuthVersion",customer.getAuthVersion().toString(),"authorizationId",UUID.randomUUID().toString()));
         LoginResultVO login=new LoginResultVO();login.setTokenName(StpUtil.getTokenName());login.setTokenValue(StpUtil.getTokenValue());
         LoginResultVO.UserInfo user=new LoginResultVO.UserInfo();user.setId(customer.getId());user.setName(customer.getName());user.setRole(customer.isVip()?"VIP":"NORMAL");
         Map<String,Object> extra=new HashMap<>();extra.put("code",customer.getCode());extra.put("phone",customer.getPhone());extra.put("vipLevel",customer.getVipLevel());extra.put("bindingState","LINKED");user.setExtra(extra);login.setUserInfo(user);
@@ -183,7 +184,7 @@ public class AuthService {
 
         String loginId = "CUST_" + customer.getId();
         StpUtil.login(loginId,new cn.dev33.satoken.stp.SaLoginModel().setToken(UUID.randomUUID().toString()));
-        StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","DEV","customerAuthVersion",customer.getAuthVersion().toString()));
+        StpUtil.getTokenSession().set("clientAuthV1",Map.of("kind","DEV","customerAuthVersion",customer.getAuthVersion().toString(),"authorizationId",UUID.randomUUID().toString()));
 
         LoginResultVO result = new LoginResultVO();
         result.setTokenName(StpUtil.getTokenName());
@@ -283,6 +284,28 @@ public class AuthService {
         if(!customerId.equals(customer.getId()))throw new IllegalArgumentException("客户身份资料待核验");
         requireCustomerAccess(customer,customerVersion);
         return customerId;
+    }
+    /** 只从当前真实会话取来源；旧会话缺少许可时要求重登，不能补造身份或版本。 */
+    public ClientAuthorization getCurrentClientAuthorization() {
+        Long customer = getCurrentCustomerId();
+        Object raw = StpUtil.getTokenSession().get("clientAuthV1");
+        if (!(raw instanceof Map<?, ?> binding)) throw new IllegalArgumentException("客户登录需重新核验");
+        try {
+            String kind = String.valueOf(binding.get("kind"));
+            return new ClientAuthorization(customer, customerVersion(binding), kind,
+                    "WECHAT".equals(kind) ? (String) binding.get("appId") : null,
+                    "WECHAT".equals(kind) ? Long.valueOf(String.valueOf(binding.get("identityId"))) : null,
+                    "WECHAT".equals(kind) ? Long.valueOf(String.valueOf(binding.get("authVersion"))) : null,
+                    (String) binding.get("authorizationId"));
+        } catch (IllegalArgumentException | ClassCastException bad) {
+            throw new IllegalArgumentException("客户原会话授权无效，请重新登录");
+        }
+    }
+    /** 同步处理每次许可前重核；存储故障向上传播，不能当作明确未发送。 */
+    public boolean isCurrentClientAuthorization(ClientAuthorization expected) {
+        if (expected == null) return false;
+        try { return expected.equals(getCurrentClientAuthorization()); }
+        catch (IllegalArgumentException | cn.dev33.satoken.exception.NotLoginException revoked) { return false; }
     }
     private static Long customerVersion(Object binding){
         if(!(binding instanceof Map<?,?> values))throw new IllegalArgumentException("客户登录需重新核验");

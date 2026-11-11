@@ -1,0 +1,29 @@
+{
+  "baseline": "0925ac6558ceda3e27d2b875d690435dbea0038d",
+  "verifiedAt": "2026-11-11T21:07:41+08:00",
+  "reports": 185,
+  "tests": 1319,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "scope": {
+    "coordinatorH2": 33,
+    "authServiceSaToken": 12,
+    "agronomyMysql": 16
+  },
+  "review": "one fresh read-only review; no confirmed P0/P1/P2; reviewer did not run tests",
+  "runtimeApiOrUiChanged": false,
+  "originalDatabaseUpgraded": false,
+  "realSupplierCalled": false,
+  "nativeWechatOrDeviceTested": false,
+  "javaOfficialTls": "previous failure remains unresolved",
+  "sourceSha256": {
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinator.java": "780ab5e972c60f49212d5b225a69d72b3b2522e8e6ae07307cd85aaa23a311c1",
+    "core-application/src/main/java/com/agri_system/application/auth/service/AuthService.java": "5476f62f7f34d6fa837cfb90218f2f8e6d5cd03082ab02ed52bff11cd6db0724",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinatorTest.java": "81eaddc0627867bebd0cfd84bba891499761e0d5416a6cad0ac71351c738f46e",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyCaseMysqlTest.java": "8b5c862b9ef5999d9bfd95b7af54fec3d67077b3a378a1a92e7858a9850fb9ad",
+    "core-application/src/test/java/com/agri_system/application/auth/service/WechatAutoRegisterTest.java": "140e967f57a69180f769ced09b8f69aa79f0de4c678ac31820cbb9f56baa7b35",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AgronomyAssistantWorkflow.java": "c595d72b2de19dd4fbb812b804196759951f87e5de735f7957b84bf015f959f6",
+    "core-domain/src/main/java/com/agri_system/domain/auth/model/ClientAuthorization.java": "cfce9f5ac0e73f34ac634d534c3f83b14e2ec4c2fa1cb67d445f18a7b2fc1686"
+  }
+}
