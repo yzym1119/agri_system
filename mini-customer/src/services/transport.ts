@@ -7,6 +7,8 @@ type Options = CustomerRequest & { timeout: number; success(response: HttpRespon
 function caseRequest(url: string, method: string): boolean {
   const parts = url.split('?'); if (parts.length > 2) return false;
   const path = parts[0]!, list = path === '/api/client/agronomy/cases';
+  const assistant = /^\/api\/client\/agronomy\/cases\/([^/]+)\/assistant\/(capability|requests|requests\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.exec(path);
+  if(assistant)return parts.length===1&&isPositiveLongId(assistant[1])&&(method==='POST'?assistant[2]==='requests':method==='GET'&&assistant[2]!=='requests');
   const detail = /^\/api\/client\/agronomy\/cases\/([^/]+)$/.exec(path);
   const item = detail !== null && isPositiveLongId(detail[1]);
   const result = /^\/api\/client\/agronomy\/cases\/submissions\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(path);
@@ -69,7 +71,7 @@ export function createCustomerTransport(value: string, development: boolean, req
         throw Error('CUSTOMER_REQUEST_INVALID');
       return new Promise((resolve, reject) => {
         try {
-          request({ ...input, url: base + input.url, header: { 'Content-Type': 'application/json', ...input.header }, timeout: 10000,
+          request({ ...input, url: base + input.url, header: { 'Content-Type': 'application/json', ...input.header }, timeout: input.method === 'POST' && /\/assistant\/requests$/.test(input.url) ? 45000 : 10000,
             success: response => resolve({ statusCode: response.statusCode, data: response.data }),
             fail: () => reject(Error('NETWORK_FAILED')) });
         } catch { reject(Error('NETWORK_FAILED')); }

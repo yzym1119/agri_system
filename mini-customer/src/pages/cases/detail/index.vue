@@ -9,6 +9,7 @@ import { largeText } from '../../../services/preferences';
 const snapshot = ref(customerAuth.current()), caseId = ref(''), record = ref<CaseDetail | null>(null);
 const loading = ref(false), busy = ref(false), error = ref(''), stale = ref(false), pending = ref<PendingCase | null>(null), blocked = ref(false);
 const body = ref(''), region = ref(''), crop = ref(''), growthStage = ref(''), moreFacts = ref(false), factsEdited = ref(false);
+const assistantVisible = ref(false);
 const showHistory = ref(false), expandedQuestion = ref(false);
 const latestReply = computed(() => record.value?.latestReply ?? null);
 const locked = computed(() => !record.value || loading.value || busy.value || stale.value || blocked.value || pending.value !== null);
@@ -56,7 +57,7 @@ async function load(more = false) {
   } finally { if (active(t, epoch)) loading.value = false; }
 }
 onShow(async () => {
-  visible = true; ++generation; snapshot.value = customerAuth.current(); loading.value = false; busy.value = false; error.value = ''; record.value = null; stale.value = false;
+  visible = true; assistantVisible.value = true; ++generation; snapshot.value = customerAuth.current(); loading.value = false; busy.value = false; error.value = ''; record.value = null; stale.value = false;
   const owner = snapshot.value.kind + ':' + snapshot.value.epoch + ':' + caseId.value;
   if (owner !== lastOwner) { body.value = ''; region.value = ''; crop.value = ''; growthStage.value = ''; pending.value = null; blocked.value = false; factsEdited.value = false; lastOwner = owner; }
   if (!caseId.value) { error.value = '问题编号无效，请返回重新选择。'; return; }
@@ -65,7 +66,7 @@ onShow(async () => {
     restore(); await load();
   }
 });
-function hide() { visible = false; ++generation; loading.value = false; }
+function hide() { visible = false; assistantVisible.value = false; ++generation; loading.value = false; }
 onHide(hide); onUnload(hide);
 function openLogin() { uni.navigateTo({ url: snapshot.value.kind === 'ONBOARDING' && snapshot.value.state === 'PHONE_VERIFIED' ? '/pages/identity/claim/index' : '/pages/login/index' }); }
 function openList() { uni.navigateTo({ url: '/pages/cases/list/index' }); }
@@ -133,6 +134,7 @@ function retryOriginal() { return recover(true); }
       <template v-if="record">
         <view class="section"><text class="status">{{ label(record.problem.status) }}</text><text class="case-message" :class="{ 'case-preview': !expandedQuestion }">{{ record.problem.question }}</text><button v-if="record.problem.question.length > 60" class="button button-secondary" hover-class="button-pressed" @tap="expandedQuestion = !expandedQuestion">{{ expandedQuestion ? '收起我的问题' : '展开我的问题' }}</button><text class="help">提交于 {{ record.problem.createdAt.slice(0, 16).replace('T', ' ') }}</text></view>
         <view v-if="latestReply" class="case-entry case-entry-reply"><text class="panel-title">{{ record.problem.status === 'WAITING_REVIEW' ? '门店上次答复' : '门店最新答复' }}</text><text v-if="latestReply.factsVersion !== record.problem.factsVersion" class="notice case-block">此答复针对此前情况。你已补充新情况，请等门店进一步确认。</text><text class="case-message">{{ latestReply.body }}</text><text class="help case-message">答复依据：{{ latestReply.sourceText }}</text><text class="help">{{ latestReply.createdAt.slice(0, 16).replace('T', ' ') }}</text></view>
+        <CaseAssistant :case-id="caseId" :version="record.problem.version" :facts-version="record.problem.factsVersion" :active="assistantVisible" :disabled="locked" @refresh="load()" />
         <text v-if="record.problem.status === 'WAITING_REVIEW'" class="paragraph secondary">门店还未回复，可以继续补充现场情况。着急时请到首页联系门店。</text>
         <button class="button button-secondary" hover-class="button-pressed" :disabled="loading || busy" @tap="load(false)">刷新回复</button>
         <view class="section">

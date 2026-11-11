@@ -2,6 +2,8 @@ import { createCustomerAuth } from '@agri/mobile-contracts/customer-session';
 import { createCustomerEnrollment } from '@agri/mobile-contracts/customer-enrollment';
 import { createPublicCatalog } from '@agri/mobile-contracts/customer-catalog';
 import { createPublicKnowledge } from '@agri/mobile-contracts/customer-knowledge';
+import { createCustomerAssistant } from '@agri/mobile-contracts/customer-assistant';
+import { createAssistantSubmissions } from '@agri/mobile-contracts/customer-assistant-submission';
 import { createCustomerCases } from '@agri/mobile-contracts/customer-cases';
 import { createCaseSubmissions } from '@agri/mobile-contracts/customer-case-submission';
 import { createMobilePlatform, type SecureRandomPort } from '@agri/mobile-contracts';
@@ -34,6 +36,18 @@ export const caseSubmissions = createCaseSubmissions({ auth: customerAuth, api: 
   storage: { read: id => platform.readStorage(caseSlot(id)), write: (id, value) => platform.writeStorage(caseSlot(id), value), remove: id => platform.removeStorage(caseSlot(id)) },
   createKey: () => platform.createRequestKey(),
 });
+export const customerAssistant = createCustomerAssistant(customerAuth);
+export const assistantSubmissions = createAssistantSubmissions({ auth: customerAuth, api: customerAssistant,
+  storage: { read: (customer,problem) => platform.readStorage(caseSlot(customer)+':assistant:'+problem), write: (customer,problem,value) => platform.writeStorage(caseSlot(customer)+':assistant:'+problem,value) },
+  createKey: () => platform.createRequestKey(),
+});
+export function assistantErrorText(error: unknown): string {
+  const code=error instanceof Error?error.message:'';
+  if(code.startsWith('STORAGE_'))return '本机原请求暂时无法核对，请保留记录并联系门店，不要另发一遍。';
+  if(['UNAUTHORIZED','STALE_SESSION','CUSTOMER_LOGIN_REQUIRED'].includes(code))return '请重新登录本人账号，原请求会保留。';
+  if(code==='ASSISTANT_BUSY'||code==='ASSISTANT_PENDING')return '还有一次AI处理待核对，请先核对原请求。';
+  return '这次AI处理结果暂未核实，请保留原请求、稍后核对。仍可补充情况或请门店帮忙。';
+}
 let namespace: string | null = null;
 function slot() {
   const appId = typeof wx !== 'undefined' ? wx.getAccountInfoSync().miniProgram.appId : '';

@@ -25,7 +25,9 @@
     "./staff-cases": "./src/staff-cases.ts",
     "./staff-case-submission": "./src/staff-case-submission.ts",
     "./staff-orders": "./src/staff-orders.ts",
-    "./pickup-preparation": "./src/pickup-preparation.ts"
+    "./pickup-preparation": "./src/pickup-preparation.ts",
+    "./customer-assistant": "./src/customer-assistant.ts",
+    "./customer-assistant-submission": "./src/customer-assistant-submission.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

@@ -235,3 +235,11 @@
 - api-client配置装配协调器/AccessService，外部调用默认false；开启必须完整正预算/计价版本/合法双密钥。后台不扫描注册缺协调器的AccessService。当前未启用真实调用；部署JDK信任链、真实模型质量/费用仍须验收。
 - 完成STAGED不等于可展示。结果先核原摘要/快照，再核当前主档版本/农情及独立V2资格，只返回title/url/publishedOn/quote；不外发draft、全文、哈希、许可、费用。CLARIFY按原安全策略重算缺失字段，HUMAN的handoffStatus仅原转交事实，不等于当前尚未答复。未知/未找到/未派出/过时/不可用分开。
 - 当前仅后端入口，SDK、持久原UUID恢复和客户/员工/后台AI页面未实现；自动验证不代表完整HTTP+SQL现场联调或微信/手机。本节为后于4.3a的当前状态，不改原不可变收据、预算与专业人工规则。
+
+## 客户AI组件与本机原号（2026-11-11，4.3b继续）
+
+- customer-assistant SDK/原问题CaseAssistant已接实际后端白名单，默认关闭无发送按钮；就绪且明确同意才发。原问题补充与人工求助不因AI未知被锁住，不把AI引用标成门店已审答复。
+- 按实际AppID/源站/客户/case保存原UUID/版本/同意，不存token、原问题或业务结果；PREPARED读回、SENT先POST。多事务AI即使BUSINESS_REJECTED也不据此清稿；NOT_FOUND/QUEUED/RUNNING/UNKNOWN的query只GET，不触发派出。仅核服务端终态后原体POST核摘要再GET才VERIFIED，保留已核key为本机查询指针；不是跨进程CAS。
+- 原稿替换/存储失败/返回原号版本不一致冻结，旧epoch/隐藏/对象变化后旧响应不写当前UI。仅三个私有AI路径，AI POST45秒，其余10秒，不自动重发。
+- 共享144/客户36/员工141、双端类型和客户微信构建过；内置浏览器只是生产SFC静态fixture窄屏布局，无真实模型/微信手机/完整HTTP+SQL验收。无本批后端/DDL/原库升级或真实费用。
+- 下一批必须补跨设备latest发现、未决持久结束/核对、首次AI优先分流及员工/后台视图；当前创建仍先人工队列，AI是原问题可选参考。不能把冻结或该过渡形态当完整产品交付，整体目标继续。

@@ -1,0 +1,67 @@
+{
+  "baseline": "ceb629ab48c3b9040d9fe253baf4a29b9efbce81",
+  "tests": {
+    "shared": 144,
+    "customer": 36,
+    "staff": 141,
+    "failures": 0,
+    "skipped": 0
+  },
+  "typeCheck": {
+    "customer": true,
+    "staff": true
+  },
+  "buildCustomerWeixin": true,
+  "backendChanged": false,
+  "originalDatabaseUpgraded": false,
+  "realSupplierCalled": false,
+  "nativeWechatOrDeviceTested": false,
+  "pages": 11,
+  "browser": {
+    "kind": "real production SFC static SSR with fictional fixtures, not native or full business interaction",
+    "surface": "IAB",
+    "frames": [
+      {
+        "label": "disabled",
+        "clientWidth": 320,
+        "scrollWidth": 320
+      },
+      {
+        "label": "reference",
+        "clientWidth": 375,
+        "scrollWidth": 375
+      },
+      {
+        "label": "unknown-large-text",
+        "clientWidth": 320,
+        "scrollWidth": 320
+      }
+    ],
+    "previewPort": 3105,
+    "previewStopped": true
+  },
+  "review": "one fresh read-only review; no confirmed P0/P1/P2; later author-found malformed enum P2 reproduced (POST 2 vs 1) and fixed with RED/GREEN",
+  "openRequirements": [
+    "server latest request discovery across devices",
+    "durable ending/reconciliation of unresolved original AI requests",
+    "AI-first initial case routing",
+    "staff/admin AI views",
+    "real supplier quality/cost and original JDK trust path",
+    "final HTTP+SQL integrated acceptance",
+    "native WeChat and Android/iPhone"
+  ],
+  "sourceSha256": {
+    "mini-customer/src/pages/cases/detail/index.vue": "0b34e9ce99f3b1c8e9dafdfb33ca3c17498878f7ad0a15fbdcd250f0c639d4e6",
+    "mini-customer/src/services/runtime.ts": "7f795f5a50a593d08d45cfda7850927c4c6f0b485e059e86de8bdfc6185f873f",
+    "mini-customer/src/services/transport.ts": "8ec7cdb1e3fef1304b0ee11b72968a2da8f6afcb80e6da17aac151143eb7da50",
+    "mini-customer/src/styles/app.css": "7e3ce102b15d8fed3335e3de1a35f1e8d909e71fd5cd16b6b98dc67f73a496d9",
+    "mini-customer/tests/transport.test.cjs": "7bea9c08e9cda804347bc5a491c9b9007eadac6486babf42ba550a60c7c6f437",
+    "packages/mobile-contracts/package.json": "2ee770541d727d6aa17b7f0726f79175422b5e187e8c6865331ec912469a6c44",
+    "packages/mobile-contracts/src/customer-assistant.ts": "88b144af8f465f02a218c1bacefd6c6cefa9ac412435a8fc26b686c4d3a9658a",
+    "packages/mobile-contracts/src/customer-assistant-submission.ts": "47425167ae000ecfe4078fc71bf35cce694c5f19c3ed8070396d1196bb2c2f39",
+    "packages/mobile-contracts/tests/customer-assistant.test.cjs": "56e2651c2ee43415d503dac73015505d6118fa31659bebf50c876f7aeb0556d6",
+    "packages/mobile-contracts/tests/customer-assistant-submission.test.cjs": "7ac72a15d5159761ecfe572422467865d98a369b41028908b4037b3c851d7c4f",
+    "mini-customer/src/components/CaseAssistant/CaseAssistant.vue": "c56a38bbec485f1d74faa04778c17103db00a7eb6d4b9beb29ec8c5c8f00d613",
+    "mini-customer/tests/assistant-panel.test.cjs": "e3e1dc985946f0676d430f683ba5587f8240c7472d4de048dcfcbffcc4e24c5b"
+  }
+}

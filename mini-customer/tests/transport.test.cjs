@@ -39,3 +39,8 @@ test('本人农技路径仅正式私有端点与固定分页，不能借URL扩�
  const count=requests.length;for(const url of ['/api/client/agronomy/cases?customerId=999','/api/client/agronomy/cases?after=1&after=2','/api/client/agronomy/cases/7?status=ACTIVE','/api/client/agronomy/cases?status=CLOSED','/api/client/agronomy/cases/1.9','/api/client/agronomy/cases/7/replies','https://evil.example.com/api/client/agronomy/cases'])await assert.rejects(source.send({url,method:'GET',header:{Authorization:'fictional-customer'}}));
  await assert.rejects(source.send({url:'/api/client/agronomy/cases/7/assignment',method:'POST',data:{},header:{Authorization:'fictional-customer'}}));assert.equal(requests.length,count);assert.equal(requests.every(r=>r.url.startsWith('https://client.example.com/api/client/agronomy/cases')),true);
 });
+test('客户AI只开放三个固定本人端点，提交有足够等待时间但不放宽其他网络入口',async()=>{
+ const {createCustomerTransport}=transport();const calls=[],base='/api/client/agronomy/cases/7/assistant',key='11111111-1111-4111-8111-111111111111';const client=createCustomerTransport('https://example.test',false,o=>{calls.push(o);o.success({statusCode:200,data:{}})});
+ await client.send({url:base+'/capability',method:'GET'});await client.send({url:base+'/requests',method:'POST',data:{}});await client.send({url:base+'/requests/'+key,method:'GET'});assert.equal(calls[1].timeout,45000);assert.equal(calls[0].timeout,10000);
+ for(const [url,method] of [[base+'/requests?customerId=8','POST'],[base+'/requests/'+key,'POST'],[base+'/capability','POST'],[base.replace('/7/','/7.1/')+'/requests','POST']])await assert.rejects(client.send({url,method}),/CUSTOMER_REQUEST_INVALID/);assert.equal(calls.length,3);
+});
