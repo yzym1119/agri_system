@@ -26,3 +26,29 @@ test('查询返回伪装QUEUED的数组必须拒绝，不得误判终态后POST�
  f.options.api.result=async()=>({requestKey:key,caseId:'7',state:['QUEUED'],queuedVersion:'2',factsVersion:'1',currentFactsVersion:'1',handoffStatus:'',missingFacts:[],citations:[]});
  await assert.rejects(s.query('7'));assert.equal(f.posts(),1);assert.equal(s.current('7').phase,'SENT');
 });
+test('结束响应丢失不解冻，原号重放取消屏障确认后允许同版本新意图',async()=>{
+ const {createAssistantSubmissions}=await load(),f=fixture(createAssistantSubmissions),s=f.make();await assert.rejects(s.submit('7',{expectedVersion:'1',factsVersion:'1',shareContextConfirmed:true}));let ends=0;
+ f.options.api.end=async()=>{ends++;if(ends===1)throw Error('NETWORK_FAILED');return{requestKey:key,caseId:'7',state:'CANCELLED',expectedVersion:'1',factsVersion:'1'}};
+ f.options.api.result=async()=>({requestKey:key,caseId:'7',state:'CANCELLED',queuedVersion:null,factsVersion:null,currentFactsVersion:'1',handoffStatus:'',missingFacts:[],citations:[]});
+ await assert.rejects(s.end('7'));assert.equal(s.current('7').phase,'ENDING');assert.equal((await s.end('7')).state,'CANCELLED');assert.equal(s.current('7').phase,'CANCELLED');
+ const next='22222222-2222-4222-8222-222222222222';f.options.createKey=async()=>next;const reloaded=f.make();await assert.rejects(reloaded.submit('7',{expectedVersion:'1',factsVersion:'1',shareContextConfirmed:true}),/NETWORK_FAILED/);assert.equal(reloaded.current('7').command.requestKey,next);
+});
+test('已派出只结束等待，query重核结束屏障不重新提交原执行',async()=>{
+ const {createAssistantSubmissions}=await load(),f=fixture(createAssistantSubmissions),s=f.make();await assert.rejects(s.submit('7',{expectedVersion:'1',factsVersion:'1',shareContextConfirmed:true}));
+ f.options.api.end=async()=>({requestKey:key,caseId:'7',state:'CLOSED',expectedVersion:'1',factsVersion:'1'});f.setState('CLOSED');
+ assert.equal((await s.end('7')).state,'CLOSED');assert.equal(s.current('7').phase,'CLOSED');assert.equal((await s.query('7')).state,'CLOSED');assert.equal(f.posts(),1);
+});
+test('新设备采用服务器原号只作核对，不创建新号，不覆盖本机未知稿',async()=>{
+ const {createAssistantSubmissions}=await load(),f=fixture(createAssistantSubmissions),s=f.make();const original={requestKey:key,caseId:'7',state:'QUEUED',queuedVersion:'2',factsVersion:'1',currentFactsVersion:'1',handoffStatus:'',missingFacts:[],citations:[]};
+ await s.adopt('7',original);f.setState('QUEUED');assert.equal((await s.query('7')).state,'QUEUED');assert.equal(f.posts(),0);
+ await assert.rejects(s.adopt('7',{...original,requestKey:'22222222-2222-4222-8222-222222222222'}),/ASSISTANT_PENDING/);assert.equal(s.current('7').command.requestKey,key);
+});
+test('确认结束但请求未到达后重建运行时，retry/query只能重放结束而不能派出原请求',async()=>{
+ const {createAssistantSubmissions}=await load();for(const method of ['retry','query']){
+  const f=fixture(createAssistantSubmissions),s=f.make();await assert.rejects(s.submit('7',{expectedVersion:'1',factsVersion:'1',shareContextConfirmed:true}));let calls=0,committed=false;
+  f.options.api.end=async()=>{calls++;if(calls===1)throw Error('NETWORK_FAILED');committed=true;return{requestKey:key,caseId:'7',state:'CANCELLED',expectedVersion:'1',factsVersion:'1'}};
+  f.options.api.result=async()=>({requestKey:key,caseId:'7',state:committed?'CANCELLED':'NOT_FOUND',queuedVersion:null,factsVersion:null,currentFactsVersion:'1',handoffStatus:'',missingFacts:[],citations:[]});
+  await assert.rejects(s.end('7'));const restored=f.make();let recovered;try{recovered=await restored[method]('7');}catch{}
+  assert.equal(f.posts(),1);assert.equal(calls,2);assert.equal(recovered.state,'CANCELLED');assert.equal(restored.current('7').phase,'CANCELLED');
+ }
+});

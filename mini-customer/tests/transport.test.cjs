@@ -44,3 +44,8 @@ test('客户AI只开放三个固定本人端点，提交有足够等待时间但
  await client.send({url:base+'/capability',method:'GET'});await client.send({url:base+'/requests',method:'POST',data:{}});await client.send({url:base+'/requests/'+key,method:'GET'});assert.equal(calls[1].timeout,45000);assert.equal(calls[0].timeout,10000);
  for(const [url,method] of [[base+'/requests?customerId=8','POST'],[base+'/requests/'+key,'POST'],[base+'/capability','POST'],[base.replace('/7/','/7.1/')+'/requests','POST']])await assert.rejects(client.send({url,method}),/CUSTOMER_REQUEST_INVALID/);assert.equal(calls.length,3);
 });
+test('原问题latest只GET、end只POST，结束不借接口发任意请求',async()=>{
+ const {createCustomerTransport}=transport();const calls=[],base='/api/client/agronomy/cases/7/assistant',client=createCustomerTransport('https://example.test',false,o=>{calls.push(o);o.success({statusCode:200,data:{}})});
+ await client.send({url:base+'/latest',method:'GET'});await client.send({url:base+'/end',method:'POST',data:{}});assert.equal(calls[1].timeout,10000);
+ for(const [suffix,method] of [['/latest','POST'],['/end','GET'],['/latest?customerId=9','GET']])await assert.rejects(client.send({url:base+suffix,method}),/CUSTOMER_REQUEST_INVALID/);assert.equal(calls.length,2);
+});

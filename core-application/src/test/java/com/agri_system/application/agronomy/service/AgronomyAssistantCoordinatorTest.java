@@ -41,7 +41,7 @@ class AgronomyAssistantCoordinatorTest {
         jdbc.execute("CREATE TABLE customer(id BIGINT PRIMARY KEY,status INT,deleted INT,auth_version BIGINT)");
         jdbc.update("INSERT INTO customer VALUES(101,1,0,1),(202,1,0,1)");
         jdbc.execute("CREATE TABLE agronomy_case(id BIGINT AUTO_INCREMENT PRIMARY KEY,customer_id BIGINT,store_id BIGINT,request_key VARCHAR(36),request_hash VARCHAR(64),question VARCHAR(2000),region VARCHAR(100),crop VARCHAR(50),growth_stage VARCHAR(100),status VARCHAR(24),version BIGINT,facts_version BIGINT,assigned_staff_id BIGINT,created_at TIMESTAMP,updated_at TIMESTAMP,UNIQUE(customer_id,request_key))");
-        jdbc.execute("CREATE TABLE agronomy_case_entry(id BIGINT AUTO_INCREMENT PRIMARY KEY,case_id BIGINT,actor_type VARCHAR(16),actor_id BIGINT,request_key VARCHAR(36),request_hash VARCHAR(64),type VARCHAR(24),body TEXT,source_text TEXT,region VARCHAR(100),crop VARCHAR(50),growth_stage VARCHAR(100),assigned_staff_id BIGINT,expected_version BIGINT,result_version BIGINT,result_facts_version BIGINT,result_status VARCHAR(24),created_at TIMESTAMP,assistant_state VARCHAR(16),assistant_snapshot TEXT,assistant_outcome TEXT,assistant_steps TEXT,assistant_budget_day DATE,assistant_model_reserved_microusd BIGINT,assistant_search_reserved_microusd BIGINT,assistant_claim_key VARCHAR(36),assistant_updated_at TIMESTAMP,UNIQUE(actor_type,actor_id,request_key))");
+        jdbc.execute("CREATE TABLE agronomy_case_entry(id BIGINT AUTO_INCREMENT PRIMARY KEY,case_id BIGINT,actor_type VARCHAR(16),actor_id BIGINT,request_key VARCHAR(36),request_hash VARCHAR(64),type VARCHAR(24),body TEXT,source_text TEXT,region VARCHAR(100),crop VARCHAR(50),growth_stage VARCHAR(100),assigned_staff_id BIGINT,expected_version BIGINT,result_version BIGINT,result_facts_version BIGINT,result_status VARCHAR(24),created_at TIMESTAMP,assistant_state VARCHAR(16),assistant_snapshot TEXT,assistant_outcome TEXT,assistant_steps TEXT,assistant_budget_day DATE,assistant_model_reserved_microusd BIGINT,assistant_search_reserved_microusd BIGINT,assistant_claim_key VARCHAR(36),assistant_updated_at TIMESTAMP,assistant_closed_at TIMESTAMP,UNIQUE(actor_type,actor_id,request_key))");
         cases=new AgronomyCaseRepositoryImpl(jdbc);requests=new AgronomyAssistantRepositoryImpl(jdbc);stores=new StorePublicationRepositoryImpl(jdbc);
         clientAuth=mock(com.agri_system.application.auth.service.AuthService.class);when(clientAuth.isCurrentClientAuthorization(any())).thenReturn(true);
         customers=mock(CustomerRepository.class);
@@ -408,6 +408,52 @@ class AgronomyAssistantCoordinatorTest {
         String raw=new ObjectMapper().writeValueAsString(result);for(String hidden:java.util.List.of("excerpt","Sha256","authorizationId","claimKey","Microusd","draft","policyVersion"))assertFalse(raw.contains(hidden));
         var later=new AgronomyAssistantCoordinator(cases,requests,stores,customers,clientAuth,manager,new ObjectMapper(),Clock.offset(clock,java.time.Duration.ofDays(2)),policy,(a,b)->{throw new AssertionError("查询不执行");});
         var expired=later.customerResult(authorization(101L,1L),id,key);assertEquals("UNAVAILABLE",expired.state());assertTrue(expired.citations().isEmpty());
+    }
+    @Test void endAbsentPersistsOriginalBarrierEvenWhenDisabledAndBlocksLateSubmit() {
+        long id=create(101);String key=UUID.randomUUID().toString();policy=AssistantBudgetPolicy.disabled();var c=coordinator((s,calls)->{throw new AssertionError();});
+        assertEquals("CANCELLED",c.end(authorization(101L,1L),id,command(key)).state());
+        assertEquals("CANCELLED",c.customerResult(authorization(101L,1L),id,key).state());assertEquals(1,cases.find(id,false).orElseThrow().version());
+        assertEquals("CANCELLED",c.end(authorization(101L,1L),id,command(key)).state());
+        assertThrows(RuntimeException.class,()->c.end(authorization(101L,1L),id,new AgronomyAssistantCoordinator.Command(key,"2","1",true)));
+        policy=policy(true,3,3,100000);var late=coordinator((s,calls)->{throw new AssertionError("结束屏障后不得派出");});
+        assertThrows(RuntimeException.class,()->late.submit(authorization(101L,1L),id,command(key)));
+        assertTrue(cases.entries(id,true,1,null).stream().noneMatch(e->e.type().contains("ASSISTANT")));assertEquals(0,requests.usage(1L,java.time.LocalDate.of(2026,11,11)).reservedMicrousd());
+    }
+    @Test void endingQueuedReleasesOnlyUnsentWhileEndingUnknownRetainsOriginalBudgetAndIdentity() {
+        long a=create(101);String key=UUID.randomUUID().toString();queued(a,key);var c=coordinator((s,calls)->{throw new AssertionError();});
+        assertEquals("NOT_DISPATCHED",c.end(authorization(101L,1L),a,command(key)).state());assertEquals(0,requests.usage(1L,java.time.LocalDate.of(2026,11,11)).reservedMicrousd());
+        long b=create(101);String other=UUID.randomUUID().toString();var unknown=coordinator((s,calls)->{calls.begin(AssistantCallLedger.Stage.SEARCH);throw new IllegalStateException("模拟结果未知");});
+        unknown.submit(authorization(101L,1L),b,command(other));String claim=cases.findRequest("CUSTOMER",101L,other).map(e->requests.find(e.id()).orElseThrow().claimKey()).orElseThrow();
+        assertEquals("CLOSED",unknown.end(authorization(101L,1L),b,command(other)).state());
+        assertEquals("CLOSED",unknown.customerResult(authorization(101L,1L),b,other).state());assertEquals(11810,requests.usage(1L,java.time.LocalDate.of(2026,11,11)).reservedMicrousd());
+        var original=cases.findRequest("CUSTOMER",101L,other).orElseThrow();assertEquals("UNKNOWN",requests.find(original.id()).orElseThrow().state());assertEquals(claim,requests.find(original.id()).orElseThrow().claimKey());
+        assertFalse(requests.hasOpen(b));assertEquals("UNKNOWN",unknown.submit(authorization(101L,1L),b,command(other)).state());
+    }
+    @Test void endedRunningStopsNextStageAndLateHumanCannotChangeCaseButUsageRemains() {
+        long id=create(101);jdbc.update("UPDATE agronomy_case SET status='COLLECTING' WHERE id=?",id);String key=UUID.randomUUID().toString();
+        var c=coordinator((s,calls)->{calls.begin(AssistantCallLedger.Stage.SEARCH);
+            assertEquals("CLOSED",coordinator((a,b)->{throw new AssertionError();}).end(authorization(101L,1L),id,command(key)).state());
+            calls.succeeded(AssistantCallLedger.Stage.SEARCH,0,0);calls.begin(AssistantCallLedger.Stage.MODEL);throw new AssertionError("已结束不能再开模型");});
+        assertEquals("STALE",c.submit(authorization(101L,1L),id,command(key)).outcomeKind());assertEquals("CLOSED",c.customerResult(authorization(101L,1L),id,key).state());assertFalse(stepJson(key).contains("MODEL"));assertEquals("COLLECTING",cases.find(id,false).orElseThrow().status());
+    }
+    @Test void latestIsServerOwnedNotLimitedByTwentyVisibleMessagesAndCannotReadOtherCustomer() {
+        long id=create(101);var c=coordinator((s,calls)->"{}");assertNull(c.latest(authorization(101L,1L),id).result());
+        String key=UUID.randomUUID().toString();c.submit(authorization(101L,1L),id,command(key));
+        for(int n=0;n<25;n++)cases.insertEntry(new AgronomyCaseEntry(null,id,"CUSTOMER",101L,UUID.randomUUID().toString(),"0".repeat(64),"HUMAN_REQUEST","test","",cases.find(id,false).orElseThrow().facts(),null,2,2,1,"WAITING_REVIEW",LocalDateTime.now(clock)));
+        assertEquals(key,c.latest(authorization(101L,1L),id).result().requestKey());assertThrows(RuntimeException.class,()->c.latest(authorization(202L,1L),id));
+    }
+    @Test void lateCancellationCannotHideAnActualRequestAtTheSameOriginalVersion() {
+        long id=create(101);var c=coordinator((a,b)->"{}");String actual=UUID.randomUUID().toString();c.submit(authorization(101L,1L),id,command(actual));
+        c.end(authorization(101L,1L),id,command(UUID.randomUUID().toString()));
+        assertEquals(actual,c.latest(authorization(101L,1L),id).result().requestKey());
+    }
+    @Test void absentEndCannotInventFutureVersionsAndLateLocalHumanDoesNotQueueAfterClosing() {
+        long id=create(101);String key=UUID.randomUUID().toString();var c=coordinator((a,b)->"{}");
+        assertThrows(IllegalArgumentException.class,()->c.end(authorization(101L,1L),id,new AgronomyAssistantCoordinator.Command(key,"999","1",true)));
+        assertTrue(cases.findRequest("CUSTOMER",101L,key).isEmpty());
+        jdbc.update("UPDATE agronomy_case SET status='COLLECTING' WHERE id=?",id);
+        var late=coordinator((s,calls)->{c.end(authorization(101L,1L),id,command(key));return "{\"kind\":\"HUMAN\",\"published\":false,\"reason\":\"PRIVATE_DRAFT\"}";});
+        assertEquals("STALE",late.submit(authorization(101L,1L),id,command(key)).outcomeKind());assertEquals("COLLECTING",cases.find(id,false).orElseThrow().status());assertFalse(jdbc.queryForObject("SELECT assistant_outcome FROM agronomy_case_entry WHERE request_key=?",String.class,key).contains("PRIVATE_DRAFT"));
     }
     static com.agri_system.domain.auth.model.ClientAuthorization authorization(Long customer,Long version) {
         return new com.agri_system.domain.auth.model.ClientAuthorization(customer,version,"WECHAT","wx1111111111111111",customer+1000,1L,String.format("00000000-0000-4000-8000-%012d",customer));

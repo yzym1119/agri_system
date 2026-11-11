@@ -53,6 +53,7 @@ class AgronomyCaseMysqlTest {
             ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V149__agronomy_case.sql"));
             ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V150__agronomy_assistant_processing.sql"));
             ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V151__agronomy_assistant_steps.sql"));
+            ScriptUtils.executeSqlScript(c,new ClassPathResource("db/migration/V152__agronomy_assistant_customer_closure.sql"));
         }
         init.update("INSERT INTO store(id,code,name,client_visible) VALUES(1,'VIRTUAL','虚构咨询门店',1),(2,'OTHER','其他虚构门店',1)");
         var config=new FlexConfiguration(new Environment("case",new SpringManagedTransactionFactory(),new FlexDataSource("case",source,false)));config.setMapUnderscoreToCamelCase(true);
@@ -240,6 +241,40 @@ class AgronomyCaseMysqlTest {
         assertEquals("COLLECTING",rows.find(other,false).orElseThrow().status());assertEquals(2,rows.find(other,false).orElseThrow().version());
         assertEquals("RUNNING",jdbc.queryForObject("SELECT assistant_state FROM agronomy_case_entry WHERE request_key=?",String.class,second));
         assertNull(jdbc.queryForObject("SELECT assistant_outcome FROM agronomy_case_entry WHERE request_key=?",String.class,second));
+    }
+    @Test void mysqlClosedWaitingRetainsUsageAndPreventsTheNextModelStage() throws Exception {
+        long id=Long.parseLong(create(101,1,UUID.randomUUID().toString()).caseId());String key=UUID.randomUUID().toString();
+        var metadata=new com.agri_system.infrastructure.agronomy.repository.AgronomyAssistantRepositoryImpl(jdbc);var started=new CountDownLatch(1);var proceed=new CountDownLatch(1);var models=new java.util.concurrent.atomic.AtomicInteger();
+        var c=assistant(assistantPolicy(10),(s,usage)->{usage.begin(com.agri_system.domain.agronomy.assistant.AssistantCallLedger.Stage.SEARCH);started.countDown();try{assertTrue(proceed.await(8,TimeUnit.SECONDS));}catch(InterruptedException stop){throw new IllegalStateException();}
+            usage.succeeded(com.agri_system.domain.agronomy.assistant.AssistantCallLedger.Stage.SEARCH,0,0);usage.begin(com.agri_system.domain.agronomy.assistant.AssistantCallLedger.Stage.MODEL);models.incrementAndGet();return "{}";},metadata);
+        var pool=Executors.newSingleThreadExecutor();var command=new AgronomyAssistantCoordinator.Command(key,"1","1",true);
+        try{var work=pool.submit(()->c.submit(authorization(101L,1L),id,command));assertTrue(started.await(8,TimeUnit.SECONDS));
+            assertEquals("CLOSED",c.end(authorization(101L,1L),id,command).state());assertFalse(metadata.hasOpen(id));assertEquals(11810,metadata.usage(1L,java.time.LocalDate.of(2026,11,11)).reservedMicrousd());
+            proceed.countDown();assertEquals("STALE",work.get(8,TimeUnit.SECONDS).outcomeKind());assertEquals(0,models.get());assertEquals("CLOSED",c.latest(authorization(101L,1L),id).result().state());
+            assertThrows(org.springframework.dao.DataAccessException.class,()->jdbc.update("UPDATE agronomy_case_entry SET assistant_closed_at=CURRENT_TIMESTAMP WHERE case_id=? AND type='QUESTION'",id));
+        }finally{proceed.countDown();pool.shutdownNow();}
+    }
+    @Test void mysqlEndAndSubmitRaceKeepsOneIdentityAndNeverDispatchesAfterAnUnsentBarrier() throws Exception {
+        var metadata=new com.agri_system.infrastructure.agronomy.repository.AgronomyAssistantRepositoryImpl(jdbc);var pool=Executors.newFixedThreadPool(2);
+        try{for(int n=0;n<4;n++){
+            long id=Long.parseLong(create(101,1,UUID.randomUUID().toString()).caseId());String key=UUID.randomUUID().toString();var calls=new java.util.concurrent.atomic.AtomicInteger();
+            var c=assistant(assistantPolicy(10),(s,usage)->{usage.begin(com.agri_system.domain.agronomy.assistant.AssistantCallLedger.Stage.SEARCH);calls.incrementAndGet();usage.succeeded(com.agri_system.domain.agronomy.assistant.AssistantCallLedger.Stage.SEARCH,0,0);return "{}";},metadata);
+            var command=new AgronomyAssistantCoordinator.Command(key,"1","1",true);var start=new CountDownLatch(1);
+            var submit=pool.submit(()->{start.await();try{return c.submit(authorization(101L,1L),id,command).state();}catch(IllegalArgumentException ended){return "REJECTED";}});
+            var end=pool.submit(()->{start.await();return c.end(authorization(101L,1L),id,command);});start.countDown();var result=end.get(10,TimeUnit.SECONDS);submit.get(10,TimeUnit.SECONDS);
+            assertEquals(1,jdbc.queryForObject("SELECT COUNT(*) FROM agronomy_case_entry WHERE actor_type='CUSTOMER' AND actor_id=101 AND request_key=?",Integer.class,key));
+            if(java.util.Set.of("CANCELLED","NOT_DISPATCHED").contains(result.state()))assertEquals(0,calls.get());else assertTrue(calls.get()<=1);
+            if(!"CANCELLED".equals(result.state()))assertEquals(2,rows.find(id,false).orElseThrow().version());
+        }}finally{pool.shutdownNow();}
+    }
+    @Test void mysqlFailedEndingRollsBackBothCancellationFactAndClosureField() {
+        long id=Long.parseLong(create(101,1,UUID.randomUUID().toString()).caseId());var metadata=spy(new com.agri_system.infrastructure.agronomy.repository.AgronomyAssistantRepositoryImpl(jdbc));rows=spy(rows);
+        var c=assistant(assistantPolicy(10),(s,usage)->{throw new IllegalStateException("模拟外发未决");},metadata);String absent=UUID.randomUUID().toString();
+        doAnswer(a->{a.callRealMethod();throw new IllegalStateException("模拟取消事实保存失败");}).when(rows).insertEntry(any());
+        assertThrows(IllegalStateException.class,()->c.end(authorization(101L,1L),id,new AgronomyAssistantCoordinator.Command(absent,"1","1",true)));assertTrue(rows.findRequest("CUSTOMER",101L,absent).isEmpty());
+        doCallRealMethod().when(rows).insertEntry(any());String original=UUID.randomUUID().toString();var command=new AgronomyAssistantCoordinator.Command(original,"1","1",true);c.submit(authorization(101L,1L),id,command);
+        doAnswer(a->{a.callRealMethod();assertEquals("READ-COMMITTED",jdbc.queryForObject("SELECT @@transaction_isolation",String.class));throw new IllegalStateException("模拟结束记录保存失败");}).when(metadata).closeWaiting(anyLong(),any());
+        assertThrows(IllegalStateException.class,()->c.end(authorization(101L,1L),id,command));assertTrue(metadata.hasOpen(id));assertNull(metadata.find(rows.findRequest("CUSTOMER",101L,original).orElseThrow().id()).orElseThrow().closedAt());
     }
     static com.agri_system.domain.auth.model.ClientAuthorization authorization(Long customer,Long version) {
         return AgronomyAssistantCoordinatorTest.authorization(customer,version);

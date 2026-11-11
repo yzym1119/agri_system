@@ -24,6 +24,8 @@ public class AgronomyAssistantClientController {
     @ModelAttribute public void noCache(jakarta.servlet.http.HttpServletResponse response) {response.setHeader("Cache-Control","no-store");}
     @ExceptionHandler({MethodArgumentTypeMismatchException.class,HttpMessageNotReadableException.class})
     public R<Void> invalidRequest() {return R.fail(SystemErrorCode.INVALID_ARGUMENT.getCode(),"请核对原问题和AI请求内容");}
+    @GetMapping("/latest") public AgronomyAssistantCoordinator.Latest latest(@PathVariable Long caseId) {return service.latest(caseId);}
+    @PostMapping("/end") public AgronomyAssistantCoordinator.EndResult end(@PathVariable Long caseId,@RequestBody AgronomyAssistantCoordinator.Command command) {return service.end(caseId,command);}
     @GetMapping("/capability") public AgronomyAssistantCoordinator.Capability capability(@PathVariable Long caseId) {return service.capability(caseId);}
     @PostMapping("/requests") public AgronomyAssistantCoordinator.View submit(@PathVariable Long caseId,@RequestBody AgronomyAssistantCoordinator.Command command) {return service.submit(caseId,command);}
     @GetMapping("/requests/{requestKey}") public AgronomyAssistantCoordinator.Result result(@PathVariable Long caseId,@PathVariable String requestKey) {return service.result(caseId,requestKey);}

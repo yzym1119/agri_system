@@ -78,6 +78,10 @@ public class AgronomyCaseRepositoryImpl implements AgronomyCaseRepository {
         return jdbc.query("SELECT " + ENTRY_COLUMNS + " FROM agronomy_case_entry WHERE case_id=? AND type='SUPPLEMENT' AND actor_type='CUSTOMER' AND result_version<=? ORDER BY id DESC LIMIT 1",
                 AgronomyCaseRepositoryImpl::mapEntry,id,version).stream().findFirst();
     }
+    @Override public Optional<AgronomyCaseEntry> latestAssistantRequest(Long id,Long customer,long version) {
+        return jdbc.query("SELECT " + ENTRY_COLUMNS + " FROM agronomy_case_entry WHERE case_id=? AND actor_type='CUSTOMER' AND actor_id=? AND type IN ('ASSISTANT_REQUEST','ASSISTANT_CANCEL') AND result_version<=? ORDER BY CASE WHEN type='ASSISTANT_REQUEST' AND assistant_state IN ('QUEUED','RUNNING','UNKNOWN') AND assistant_closed_at IS NULL THEN 0 WHEN type='ASSISTANT_REQUEST' THEN 1 ELSE 2 END, expected_version DESC,id DESC LIMIT 1",
+                AgronomyCaseRepositoryImpl::mapEntry,id,customer,version).stream().findFirst();
+    }
     @Override public Optional<AgronomyCaseEntry> latestHumanReply(Long id, long version) {
         return jdbc.query("SELECT " + ENTRY_COLUMNS + " FROM agronomy_case_entry WHERE case_id=? AND type='HUMAN_REPLY' AND actor_type='STAFF' AND result_version<=? ORDER BY id DESC LIMIT 1",
                 AgronomyCaseRepositoryImpl::mapEntry, id, version).stream().findFirst();

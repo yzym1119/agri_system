@@ -5,7 +5,7 @@ type Auth = Pick<ReturnType<typeof createCustomerAuth>, 'current' | 'requestCust
 export type AssistantCommand = { requestKey: string; expectedVersion: string; factsVersion: string; shareContextConfirmed: true };
 export type AssistantCapability = { enabled: boolean; reason: 'READY' | 'DISABLED' | 'STORE_DISABLED' | 'PENDING' | 'QUOTA_EXHAUSTED'; version: string; factsVersion: string };
 export type AssistantReceipt = { requestKey: string; caseId: string; state: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'UNKNOWN'; queuedVersion: string; factsVersion: string; outcomeKind: string; handoffStatus: '' | 'WAITING_REVIEW' };
-export type AssistantState = 'NOT_FOUND' | 'QUEUED' | 'RUNNING' | 'UNKNOWN' | 'NOT_DISPATCHED' | 'STALE' | 'UNAVAILABLE' | 'CLARIFY' | 'HUMAN' | 'REFERENCE';
+export type AssistantState = 'CANCELLED' | 'CLOSED' | 'NOT_FOUND' | 'QUEUED' | 'RUNNING' | 'UNKNOWN' | 'NOT_DISPATCHED' | 'STALE' | 'UNAVAILABLE' | 'CLARIFY' | 'HUMAN' | 'REFERENCE';
 export type AssistantResult = { requestKey: string; caseId: string; state: AssistantState; queuedVersion: string | null; factsVersion: string | null; currentFactsVersion: string; handoffStatus: '' | 'WAITING_REVIEW'; missingFacts: string[]; citations: { title: string; url: string; publishedOn: string; quote: string }[] };
 function bad(): never { throw Error('ASSISTANT_RESPONSE_INVALID'); }
 function object(v: unknown): Record<string, unknown> { return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : bad(); }
@@ -31,8 +31,8 @@ export function decodeAssistantReceipt(v: unknown, caseId: string, command: Assi
   return{requestKey:c.requestKey,caseId,state:r.state as AssistantReceipt['state'],queuedVersion:value.version,factsVersion:value.factsVersion,outcomeKind:r.outcomeKind as string,handoffStatus:r.handoffStatus as AssistantReceipt['handoffStatus']};
 }
 export function decodeAssistantResult(v: unknown, caseId: string, requestKey: string): AssistantResult {
-  const r=object(v);if(r.requestKey!==key(requestKey)||r.caseId!==id(caseId)||typeof r.state!=='string'||!['NOT_FOUND','QUEUED','RUNNING','UNKNOWN','NOT_DISPATCHED','STALE','UNAVAILABLE','CLARIFY','HUMAN','REFERENCE'].includes(String(r.state)))bad();
-  const currentFactsVersion=id(r.currentFactsVersion), absent=r.state==='NOT_FOUND';
+  const r=object(v);if(r.requestKey!==key(requestKey)||r.caseId!==id(caseId)||typeof r.state!=='string'||!['CANCELLED','CLOSED','NOT_FOUND','QUEUED','RUNNING','UNKNOWN','NOT_DISPATCHED','STALE','UNAVAILABLE','CLARIFY','HUMAN','REFERENCE'].includes(String(r.state)))bad();
+  const currentFactsVersion=id(r.currentFactsVersion), absent=r.state==='NOT_FOUND'||r.state==='CANCELLED';
   if(absent&&(r.queuedVersion!==null||r.factsVersion!==null))bad();
   const value=absent?null:versions(r.queuedVersion,r.factsVersion);
   if(value&&BigInt(value.factsVersion)>BigInt(currentFactsVersion))bad();
@@ -45,10 +45,21 @@ export function decodeAssistantResult(v: unknown, caseId: string, requestKey: st
     return{title,url,publishedOn,quote};});
   return{requestKey,caseId,state:r.state as AssistantState,queuedVersion:value?.version??null,factsVersion:value?.factsVersion??null,currentFactsVersion,handoffStatus:r.handoffStatus as AssistantResult['handoffStatus'],missingFacts:r.missingFacts as string[],citations};
 }
+export type AssistantEndResult={requestKey:string;caseId:string;state:'CANCELLED'|'CLOSED'|'NOT_DISPATCHED'|'COMPLETED';expectedVersion:string;factsVersion:string};
+export function decodeAssistantEnd(v:unknown,caseId:string,command:AssistantCommand):AssistantEndResult {
+  const r=object(v),c=encodeAssistantCommand(command);
+  if(r.requestKey!==c.requestKey||r.caseId!==id(caseId)||r.expectedVersion!==c.expectedVersion||r.factsVersion!==c.factsVersion||typeof r.state!=='string'||!['CANCELLED','CLOSED','NOT_DISPATCHED','COMPLETED'].includes(r.state))bad();
+  return{requestKey:c.requestKey,caseId,state:r.state as AssistantEndResult['state'],expectedVersion:c.expectedVersion,factsVersion:c.factsVersion};
+}
+export function decodeAssistantLatest(v:unknown,caseId:string):{result:AssistantResult|null} {
+  const r=object(v);if(r.result===null)return{result:null};const raw=object(r.result);return{result:decodeAssistantResult(raw,caseId,key(raw.requestKey))};
+}
 export function createCustomerAssistant(auth: Auth) {
   function epoch(expected?:number) {const a=auth.current();if(expected!==undefined&&a.epoch!==expected)throw Error('STALE_SESSION');if(a.kind!=='CUSTOMER')throw Error('CUSTOMER_LOGIN_REQUIRED');return a.epoch;}
   const base=(caseId:string)=>'/api/client/agronomy/cases/'+id(caseId)+'/assistant';
   return{
+    async latest(caseId:string,expectedEpoch?:number){const t=epoch(expectedEpoch);return decodeAssistantLatest(await auth.requestCustomer({url:base(caseId)+'/latest',method:'GET'},t),caseId);},
+    async end(caseId:string,command:AssistantCommand,expectedEpoch?:number){const t=epoch(expectedEpoch),data=encodeAssistantCommand(command);return decodeAssistantEnd(await auth.requestCustomer({url:base(caseId)+'/end',method:'POST',data},t),caseId,data);},
     async capability(caseId:string,expectedEpoch?:number){const t=epoch(expectedEpoch);return decodeAssistantCapability(await auth.requestCustomer({url:base(caseId)+'/capability',method:'GET'},t));},
     async submit(caseId:string,command:AssistantCommand,expectedEpoch?:number){const t=epoch(expectedEpoch),data=encodeAssistantCommand(command);return decodeAssistantReceipt(await auth.requestCustomer({url:base(caseId)+'/requests',method:'POST',data},t),caseId,data);},
     async result(caseId:string,requestKey:string,expectedEpoch?:number){const t=epoch(expectedEpoch);return decodeAssistantResult(await auth.requestCustomer({url:base(caseId)+'/requests/'+key(requestKey),method:'GET'},t),caseId,requestKey);},

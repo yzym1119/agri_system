@@ -180,6 +180,15 @@ class ClientHttpBoundaryTest {
         request(get(base+"/requests/"+key),token,null);verify(assistantAccess).result(7L,key);
         businessFailure(request(get(base+"/capability"),null,null),10003);
     }
+    @Test void assistantLatestAndEndArePrivateUrlBoundAndKeepTheOriginalCommand() throws Exception {
+        String base="/api/client/agronomy/cases/7/assistant",token=login("CUST_101"),key="11111111-1111-4111-8111-111111111111";
+        when(assistantAccess.latest(7L)).thenReturn(new com.agri_system.application.agronomy.service.AgronomyAssistantCoordinator.Latest(null));
+        request(get(base+"/latest"),token,null).andExpect(header().string("Cache-Control","no-store")).andExpect(jsonPath("$.result").isEmpty());verify(assistantAccess).latest(7L);
+        when(assistantAccess.end(eq(7L),any())).thenReturn(new com.agri_system.application.agronomy.service.AgronomyAssistantCoordinator.EndResult(key,"7","CLOSED","1","1"));
+        request(post(base+"/end"),token,"{\"requestKey\":\""+key+"\",\"expectedVersion\":\"1\",\"factsVersion\":\"1\",\"shareContextConfirmed\":true,\"caseId\":999,\"customerId\":202}").andExpect(jsonPath("$.state").value("CLOSED"));
+        var original=ArgumentCaptor.forClass(com.agri_system.application.agronomy.service.AgronomyAssistantCoordinator.Command.class);verify(assistantAccess).end(eq(7L),original.capture());assertEquals(key,original.getValue().requestKey());assertEquals("1",original.getValue().expectedVersion());
+        businessFailure(request(post(base+"/end"),null,"{}"),10003);
+    }
     @BeforeEach void customerAndCallback() {
         when(registrationTransactions.getTransaction(any())).thenAnswer(call->new org.springframework.transaction.support.SimpleTransactionStatus());
         ReflectionTestUtils.setField(authentication,"wechatAppId","");

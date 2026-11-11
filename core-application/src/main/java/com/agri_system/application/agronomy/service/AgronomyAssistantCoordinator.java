@@ -55,6 +55,53 @@ public final class AgronomyAssistantCoordinator {
     public record Citation(String title,String url,String publishedOn,String quote) {}
     public record Result(String requestKey,String caseId,String state,String queuedVersion,String factsVersion,
             String currentFactsVersion,String handoffStatus,java.util.List<String> missingFacts,java.util.List<Citation> citations) {}
+    public record Latest(Result result) {}
+    public record EndResult(String requestKey,String caseId,String state,String expectedVersion,String factsVersion) {}
+    public Latest latest(ClientAuthorization authorization,Long caseId) {
+        outside();auth(authorization);positive(caseId);
+        var row=cases.findOwned(caseId,authorization.customerId(),false).orElseThrow(AgronomyAssistantCoordinator::unavailable);
+        return new Latest(cases.latestAssistantRequest(caseId,row.customerId(),row.version()).map(e->scopedResult(row,e.requestKey())).orElse(null));
+    }
+    /** 原case锁与原UUID构成持久结束屏障；不把结束等待当成撤销外发或免除已派出预占。 */
+    public EndResult end(ClientAuthorization authorization,Long caseId,Command command) {
+        outside();validate(command);auth(authorization);positive(caseId);
+        return inTx(()->{
+            var row=cases.findOwned(caseId,authorization.customerId(),true).orElseThrow(AgronomyAssistantCoordinator::unavailable);auth(authorization);
+            var found=cases.findRequest("CUSTOMER",row.customerId(),command.requestKey());String state;
+            if(found.isEmpty()) {
+                if(number(command.expectedVersion())>row.version()||number(command.factsVersion())>row.factsVersion()||number(command.factsVersion())>number(command.expectedVersion()))throw invalid("原结束版本无效，请保留原请求核对");
+                var cancellation=new AgronomyCaseEntry(null,caseId,"CUSTOMER",row.customerId(),command.requestKey(),cancelHash(caseId,command),"ASSISTANT_CANCEL",encode(command),"",row.facts(),null,number(command.expectedVersion()),row.version(),row.factsVersion(),row.status(),now());
+                if(!cases.insertEntry(cancellation))throw unavailable();
+                verifyCancellation(row,cases.findRequest("CUSTOMER",row.customerId(),command.requestKey()).orElseThrow(AgronomyAssistantCoordinator::unavailable),command);state="CANCELLED";
+            } else if("ASSISTANT_CANCEL".equals(found.get().type())) {verifyCancellation(row,found.get(),command);state="CANCELLED";}
+            else {
+                var o=original(row.customerId(),caseId,command.requestKey(),command);var m=o.metadata();
+                if(m.closedAt()!=null)state="CLOSED";
+                else if("QUEUED".equals(m.state())) {
+                    if(!requests.failBeforeDispatch(o.entry().id(),encode(java.util.Map.of("kind","NOT_DISPATCHED")),now()))throw unavailable();state="NOT_DISPATCHED";
+                } else if("FAILED".equals(m.state()))state="NOT_DISPATCHED";
+                else if("COMPLETED".equals(m.state()))state="COMPLETED";
+                else {
+                    if(!requests.closeWaiting(o.entry().id(),now()))throw unavailable();state="CLOSED";
+                }
+            }
+            return new EndResult(command.requestKey(),caseId.toString(),state,command.expectedVersion(),command.factsVersion());
+        });
+    }
+    private Command verifyCancellation(AgronomyCase row,AgronomyCaseEntry entry,Command command) {
+        try {
+            if(!row.id().equals(entry.caseId())||!row.customerId().equals(entry.actorId())||!"CUSTOMER".equals(entry.actorType())||!"ASSISTANT_CANCEL".equals(entry.type())
+                    ||entry.body().getBytes(StandardCharsets.UTF_8).length>1024||entry.resultVersion()>row.version()||entry.resultFactsVersion()>row.factsVersion())throw unavailable();
+            var saved=json.readValue(entry.body(),Command.class);validate(saved);
+            if(!encode(saved).equals(entry.body())||!saved.requestKey().equals(entry.requestKey())||entry.expectedVersion()!=number(saved.expectedVersion())
+                    ||!cancelHash(row.id(),saved).equals(entry.requestHash())||command!=null&&!encode(saved).equals(encode(command)))throw unavailable();
+            return saved;
+        }catch(Exception invalid){throw unavailable();}
+    }
+    private String cancelHash(Long id,Command command) {
+        try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(encode(java.util.List.of("ASSISTANT_CANCEL",id,command)).getBytes(StandardCharsets.UTF_8)));}
+        catch(Exception bad){throw unavailable();}
+    }
     public Capability capability(ClientAuthorization authorization,Long caseId) {
         outside();auth(authorization);positive(caseId);
         var row=cases.findOwned(caseId,authorization.customerId(),false).orElseThrow(AgronomyAssistantCoordinator::unavailable);
@@ -79,9 +126,12 @@ public final class AgronomyAssistantCoordinator {
     /** 仅供同应用包已执行真实客户/员工范围校验的门面使用；不能直接作为控制器入口。 */
     Result scopedResult(AgronomyCase row,String key) {
         uuid(key);
-        if(cases.findRequest("CUSTOMER",row.customerId(),key).isEmpty())return presented(row,key,null,"NOT_FOUND","",java.util.List.of(),java.util.List.of());
+        var found=cases.findRequest("CUSTOMER",row.customerId(),key);
+        if(found.isEmpty())return presented(row,key,null,"NOT_FOUND","",java.util.List.of(),java.util.List.of());
+        if("ASSISTANT_CANCEL".equals(found.get().type())){verifyCancellation(row,found.get(),null);return presented(row,key,null,"CANCELLED","",java.util.List.of(),java.util.List.of());}
         var o=original(row.customerId(),row.id(),key,null);var m=o.metadata();var snapshot=o.snapshot();
         if(o.entry().resultVersion()>row.version())throw unavailable();
+        if(m.closedAt()!=null)return presented(row,key,o,"CLOSED","",java.util.List.of(),java.util.List.of());
         String state=m.state();String handoff="";var missing=java.util.List.<String>of();var citations=new java.util.ArrayList<Citation>();
         if("FAILED".equals(state))state="NOT_DISPATCHED";
         if("COMPLETED".equals(state)) {
@@ -132,7 +182,8 @@ public final class AgronomyAssistantCoordinator {
         String output=staged;
         return inTx(()->{
             var row=cases.findOwned(caseId,customer,true).orElseThrow(AgronomyAssistantCoordinator::unavailable);
-            boolean fresh=validAuthorization(dispatch.original().snapshot().authorization())&&fresh(row,dispatch.original().snapshot())&&activeStore(row.storeId());
+            boolean fresh=validAuthorization(dispatch.original().snapshot().authorization())&&fresh(row,dispatch.original().snapshot())&&activeStore(row.storeId())
+                    &&requests.find(dispatch.original().entry().id()).orElseThrow(AgronomyAssistantCoordinator::unavailable).closedAt()==null;
             return record(dispatch,"COMPLETED",fresh?"STAGED":"STALE",fresh?output:null);
         });
     }
@@ -199,6 +250,7 @@ public final class AgronomyAssistantCoordinator {
         // 不覆盖entry的原body/hash/版本收据。仅同一次私有执行凭证可提交处理结果。
         var e=d.original().entry();
         var row=cases.find(e.caseId(),true).orElseThrow(AgronomyAssistantCoordinator::unavailable);
+        if(staged!=null&&requests.find(e.id()).orElseThrow(AgronomyAssistantCoordinator::unavailable).closedAt()!=null){kind="STALE";staged=null;}
         var outcomeFields=new java.util.LinkedHashMap<String,Object>();outcomeFields.put("kind",kind);
         if(staged!=null) {
             var draft=parseTree(staged);outcomeFields.put("draft",draft);
@@ -239,7 +291,7 @@ public final class AgronomyAssistantCoordinator {
         };
     }
     private boolean ready(AgronomyCase row,AssistantRequestMetadata m,AgronomyAssistantWorkflow.Snapshot s,Long customer) {
-        return s.externalCallsPlanned()&&"RUNNING".equals(m.state())&&fresh(row,s)&&validAuthorization(s.authorization())&&s.authorization().customerId()==customer
+        return m.closedAt()==null&&s.externalCallsPlanned()&&"RUNNING".equals(m.state())&&fresh(row,s)&&validAuthorization(s.authorization())&&s.authorization().customerId()==customer
                 &&activeStore(row.storeId())&&policy.enabled()&&policy.execution().equals(s.execution())&&day().equals(m.budgetDay());
     }
     private void changeStep(Dispatch d,AssistantCallLedger.Stage stage,String state,long input,long output) {

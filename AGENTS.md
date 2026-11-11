@@ -243,3 +243,11 @@
 - 原稿替换/存储失败/返回原号版本不一致冻结，旧epoch/隐藏/对象变化后旧响应不写当前UI。仅三个私有AI路径，AI POST45秒，其余10秒，不自动重发。
 - 共享144/客户36/员工141、双端类型和客户微信构建过；内置浏览器只是生产SFC静态fixture窄屏布局，无真实模型/微信手机/完整HTTP+SQL验收。无本批后端/DDL/原库升级或真实费用。
 - 下一批必须补跨设备latest发现、未决持久结束/核对、首次AI优先分流及员工/后台视图；当前创建仍先人工队列，AI是原问题可选参考。不能把冻结或该过渡形态当完整产品交付，整体目标继续。
+
+## AI服务器发现与持久结束（V152，2026-11-11）
+
+- latest按真实customer/case/主档version，不猜20条历史；open、真实请求优先于cancel，再expectedVersion/id。新设备沿原号adopt核对，不新建UUID，不覆盖SENT/ENDING或更晚已核稿。
+- 原Command/hash＋case锁下：无请求追加隐藏ASSISTANT_CANCEL（actor/UUID唯一，body仅原Command，无假价格/主档版本）；QUEUED确定未派FAILED释放；RUNNING/UNKNOWN只结束等待，保留state/claim/steps/最大预占，仍计额度。ready和最终保存核closed，晚usage可记，晚草案不显示或触发人工；不假称在途HTTP停止或费用已退。
+- V152仅原entry新增assistant_closed_at nullable＋CHECK；outcome晚结果会覆盖、steps属于付费阶段，不能代替耐久结束。不改149—151、不新表，仅随机自动库152，原环境不升。CANCELLED/CLOSED只属客户投影，不改原assistant_state/收据。
+- 结束前可靠保存ENDING；失联/重建/retry/query只end，不重发原执行。确认绑定原key/完整Command/当前scope；发送后无可撤回框。CANCELLED/CLOSED核明确后保留原号，只有无处理CANCELLED允许同主档version的新UUID。不关闭原问题/人工队列。
+- 后端1335、共享149/客户40/员工141、类型与客户微信build过；独审P2实际RED后修、不复派。IAB实点真实SFC/SDK/恢复＋接口替身/sessionStorage/click转tap，原执行POST0/新UUID0，不冒称微信、实际provider或最终JAR SQL联调。首次AI优先创建、员工后台视图与真实费用质量/手机继续，完整goal不完成。

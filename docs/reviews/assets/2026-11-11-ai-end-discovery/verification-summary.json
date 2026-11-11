@@ -1,0 +1,85 @@
+{
+  "baseline": "75a73e1ee3caabb190ea0c0b102d2d21cf9b37ea",
+  "backendVerifiedAt": "2026-11-11T22:16:13+08:00",
+  "backend": {
+    "reports": 186,
+    "tests": 1335,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "coordinatorH2": 43,
+    "caseMysql": 19
+  },
+  "frontend": {
+    "shared": 149,
+    "customer": 40,
+    "staff": 141,
+    "failures": 0,
+    "skipped": 0,
+    "typesCustomer": true,
+    "typesStaff": true,
+    "customerWeixinBuild": true
+  },
+  "migration": {
+    "newVersion": 152,
+    "original149To151Unchanged": true,
+    "onlyAutomaticRandomDatabasesUpgraded": true,
+    "originalEnvironmentUpgraded": false
+  },
+  "browser": {
+    "surface": "IAB",
+    "actual": "production SFC + real SDK/journal; fixture requestCustomer/sessionStorage; click adapted to uni tap",
+    "nativeWechatOrFinalHttpSqlTested": false,
+    "lostEndBeforeArrivalThenReload": true,
+    "originalExecutionPosts": 0,
+    "newRequestKeys": 0,
+    "endRequests": 3,
+    "endRequestsMeaning": "first failed, replay after reload, same-identity verification",
+    "finalState": "CLOSED",
+    "temporaryPort": 3106,
+    "stopped": true
+  },
+  "review": {
+    "freshReadOnlyReviews": 1,
+    "P2": "End intent not persisted before send; restored retry could dispatch original when both requests never arrived",
+    "red": "original POST expected1 actual2",
+    "fix": "ENDING persisted before end; query/retry only end",
+    "repeatReview": false
+  },
+  "realSupplierCalled": false,
+  "goalComplete": false,
+  "remaining": [
+    "AI-first initial routing",
+    "staff/admin AI views",
+    "final isolated JAR SDK HTTP SQL acceptance",
+    "real supplier quality/cost and JDK official trust path",
+    "native WeChat and phones"
+  ],
+  "sourceSha256": {
+    "api-client/src/main/java/com/agri_system/api/client/controller/AgronomyAssistantClientController.java": "7310c42c125766d65166e33995e9eaaa930e51f905d06144ad848ae9e420305a",
+    "api-client/src/test/java/com/agri_system/api/client/controller/ClientHttpBoundaryTest.java": "127dc1aa02d795a573bae40591f467764cbcb9e68c1a3ec00e1ad378aadf9bcc",
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyAssistantAccessService.java": "2f95246e6916d0b79c5fc784e0499f0707be153ebf8920e7cb3374a4de09a540",
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinator.java": "778ecdaf46ad3599d16f95e449f4dad56ecfb184423bafbdcd4ed5d25b398fd0",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinatorTest.java": "f56bd913a23108d25783aaa0bf080bead751c997ec120f7c71eebf021806666d",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyCaseMysqlTest.java": "4e2f143d04b812613e348e3d91d55ea292b9364b104ae30efda030d94bfae3ba",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AgronomyAssistantRepository.java": "61503778cd467781ca75f282ac1741ac536f5d6f3a052a552e64ddae765202fb",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AssistantRequestMetadata.java": "319a184bb318c8bf8e51b624d7d5ecb026aacbb1d3d438e7ddbca8d81c6f4e66",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/repository/AgronomyCaseRepository.java": "4c7f02fd5573e0b41291523134114ad869cf910b71e3a17a65a0f07370fb456e",
+    "core-infrastructure/src/main/java/com/agri_system/infrastructure/agronomy/repository/AgronomyAssistantRepositoryImpl.java": "7d73e5259db8e342fc4442cc99fd6c6c7cc278c5d35b3c638b07b09a765501cd",
+    "core-infrastructure/src/main/java/com/agri_system/infrastructure/agronomy/repository/AgronomyCaseRepositoryImpl.java": "3c3b5c38cfd31dec4ce46f14e73c61899f89f9490b1f87d036001464cd36c43c",
+    "core-infrastructure/src/test/java/com/agri_system/infrastructure/migration/RetailFactChainMigrationTest.java": "93c277ea92a12b6b2c1ed66d7f32b638b5cff497e602df6f86e742859bf6762f",
+    "mini-customer/src/components/CaseAssistant/CaseAssistant.vue": "043cd34546f1cdc3bbded9a5fa992223ef3b6c036ddd40503542aa2c75dd98d2",
+    "mini-customer/src/services/transport.ts": "b6bcc9900431e5c9aaf6bde381110f273a15c58d4686030d8fe5d7cbcba05ca8",
+    "mini-customer/tests/assistant-panel.test.cjs": "a2d85864e61ed0210c6005e163c948ecd1ea652c7bb1a7a9582c8827061b6da4",
+    "mini-customer/tests/transport.test.cjs": "5f4877d298ce1c53230b69ffe8e9982303530e78a7737897d48f46301ba67868",
+    "packages/mobile-contracts/src/customer-assistant-submission.ts": "c6ff64f2356877a9da57c0a19b15c85dfe4b3a7467a178734aba6755cc9c0960",
+    "packages/mobile-contracts/src/customer-assistant.ts": "b115c9ade5805ec10493069c0570bf1f63843b7f85ded96b414bd847ffba95d8",
+    "packages/mobile-contracts/tests/customer-assistant-submission.test.cjs": "d1d47cf10f89dbf7fb4a5f5fc95044974536a7afd5a4824e7a99003c6f869350",
+    "packages/mobile-contracts/tests/customer-assistant.test.cjs": "7a99e9e336dd58b39a9bd22f5a92b700ed0c3dc6cd3b20d3fcd5082ebef87621",
+    "core-infrastructure/src/main/resources/db/migration/V152__agronomy_assistant_customer_closure.sql": "417f180d3e04e8b7551e801fa9e08307a0c3e5ccf2f19bfd977ac31cb5b5e9b2"
+  },
+  "imageSha256": {
+    "docs/reviews/assets/2026-11-11-ai-end-discovery/刷新后已结束.jpg": "635bcafc66477de2620522931e87bd09fb4c48dbadb5419cb5dd2777c813392e",
+    "docs/reviews/assets/2026-11-11-ai-end-discovery/结束待确认.jpg": "f614a2e5fa05a1cd7f3593712e7a06d6fbb5895c9c1c035850a29cc78ebd6efe"
+  }
+}

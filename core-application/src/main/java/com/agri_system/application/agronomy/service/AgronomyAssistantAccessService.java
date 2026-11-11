@@ -8,6 +8,12 @@ import lombok.RequiredArgsConstructor;
 public class AgronomyAssistantAccessService {
     private final AuthService auth;
     private final AgronomyAssistantCoordinator coordinator;
+    public AgronomyAssistantCoordinator.Latest latest(Long caseId) {
+        return coordinator.latest(auth.getCurrentClientAuthorization(),caseId);
+    }
+    public AgronomyAssistantCoordinator.EndResult end(Long caseId,AgronomyAssistantCoordinator.Command command) {
+        return coordinator.end(auth.getCurrentClientAuthorization(),caseId,command);
+    }
     public AgronomyAssistantCoordinator.Capability capability(Long caseId) {
         return coordinator.capability(auth.getCurrentClientAuthorization(),caseId);
     }

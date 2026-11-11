@@ -10,6 +10,7 @@ public interface AgronomyAssistantRepository {
     Optional<AssistantRequestMetadata> find(Long entryId);
     void initialize(AssistantRequestMetadata value);
     boolean hasOpen(Long caseId);
+    boolean closeWaiting(Long entryId,LocalDateTime at);
     Usage usage(Long storeId,LocalDate day);
     boolean claim(Long entryId,String claimKey,LocalDateTime at);
     boolean failBeforeDispatch(Long entryId,String outcome,LocalDateTime at);

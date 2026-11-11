@@ -24,3 +24,9 @@ test('状态/能力原因必须是字符串，数组不能冒充处理中或终�
  assert.throws(()=>decodeAssistantCapability({enabled:false,reason:['DISABLED'],version:'1',factsVersion:'1'}));
  assert.throws(()=>decodeAssistantReceipt({requestKey:key,caseId:'7',state:'COMPLETED',queuedVersion:'2',factsVersion:'1',outcomeKind:['STAGED'],handoffStatus:''},'7',{requestKey:key,expectedVersion:'1',factsVersion:'1',shareContextConfirmed:true}));
 });
+test('服务器latest按本人问题解码，结束原号/原版本必须对应，不返回内部状态',async()=>{
+ const {createCustomerAssistant,decodeAssistantEnd}=await load();const calls=[],command={requestKey:key,expectedVersion:'1',factsVersion:'1',shareContextConfirmed:true};
+ const api=createCustomerAssistant({current:()=>({kind:'CUSTOMER',epoch:1,customerId:'101'}),requestCustomer:async r=>{calls.push(r);return r.url.endsWith('/latest')?{result:result('UNKNOWN')}:{requestKey:key,caseId:'7',state:'CLOSED',expectedVersion:'1',factsVersion:'1',claimKey:'private'}}});
+ assert.equal((await api.latest('7')).result.requestKey,key);const ended=await api.end('7',command);assert.equal(ended.state,'CLOSED');assert.equal(ended.claimKey,undefined);assert.equal(calls[1].url,'/api/client/agronomy/cases/7/assistant/end');
+ assert.throws(()=>decodeAssistantEnd({...ended,expectedVersion:'2'},'7',command));assert.throws(()=>decodeAssistantEnd({...ended,state:['CLOSED']},'7',command));
+});
