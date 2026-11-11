@@ -35,7 +35,7 @@ final class AgronomyAssistantSafetyPolicy {
     static boolean privateText(String text) {return PRIVATE.matcher(normalize(text)).find();}
     static boolean professional(String text) {return PROFESSIONAL.matcher(normalize(text)).find();}
     static boolean injection(String text) {return INJECTION.matcher(normalize(text)).find();}
-    static boolean unsafeCharacters(String value) {return value.codePoints().anyMatch(c->Character.getType(c)==Character.FORMAT||Character.isISOControl(c)&&c!='\n'&&c!='\r'&&c!='\t');}
+    static boolean unsafeCharacters(String value) {return value.codePoints().anyMatch(c->c==0xfffd||Character.getType(c)==Character.FORMAT||Character.isISOControl(c)&&c!='\n'&&c!='\r'&&c!='\t');}
     static boolean matchesTopic(String value,String topic) {
         String text=normalize(value);
         return switch(topic) {

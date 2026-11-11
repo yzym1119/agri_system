@@ -59,7 +59,7 @@ class ControlledAgronomyAssistantWorkflowTest {
                 }
                 var candidate=new AgronomySearchGateway.Candidate("虚构软件评测资料，不是真实农技依据",url,body,truncated,date);
                 var ledger=new RecordedCalls();var searchCalls=new java.util.concurrent.atomic.AtomicInteger();var modelCalls=new java.util.concurrent.atomic.AtomicInteger();
-                final String originalQuote=quote;
+                final String originalQuote=quote;final String actualBody=body;
                 var work=new ControlledAgronomyAssistantWorkflow(mapper,clock,policy.execution(),query->{
                     searchCalls.incrementAndGet();assertFalse(query.contains("原文私有标记"));return List.of(candidate);
                 },input->{
@@ -78,7 +78,7 @@ class ControlledAgronomyAssistantWorkflowTest {
                         default -> { }
                     }
                     return new AgronomyModelGateway.Output("deepseek-flash",draft,100,40);
-                });
+                },official(actualBody,clock));
                 var s=new AgronomyAssistantWorkflow.Snapshot(1,1,2,1,row.path("question").asText(),facts,"原文私有标记",policy.execution());
                 var result=mapper.readTree(work.stage(s,ledger));
                 assertEquals(row.path("expected").asText(),result.path("kind").asText());
@@ -87,7 +87,7 @@ class ControlledAgronomyAssistantWorkflowTest {
                 assertEquals(searchCalls.get()+modelCalls.get(),ledger.started.size());assertEquals(ledger.started,ledger.completed);
                 if(result.path("kind").asText().equals("REFERENCE")) {
                     assertEquals(originalQuote,result.path("citations").get(0).path("quote").asText());
-                    assertFalse(result.path("verifiedDirectFetch").asBoolean(true));
+                    assertTrue(result.path("verifiedDirectFetch").asBoolean());
                 } else assertFalse(result.has("citations"));
             }));
         }
@@ -98,7 +98,7 @@ class ControlledAgronomyAssistantWorkflowTest {
         String irrelevant="黑龙江大庆玉米苗期的补助公告仅用于软件测试。";
         var work=new ControlledAgronomyAssistantWorkflow(new ObjectMapper(),clock,policy.execution(),q->List.of(
                 new AgronomySearchGateway.Candidate("虚构无关补助资料","https://www.moa.gov.cn/test-fixture/subsidy",irrelevant,false,OffsetDateTime.parse("2026-11-10T10:00:00+08:00"))),
-                i->new AgronomyModelGateway.Output("deepseek-flash",fixtureJson(Map.of("quotes",List.of(Map.of("sourceId","S1","text",irrelevant)))),100,40));
+                i->new AgronomyModelGateway.Output("deepseek-flash",fixtureJson(Map.of("quotes",List.of(Map.of("sourceId","S1","text",irrelevant)))),100,40),official(irrelevant,clock));
         var calls=new RecordedCalls();var result=new ObjectMapper().readTree(work.stage(snapshot("如何记录积水？",new Facts("黑龙江大庆","玉米","苗期")),calls));
         assertEquals("HUMAN",result.path("kind").asText());assertEquals(List.of(AssistantCallLedger.Stage.SEARCH),calls.started);
     }
@@ -107,14 +107,63 @@ class ControlledAgronomyAssistantWorkflowTest {
         String excerpt="黑龙江大庆玉米苗期的积水记录包含日期和照片。"+irrelevant;
         var work=new ControlledAgronomyAssistantWorkflow(new ObjectMapper(),clock,policy.execution(),q->List.of(
                 new AgronomySearchGateway.Candidate("虚构复合资料","https://www.moa.gov.cn/test-fixture/mixed",excerpt,false,OffsetDateTime.parse("2026-11-10T10:00:00+08:00"))),
-                i->new AgronomyModelGateway.Output("deepseek-flash",fixtureJson(Map.of("quotes",List.of(Map.of("sourceId","S1","text",irrelevant)))),100,40));
+                i->new AgronomyModelGateway.Output("deepseek-flash",fixtureJson(Map.of("quotes",List.of(Map.of("sourceId","S1","text",irrelevant)))),100,40),official(excerpt,clock));
         var result=new ObjectMapper().readTree(work.stage(snapshot("如何记录积水？",new Facts("黑龙江大庆","玉米","苗期")),new RecordedCalls()));
         assertEquals("HUMAN",result.path("kind").asText());assertFalse(result.has("citations"));
+    }
+    @Test void missingOfficialVerifierMustNotPromoteSearchCandidateToReference() throws Exception {
+        String text="黑龙江大庆玉米苗期的积水记录包括观察日期与现场照片编号。";
+        var work=new ControlledAgronomyAssistantWorkflow(new ObjectMapper(),clock,policy.execution(),q->List.of(
+                new AgronomySearchGateway.Candidate("软件观察资料","https://www.moa.gov.cn/test-fixture",text,false,OffsetDateTime.parse("2026-11-10T10:00:00+08:00"))),
+                i->new AgronomyModelGateway.Output("deepseek-flash",fixtureJson(Map.of("quotes",List.of(Map.of("sourceId","S1","text",text)))),100,40));
+        var result=new ObjectMapper().readTree(work.stage(snapshot("如何记录积水？",new Facts("黑龙江大庆","玉米","苗期")),new RecordedCalls()));
+        assertEquals("HUMAN",result.path("kind").asText());assertFalse(result.path("publicationEligible").asBoolean());
+    }
+    @Test void modelUsesOfficialParagraphAndCannotQuoteInventedSearchSummary() throws Exception {
+        String summary="黑龙江大庆玉米苗期的积水记录不要记录日期。";
+        String body="黑龙江大庆玉米苗期的积水记录包括日期与现场照片编号。";
+        var work=new ControlledAgronomyAssistantWorkflow(new ObjectMapper(),clock,policy.execution(),q->List.of(
+                new AgronomySearchGateway.Candidate("虚构摘要","https://www.moa.gov.cn/test-fixture",summary,false,OffsetDateTime.parse("2026-11-10T10:00:00+08:00"))),
+                input->{assertTrue(input.contextJson().contains(body));assertFalse(input.contextJson().contains(summary));return new AgronomyModelGateway.Output("deepseek-flash",fixtureJson(Map.of("quotes",List.of(Map.of("sourceId","S1","text",summary)))),100,40);},official(body,clock));
+        var result=new ObjectMapper().readTree(work.stage(snapshot("如何记录积水？",new Facts("黑龙江大庆","玉米","苗期")),new RecordedCalls()));
+        assertEquals("HUMAN",result.path("kind").asText());assertFalse(result.has("citations"));
+    }
+    @Test void mismatchedDateAddressHashTimeOrProfessionalTitleStopsBeforeModel() throws Exception {
+        String body="黑龙江大庆玉米苗期的积水记录包括日期与现场照片编号。";
+        for(String change:List.of("DATE","URL","HASH","STALE","FUTURE","TITLE","DOCUMENT_HASH")) {
+            var fetched=new java.util.concurrent.atomic.AtomicInteger();
+            com.agri_system.domain.agronomy.assistant.AgronomySourceGateway source=(url,timeout)->{
+                fetched.incrementAndGet();try {
+                    return new com.agri_system.domain.agronomy.assistant.AgronomySourceGateway.Page(change.equals("URL")?url+"-other":url,
+                            change.equals("TITLE")?"每亩100毫升": "虚构原页",body,change.equals("DATE")?LocalDate.of(2026,11,9):LocalDate.of(2026,11,10),
+                            change.equals("STALE")?clock.instant().minusSeconds(31):change.equals("FUTURE")?clock.instant().plusSeconds(1):clock.instant(),
+                            change.equals("DOCUMENT_HASH")?"not-hash":"0".repeat(64),change.equals("HASH")?"0".repeat(64):AgronomyReferencePublicationPolicyTest.sha(body));
+                }catch(Exception invalid){throw new AssertionError(invalid);}
+            };
+            var work=new ControlledAgronomyAssistantWorkflow(new ObjectMapper(),clock,policy.execution(),q->List.of(
+                    new AgronomySearchGateway.Candidate("虚构摘要","https://www.moa.gov.cn/test-fixture",body,false,OffsetDateTime.parse("2026-11-10T10:00:00+08:00"))),
+                    input->{throw new AssertionError("未核实不生成："+change);},source);
+            var result=new ObjectMapper().readTree(work.stage(snapshot("如何记录积水？",new Facts("黑龙江大庆","玉米","苗期")),new RecordedCalls()));
+            assertEquals("HUMAN",result.path("kind").asText());assertEquals(1,fetched.get());
+        }
+    }
+    @Test void authorizationWaitCannotStartSourceReadAfterBatchDeadline() throws Exception {
+        String body="黑龙江大庆玉米苗期的积水记录包括日期与现场照片编号。";var fetched=new java.util.concurrent.atomic.AtomicInteger();
+        var work=new ControlledAgronomyAssistantWorkflow(new ObjectMapper(),clock,policy.execution(),q->List.of(
+                new AgronomySearchGateway.Candidate("虚构摘要","https://www.moa.gov.cn/test-fixture",body,false,OffsetDateTime.parse("2026-11-10T10:00:00+08:00"))),
+                input->{throw new AssertionError("过期批次不可生成");},(url,timeout)->{fetched.incrementAndGet();return null;});
+        var calls=new RecordedCalls(){public void beforeSourceRead(){super.beforeSourceRead();try{Thread.sleep(8050);}catch(InterruptedException stopped){Thread.currentThread().interrupt();throw new AssertionError(stopped);}}};
+        var result=new ObjectMapper().readTree(work.stage(snapshot("如何记录积水？",new Facts("黑龙江大庆","玉米","苗期")),calls));
+        assertEquals("HUMAN",result.path("kind").asText());assertEquals(0,fetched.get());
+    }
+    static com.agri_system.domain.agronomy.assistant.AgronomySourceGateway official(String body,Clock clock) {
+        return (url,maximum)->{try{String sha=AgronomyReferencePublicationPolicyTest.sha(body);return new com.agri_system.domain.agronomy.assistant.AgronomySourceGateway.Page(url,"虚构软件原页资料",body,LocalDate.of(2026,11,10),clock.instant(),"0".repeat(64),sha);}catch(Exception bad){throw new AssertionError(bad);}};
     }
     static class RecordedCalls implements AssistantCallLedger {
         final List<Stage> started=new ArrayList<>(),completed=new ArrayList<>();
         public void begin(Stage stage){assertFalse(started.contains(stage));started.add(stage);}
         public void succeeded(Stage stage,long input,long output){assertTrue(started.contains(stage));completed.add(stage);}
         public void unknown(Stage stage){throw new AssertionError("本固定评测不应出现未知调用");}
+        public void beforeSourceRead(){assertTrue(completed.contains(Stage.SEARCH));assertFalse(started.contains(Stage.MODEL));}
     }
 }

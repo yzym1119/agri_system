@@ -1,0 +1,77 @@
+{
+  "baseCommit": "fbb32960cbd59711e657d9cfee3aa8c90a8a508d",
+  "scope": "official source verification and V2 eligibility engineering, no customer API or publication",
+  "backend": {
+    "reports": 185,
+    "tests": 1310,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "completedAt": "2026-11-11T16:17:18+08:00",
+  "java": 17,
+  "mysqlAndAuthorityEnabled": true,
+  "targeted": {
+    "officialGateway": 9,
+    "existingDeepSeekGateway": 18,
+    "workflowIncluding50Business": 57,
+    "publicationPolicy": 5,
+    "coordinatorH2": 27,
+    "agronomyMysql": 15,
+    "total": 131
+  },
+  "schemaSourceMax": 151,
+  "newMigrations": 0,
+  "unchangedMigrationSha256": {
+    "149": "49720ed3fb28cb5b3b4d8cb4f844c2756529b1048dda6ccdd10eb38fa6ae73f8",
+    "150": "ef2dc08f9d092b025e13f777fb54b85e766603a352a0a81d2a87f99f93b95209",
+    "151": "65b44bf57b270912ddc6bbf9c84018676fcc77e86969a3fb714cd2740bc805da"
+  },
+  "htmlParser": "org.jsoup:jsoup:1.24.1, parse only",
+  "realJavaOfficialHttps": "FAILED_CERT_PATH",
+  "curlTls": "VERIFIED",
+  "actualHtmlProductionParser": "PASSED_OFFLINE_ONLY",
+  "sourcePrototypeTransportTrustChanged": false,
+  "realModelOrPaidSearchCalls": 0,
+  "providerCost": 0,
+  "runtimeBeanOrApi": false,
+  "frontendChanged": false,
+  "published": false,
+  "nativeWechatOrPhoneAcceptance": false,
+  "independentReview": {
+    "runs": 1,
+    "confirmedP2": 1,
+    "authorizationWaitRedExpectedFetch": 0,
+    "authorizationWaitRedActualFetch": 1,
+    "fixedTargetedTotal": 131,
+    "reviewerRanBuild": false,
+    "postFixNewReview": false
+  },
+  "remaining": [
+    "runtime Java official HTTPS trust path acceptance",
+    "4.3 actual AuthService session and identity version at every execution stage",
+    "immutable request recovery and client/staff/admin views with actual human handoff",
+    "real provider semantic usefulness, cost and native Wechat/phone acceptance"
+  ],
+  "sourceSha256": {
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinator.java": "2d3fd6ee5a7949de3a94096705a46333f50dee650fb8e54e8b7b7d7e3cb26fd6",
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyAssistantSafetyPolicy.java": "c7a0393e9d064066f515b314aa4309da48e4deb0f9fd73a4a2817f7697ba2807",
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyReferencePublicationPolicy.java": "df77817da11230743c30eae2da130f13483318f6f0e3dcf4ed04410067aae85b",
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/ControlledAgronomyAssistantWorkflow.java": "542748a39a9e1b9b3a4cda52d7bc7008cee1619d434afe7f046a2777f7ed40fa",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinatorTest.java": "afdebffa37f24c9dcc8d88465619f09322c6a42aaedac79ec1f91356117e579a",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyCaseMysqlTest.java": "88b0f1e9f0bf5493cb4898a40d0b4c8a7948d94342d271645181f4ffb0204f28",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyReferencePublicationPolicyTest.java": "345cf9317a7ce927e78e8ad69006b6eec2008c117d1dfbf7bf8ff2c4dd42c9ce",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/ControlledAgronomyAssistantWorkflowTest.java": "b9dc41f7127cee47e6b8afdee3cebee2cc22a097bfcf698c9eb60629f4792861",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AgronomySourceFailure.java": "579173af0bee57ffe4661982b72f6d7876c1801de508ccd27dba8880a77a05b9",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AgronomySourceGateway.java": "1af39d6ed555bb423012735900f7a21a250ce2bfa26b135edf5a0a62c5e54eac",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AssistantCallLedger.java": "37e130d53007f52255316fc235e9c273f383b19dd456f89555225cb6c25ae2ad",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/OfficialAgronomySourceRules.java": "5b8d5c8b915c88a30e922065e0d072a797a8eaf500cc99c6bd8db43c34475de8",
+    "core-infrastructure/pom.xml": "756e27dfa182645ff1d81c5bd5b963c0fa17482ad25c6afa1b1a6e59a964bb58",
+    "core-infrastructure/src/main/java/com/agri_system/infrastructure/agronomy/assistant/DeepSeekAssistantGateway.java": "5bbb1984488e3d94c1b20abe60f0ef887d5be6f56c1138d2b875ae08a9222c57",
+    "core-infrastructure/src/main/java/com/agri_system/infrastructure/agronomy/assistant/OfficialAgronomySourceGateway.java": "a69dbde7dfaba342fcd4bbc7f4a1d8850e7b4c9f2824ad1b14973d707d1b3ca5",
+    "core-infrastructure/src/main/java/com/agri_system/infrastructure/common/http/BoundedResponseBody.java": "52ae57f50dd21451543a31df0d6feb78d2b0c1fd8f9e89333fd1421f332d98ac",
+    "core-infrastructure/src/test/java/com/agri_system/infrastructure/agronomy/assistant/OfficialAgronomySourceGatewayTest.java": "4ecb8cdcbac6bd205e8463c0dd5db8b5eb4edbf284eeac6635ada7bfe01c32c0"
+  },
+  "businessFixtureSha256": "642d37ccd787437a97689e6403b43c28d3b30c83918ad885ecb69070d32245ba",
+  "finalBuildLogSha256": "051d409aea3f17304ead7939824d813ab0f0b65f5db1cd2c451898e483381598"
+}

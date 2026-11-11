@@ -16,6 +16,12 @@
     <description>核心基础设施层 - 包含数据持久化、第三方接口、配置</description>
     
     <dependencies>
+        <!-- 只解析已受限的官方HTML字节；不使用jsoup联网或加载子资源。 -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.24.1</version>
+        </dependency>
         <dependency>
             <groupId>com.agri_system</groupId>
             <artifactId>core-domain</artifactId>

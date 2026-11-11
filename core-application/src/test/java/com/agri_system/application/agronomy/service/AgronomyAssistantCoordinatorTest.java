@@ -269,9 +269,32 @@ class AgronomyAssistantCoordinatorTest {
         long id=create(101);String key=UUID.randomUUID().toString();var count=new AtomicInteger();
         var work=new ControlledAgronomyAssistantWorkflow(new ObjectMapper(),clock,policy.execution(),q->java.util.List.of(
                 new com.agri_system.domain.agronomy.assistant.AgronomySearchGateway.Candidate("软件验收资料","https://www.moa.gov.cn/test-fixture", "虚构地区虚构作物软件阶段的积水记录包括观察日期与现场照片编号。",false,java.time.OffsetDateTime.parse("2026-11-10T10:00:00+08:00"))),
-                input->{count.incrementAndGet();throw new IllegalStateException("模拟网络结果未知");});
+                input->{count.incrementAndGet();throw new IllegalStateException("模拟网络结果未知");},ControlledAgronomyAssistantWorkflowTest.official("虚构地区虚构作物软件阶段的积水记录包括观察日期与现场照片编号。",clock));
         assertEquals("UNKNOWN",coordinator(work).submit(101L,1L,id,command(key)).state());assertEquals(1,count.get());
         var steps=new ObjectMapper().readTree(stepJson(key));assertEquals("SUCCEEDED",steps.path("SEARCH").path("state").asText());assertEquals("UNKNOWN",steps.path("MODEL").path("state").asText());
         assertEquals("UNKNOWN",coordinator(work).submit(101L,1L,id,command(key)).state());assertEquals(1,count.get());
+    }
+    @Test void sourceReadsNeedSuccessfulSearchAndAreBoundedPerOriginalExecution() {
+        long id=create(101);String key=UUID.randomUUID().toString();var reads=new AtomicInteger();
+        assertEquals("STALE",coordinator((s,calls)->{
+            calls.begin(AssistantCallLedger.Stage.SEARCH);calls.succeeded(AssistantCallLedger.Stage.SEARCH,0,0);
+            for(int n=0;n<4;n++){calls.beforeSourceRead();assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());reads.incrementAndGet();}
+            throw new AssertionError("最多三次读取");
+        }).submit(101L,1L,id,command(key)).outcomeKind());assertEquals(3,reads.get());
+        long other=create(101);String second=UUID.randomUUID().toString();
+        assertEquals("STALE",coordinator((s,calls)->{calls.beforeSourceRead();throw new AssertionError("搜索前不可读取");}).submit(101L,1L,other,command(second)).outcomeKind());
+    }
+    @Test void changedFactsBeforeFreeSourceReadStopTheOriginalWorker() {
+        long id=create(101);String key=UUID.randomUUID().toString();
+        assertEquals("STALE",coordinator((s,calls)->{
+            calls.begin(AssistantCallLedger.Stage.SEARCH);calls.succeeded(AssistantCallLedger.Stage.SEARCH,0,0);
+            jdbc.update("UPDATE agronomy_case SET version=version+1,facts_version=facts_version+1 WHERE id=?",id);
+            calls.beforeSourceRead();throw new AssertionError("不可读旧农情来源");
+        }).submit(101L,1L,id,command(key)).outcomeKind());
+    }
+    @Test void forgedReferenceFlagsWithoutOfficialEvidenceAreNotStaged() {
+        long id=create(101);String key=UUID.randomUUID().toString();
+        var result=coordinator((s,calls)->"{\"kind\":\"REFERENCE\",\"publicationEligible\":true,\"verifiedDirectFetch\":true}").submit(101L,1L,id,command(key));
+        assertEquals("UNKNOWN",result.state());assertFalse(requests.find(cases.findRequest("CUSTOMER",101L,key).orElseThrow().id()).orElseThrow().outcome().contains("publicationEligible"));
     }
 }

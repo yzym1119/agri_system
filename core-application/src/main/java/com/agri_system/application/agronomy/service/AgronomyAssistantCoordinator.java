@@ -66,7 +66,7 @@ public final class AgronomyAssistantCoordinator {
         Dispatch dispatch=inTx(()->claim(customer,authVersion,caseId,command));
         if(dispatch==null)return read(customer,authVersion,caseId,command.requestKey());
         String staged;
-        try { outside();staged=workflow.stage(dispatch.original().snapshot(),ledger(dispatch));validateStaged(staged); }
+        try { outside();staged=workflow.stage(dispatch.original().snapshot(),ledger(dispatch));validateStaged(staged,dispatch.original().snapshot()); }
         catch(AssistantCallLedger.Stopped stopped) { return inTx(()->record(dispatch,"COMPLETED","STALE",null)); }
         catch(RuntimeException failure) { return inTx(()->record(dispatch,"UNKNOWN","UNKNOWN",null)); }
         String output=staged;
@@ -142,10 +142,28 @@ public final class AgronomyAssistantCoordinator {
     private record Step(String state,Long inputTokens,Long outputTokens,Long configuredCostMicrousd) {}
     private AssistantCallLedger ledger(Dispatch d) {
         return new AssistantCallLedger() {
+            private int sourceReads;
             public void begin(Stage stage) { changeStep(d,stage,"STARTED",0,0); }
             public void succeeded(Stage stage,long input,long output) { changeStep(d,stage,"SUCCEEDED",input,output); }
             public void unknown(Stage stage) { changeStep(d,stage,"UNKNOWN",0,0); }
+            public synchronized void beforeSourceRead() {
+                outside();if(sourceReads>=3)throw new Stopped();
+                inTx(()->{
+                    var entry=d.original().entry();var s=d.original().snapshot();
+                    var row=cases.find(entry.caseId(),true).orElseThrow(AgronomyAssistantCoordinator::unavailable);
+                    var m=requests.find(entry.id()).orElseThrow(AgronomyAssistantCoordinator::unavailable);
+                    if(!d.claimKey().equals(m.claimKey())||!ready(row,m,s,entry.actorId()))throw new Stopped();
+                    var steps=decodeSteps(requests.steps(entry.id()).orElse(null),s,m);
+                    if(!steps.containsKey(Stage.SEARCH)||!"SUCCEEDED".equals(steps.get(Stage.SEARCH).state())||steps.containsKey(Stage.MODEL))throw new Stopped();
+                    return null;
+                });
+                sourceReads++;
+            }
         };
+    }
+    private boolean ready(AgronomyCase row,AssistantRequestMetadata m,AgronomyAssistantWorkflow.Snapshot s,Long customer) {
+        return s.externalCallsPlanned()&&"RUNNING".equals(m.state())&&fresh(row,s)&&validAuth(customer,s.customerAuthVersion())
+                &&activeStore(row.storeId())&&policy.enabled()&&policy.execution().equals(s.execution())&&day().equals(m.budgetDay());
     }
     private void changeStep(Dispatch d,AssistantCallLedger.Stage stage,String state,long input,long output) {
         outside();if(stage==null)throw unavailable();
@@ -158,9 +176,7 @@ public final class AgronomyAssistantCoordinator {
             var steps=decodeSteps(previous,snapshot,m);
             Long cost=null;Long in=null;Long out=null;
             if("STARTED".equals(state)) {
-                if(!snapshot.externalCallsPlanned()||!"RUNNING".equals(m.state())||!fresh(row,snapshot)||!validAuth(entry.actorId(),snapshot.customerAuthVersion())
-                        ||!activeStore(row.storeId())||!policy.enabled()||!policy.execution().equals(snapshot.execution())
-                        ||!day().equals(m.budgetDay()))throw new AssistantCallLedger.Stopped();
+                if(!ready(row,m,snapshot,entry.actorId()))throw new AssistantCallLedger.Stopped();
                 if(steps.containsKey(stage)||stage==AssistantCallLedger.Stage.SEARCH&&(!snapshot.execution().searchRequired()||!steps.isEmpty())
                         ||stage==AssistantCallLedger.Stage.MODEL&&snapshot.execution().searchRequired()
                         &&(!steps.containsKey(AssistantCallLedger.Stage.SEARCH)||!"SUCCEEDED".equals(steps.get(AssistantCallLedger.Stage.SEARCH).state())))throw unavailable();
@@ -250,7 +266,10 @@ public final class AgronomyAssistantCoordinator {
     }
     private String encode(Object value) {try{return json.writeValueAsString(value);}catch(Exception bad){throw unavailable();}}
     private com.fasterxml.jackson.databind.JsonNode parseTree(String value) {try{if(value==null||value.getBytes(StandardCharsets.UTF_8).length>49152)throw unavailable();var n=json.readTree(value);if(n==null||!n.isObject())throw unavailable();return n;}catch(Exception bad){throw unavailable();}}
-    private void validateStaged(String value) {if(value==null||value.getBytes(StandardCharsets.UTF_8).length>24576)throw unavailable();parseTree(value);}
+    private void validateStaged(String value,AgronomyAssistantWorkflow.Snapshot snapshot) {
+        if(value==null||value.getBytes(StandardCharsets.UTF_8).length>24576)throw unavailable();var root=parseTree(value);
+        if("REFERENCE".equals(root.path("kind").asText())&&!new AgronomyReferencePublicationPolicy(json).eligible(value,snapshot,snapshot.facts(),snapshot.factsVersion(),clock.instant()))throw unavailable();
+    }
     private static boolean fresh(AgronomyCase c,AgronomyAssistantWorkflow.Snapshot s) {return c.version()==s.queuedCaseVersion()&&c.factsVersion()==s.factsVersion()&&c.facts().equals(s.facts());}
     private boolean validAuth(Long id,Long version) {return customers.findAuthStateById(id).filter(s->s.active()&&Objects.equals(s.id(),id)&&Objects.equals(s.authVersion(),version)).isPresent();}
     private void auth(Long id,Long version) {positive(id);positive(version);if(!validAuth(id,version))throw invalid("客户授权已变化，请重新登录");}

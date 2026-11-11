@@ -1,0 +1,10 @@
+{
+  "officialPageUrl": "https://www.moa.gov.cn/xw/zxfb/202609/t20260924_6488137.htm",
+  "jdkTransportSuccess": false,
+  "failureCategory": "SSLHandshakeException / ValidatorException / SunCertPathBuilderException",
+  "curlCertificateVerified": true,
+  "observedIssuer": "China Financial Certification Authority / CFCA OV OCA",
+  "trustOrCertificateChecksChanged": false,
+  "realModelOrPaidSearchCalls": 0,
+  "scope": "transport discrepancy, not a successful Java end-to-end source read"
+}

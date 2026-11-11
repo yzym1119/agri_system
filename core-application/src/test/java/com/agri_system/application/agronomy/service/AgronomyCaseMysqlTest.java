@@ -212,4 +212,16 @@ class AgronomyCaseMysqlTest {
         assertTrue(metadata.steps(rows.findRequest("CUSTOMER",101L,key).orElseThrow().id()).isEmpty());
         assertEquals(11810,metadata.usage(1L,java.time.LocalDate.of(2026,11,11)).reservedMicrousd());
     }
+    @Test void sourceReadPermissionCommitsBeforeAnonymousReadAndAddsNoPaidStage() {
+        long id=Long.parseLong(create(101,1,UUID.randomUUID().toString()).caseId());String key=UUID.randomUUID().toString();
+        var metadata=new com.agri_system.infrastructure.agronomy.repository.AgronomyAssistantRepositoryImpl(jdbc);var reads=new java.util.concurrent.atomic.AtomicInteger();
+        var c=assistant(assistantPolicy(2),(s,calls)->{
+            calls.begin(com.agri_system.domain.agronomy.assistant.AssistantCallLedger.Stage.SEARCH);calls.succeeded(com.agri_system.domain.agronomy.assistant.AssistantCallLedger.Stage.SEARCH,0,0);
+            calls.beforeSourceRead();assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());assertNull(com.mybatisflex.core.transaction.TransactionContext.getXID());reads.incrementAndGet();return "{}";
+        },metadata);
+        assertEquals("COMPLETED",c.submit(101L,1L,id,new AgronomyAssistantCoordinator.Command(key,"1","1",true)).state());assertEquals(1,reads.get());
+        assertEquals(2,jdbc.queryForObject("SELECT COUNT(*) FROM agronomy_case_entry WHERE case_id=?",Integer.class,id));
+        String steps=metadata.steps(rows.findRequest("CUSTOMER",101L,key).orElseThrow().id()).orElseThrow();assertTrue(steps.contains("SUCCEEDED"));assertFalse(steps.contains("MODEL"));
+        assertEquals(11810,metadata.usage(1L,java.time.LocalDate.of(2026,11,11)).reservedMicrousd());
+    }
 }

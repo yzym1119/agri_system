@@ -4,30 +4,25 @@ import com.agri_system.domain.agronomy.assistant.AgronomyModelGateway;
 import com.agri_system.domain.agronomy.assistant.AgronomySearchGateway;
 import com.agri_system.domain.agronomy.assistant.AssistantGatewayFailure;
 import com.agri_system.domain.agronomy.assistant.AssistantGatewayFailure.Reason;
+import com.agri_system.infrastructure.common.http.BoundedResponseBody;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.StreamReadConstraints;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 /** 固定供应商边界。不注册Bean；只有后续持久收费许可协调器可以接入客户端流程。 */
 public final class DeepSeekAssistantGateway implements AgronomyModelGateway, AgronomySearchGateway {
@@ -146,7 +141,7 @@ public final class DeepSeekAssistantGateway implements AgronomyModelGateway, Agr
         if (value.isContainerNode()) for (var child : value) validateTree(child, reason);
     }
     private JsonNode send(URI destination, String key, byte[] body) {
-        var subscriber = new LimitedBody(); CompletableFuture<HttpResponse<byte[]>> pending = null;
+        var subscriber = new BoundedResponseBody(MAX_RESPONSE_BYTES, () -> failure(Reason.RESPONSE), () -> failure(Reason.NETWORK)); CompletableFuture<HttpResponse<byte[]>> pending = null;
         long deadline = System.nanoTime() + settings.timeout().toNanos();
         try {
             var request = HttpRequest.newBuilder(destination).timeout(settings.timeout()).header("Content-Type", "application/json")
@@ -169,7 +164,7 @@ public final class DeepSeekAssistantGateway implements AgronomyModelGateway, Agr
         } catch (AssistantGatewayFailure own) { abort(pending, subscriber); throw own; }
         catch (Exception invalid) { abort(pending, subscriber); throw failure(Reason.RESPONSE); }
     }
-    private static void abort(CompletableFuture<?> pending, LimitedBody subscriber) {
+    private static void abort(CompletableFuture<?> pending, BoundedResponseBody subscriber) {
         if (pending != null) pending.cancel(true);
         subscriber.cancel();
     }
@@ -197,31 +192,4 @@ public final class DeepSeekAssistantGateway implements AgronomyModelGateway, Agr
     }
     private static AssistantGatewayFailure failure(Reason reason) { return new AssistantGatewayFailure(reason); }
 
-    /** 按实际流字节数限制内存；外层截止时也取消可能迟到的上游订阅。 */
-    private static final class LimitedBody implements HttpResponse.BodySubscriber<byte[]> {
-        private final CompletableFuture<byte[]> result = new CompletableFuture<>();
-        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        private final AtomicReference<Flow.Subscription> subscription = new AtomicReference<>();
-        private final AtomicBoolean cancelled = new AtomicBoolean();
-        @Override public CompletionStage<byte[]> getBody() { return result; }
-        @Override public void onSubscribe(Flow.Subscription incoming) {
-            if (!subscription.compareAndSet(null, incoming) || cancelled.get()) { incoming.cancel(); return; }
-            incoming.request(Long.MAX_VALUE);
-        }
-        @Override public void onNext(List<ByteBuffer> parts) {
-            if (result.isDone()) return;
-            for (var part : parts) {
-                if (part.remaining() > MAX_RESPONSE_BYTES - bytes.size()) {
-                    result.completeExceptionally(failure(Reason.RESPONSE)); cancel(); return;
-                }
-                byte[] chunk = new byte[part.remaining()]; part.get(chunk); bytes.writeBytes(chunk);
-            }
-        }
-        @Override public void onError(Throwable ignored) { result.completeExceptionally(failure(Reason.NETWORK)); }
-        @Override public void onComplete() { result.complete(bytes.toByteArray()); }
-        void cancel() {
-            cancelled.set(true); var current = subscription.get(); if (current != null) current.cancel();
-            result.completeExceptionally(failure(Reason.NETWORK));
-        }
-    }
 }
