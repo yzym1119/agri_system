@@ -1,0 +1,25 @@
+{
+  "baseline": "d0e4d40e2f10682254b2dd22585c51c7d08e8d90",
+  "verifiedAt": "2026-11-11T21:27:40+08:00",
+  "reports": 186,
+  "tests": 1325,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "externalCallsEnabled": false,
+  "realSupplierCalled": false,
+  "originalDatabaseUpgraded": false,
+  "browserOrNativeDeviceTested": false,
+  "pagesChanged": false,
+  "independentReview": "one read-only review; no confirmed P0/P1/P2; no tests rerun by reviewer",
+  "sourceSha256": {
+    "api-client/src/test/java/com/agri_system/api/client/controller/ClientHttpBoundaryTest.java": "acb72e44ffbf79a56bc8c41a0b1855e1ea89486c390102897433b717f18ad3b2",
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinator.java": "1c64c81387c97b1200962656facf1e9fa65ab46da2d166b0bafc9702b3305f5a",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinatorTest.java": "38e40dbae14debd6e0c3689ea9b97bc56b962a017ba3eea8dde7d165b54f44cc",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AgronomyAssistantWorkflow.java": "c5885432172738bc3fd664582f66cf02becc16980ba04269efe943f33aecb2d6",
+    "api-client/src/main/java/com/agri_system/api/client/config/AgronomyAssistantConfiguration.java": "47774c419dd260fcbba3477bbc0378b7ef57d793172b722383d5f6dc5dd4402e",
+    "api-client/src/main/java/com/agri_system/api/client/controller/AgronomyAssistantClientController.java": "7b206941ed458f6d10af4416a4cbe3de76716b2e7ac43e5d186116f69e1802db",
+    "api-client/src/test/java/com/agri_system/api/client/config/AgronomyAssistantConfigurationTest.java": "a5727b73d5e17046c78a1fa85b87feaf5abe5106e1a37873d8bbb3b496714b96",
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyAssistantAccessService.java": "5a9d4baa9ed4b91b9179eaeb9ad3c629aabbd351b85296cbeb6be3f2dcffbe1d"
+  }
+}

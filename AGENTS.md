@@ -228,3 +228,10 @@
 - 旧会话缺新许可时AI要求重登，普通本人读取保持；旧快照缺来源按原摘要保留收据，不补当前来源。新会话只能核原结果，不能接管旧QUEUED；仅确定未派出失败可释放，RUNNING/UNKNOWN保留最大预占。
 - HUMAN处理结果与原问题同事务进入WAITING_REVIEW，保存handoffVersion/Status，已在队列不再增版本；原entry body/hash/resultVersion不改，不伪造客户消息或STAFF答复。转交结果写失败全回滚，旧事实/失效许可只STALE。queuedVersion是原收据，不能当当前主档版本。
 - 当前无运行Bean/客户AI API或三端AI视图，完整1319项后端通过不是微信/手机、供应商质量/费用或AI已可用证明。4.3b接口/原UUID恢复/白名单视图继续，官方JDK信任链缺口仍在。
+
+## 客户AI后端入口与白名单投影（2026-11-11，4.3b进行中）
+
+- 客户实际HTTP在原case下取能力/POST原请求/GET原号结果，真实AuthService填授权，URL固定caseId、严格布尔同意。capability只读非预占，正式提交继续锁内重核；NOT_FOUND不证明未提交，不据此换号。
+- api-client配置装配协调器/AccessService，外部调用默认false；开启必须完整正预算/计价版本/合法双密钥。后台不扫描注册缺协调器的AccessService。当前未启用真实调用；部署JDK信任链、真实模型质量/费用仍须验收。
+- 完成STAGED不等于可展示。结果先核原摘要/快照，再核当前主档版本/农情及独立V2资格，只返回title/url/publishedOn/quote；不外发draft、全文、哈希、许可、费用。CLARIFY按原安全策略重算缺失字段，HUMAN的handoffStatus仅原转交事实，不等于当前尚未答复。未知/未找到/未派出/过时/不可用分开。
+- 当前仅后端入口，SDK、持久原UUID恢复和客户/员工/后台AI页面未实现；自动验证不代表完整HTTP+SQL现场联调或微信/手机。本节为后于4.3a的当前状态，不改原不可变收据、预算与专业人工规则。

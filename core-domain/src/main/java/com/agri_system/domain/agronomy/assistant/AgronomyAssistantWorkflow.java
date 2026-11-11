@@ -2,7 +2,7 @@ package com.agri_system.domain.agronomy.assistant;
 
 import com.agri_system.domain.agronomy.model.AgronomyCase.Facts;
 
-/** 只产生未发布结果；后续实现可信检索/专业规则前不注册运行Bean。 */
+/** 只产生未发布处理结果；当前会话、持久许可和页面投影由协调器独立核验。 */
 public interface AgronomyAssistantWorkflow {
     record Snapshot(long customerAuthVersion, long originalCaseVersion, long queuedCaseVersion, long factsVersion,
             String question, Facts facts, String latestSupplement, AssistantBudgetPolicy.Execution execution,String processingPlan,com.agri_system.domain.auth.model.ClientAuthorization authorization) {

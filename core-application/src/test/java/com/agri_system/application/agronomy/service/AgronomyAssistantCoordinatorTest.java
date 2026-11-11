@@ -372,6 +372,43 @@ class AgronomyAssistantCoordinatorTest {
         assertEquals("QUEUED",c.read(authorization(101L,1L),id,key).state());assertEquals("FAILED",c.submit(authorization(101L,1L),id,command(key)).state());
         assertEquals(0,requests.usage(1L,java.time.LocalDate.of(2026,11,11)).reservedMicrousd());
     }
+    @Test void customerAvailabilityChecksRealOwnerConfigurationAndQuotaWithoutReserving() {
+        long id=create(101);policy=AssistantBudgetPolicy.disabled();var disabled=coordinator((s,calls)->{throw new AssertionError();});
+        assertFalse(disabled.capability(authorization(101L,1L),id).enabled());
+        assertThrows(RuntimeException.class,()->disabled.capability(authorization(202L,1L),id));
+        assertEquals(1,cases.find(id,false).orElseThrow().version());
+        policy=policy(true,1,1,11810);var c=coordinator((s,calls)->"{}");assertTrue(c.capability(authorization(101L,1L),id).enabled());
+        c.submit(authorization(101L,1L),id,command(UUID.randomUUID().toString()));
+        long other=create(101);assertEquals("QUOTA_EXHAUSTED",c.capability(authorization(101L,1L),other).reason());
+    }
+    @Test void customerProjectionDoesNotExposeInternalDraftAndKeepsUnknownDistinctFromMissing() throws Exception {
+        long id=create(101);String key=UUID.randomUUID().toString();var c=coordinator((s,calls)->{throw new IllegalStateException("PRIVATE");});
+        var absent=c.customerResult(authorization(101L,1L),id,key);assertEquals("NOT_FOUND",absent.state());
+        c.submit(authorization(101L,1L),id,command(key));var unknown=c.customerResult(authorization(101L,1L),id,key);
+        assertEquals("UNKNOWN",unknown.state());assertTrue(unknown.citations().isEmpty());assertTrue(unknown.missingFacts().isEmpty());
+        assertThrows(RuntimeException.class,()->c.customerResult(authorization(202L,1L),id,key));
+        assertFalse(new ObjectMapper().writeValueAsString(unknown).contains("snapshot"));
+    }
+    @Test void completedLocalClarificationIsDerivedFromOriginalFactsNotArbitraryDraftText() throws Exception {
+        long id=create(101);jdbc.update("UPDATE agronomy_case SET region='' WHERE id=?",id);
+        var c=coordinator((s,calls)->"{\"kind\":\"CLARIFY\",\"published\":false,\"reason\":\"ARBITRARY_PRIVATE_TEXT\",\"missingFacts\":[\"unsafe-field\"]}");
+        String key=UUID.randomUUID().toString();c.submit(authorization(101L,1L),id,command(key));var result=c.customerResult(authorization(101L,1L),id,key);
+        assertEquals("CLARIFY",result.state());assertEquals(java.util.List.of("region"),result.missingFacts());
+        assertFalse(new ObjectMapper().writeValueAsString(result).contains("ARBITRARY_PRIVATE_TEXT"));
+        jdbc.update("UPDATE agronomy_case SET facts_version=2 WHERE id=?",id);
+        assertEquals("STALE",c.customerResult(authorization(101L,1L),id,key).state());
+    }
+    @Test void completedReferenceOnlyExposesVerifiedQuotesAndExpiryRemovesThem() throws Exception {
+        long id=create(101);String key=UUID.randomUUID().toString();String quote="虚构地区虚构作物软件阶段的积水记录包括观察日期与现场照片编号。";
+        var work=new ControlledAgronomyAssistantWorkflow(new ObjectMapper(),clock,policy.execution(),q->java.util.List.of(
+            new com.agri_system.domain.agronomy.assistant.AgronomySearchGateway.Candidate("软件验收资料","https://www.moa.gov.cn/test-fixture",quote,false,java.time.OffsetDateTime.parse("2026-11-10T10:00:00+08:00"))),
+            input->new com.agri_system.domain.agronomy.assistant.AgronomyModelGateway.Output("deepseek-flash","{\"quotes\":[{\"sourceId\":\"S1\",\"text\":\""+quote+"\"}]}",100,100),ControlledAgronomyAssistantWorkflowTest.official(quote,clock));
+        var c=coordinator(work);c.submit(authorization(101L,1L),id,command(key));var result=c.customerResult(authorization(101L,1L),id,key);
+        assertEquals("REFERENCE",result.state());assertEquals(1,result.citations().size());assertEquals(quote,result.citations().get(0).quote());
+        String raw=new ObjectMapper().writeValueAsString(result);for(String hidden:java.util.List.of("excerpt","Sha256","authorizationId","claimKey","Microusd","draft","policyVersion"))assertFalse(raw.contains(hidden));
+        var later=new AgronomyAssistantCoordinator(cases,requests,stores,customers,clientAuth,manager,new ObjectMapper(),Clock.offset(clock,java.time.Duration.ofDays(2)),policy,(a,b)->{throw new AssertionError("查询不执行");});
+        var expired=later.customerResult(authorization(101L,1L),id,key);assertEquals("UNAVAILABLE",expired.state());assertTrue(expired.citations().isEmpty());
+    }
     static com.agri_system.domain.auth.model.ClientAuthorization authorization(Long customer,Long version) {
         return new com.agri_system.domain.auth.model.ClientAuthorization(customer,version,"WECHAT","wx1111111111111111",customer+1000,1L,String.format("00000000-0000-4000-8000-%012d",customer));
     }

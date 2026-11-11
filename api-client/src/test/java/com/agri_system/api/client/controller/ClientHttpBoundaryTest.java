@@ -96,6 +96,7 @@ class ClientHttpBoundaryTest {
     @MockBean com.agri_system.application.catalog.service.ClientCatalogService publicCatalog;
     @MockBean com.agri_system.application.agronomy.service.PublicKnowledgeService publicKnowledge;
     @MockBean com.agri_system.application.agronomy.service.AgronomyCaseService agronomyCases;
+    @MockBean com.agri_system.application.agronomy.service.AgronomyAssistantAccessService assistantAccess;
     @MockBean StaffAuthorityService authority;
     @MockBean StringRedisTemplate redis;
     @MockBean com.agri_system.application.performance.service.OneTimeQrService oldQr;
@@ -103,7 +104,7 @@ class ClientHttpBoundaryTest {
     @SpringBootConfiguration
     @EnableAutoConfiguration
     @Import({SaTokenConfigure.class, AuthService.class, GlobalExceptionHandler.class,
-            OrderClientController.class, AfterSalesClientController.class, ClientCatalogController.class, PublicKnowledgeController.class, AgronomyCaseClientController.class,
+            OrderClientController.class, AfterSalesClientController.class, ClientCatalogController.class, PublicKnowledgeController.class, AgronomyCaseClientController.class, AgronomyAssistantClientController.class,
             OrderPaymentPublicController.class, AuthClientController.class, ClientOnboardingController.class, com.agri_system.application.auth.service.ClientOnboardingService.class, com.agri_system.application.auth.service.CustomerEnrollmentService.class, QrClientController.class, LoginProbe.class})
     static class Config {
         @Bean SaTokenDao saTokenDao() { return new SaTokenDaoDefaultImpl(); }
@@ -168,6 +169,17 @@ class ClientHttpBoundaryTest {
         org.mockito.Mockito.verifyNoInteractions(agronomyCases);
     }
 
+    @Test void assistantRoutesUseOriginalUrlAndRejectCoercedConsentBeforeSubmission() throws Exception {
+        String base="/api/client/agronomy/cases/7/assistant",token=login("CUST_101"),key="11111111-1111-4111-8111-111111111111";
+        when(assistantAccess.capability(7L)).thenReturn(new com.agri_system.application.agronomy.service.AgronomyAssistantCoordinator.Capability(false,"DISABLED","1","1"));
+        request(get(base+"/capability"),token,null).andExpect(header().string("Cache-Control","no-store")).andExpect(jsonPath("$.enabled").value(false));
+        request(post(base+"/requests"),token,"{\"requestKey\":\""+key+"\",\"expectedVersion\":\"1\",\"factsVersion\":\"1\",\"shareContextConfirmed\":\"true\"}").andExpect(jsonPath("$.code").value(10001));
+        verify(assistantAccess,never()).submit(anyLong(),any());
+        request(post(base+"/requests"),token,"{\"requestKey\":\""+key+"\",\"expectedVersion\":\"1\",\"factsVersion\":\"1\",\"shareContextConfirmed\":true,\"customerId\":202,\"caseId\":999}");
+        verify(assistantAccess).submit(eq(7L),any());
+        request(get(base+"/requests/"+key),token,null);verify(assistantAccess).result(7L,key);
+        businessFailure(request(get(base+"/capability"),null,null),10003);
+    }
     @BeforeEach void customerAndCallback() {
         when(registrationTransactions.getTransaction(any())).thenAnswer(call->new org.springframework.transaction.support.SimpleTransactionStatus());
         ReflectionTestUtils.setField(authentication,"wechatAppId","");

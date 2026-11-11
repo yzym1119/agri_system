@@ -34,7 +34,7 @@ import java.util.EnumMap;
 import java.math.BigInteger;
 import java.util.function.Supplier;
 
-/** 持久许可及保守预占；未注册Bean/API，后续可信发布工作流实现后才接线。 */
+/** 持久许可及保守预占；客户端装配默认关闭，页面结果只经独立资格白名单投影。 */
 public final class AgronomyAssistantCoordinator {
     private final AgronomyCaseRepository cases;
     private final AgronomyAssistantRepository requests;
@@ -47,9 +47,65 @@ public final class AgronomyAssistantCoordinator {
     private final AssistantBudgetPolicy policy;
     private final AgronomyAssistantWorkflow workflow;
     private static final ZoneId ZONE=ZoneId.of("Asia/Shanghai");
-    public record Command(String requestKey,String expectedVersion,String factsVersion,boolean shareContextConfirmed) {}
+    public record Command(String requestKey,String expectedVersion,String factsVersion,@com.fasterxml.jackson.databind.annotation.JsonDeserialize(using=com.agri_system.application.agronomy.dto.CaseHumanRequestDeserializer.class) boolean shareContextConfirmed) {}
     /** 只给出处理状态，未发布草案和私有执行凭证不出现在结果视图。 */
     public record View(String requestKey,String caseId,String state,String queuedVersion,String factsVersion,String outcomeKind,String handoffStatus) {}
+    public record Capability(boolean enabled,String reason,String version,String factsVersion) {}
+    /** 唯一页面白名单；不包含来源全文、哈希、授权、计价或私有执行状态JSON。 */
+    public record Citation(String title,String url,String publishedOn,String quote) {}
+    public record Result(String requestKey,String caseId,String state,String queuedVersion,String factsVersion,
+            String currentFactsVersion,String handoffStatus,java.util.List<String> missingFacts,java.util.List<Citation> citations) {}
+    public Capability capability(ClientAuthorization authorization,Long caseId) {
+        outside();auth(authorization);positive(caseId);
+        var row=cases.findOwned(caseId,authorization.customerId(),false).orElseThrow(AgronomyAssistantCoordinator::unavailable);
+        String reason="READY";
+        try {policy.requireEnabled();}catch(IllegalArgumentException disabled){reason="DISABLED";}
+        if("READY".equals(reason)&&!activeStore(row.storeId()))reason="STORE_DISABLED";
+        if("READY".equals(reason)&&requests.hasOpen(caseId))reason="PENDING";
+        var decision=new AgronomyAssistantSafetyPolicy().assess(row.question(),cases.latestCustomerSupplement(caseId,row.version()).map(AgronomyCaseEntry::body).orElse(""),row.facts());
+        if("READY".equals(reason)&&policy.searchRequired()&&"REFERENCE".equals(decision.kind())) {
+            var used=requests.usage(row.storeId(),day());
+            try {if(used.modelCalls()>=policy.dailyModelCalls()||used.searchCalls()>=policy.dailySearchCalls()
+                    ||Math.addExact(used.reservedMicrousd(),Math.addExact(policy.modelReservation(),policy.searchMicrousd()))>policy.dailyMicrousd())reason="QUOTA_EXHAUSTED";}
+            catch(ArithmeticException exhausted){reason="QUOTA_EXHAUSTED";}
+        }
+        return new Capability("READY".equals(reason),reason,Long.toString(row.version()),Long.toString(row.factsVersion()));
+    }
+    public Result customerResult(ClientAuthorization authorization,Long caseId,String key) {
+        outside();auth(authorization);positive(caseId);uuid(key);
+        var row=cases.findOwned(caseId,authorization.customerId(),false).orElseThrow(AgronomyAssistantCoordinator::unavailable);
+        return scopedResult(row,key);
+    }
+    /** 仅供同应用包已执行真实客户/员工范围校验的门面使用；不能直接作为控制器入口。 */
+    Result scopedResult(AgronomyCase row,String key) {
+        uuid(key);
+        if(cases.findRequest("CUSTOMER",row.customerId(),key).isEmpty())return presented(row,key,null,"NOT_FOUND","",java.util.List.of(),java.util.List.of());
+        var o=original(row.customerId(),row.id(),key,null);var m=o.metadata();var snapshot=o.snapshot();
+        if(o.entry().resultVersion()>row.version())throw unavailable();
+        String state=m.state();String handoff="";var missing=java.util.List.<String>of();var citations=new java.util.ArrayList<Citation>();
+        if("FAILED".equals(state))state="NOT_DISPATCHED";
+        if("COMPLETED".equals(state)) {
+            var outcome=parseTree(m.outcome());var draft=outcome.path("draft");state="UNAVAILABLE";
+            if(snapshot.authorization()==null||!validAuth(row.customerId(),snapshot.customerAuthVersion())
+                    ||row.factsVersion()!=snapshot.factsVersion()||!row.facts().equals(snapshot.facts())||"STALE".equals(outcome.path("kind").asText()))state="STALE";
+            else if("STAGED".equals(outcome.path("kind").asText())&&draft.isObject()) {
+                String kind=draft.path("kind").asText();
+                var decision=new AgronomyAssistantSafetyPolicy().assess(snapshot.question(),snapshot.latestSupplement(),snapshot.facts());
+                if("CLARIFY".equals(kind)&&"CLARIFY".equals(decision.kind())) {state="CLARIFY";missing=decision.missingFacts();}
+                else if("HUMAN".equals(kind)&&"WAITING_REVIEW".equals(outcome.path("handoffStatus").asText())) {state="HUMAN";handoff="WAITING_REVIEW";}
+                else if("REFERENCE".equals(kind)&&new AgronomyReferencePublicationPolicy(json).eligible(encode(draft),snapshot,row.facts(),row.factsVersion(),clock.instant())) {
+                    state="REFERENCE";
+                    for(var citation:draft.path("citations"))for(var source:draft.path("sources"))
+                        if(citation.path("sourceId").asText().equals(source.path("id").asText()))
+                            citations.add(new Citation(source.path("title").asText(),source.path("url").asText(),source.path("publishedOn").asText(),citation.path("quote").asText()));
+                }
+            }
+        }
+        return presented(row,key,o,state,handoff,missing,java.util.List.copyOf(citations));
+    }
+    private Result presented(AgronomyCase row,String key,Original o,String state,String handoff,java.util.List<String> missing,java.util.List<Citation> citations) {
+        return new Result(key,row.id().toString(),state,o==null?null:Long.toString(o.entry().resultVersion()),o==null?null:Long.toString(o.entry().resultFactsVersion()),Long.toString(row.factsVersion()),handoff,missing,citations);
+    }
     private record Original(AgronomyCaseEntry entry,AssistantRequestMetadata metadata,AgronomyAssistantWorkflow.Snapshot snapshot) {}
     private record Dispatch(Original original,String claimKey) {}
 
