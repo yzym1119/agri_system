@@ -1,0 +1,70 @@
+{
+  "baseCommit": "d181e38e740f1d17d44cbee6ddbe7cf57a356fe0",
+  "scope": "4.2b engineering checkpoint, no runtime API or published customer answer",
+  "backend": {
+    "reports": 183,
+    "tests": 1288,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "java": 17,
+  "mysqlAndAuthorityEnabled": true,
+  "completedAt": "2026-11-11T15:16:54+08:00",
+  "targeted": {
+    "workflowIncluding50Business": 53,
+    "coordinatorH2": 24,
+    "agronomyMysql": 14,
+    "total": 91
+  },
+  "businessFixtureCount": 50,
+  "businessExpectedKinds": {
+    "REFERENCE": 10,
+    "HUMAN": 30,
+    "CLARIFY": 10
+  },
+  "schemaSourceMax": 151,
+  "onlyAutomaticRandomSchemasMigratedThisBatch": true,
+  "existingManualIsolatedSchemaVersion": 150,
+  "originalDatabaseOrPreviewChanged": false,
+  "V149V150Unchanged": true,
+  "outboundProviderCalls": 0,
+  "realProviderCost": 0,
+  "runtimeBeanOrApi": false,
+  "frontendChanged": false,
+  "nativeWechatOrPhoneAcceptance": false,
+  "sourceEvidence": "SEARCH_CANDIDATE",
+  "verifiedDirectFetch": false,
+  "published": false,
+  "realSupplierQualityAcceptance": false,
+  "independentReview": {
+    "runs": 1,
+    "confirmedP2": 1,
+    "topicCasesFailedBeforeFix": 2,
+    "postFixTargetedPassed": 91,
+    "reviewerRanTests": false,
+    "postFixNewReview": false
+  },
+  "remaining": [
+    "official source direct authenticity and publication eligibility",
+    "4.3 actual customer session, immutable requests and client/staff/admin presentation",
+    "real provider semantic quality and cost acceptance",
+    "native Wechat and phone acceptance"
+  ],
+  "sourceSha256": {
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinator.java": "b71ce4f0343454ba60614c1bd3e99c4ac957d3e4d78f28f7971a34d66dd824c9",
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/AgronomyAssistantSafetyPolicy.java": "35735e90ca21ffafceab2d48b6dd876c3f77b3d5f0b43c91c553c4b853cdb26c",
+    "core-application/src/main/java/com/agri_system/application/agronomy/service/ControlledAgronomyAssistantWorkflow.java": "7b8b3eced56737810d70e1b34364c607fbaef8ad2c8011cd9b0682ff2f5a9a3f",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyAssistantCoordinatorTest.java": "344e67acf8fb9537ed9e1a21b46cc5892ab85f810c9871d4484b6c731c3c8100",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/AgronomyCaseMysqlTest.java": "ad9fb387276704cf4157383e230d77c83a2cd9ce93f1d05fbb47fab08e29aaad",
+    "core-application/src/test/java/com/agri_system/application/agronomy/service/ControlledAgronomyAssistantWorkflowTest.java": "5ab10afbdf6ff98e75a14f5501573302791c71a09e565e49208fa8c9d28b460a",
+    "core-application/src/test/resources/agronomy/assistant-business-evals.json": "642d37ccd787437a97689e6403b43c28d3b30c83918ad885ecb69070d32245ba",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AgronomyAssistantRepository.java": "7b6cb8fc25ae1b8cc6c04263ea05052c3a116df7b6973c465efdbfe5a28477cb",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AgronomyAssistantWorkflow.java": "20dec95e1cf8cf5d3516827cd46616120fc66608d6ecdba107ae93fe0ce4dbfb",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AssistantCallLedger.java": "5d2b7324113c1df7deb8c32be75fa44bbf926392845579d5ee773dd2e51e2325",
+    "core-infrastructure/src/main/java/com/agri_system/infrastructure/agronomy/repository/AgronomyAssistantRepositoryImpl.java": "95855a5ac842614cb648789a1930c60a566eba6d82ed75cddb4105e456c62e3b",
+    "core-infrastructure/src/main/resources/db/migration/V151__agronomy_assistant_steps.sql": "65b44bf57b270912ddc6bbf9c84018676fcc77e86969a3fb714cd2740bc805da",
+    "core-infrastructure/src/test/java/com/agri_system/infrastructure/migration/RetailFactChainMigrationTest.java": "f960729ac0fcc7db5d043bca1f8f664a4e4213487d39e5b048a0b8a9f61e28e8"
+  },
+  "finalBuildLogSha256": "ba485f4c624599bacfdc24b2c8c14291b890ec5f3414f2fa9ba5ec5012a71b9a"
+}

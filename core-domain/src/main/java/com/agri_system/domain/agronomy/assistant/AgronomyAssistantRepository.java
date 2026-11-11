@@ -14,4 +14,6 @@ public interface AgronomyAssistantRepository {
     boolean claim(Long entryId,String claimKey,LocalDateTime at);
     boolean failBeforeDispatch(Long entryId,String outcome,LocalDateTime at);
     boolean finish(Long entryId,String claimKey,String state,String outcome,LocalDateTime at);
+    Optional<String> steps(Long entryId);
+    boolean compareSteps(Long entryId,String claimKey,String expected,String next,LocalDateTime at);
 }

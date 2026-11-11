@@ -41,4 +41,11 @@ public class AgronomyAssistantRepositoryImpl implements AgronomyAssistantReposit
         if(!java.util.Set.of("COMPLETED","UNKNOWN").contains(state))throw new IllegalArgumentException("AI处理状态无效");
         return jdbc.update("UPDATE agronomy_case_entry SET assistant_state=?,assistant_outcome=?,assistant_updated_at=? WHERE id=? AND assistant_state IN ('RUNNING','UNKNOWN') AND assistant_claim_key=?",state,outcome,at,id,claim)==1;
     }
+    @Override public Optional<String> steps(Long id) {
+        return jdbc.query("SELECT assistant_steps FROM agronomy_case_entry WHERE id=? AND type='ASSISTANT_REQUEST'",(r,n)->r.getString(1),id).stream().filter(java.util.Objects::nonNull).findFirst();
+    }
+    @Override public boolean compareSteps(Long id,String claim,String expected,String next,LocalDateTime at) {
+        return jdbc.update("UPDATE agronomy_case_entry SET assistant_steps=?,assistant_updated_at=? WHERE id=? AND type='ASSISTANT_REQUEST' AND assistant_state IN ('RUNNING','UNKNOWN') AND assistant_claim_key=? AND (assistant_steps=? OR (assistant_steps IS NULL AND ? IS NULL))",
+                next,at,id,claim,expected,expected)==1;
+    }
 }

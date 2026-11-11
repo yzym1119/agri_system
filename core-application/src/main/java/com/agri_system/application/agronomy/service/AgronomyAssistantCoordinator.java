@@ -4,6 +4,7 @@ import com.agri_system.domain.agronomy.assistant.AssistantBudgetPolicy;
 import com.agri_system.domain.agronomy.assistant.AssistantRequestMetadata;
 import com.agri_system.domain.agronomy.assistant.AgronomyAssistantRepository;
 import com.agri_system.domain.agronomy.assistant.AgronomyAssistantWorkflow;
+import com.agri_system.domain.agronomy.assistant.AssistantCallLedger;
 import com.agri_system.domain.agronomy.model.AgronomyCase;
 import com.agri_system.domain.agronomy.model.AgronomyCaseEntry;
 import com.agri_system.domain.agronomy.repository.AgronomyCaseRepository;
@@ -27,6 +28,8 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.EnumMap;
+import java.math.BigInteger;
 import java.util.function.Supplier;
 
 /** 持久许可及保守预占；未注册Bean/API，后续可信发布工作流实现后才接线。 */
@@ -63,7 +66,8 @@ public final class AgronomyAssistantCoordinator {
         Dispatch dispatch=inTx(()->claim(customer,authVersion,caseId,command));
         if(dispatch==null)return read(customer,authVersion,caseId,command.requestKey());
         String staged;
-        try { outside();staged=workflow.stage(dispatch.original().snapshot());validateStaged(staged); }
+        try { outside();staged=workflow.stage(dispatch.original().snapshot(),ledger(dispatch));validateStaged(staged); }
+        catch(AssistantCallLedger.Stopped stopped) { return inTx(()->record(dispatch,"COMPLETED","STALE",null)); }
         catch(RuntimeException failure) { return inTx(()->record(dispatch,"UNKNOWN","UNKNOWN",null)); }
         String output=staged;
         return inTx(()->{
@@ -95,15 +99,16 @@ public final class AgronomyAssistantCoordinator {
         if(row.version()!=number(command.expectedVersion())||row.factsVersion()!=number(command.factsVersion())||row.version()==Long.MAX_VALUE
                 ||row.factsVersion()<1||row.factsVersion()>row.version()||!Set.of("COLLECTING","WAITING_REVIEW","ACTIVE").contains(row.status()))throw invalid("问题情况已变化，请重新核对");
         if(requests.hasOpen(caseId))throw invalid("此问题还有原AI请求待核对，不能另号调用");
-        long model=policy.modelReservation(),search=policy.searchRequired()?policy.searchMicrousd():0;
+        String supplement=cases.latestCustomerSupplement(caseId,row.version()).map(AgronomyCaseEntry::body).orElse("");
+        boolean external=policy.searchRequired()&&"REFERENCE".equals(new AgronomyAssistantSafetyPolicy().assess(row.question(),supplement,row.facts()).kind());
+        long model=external?policy.modelReservation():0,search=external?policy.searchMicrousd():0;
         // 同一店锁下只取一次业务日期，不能把旧日核过的额度写入新日。
         LocalDateTime reservationAt=now();LocalDate budgetDay=reservationAt.toLocalDate();
         var used=requests.usage(row.storeId(),budgetDay);
-        try {if(used.modelCalls()>=policy.dailyModelCalls()||search>0&&used.searchCalls()>=policy.dailySearchCalls()
-                    ||Math.addExact(used.reservedMicrousd(),Math.addExact(model,search))>policy.dailyMicrousd())throw invalid("本店今日AI调用额度不足，请联系门店");}
+        try {if(external&&(used.modelCalls()>=policy.dailyModelCalls()||used.searchCalls()>=policy.dailySearchCalls()
+                    ||Math.addExact(used.reservedMicrousd(),Math.addExact(model,search))>policy.dailyMicrousd()))throw invalid("本店今日AI调用额度不足，请联系门店");}
         catch(ArithmeticException overflow){throw invalid("AI预占合计超出支持范围");}
-        String supplement=cases.latestCustomerSupplement(caseId,row.version()).map(AgronomyCaseEntry::body).orElse("");
-        var snapshot=new AgronomyAssistantWorkflow.Snapshot(authVersion,row.version(),row.version()+1,row.factsVersion(),row.question(),row.facts(),supplement,policy.execution());
+        var snapshot=new AgronomyAssistantWorkflow.Snapshot(authVersion,row.version(),row.version()+1,row.factsVersion(),row.question(),row.facts(),supplement,policy.execution(),external?"EXTERNAL":"LOCAL");
         String saved=encode(snapshot);if(saved.getBytes(StandardCharsets.UTF_8).length>49152)throw invalid("AI上下文超出支持范围");
         var entry=new AgronomyCaseEntry(null,caseId,"CUSTOMER",customer,command.requestKey(),hash(caseId,command,saved),"ASSISTANT_REQUEST","请求AI说明（尚未发布）","",row.facts(),null,row.version(),row.version()+1,row.factsVersion(),row.status(),reservationAt);
         if(!cases.insertEntry(entry))throw invalid("原AI请求身份已被占用，请核对原号");
@@ -134,6 +139,80 @@ public final class AgronomyAssistantCoordinator {
         if(!requests.finish(e.id(),d.claimKey(),state,outcome,now()))throw unavailable();
         return view(original(e.actorId(),e.caseId(),e.requestKey(),null));
     }
+    private record Step(String state,Long inputTokens,Long outputTokens,Long configuredCostMicrousd) {}
+    private AssistantCallLedger ledger(Dispatch d) {
+        return new AssistantCallLedger() {
+            public void begin(Stage stage) { changeStep(d,stage,"STARTED",0,0); }
+            public void succeeded(Stage stage,long input,long output) { changeStep(d,stage,"SUCCEEDED",input,output); }
+            public void unknown(Stage stage) { changeStep(d,stage,"UNKNOWN",0,0); }
+        };
+    }
+    private void changeStep(Dispatch d,AssistantCallLedger.Stage stage,String state,long input,long output) {
+        outside();if(stage==null)throw unavailable();
+        inTx(()->{
+            var entry=d.original().entry();var snapshot=d.original().snapshot();
+            var row=cases.find(entry.caseId(),true).orElseThrow(AgronomyAssistantCoordinator::unavailable);
+            var m=requests.find(entry.id()).orElseThrow(AgronomyAssistantCoordinator::unavailable);
+            if(!d.claimKey().equals(m.claimKey())||!Set.of("RUNNING","UNKNOWN").contains(m.state()))throw unavailable();
+            String previous=requests.steps(entry.id()).orElse(null);
+            var steps=decodeSteps(previous,snapshot,m);
+            Long cost=null;Long in=null;Long out=null;
+            if("STARTED".equals(state)) {
+                if(!snapshot.externalCallsPlanned()||!"RUNNING".equals(m.state())||!fresh(row,snapshot)||!validAuth(entry.actorId(),snapshot.customerAuthVersion())
+                        ||!activeStore(row.storeId())||!policy.enabled()||!policy.execution().equals(snapshot.execution())
+                        ||!day().equals(m.budgetDay()))throw new AssistantCallLedger.Stopped();
+                if(steps.containsKey(stage)||stage==AssistantCallLedger.Stage.SEARCH&&(!snapshot.execution().searchRequired()||!steps.isEmpty())
+                        ||stage==AssistantCallLedger.Stage.MODEL&&snapshot.execution().searchRequired()
+                        &&(!steps.containsKey(AssistantCallLedger.Stage.SEARCH)||!"SUCCEEDED".equals(steps.get(AssistantCallLedger.Stage.SEARCH).state())))throw unavailable();
+            } else {
+                if(!steps.containsKey(stage)||!"STARTED".equals(steps.get(stage).state()))throw unavailable();
+                if("SUCCEEDED".equals(state)) {
+                    if(stage==AssistantCallLedger.Stage.MODEL) {
+                        in=input;out=output;
+                        cost=modelCost(snapshot.execution(),input,output);
+                        if(cost>m.modelReservedMicrousd())throw unavailable();
+                    } else {
+                        if(input!=0||output!=0)throw unavailable();
+                        cost=snapshot.execution().searchMicrousd();
+                    }
+                } else if(!"UNKNOWN".equals(state))throw unavailable();
+            }
+            steps.put(stage,new Step(state,in,out,cost));String next=encode(steps);
+            if(next.getBytes(StandardCharsets.UTF_8).length>8192||!requests.compareSteps(entry.id(),d.claimKey(),previous,next,now()))throw unavailable();
+            return null;
+        });
+    }
+    private static long modelCost(AssistantBudgetPolicy.Execution execution,long input,long output) {
+        if(input<1||input>32768||output<1||output>execution.maxOutputTokens())throw unavailable();
+        var million=BigInteger.valueOf(1000000);
+        return BigInteger.valueOf(input).multiply(BigInteger.valueOf(execution.inputMicrousdPerMillion()))
+                .add(BigInteger.valueOf(output).multiply(BigInteger.valueOf(execution.outputMicrousdPerMillion())))
+                .add(million.subtract(BigInteger.ONE)).divide(million).longValueExact();
+    }
+    private EnumMap<AssistantCallLedger.Stage,Step> decodeSteps(String value,AgronomyAssistantWorkflow.Snapshot snapshot,AssistantRequestMetadata metadata) {
+        var out=new EnumMap<AssistantCallLedger.Stage,Step>(AssistantCallLedger.Stage.class);if(value==null)return out;
+        try {
+            if(value.getBytes(StandardCharsets.UTF_8).length>8192)throw unavailable();
+            var root=parseTree(value);var fields=root.fields();
+            while(fields.hasNext()) {
+                var field=fields.next();var stage=AssistantCallLedger.Stage.valueOf(field.getKey());var step=json.treeToValue(field.getValue(),Step.class);
+                if(!Set.of("STARTED","SUCCEEDED","UNKNOWN").contains(step.state())
+                        ||("SUCCEEDED".equals(step.state())?(step.configuredCostMicrousd()==null||step.configuredCostMicrousd()<0):
+                        (step.configuredCostMicrousd()!=null||step.inputTokens()!=null||step.outputTokens()!=null)))throw unavailable();
+                if(!snapshot.externalCallsPlanned()||stage==AssistantCallLedger.Stage.SEARCH&&!snapshot.execution().searchRequired())throw unavailable();
+                if("SUCCEEDED".equals(step.state())) {
+                    if(stage==AssistantCallLedger.Stage.SEARCH) {
+                        if(step.inputTokens()!=null||step.outputTokens()!=null||step.configuredCostMicrousd()!=snapshot.execution().searchMicrousd())throw unavailable();
+                    } else if(step.inputTokens()==null||step.outputTokens()==null||step.configuredCostMicrousd()!=modelCost(snapshot.execution(),step.inputTokens(),step.outputTokens())
+                            ||step.configuredCostMicrousd()>metadata.modelReservedMicrousd())throw unavailable();
+                }
+                out.put(stage,step);
+            }
+            if(out.containsKey(AssistantCallLedger.Stage.MODEL)&&snapshot.execution().searchRequired()
+                    &&(!out.containsKey(AssistantCallLedger.Stage.SEARCH)||!"SUCCEEDED".equals(out.get(AssistantCallLedger.Stage.SEARCH).state())))throw unavailable();
+            if(!encode(out).equals(value))throw unavailable();return out;
+        } catch(Exception invalid) { throw unavailable(); }
+    }
     private Original original(Long customer,Long caseId,String key,Command command) {
         var entry=cases.findRequest("CUSTOMER",customer,key).orElseThrow(AgronomyAssistantCoordinator::unavailable);
         if(!entry.caseId().equals(caseId)||!entry.type().equals("ASSISTANT_REQUEST"))throw invalid("原请求编号不能用于其他问题或动作");
@@ -142,15 +221,19 @@ public final class AgronomyAssistantCoordinator {
         try {
             if(m.snapshot()==null||m.snapshot().getBytes(StandardCharsets.UTF_8).length>49152)throw unavailable();
             s=json.readValue(m.snapshot(),AgronomyAssistantWorkflow.Snapshot.class);
-            if(!encode(s).equals(m.snapshot())||s.queuedCaseVersion()!=entry.resultVersion()||s.originalCaseVersion()!=entry.expectedVersion()
+            var canonical=json.valueToTree(s);
+            if(s.processingPlan()==null)((com.fasterxml.jackson.databind.node.ObjectNode)canonical).remove("processingPlan");
+            if(!encode(canonical).equals(m.snapshot())||s.processingPlan()!=null&&!Set.of("LOCAL","EXTERNAL").contains(s.processingPlan())
+                    ||s.queuedCaseVersion()!=entry.resultVersion()||s.originalCaseVersion()!=entry.expectedVersion()
                     ||s.factsVersion()!=entry.resultFactsVersion()||!s.facts().equals(entry.facts())||s.customerAuthVersion()<1
                     ||s.originalCaseVersion()<1||s.originalCaseVersion()==Long.MAX_VALUE||s.queuedCaseVersion()!=s.originalCaseVersion()+1)throw unavailable();
-            var p=from(s.execution());long model=p.modelReservation(),search=p.searchRequired()?p.searchMicrousd():0;
+            var p=from(s.execution());p.requireEnabled();long model=s.externalCallsPlanned()?p.modelReservation():0,search=s.externalCallsPlanned()&&p.searchRequired()?p.searchMicrousd():0;
             boolean notDispatched="FAILED".equals(m.state())&&m.claimKey()==null;
             if(m.modelReservedMicrousd()!=(notDispatched?0:model)||m.searchReservedMicrousd()!=(notDispatched?0:search)
                     ||!Set.of("QUEUED","RUNNING","UNKNOWN","COMPLETED","FAILED").contains(m.state())||m.budgetDay()==null||m.updatedAt()==null
                     ||("QUEUED".equals(m.state())||notDispatched)!=(m.claimKey()==null))throw unavailable();
             if(m.claimKey()!=null)uuid(m.claimKey());
+            decodeSteps(requests.steps(entry.id()).orElse(null),s,m);
         } catch(RuntimeException own){throw unavailable();}catch(Exception bad){throw unavailable();}
         Command original=new Command(key,Long.toString(s.originalCaseVersion()),Long.toString(s.factsVersion()),true);
         if(!hash(caseId,original,m.snapshot()).equals(entry.requestHash())||command!=null&&!hash(caseId,command,m.snapshot()).equals(entry.requestHash()))throw invalid("原AI请求内容不能修改");
