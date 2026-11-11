@@ -1,0 +1,34 @@
+{
+  "baseCommit": "7cff753bf18753829a466b50a95e1291c7378219",
+  "backend": {
+    "reports": 181,
+    "tests": 1205,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "cleanVerifyFinished": "2026-11-11T10:03:55+08:00"
+  },
+  "newGatewayTests": 18,
+  "independentReview": {
+    "count": 1,
+    "confirmedP0P1P2": 0,
+    "testsIndependentlyRerun": false,
+    "nonBlockingObservation": "JDK timeout may classify NETWORK; never infer no dispatch or refund from category"
+  },
+  "realProviderCalls": 0,
+  "realFees": 0,
+  "runtimeBeanRegistered": false,
+  "clientAssistantEntryExposed": false,
+  "businessEvaluation50Complete": false,
+  "persistentBudgetAndRequestCoordinatorComplete": false,
+  "schemaVersion": 149,
+  "originalEnvironmentChanged": false,
+  "sourceSha256": {
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AgronomyModelGateway.java": "c5ae84a822fc04daa27105348d665a3ca35440069c66dd0ea4f22114ecfcb1be",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AgronomySearchGateway.java": "efa57ab8ba35e7825ec8b6ccea60aae2d308f8d4e3d4f2c992aefb34601a93ca",
+    "core-domain/src/main/java/com/agri_system/domain/agronomy/assistant/AssistantGatewayFailure.java": "5f1fd53d23dd1d583d7304e3c10ded2b53795495564d5bc27d297756a73cbee1",
+    "core-infrastructure/src/main/java/com/agri_system/infrastructure/agronomy/assistant/DeepSeekAssistantGateway.java": "b3c7658e058a03b857ba41fa6609ee255a1f4d1e53aadb6c22deed3928c6f341",
+    "core-infrastructure/src/main/java/com/agri_system/infrastructure/agronomy/assistant/DeepSeekAssistantSettings.java": "a5ad88b3b5a4b837ff0556d34026eeefc3f4aad6154196d39bfb3128a7f80038",
+    "core-infrastructure/src/test/java/com/agri_system/infrastructure/agronomy/assistant/DeepSeekAssistantGatewayTest.java": "016874055f6e8e88eeeeab6631b4b26625c5c216084d77d80d43e72c1ce64405"
+  }
+}
