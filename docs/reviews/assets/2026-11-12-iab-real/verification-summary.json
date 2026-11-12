@@ -1,0 +1,37 @@
+{
+  "sourceCommit": "5f866e489fae189ff922cc5feaa8c2d16a783d09",
+  "actualIabAdminUi": true,
+  "actualAdminAndClientJarHttp": true,
+  "actualMysql": true,
+  "schemaIsRandomIsolated": true,
+  "migration": "152",
+  "caseId": "1",
+  "version": "2",
+  "status": "ACTIVE",
+  "customerVisibleEntries": 2,
+  "replyRows": 1,
+  "replyMatchesBrowser": true,
+  "refreshDuplicateReply": false,
+  "noAiProcessingRows": true,
+  "aiCapability": {
+    "enabled": false,
+    "reason": "DISABLED",
+    "version": "2",
+    "factsVersion": "1"
+  },
+  "moneyInventoryBaseline": {
+    "order": 0,
+    "wallet_transaction": 0,
+    "inventory_movement": 0
+  },
+  "realModelCalls": false,
+  "nativeWechatTested": false,
+  "customerMiniUiTested": false,
+  "ownedTemporaryServicesStopped": true,
+  "originalEnvironmentUnchanged": true,
+  "artifactSha256": {
+    "api-admin/target/api-admin-0.0.1-SNAPSHOT.jar": "dec5588793f447cab2deec08667c283912a2058bb6b58b7d1028c60f313344d5",
+    "api-client/target/api-client-0.0.1-SNAPSHOT.jar": "835f862f55b3a8831a6a687403f800c0bfe37d902d6ec888140473d073c92575",
+    "docs/reviews/assets/2026-11-12-iab-real/后台真实答复.jpg": "faf88d7c042ad16732ec58e3e03eb90494c6a8bc2b00c114a5f220fd1a7aec17"
+  }
+}
