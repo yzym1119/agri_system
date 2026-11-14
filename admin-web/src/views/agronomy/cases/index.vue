@@ -3,8 +3,9 @@ import { ref, computed, watch, onUnmounted } from 'vue';
 import { useUserStore } from '@/store/user';
 import { usePermissionStore } from '@/store/permission';
 import { createAdminCases, caseError } from '@/api/cases';
-import { caseStatusLabel, type WorkSummary, type WorkDetail, type WorkEntry, type WorkOperation } from '../../../../../packages/mobile-contracts/src/staff-cases';
+import { caseStatusLabel, assistantStaffText, type WorkSummary, type WorkDetail, type WorkEntry, type WorkOperation } from '../../../../../packages/mobile-contracts/src/staff-cases';
 import type { CaseStatus } from '../../../../../packages/mobile-contracts/src/customer-cases';
+import type { AssistantResult } from '../../../../../packages/mobile-contracts/src/customer-assistant';
 import type { WorkPending, WorkInput } from '../../../../../packages/mobile-contracts/src/staff-case-submission';
 const user = useUserStore(), permission = usePermissionStore(), service = createAdminCases();
 const has = (p: string) => permission.permissions.includes('agronomy:case:' + p);
@@ -20,6 +21,7 @@ const storeOptions = ref<{
     id: string;
     name: string;
 }[]>([]);
+const assistant = ref<{ caseId: string; status: 'loading' | 'error' | 'done'; result: AssistantResult | null } | null>(null);
 const editing = ref<WorkInput | null>(null), body = ref(''), source = ref(''), target = ref(''), confirmed = ref(false), endConfirmed = ref(false);
 let alive = true, epoch = 0, listRun = 0, detailRun = 0, staffRun = 0, storeRun = 0;
 const capture = () => ({ identity: JSON.stringify(service.current()), store: selectedStore.value, filter: filter.value, epoch });
@@ -88,13 +90,14 @@ catch {
 } }
 async function openRow(w: WorkSummary) { if (busy.value)
     return; const s = capture(), run = ++detailRun; if (!current(s))
-    return; drawer.value = true; detail.value = null; entries.value = []; historyAfter.value = null; editing.value = null; body.value = ''; source.value = ''; confirmed.value = false; detailLoading.value = true; error.value = ''; try {
+    return; drawer.value = true; detail.value = null; ++assistantRun; assistant.value = null; entries.value = []; historyAfter.value = null; editing.value = null; body.value = ''; source.value = ''; confirmed.value = false; detailLoading.value = true; error.value = ''; try {
     const d = await service.cases.detail(w.problem.id, undefined, service.current()!.stamp);
     if (current(s) && run === detailRun && drawer.value) {
         detail.value = d;
         entries.value = d.entries;
         historyAfter.value = d.nextAfter;
         restore();
+        void loadAssistant(d, s);
     }
 }
 catch {
@@ -104,6 +107,16 @@ catch {
 finally {
     if (current(s) && run === detailRun)
         detailLoading.value = false;
+} }
+/** AI参考与详情分开读取：失败不影响人工处理；换问题、关闭、换会话后旧响应不写入。 */
+let assistantRun = 0;
+async function loadAssistant(d: WorkDetail, s: ReturnType<typeof capture>) { const caseId = d.work.problem.id, run = ++assistantRun, live = () => current(s) && run === assistantRun && detail.value?.work.problem.id === caseId; if (!current(s))
+    return; assistant.value = { caseId, status: 'loading', result: null }; try {
+    const result = await service.cases.assistantLatest(caseId, service.current()!.stamp);
+    if (live()) assistant.value = { caseId, status: 'done', result };
+}
+catch {
+    if (live()) assistant.value = { caseId, status: 'error', result: null };
 } }
 async function moreHistory() { const s = capture(), original = detail.value; if (!current(s) || !original || !historyAfter.value || detailLoading.value || busy.value)
     return; const run = ++detailRun; detailLoading.value = true; try {
@@ -201,11 +214,11 @@ finally {
 function openOriginal() { const s = capture(); if (!current(s) || !pending.value)
     return; void openRow({ problem: { id: pending.value.caseId } } as WorkSummary); }
 const entryLabel = (e: WorkEntry) => ({ QUESTION: '客户提问', SUPPLEMENT: '客户补充', HUMAN_REQUEST: '请求门店帮助', ASSIGN: '门店分配', HUMAN_REPLY: '门店答复' })[e.type];
-watch(() => JSON.stringify(service.current()), () => { ++epoch; ++listRun; ++detailRun; ++staffRun; ++storeRun; selectedStore.value = service.current()?.storeId ?? ''; rows.value = []; nextAfter.value = null; detail.value = null; entries.value = []; drawer.value = false; editing.value = null; body.value = ''; source.value = ''; confirmed.value = false; endConfirmed.value = false; pending.value = null; blocked.value = false; busy.value = false; loading.value = false; detailLoading.value = false; loaded.value = false; error.value = ''; message.value = ''; staffOptions.value = []; storeOptions.value = []; if (canRead.value) {
+watch(() => JSON.stringify(service.current()), () => { ++epoch; ++listRun; ++detailRun; ++staffRun; ++storeRun; selectedStore.value = service.current()?.storeId ?? ''; rows.value = []; nextAfter.value = null; detail.value = null; ++assistantRun; assistant.value = null; entries.value = []; drawer.value = false; editing.value = null; body.value = ''; source.value = ''; confirmed.value = false; endConfirmed.value = false; pending.value = null; blocked.value = false; busy.value = false; loading.value = false; detailLoading.value = false; loaded.value = false; error.value = ''; message.value = ''; staffOptions.value = []; storeOptions.value = []; if (canRead.value) {
     restore();
     void loadPage();
 } }, { immediate: true, flush: 'sync' });
-watch([selectedStore, filter], () => { ++epoch; ++listRun; ++detailRun; ++staffRun; ++storeRun; detail.value = null; entries.value = []; editing.value = null; drawer.value = false; confirmed.value = false; loading.value = false; detailLoading.value = false; staffOptions.value = []; if (canRead.value) {
+watch([selectedStore, filter], () => { ++epoch; ++listRun; ++detailRun; ++staffRun; ++storeRun; detail.value = null; ++assistantRun; assistant.value = null; entries.value = []; editing.value = null; drawer.value = false; confirmed.value = false; loading.value = false; detailLoading.value = false; staffOptions.value = []; if (canRead.value) {
     restore();
     void loadPage();
 } });
@@ -213,6 +226,8 @@ watch([body, source, target], () => { confirmed.value = false; }, { flush: 'sync
 watch(drawer, v => { if (!v) {
     ++detailRun;
     detail.value = null;
+    ++assistantRun;
+    assistant.value = null;
     entries.value = [];
     editing.value = null;
     body.value = '';
@@ -229,6 +244,7 @@ onUnmounted(() => { alive = false; ++epoch; ++listRun; ++detailRun; ++staffRun; 
  <el-card v-if="canRead" shadow="never"><div class="case-actions mb-16"><el-select v-if="canStoreList" v-model="selectedStore" :disabled="busy" filterable remote :remote-method="searchStores" placeholder="选择门店" @visible-change="(v:boolean)=>v&&searchStores()"><el-option v-if="selectedStore&&!storeOptions.some(s=>s.id===selectedStore)" :value="selectedStore" :label="'门店 '+selectedStore"/><el-option v-for="s in storeOptions" :key="s.id" :value="s.id" :label="s.name"/></el-select><span v-else>本店 {{selectedStore}}</span><el-select v-model="filter" :disabled="busy" placeholder="全部状态"><el-option label="全部状态" value=""/><el-option v-for="s in (['WAITING_REVIEW','COLLECTING','ACTIVE'] as const)" :key="s" :value="s" :label="caseStatusLabel(s)"/></el-select><el-button :loading="loading" @click="loadPage(false)">刷新列表</el-button></div>
  <el-table :data="rows" v-loading="loading" row-key="problem.id"><el-table-column label="客户问题" min-width="260"><template #default="{row}"><p class="case-preview">{{row.problem.question}}</p><span class="muted">{{[row.problem.facts.region,row.problem.facts.crop,row.problem.facts.growthStage].filter(Boolean).join(' · ')||'客户尚未补充农情'}}</span></template></el-table-column><el-table-column label="状态" width="130"><template #default="{row}">{{caseStatusLabel(row.problem.status)}}</template></el-table-column><el-table-column label="处理员工" width="130"><template #default="{row}">{{row.assignedStaffId?'员工 '+row.assignedStaffId:'待分配'}}</template></el-table-column><el-table-column label="更新时间" width="175"><template #default="{row}">{{row.problem.updatedAt.replace('T',' ')}}</template></el-table-column><el-table-column label="操作" width="90" fixed="right"><template #default="{row}"><el-button link type="primary" :disabled="busy" @click="openRow(row)">查看处理</el-button></template></el-table-column><template #empty><span>{{loaded?'当前筛选下没有可查看的问题。':'列表尚未读取，请刷新重试。'}}</span></template></el-table><el-button v-if="nextAfter" class="mt-16" :loading="loading" @click="loadPage(true)">加载更多</el-button></el-card>
  <el-drawer v-model="drawer" title="查看与处理农技问题" size="min(760px, 100vw)" :close-on-click-modal="false"><div v-loading="detailLoading"><template v-if="detail"><div class="case-heading"><h3>客户问题</h3><el-tag>{{caseStatusLabel(detail.work.problem.status)}}</el-tag></div><p class="case-text">{{detail.work.problem.question}}</p><el-descriptions :column="1" border><el-descriptions-item label="地区">{{detail.work.problem.facts.region||'未提供'}}</el-descriptions-item><el-descriptions-item label="作物">{{detail.work.problem.facts.crop||'未提供'}}</el-descriptions-item><el-descriptions-item label="阶段">{{detail.work.problem.facts.growthStage||'未提供'}}</el-descriptions-item><el-descriptions-item label="处理员工">{{detail.work.assignedStaffId?'员工 '+detail.work.assignedStaffId:'待分配'}}</el-descriptions-item></el-descriptions><el-button class="mt-16" :disabled="busy" @click="openRow(detail.work)">刷新当前情况</el-button>
+ <section class="case-section" aria-live="polite"><h3>AI参考 <small class="muted">只读，非门店答复</small></h3><p v-if="assistant?.caseId!==detail.work.problem.id||assistant.status==='loading'" class="muted">正在读取AI参考…</p><template v-else-if="assistant.status==='error'"><p class="muted">AI参考未能读取，不影响人工处理。</p><el-button size="small" :disabled="busy" @click="loadAssistant(detail,capture())">重新读取AI参考</el-button></template><template v-else><el-alert :title="assistantStaffText(assistant.result).title" :description="assistantStaffText(assistant.result).detail" :type="assistant.result?.state==='REFERENCE'?'info':'warning'" :closable="false"/><el-alert v-if="assistant.result&&assistant.result.factsVersion&&assistant.result.factsVersion!==assistant.result.currentFactsVersion&&assistant.result.state!=='STALE'" class="mt-16" title="客户后来补充了情况，这条AI记录针对此前情况。" type="warning" :closable="false"/><article v-for="c in assistant.result?.citations??[]" :key="c.url+c.quote" class="case-entry"><strong>{{c.title}}</strong> <span class="muted">{{c.publishedOn}}</span><p class="case-text">“{{c.quote}}”</p><a :href="c.url" target="_blank" rel="noopener noreferrer nofollow">{{c.url}}</a></article></template></section>
  <section v-if="detail.latestReply" class="case-section"><h3>最近门店答复</h3><el-alert v-if="detail.latestReply.factsVersion!==detail.work.problem.factsVersion" title="客户后来补充了情况，此答复针对此前情况。" type="warning" :closable="false"/><p class="case-text">{{detail.latestReply.body}}</p><p class="case-text muted">依据与适用条件：{{detail.latestReply.sourceText}}</p></section>
  <section class="case-section"><div v-if="!editing" class="case-actions"><el-button v-if="canAssign" :disabled="busy||!!pending||blocked" @click="choose('ASSIGN')">分配员工</el-button><el-button v-if="canReply" type="primary" :disabled="busy||!!pending||blocked" @click="choose('HUMAN_REPLY')">答复客户</el-button></div>
  <el-form v-if="editing" label-position="top"><h3>{{editing.operation==='ASSIGN'?'分配处理员工':'答复客户'}}</h3><template v-if="editing.operation==='ASSIGN'"><el-form-item v-if="canStaffList" label="本店在职员工"><el-select v-model="target" :disabled="busy||!!pending" filterable remote :remote-method="searchStaff" placeholder="搜索员工姓名"><el-option v-for="s in staffOptions" :key="s.id" :value="s.id" :label="s.name"/></el-select></el-form-item><el-button v-if="service.current()?.storeId===detail.work.problem.storeId" :disabled="busy||!!pending" @click="target=service.current()!.staffId">由我处理</el-button><p class="muted">接手人须有农技问题查询权限，由服务端核实。{{!canStaffList?'你没有员工列表权限，可由自己处理或联系管理员分配。':''}}</p></template><el-form-item :label="editing.operation==='ASSIGN'?'分配说明（可选）':'答复内容'"><el-input v-model="body" type="textarea" :rows="5" maxlength="4000" show-word-limit :disabled="busy||!!pending"/></el-form-item><el-form-item v-if="editing.operation==='HUMAN_REPLY'" label="判断依据、适用条件与注意事项（必填）"><el-input v-model="source" type="textarea" :rows="3" maxlength="2000" show-word-limit :disabled="busy||!!pending"/></el-form-item><el-checkbox v-model="confirmed" :disabled="busy||!!pending">我已核对当前农情、补充记录和本次{{editing.operation==='ASSIGN'?'分配':'答复'}}</el-checkbox><div class="case-actions mt-16"><el-button :disabled="busy||!!pending" @click="cancelEdit">取消编辑</el-button><el-button type="primary" :loading="busy" :disabled="!confirmed||!!pending||blocked||(editing.operation==='ASSIGN'?!target:!body.trim()||!source.trim())" @click="submit">确认{{editing.operation==='ASSIGN'?'分配':'发送答复'}}</el-button></div></el-form></section>

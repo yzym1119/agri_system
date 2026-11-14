@@ -209,6 +209,12 @@ public class AgronomyCaseService {
         var entries = entries(row, false, before);
         return new WorkDetail(work(row), entries.values(), entries.next(), latestReply(row));
     }
+    /** 只读门面使用（public以便经事务代理调用）：按真实员工身份、权限与本店/分配范围取得原问题快照。 */
+    public AgronomyCase staffCase(Long actorId, Long id) {
+        var actor = actor(actorId); positive(id);
+        var row = rows.find(id, false).orElseThrow(AgronomyCaseService::unavailable); scope(actor, row);
+        return row;
+    }
     private record Entries(List<Entry> values, String next) {}
     private Entries entries(AgronomyCase row, boolean customer, Long before) {
         integrity(row);

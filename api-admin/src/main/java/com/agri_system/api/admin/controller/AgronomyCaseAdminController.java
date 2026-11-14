@@ -2,6 +2,8 @@ package com.agri_system.api.admin.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.dev33.satoken.annotation.SaMode;
+import com.agri_system.application.agronomy.service.AgronomyAssistantCoordinator;
+import com.agri_system.application.agronomy.service.AgronomyAssistantStaffViewService;
 import com.agri_system.application.agronomy.service.AgronomyCaseService;
 import com.agri_system.application.auth.util.CurrentUser;
 import com.agri_system.domain.common.error.SystemErrorCode;
@@ -25,6 +27,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 @RequiredArgsConstructor
 public class AgronomyCaseAdminController {
     private final AgronomyCaseService service;
+    private final AgronomyAssistantStaffViewService assistant;
     @ModelAttribute public void noCache(jakarta.servlet.http.HttpServletResponse response) {
         response.setHeader("Cache-Control", "no-store");
     }
@@ -43,6 +46,11 @@ public class AgronomyCaseAdminController {
     @GetMapping("/{caseId}") public AgronomyCaseService.WorkDetail detail(@PathVariable Long caseId,
                                                                           @RequestParam(required=false) Long after) {
         return service.detailStaff(CurrentUser.staffId(), caseId, after);
+    }
+    /** 只读AI参考：与详情同一员工范围，返回客户同款白名单，不派出或结束AI。 */
+    @GetMapping("/{caseId}/assistant/latest")
+    public AgronomyAssistantCoordinator.Latest assistantLatest(@PathVariable Long caseId) {
+        return assistant.latest(CurrentUser.staffId(), caseId);
     }
     @PostMapping("/{caseId}/assignment")
     @SaCheckPermission(value={"agronomy:case:query", "agronomy:case:manage"}, mode=SaMode.AND)

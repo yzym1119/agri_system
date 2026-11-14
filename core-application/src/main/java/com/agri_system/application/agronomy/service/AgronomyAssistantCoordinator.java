@@ -60,7 +60,12 @@ public final class AgronomyAssistantCoordinator {
     public Latest latest(ClientAuthorization authorization,Long caseId) {
         outside();auth(authorization);positive(caseId);
         var row=cases.findOwned(caseId,authorization.customerId(),false).orElseThrow(AgronomyAssistantCoordinator::unavailable);
-        return new Latest(cases.latestAssistantRequest(caseId,row.customerId(),row.version()).map(e->scopedResult(row,e.requestKey())).orElse(null));
+        return latestFor(row);
+    }
+    /** 仅供已完成真实客户或员工范围校验的同包门面；结果仍走同一白名单投影。 */
+    Latest latestFor(AgronomyCase row) {
+        outside();
+        return new Latest(cases.latestAssistantRequest(row.id(),row.customerId(),row.version()).map(e->scopedResult(row,e.requestKey())).orElse(null));
     }
     /** 原case锁与原UUID构成持久结束屏障；不把结束等待当成撤销外发或免除已派出预占。 */
     public EndResult end(ClientAuthorization authorization,Long caseId,Command command) {

@@ -466,6 +466,20 @@ class AgronomyAssistantCoordinatorTest {
         for(int n=0;n<25;n++)cases.insertEntry(new AgronomyCaseEntry(null,id,"CUSTOMER",101L,UUID.randomUUID().toString(),"0".repeat(64),"HUMAN_REQUEST","test","",cases.find(id,false).orElseThrow().facts(),null,2,2,1,"WAITING_REVIEW",LocalDateTime.now(clock)));
         assertEquals(key,c.latest(authorization(101L,1L),id).result().requestKey());assertThrows(RuntimeException.class,()->c.latest(authorization(202L,1L),id));
     }
+    @Test void staffViewUsesCaseScopeThenSameWhitelistWithoutDispatchingOrCustomerSession() {
+        long id=create(101);var c=coordinator((s,calls)->"{}");String key=UUID.randomUUID().toString();c.submit(authorization(101L,1L),id,command(key));
+        var scope=mock(AgronomyCaseService.class);var view=new AgronomyAssistantStaffViewService(scope,c);
+        when(scope.staffCase(4L,id)).thenAnswer(a->cases.find(id,false).orElseThrow());
+        when(clientAuth.isCurrentClientAuthorization(any())).thenReturn(false);
+        long before=jdbc.queryForObject("SELECT COUNT(*) FROM agronomy_case_entry",Long.class);
+        var staff=view.latest(4L,id).result();assertEquals(key,staff.requestKey());assertEquals(String.valueOf(id),staff.caseId());
+        when(clientAuth.isCurrentClientAuthorization(any())).thenReturn(true);
+        assertEquals(c.latest(authorization(101L,1L),id).result(),staff);
+        assertEquals(before,jdbc.queryForObject("SELECT COUNT(*) FROM agronomy_case_entry",Long.class));
+        when(scope.staffCase(5L,id)).thenThrow(new IllegalArgumentException("范围外"));
+        assertThrows(IllegalArgumentException.class,()->view.latest(5L,id));
+        long empty=create(202);when(scope.staffCase(4L,empty)).thenAnswer(a->cases.find(empty,false).orElseThrow());assertNull(view.latest(4L,empty).result());
+    }
     @Test void lateCancellationCannotHideAnActualRequestAtTheSameOriginalVersion() {
         long id=create(101);var c=coordinator((a,b)->"{}");String actual=UUID.randomUUID().toString();c.submit(authorization(101L,1L),id,command(actual));
         c.end(authorization(101L,1L),id,command(UUID.randomUUID().toString()));

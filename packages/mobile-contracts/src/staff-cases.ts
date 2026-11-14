@@ -1,4 +1,5 @@
 import { isPositiveLongId } from './ids.js';
+import { decodeAssistantLatest, type AssistantResult } from './customer-assistant.js';
 import { decodeCaseSummary, decodeCaseEntry, decodeCaseDetail, decodeCaseReceipt, decodeCaseSubmission, isCaseRequestKey, type CaseSummary, type CaseEntry, type CaseStatus } from './customer-cases.js';
 export type WorkSummary = {
     problem: CaseSummary;
@@ -47,6 +48,22 @@ const id = (v: unknown) => { if (!isPositiveLongId(v))
 const object = (v: unknown): Record<string, unknown> => { if (!v || typeof v !== 'object' || Array.isArray(v))
     throw invalid(); return v as Record<string, unknown>; };
 export const caseStatusLabel = (s: CaseStatus) => ({ COLLECTING: '待补充情况', WAITING_REVIEW: '待门店答复', ACTIVE: '已答复' })[s];
+const factLabels: Record<string, string> = { region: '地区', crop: '作物', growthStage: '生长阶段' };
+/** 员工/后台AI参考状态说明：AI结果不是门店答复，未知不代表未收费，过时不能当当前建议。 */
+export function assistantStaffText(r: AssistantResult | null): { title: string; detail: string } {
+    if (!r) return { title: '客户尚未查询AI参考', detail: '按原流程人工处理。' };
+    switch (r.state) {
+        case 'REFERENCE': return { title: 'AI整理的官方资料参考（未经门店审核）', detail: '仅供核对，不等于门店答复；如采用请另行人工确认后答复客户。' };
+        case 'CLARIFY': return { title: 'AI建议客户先补充情况', detail: '缺少：' + r.missingFacts.map(f => factLabels[f] ?? f).join('、') + '。' };
+        case 'HUMAN': return { title: 'AI当时判断需要门店人工处理', detail: '当时已转交门店，AI没有给出处置建议；当前是否已答复以问题状态为准。' };
+        case 'QUEUED': case 'RUNNING': return { title: 'AI正在处理', detail: '结果出来前请按原流程人工处理。' };
+        case 'UNKNOWN': return { title: 'AI结果未知', detail: '可能已产生调用费用，不会自动重发；不影响人工答复。' };
+        case 'STALE': return { title: 'AI结果针对此前情况，已失效', detail: '客户后来补充了情况或会话已变化，不能当当前建议。' };
+        case 'CANCELLED': case 'CLOSED': return { title: '客户已结束AI等待', detail: '没有可展示的AI参考。' };
+        case 'NOT_DISPATCHED': return { title: 'AI请求未派出', detail: '没有可展示的AI参考。' };
+        default: return { title: 'AI结果暂不可展示', detail: '按原流程人工处理。' };
+    }
+}
 export function casePermission(actor: CaseStaff, code: 'query' | 'manage' | 'review') { return actor.permissions.includes('agronomy:case:' + code); }
 function summary(v: unknown): WorkSummary {
     const r = object(v);
@@ -124,6 +141,8 @@ export function createStaffCases(port: CaseStaffPort) {
             throw invalid(); return d; },
         async change(caseId: string, op: WorkOperation, command: WorkCommand, stamp?: string) { const a = actor(stamp, op), data = encodeWorkCommand(command, op), r = decodeCaseReceipt(await read(a, { url: base + '/' + id(caseId) + '/' + (op === 'ASSIGN' ? 'assignment' : 'replies'), method: 'POST', data }), data.requestKey, caseId); if (BigInt(r.version) !== BigInt(data.expectedVersion) + 1n || op === 'HUMAN_REPLY' && r.status !== 'ACTIVE')
             throw invalid(); return r; },
+        /** 只读AI参考：同员工范围与会话戳，客户同款白名单解码；不提供派出或结束入口。 */
+        async assistantLatest(caseId: string, stamp?: string): Promise<AssistantResult | null> { const a = actor(stamp); return decodeAssistantLatest(await read(a, { url: base + '/' + id(caseId) + '/assistant/latest', method: 'GET' }), caseId).result; },
         async submission(key: string, stamp?: string) { const a = actor(stamp); if (!isCaseRequestKey(key))
             throw Error('CASE_REQUEST_INVALID'); return decodeCaseSubmission(await read(a, { url: base + '/submissions/' + key, method: 'GET' }), key); },
     };

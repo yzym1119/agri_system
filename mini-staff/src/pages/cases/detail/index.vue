@@ -2,17 +2,21 @@
 import { ref } from 'vue';
 import { onLoad, onShow, onHide } from '@dcloudio/uni-app';
 import { isPositiveLongId } from '@agri/mobile-contracts/ids';
-import { caseStatusLabel, type WorkDetail, type WorkEntry } from '@agri/mobile-contracts/staff-cases';
+import { caseStatusLabel, assistantStaffText, type WorkDetail, type WorkEntry } from '@agri/mobile-contracts/staff-cases';
+import type { AssistantResult } from '@agri/mobile-contracts/customer-assistant';
 import type { WorkPending } from '@agri/mobile-contracts/staff-case-submission';
 import { staffAuth } from '../../../services/auth';
 import { staffCases, caseActor, caseSubmissions, caseError } from '../../../services/cases';
 const detail = ref<WorkDetail | null>(null), entries = ref<WorkEntry[]>([]), nextAfter = ref<string | null>(null), loading = ref(false), busy = ref(false), allowed = ref(false), canReply = ref(false), message = ref(''), body = ref(''), source = ref(''), confirmed = ref(false), endConfirmed = ref(false), pending = ref<WorkPending | null>(null), blocked = ref(false);
-let id = '', visible = false, generation = 0, stamp = '';
+const assistant = ref<{ caseId: string; status: 'loading' | 'error' | 'done'; result: AssistantResult | null } | null>(null);
+let id = '', visible = false, generation = 0, stamp = '', assistantRun = 0;
 const current = (t = generation) => visible && allowed.value && t === generation && caseActor()?.stamp === stamp;
 function expired(t: number) { if (visible && t === generation && !caseActor()) {
     allowed.value = false;
     canReply.value = false;
     detail.value = null;
+    ++assistantRun;
+    assistant.value = null;
     entries.value = [];
     body.value = '';
     source.value = '';
@@ -51,6 +55,8 @@ async function load() {
     loading.value = true;
     confirmed.value = false;
     detail.value = null;
+    ++assistantRun;
+    assistant.value = null;
     entries.value = [];
     nextAfter.value = null;
     try {
@@ -59,6 +65,7 @@ async function load() {
             detail.value = d;
             entries.value = d.entries;
             nextAfter.value = d.nextAfter;
+            void loadAssistant();
         }
     }
     catch {
@@ -69,6 +76,24 @@ async function load() {
     finally {
         if (t === generation)
             loading.value = false;
+    }
+}
+/** AI参考单独只读：失败不影响人工答复；离页、刷新、换会话后旧响应不写入。 */
+async function loadAssistant() {
+    const t = generation, caseId = detail.value?.work.problem.id, run = ++assistantRun;
+    if (!current(t) || !caseId)
+        return;
+    const live = () => current(t) && run === assistantRun && detail.value?.work.problem.id === caseId;
+    assistant.value = { caseId, status: 'loading', result: null };
+    try {
+        const result = await staffCases.assistantLatest(caseId, stamp);
+        if (live())
+            assistant.value = { caseId, status: 'done', result };
+    }
+    catch {
+        expired(t);
+        if (live())
+            assistant.value = { caseId, status: 'error', result: null };
     }
 }
 onShow(async () => {
@@ -115,7 +140,7 @@ onShow(async () => {
             loading.value = false;
     }
 });
-onHide(() => { visible = false; generation++; allowed.value = false; loading.value = false; busy.value = false; detail.value = null; entries.value = []; body.value = ''; source.value = ''; confirmed.value = false; pending.value = null; endConfirmed.value = false; message.value = ''; });
+onHide(() => { visible = false; generation++; ++assistantRun; assistant.value = null; allowed.value = false; loading.value = false; busy.value = false; detail.value = null; entries.value = []; body.value = ''; source.value = ''; confirmed.value = false; pending.value = null; endConfirmed.value = false; message.value = ''; });
 async function more() { if (!current() || loading.value || busy.value || !detail.value || !nextAfter.value)
     return; const t = generation, version = detail.value.work.problem.version, after = nextAfter.value; loading.value = true; try {
     const d = await staffCases.detail(id, after, stamp);
@@ -215,6 +240,7 @@ const entryLabel = (e: WorkEntry) => ({ QUESTION: '客户提问', SUPPLEMENT: '�
  <view v-if="pending" class="card"><text class="t-sub">原确认待核对</text><text class="t-meta mt8">{{pending.operation==='ASSIGN'?'分配':'答复'}} · 问题 {{pending.caseId}}</text><text class="case-text mt8">{{pending.command.body}}</text><text class="t-meta case-text mt8">{{pending.command.sourceText}}</text><button v-if="pending.caseId!==id" class="btn btn-ghost mt8" @click="openOriginal">前往原问题</button><view class="row mt12"><button class="btn btn-primary grow" :disabled="busy" @click="recover('query')">核对原结果</button><button class="btn btn-ghost grow ml10" :disabled="busy" @click="recover('retry')">重试原确认</button></view><text class="t-cap mt12">若客户补充或问题已更新，可核对新版本后结束过时确认。未能核实前保留原号。</text><switch :checked="endConfirmed" @change="setEnd($event)"/><text class="t-meta">我确认要核对并结束过时确认</text><button class="btn btn-quiet mt8" :disabled="busy||!endConfirmed" @click="recover('end')">核对并结束过时确认</button></view>
  <view v-if="loading" class="card"><text class="t-meta">正在读取问题…</text></view>
  <template v-if="detail"><view class="card"><view class="row-between"><text class="t-sub">客户问题</text><text class="chip chip-line">{{caseStatusLabel(detail.work.problem.status)}}</text></view><text class="case-text mt12">{{detail.work.problem.question}}</text><view class="divider mt12"></view><text class="t-meta mt12">地区：{{detail.work.problem.facts.region||'未提供'}}</text><text class="t-meta mt8">作物：{{detail.work.problem.facts.crop||'未提供'}}</text><text class="t-meta mt8">阶段：{{detail.work.problem.facts.growthStage||'未提供'}}</text><button class="btn btn-ghost mt12" :disabled="loading||busy" @click="load">刷新当前情况</button></view>
+ <view class="card" aria-live="polite"><view class="row-between"><text class="t-sub">AI参考</text><text class="chip chip-line">只读·非门店答复</text></view><text v-if="assistant?.caseId!==detail.work.problem.id||assistant.status==='loading'" class="t-meta mt8">正在读取AI参考…</text><template v-else-if="assistant.status==='error'"><text class="t-meta mt8">AI参考未能读取，不影响人工处理。</text><button class="btn btn-ghost mt12" :disabled="loading||busy" @click="loadAssistant">重新读取AI参考</button></template><template v-else><text class="case-text mt8">{{assistantStaffText(assistant.result).title}}</text><text class="t-meta case-text mt8">{{assistantStaffText(assistant.result).detail}}</text><text v-if="assistant.result&&assistant.result.factsVersion&&assistant.result.factsVersion!==assistant.result.currentFactsVersion&&assistant.result.state!=='STALE'" class="t-danger mt8">客户后来补充了情况，这条AI记录针对此前情况。</text><view v-for="c in assistant.result?.citations??[]" :key="c.url+c.quote" class="mt12"><text class="t-sub">{{c.title}}</text><text class="t-cap mt4">{{c.publishedOn}} · {{c.url}}</text><text class="case-text mt8">“{{c.quote}}”</text></view></template></view>
  <view v-if="detail.latestReply" class="card"><text class="t-sub">最近门店答复</text><text v-if="detail.latestReply.factsVersion!==detail.work.problem.factsVersion" class="t-danger mt8">客户后来补充了情况，此答复针对此前情况。</text><text class="case-text mt12">{{detail.latestReply.body}}</text><text class="t-meta case-text mt8">依据与适用条件：{{detail.latestReply.sourceText}}</text></view>
  <view v-if="canReply&&!pending&&!blocked" class="card"><text class="t-sub">答复客户</text><text class="t-meta mt4">先阅读客户补充记录。情况不全时可在答复中说明还需核实什么。</text><textarea v-model="body" class="case-input mt12" placeholder="向客户说明处理建议或需要补充的情况" :maxlength="4000" :disabled="busy" @input="confirmed=false"/><textarea v-model="source" class="case-input mt12" placeholder="判断依据、适用条件与需注意的问题（必填）" :maxlength="2000" :disabled="busy" @input="confirmed=false"/><view class="row mt12"><switch :checked="confirmed" :disabled="busy" @change="setConfirm($event)"/><text class="t-meta grow">我已核对当前农情、补充记录和本次答复</text></view><button class="btn btn-primary mt12" :disabled="busy||loading||!confirmed||!body.trim()||!source.trim()" @click="submit">{{busy?'正在保存…':'保存并发给客户'}}</button></view>
  <view v-else-if="!canReply" class="card"><text class="t-meta">你可查看问题；专业回复需要店长授予相应权限。</text></view>

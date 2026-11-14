@@ -98,6 +98,7 @@ class AuthorityHttpIntegrationTest {
     @MockBean com.agri_system.application.store.service.StorePublicationService publicStores;
     @MockBean com.agri_system.application.agronomy.service.KnowledgeRevisionService knowledge;
     @MockBean com.agri_system.application.agronomy.service.AgronomyCaseService agronomyCases;
+    @MockBean com.agri_system.application.agronomy.service.AgronomyAssistantStaffViewService assistantStaffView;
     @MockBean com.agri_system.application.purchase.service.PurchaseApplicationService receiving;
     @MockBean com.agri_system.application.product.service.ProductApplicationService productCatalogAdmin;
     @MockBean com.agri_system.application.inventory.service.MobileScanQueryService mobileInventory;
@@ -423,6 +424,9 @@ class AuthorityHttpIntegrationTest {
         ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query)))));
         assertTrue(call(token,"GET",base+"?staffId=99",null).path("rows").isArray());org.mockito.Mockito.verify(agronomyCases).pageStaff(4L,null,null,null);
         reject(call(token,"POST",base+"/7/replies",command));reject(call(token,"POST",base+"/7/assignment",command));
+        when(assistantStaffView.latest(4L,7L)).thenReturn(new com.agri_system.application.agronomy.service.AgronomyAssistantCoordinator.Latest(null));
+        assertTrue(call(token,"GET",base+"/7/assistant/latest",null).has("result"));org.mockito.Mockito.verify(assistantStaffView).latest(4L,7L);
+        for(String write:List.of("/7/assistant/requests","/7/assistant/end"))assertNotEquals(0,call(token,"POST",base+write,"{}").path("code").asInt(0));
         ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(query,review)))));
         assertEquals("7",call(token,"POST",base+"/7/replies",command).path("caseId").asText());reject(call(token,"POST",base+"/7/assignment",command));
         org.mockito.Mockito.verify(agronomyCases).changeStaff(org.mockito.ArgumentMatchers.eq(4L),org.mockito.ArgumentMatchers.eq(7L),org.mockito.ArgumentMatchers.eq("HUMAN_REPLY"),any());
@@ -434,7 +438,8 @@ class AuthorityHttpIntegrationTest {
         org.mockito.Mockito.verify(agronomyCases,org.mockito.Mockito.never()).changeStaff(org.mockito.ArgumentMatchers.eq(4L),org.mockito.ArgumentMatchers.eq(7L),org.mockito.ArgumentMatchers.eq("ASSIGN"),any());
         assertEquals("7",call(token,"POST",base+"/7/assignment",command).path("caseId").asText());reject(call(token,"POST",base+"/7/replies",command));
         ok(call(admin,"POST","/api/admin/roles/4/menus",json.writeValueAsString(Map.of("roleId",4,"menuIds",List.of(manage,review)))));
-        reject(call(token,"GET",base,null));reject(call(token,"POST",base+"/7/replies",command));reject(call(token,"POST",base+"/7/assignment",command));
+        reject(call(token,"GET",base,null));reject(call(token,"GET",base+"/7/assistant/latest",null));reject(call(token,"POST",base+"/7/replies",command));reject(call(token,"POST",base+"/7/assignment",command));
+        org.mockito.Mockito.verify(assistantStaffView,org.mockito.Mockito.times(1)).latest(4L,7L);
     }
 
     @Test void 本人订单迁移不自动授权且实际管理员可单独授予撤销() throws Exception {
