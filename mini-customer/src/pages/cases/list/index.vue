@@ -7,10 +7,10 @@ import { customerAuth, customerCases, caseErrorText } from '../../../services/ru
 import { largeText } from '../../../services/preferences';
 const snapshot = ref(customerAuth.current()), rows = ref<CaseSummary[]>([]), loading = ref(false), loaded = ref(false), error = ref(''), nextAfter = ref<string | null>(null);
 const filter = ref<CaseStatus | ''>('');
-const filters: { value: CaseStatus | ''; label: string }[] = [{ value: '', label: '全部' }, { value: 'WAITING_REVIEW', label: '等门店回复' }, { value: 'ACTIVE', label: '门店已回复' }, { value: 'COLLECTING', label: '待补充情况' }];
+const filters: { value: CaseStatus | ''; label: string }[] = [{ value: '', label: '全部' }, { value: 'WAITING_REVIEW', label: '等门店回复' }, { value: 'ACTIVE', label: '门店已回复' }, { value: 'COLLECTING', label: '已保存情况' }];
 let visible = false, generation = 0;
 function active(t: number, epoch: number) { return visible && generation === t && customerAuth.current().epoch === epoch; }
-function label(state: CaseStatus) { return state === 'WAITING_REVIEW' ? '等待门店回复' : state === 'ACTIVE' ? '门店已回复' : '可继续补充情况'; }
+function label(state: CaseStatus) { return state === 'WAITING_REVIEW' ? '等待门店回复' : state === 'ACTIVE' ? '门店已回复' : '情况已保存'; }
 async function load(more = false) {
   if (!visible || more && loading.value || snapshot.value.kind !== 'CUSTOMER') return;
   const t = ++generation, epoch = snapshot.value.epoch, selected = filter.value;

@@ -49,3 +49,10 @@ test('原问题latest只GET、end只POST，结束不借接口发任意请求',as
  await client.send({url:base+'/latest',method:'GET'});await client.send({url:base+'/end',method:'POST',data:{}});assert.equal(calls[1].timeout,10000);
  for(const [suffix,method] of [['/latest','POST'],['/end','GET'],['/latest?customerId=9','GET']])await assert.rejects(client.send({url:base+suffix,method}),/CUSTOMER_REQUEST_INVALID/);assert.equal(calls.length,2);
 });
+
+test('创建问题前只允许规范单门店availability GET，不开放其他身份和查询参数',async()=>{
+ const {createCustomerTransport}=transport();const calls=[],client=createCustomerTransport('https://example.test',false,o=>{calls.push(o);o.success({statusCode:200,data:{}})}),base='/api/client/agronomy/assistant/availability';
+ await client.send({url:base+'?storeId=7',method:'GET'});
+ for(const url of [base,base+'?storeId=07',base+'?storeId=7.0',base+'?storeId=7&storeId=8',base+'?storeId=7&customerId=9',base+'?storeId=9223372036854775808'])await assert.rejects(client.send({url,method:'GET'}),/CUSTOMER_REQUEST_INVALID/);
+ await assert.rejects(client.send({url:base+'?storeId=7',method:'POST'}),/CUSTOMER_REQUEST_INVALID/);assert.equal(calls.length,1);
+});

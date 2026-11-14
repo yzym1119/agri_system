@@ -189,6 +189,16 @@ class ClientHttpBoundaryTest {
         var original=ArgumentCaptor.forClass(com.agri_system.application.agronomy.service.AgronomyAssistantCoordinator.Command.class);verify(assistantAccess).end(eq(7L),original.capture());assertEquals(key,original.getValue().requestKey());assertEquals("1",original.getValue().expectedVersion());
         businessFailure(request(post(base+"/end"),null,"{}"),10003);
     }
+    @Test void initialAssistantAvailabilityIsPrivateNoStoreGuessOrReservation() throws Exception {
+        String path="/api/client/agronomy/assistant/availability",token=login("CUST_101");
+        when(assistantAccess.availability(7L)).thenReturn(new com.agri_system.application.agronomy.service.AgronomyAssistantCoordinator.Availability("7",false,"DISABLED"));
+        request(get(path).param("storeId","7"),token,null).andExpect(header().string("Cache-Control","no-store")).andExpect(jsonPath("$.storeId").value("7")).andExpect(jsonPath("$.reason").value("DISABLED"));
+        verify(assistantAccess).availability(7L);verify(assistantAccess,never()).submit(anyLong(),any());
+        businessFailure(request(get(path).param("storeId","7"),null,null),10003);
+        businessFailure(request(get(path).param("storeId","7"),login("STAFF_1"),null),10003);
+        for(String invalid:List.of("01","1.0","1e0","0","-1","9223372036854775808"))request(get(path).param("storeId",invalid),token,null).andExpect(jsonPath("$.code").value(10001));
+        verifyNoMoreInteractions(assistantAccess);
+    }
     @BeforeEach void customerAndCallback() {
         when(registrationTransactions.getTransaction(any())).thenAnswer(call->new org.springframework.transaction.support.SimpleTransactionStatus());
         ReflectionTestUtils.setField(authentication,"wechatAppId","");

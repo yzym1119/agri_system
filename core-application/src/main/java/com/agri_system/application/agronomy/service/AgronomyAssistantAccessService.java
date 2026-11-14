@@ -8,6 +8,9 @@ import lombok.RequiredArgsConstructor;
 public class AgronomyAssistantAccessService {
     private final AuthService auth;
     private final AgronomyAssistantCoordinator coordinator;
+    public AgronomyAssistantCoordinator.Availability availability(Long storeId) {
+        return coordinator.availability(auth.getCurrentClientAuthorization(),storeId);
+    }
     public AgronomyAssistantCoordinator.Latest latest(Long caseId) {
         return coordinator.latest(auth.getCurrentClientAuthorization(),caseId);
     }

@@ -102,6 +102,18 @@ public final class AgronomyAssistantCoordinator {
         try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(encode(java.util.List.of("ASSISTANT_CANCEL",id,command)).getBytes(StandardCharsets.UTF_8)));}
         catch(Exception bad){throw unavailable();}
     }
+    /** 仅首次提问的路由提示；不读取或预占预算，不能代替原问题正式派出许可。 */
+    public record Availability(String storeId,boolean enabled,String reason) {}
+    public Availability availability(ClientAuthorization authorization,Long storeId) {
+        outside();auth(authorization);positive(storeId);
+        boolean open=stores.find(storeId,false).filter(s->Integer.valueOf(1).equals(s.status())
+                &&Integer.valueOf(0).equals(s.deleted())&&Integer.valueOf(1).equals(s.visible())
+                &&s.version()!=null&&s.version()>0).isPresent();
+        String reason=open?"READY":"STORE_UNAVAILABLE";
+        if(open)try {policy.requireEnabled();}catch(IllegalArgumentException disabled){reason="DISABLED";}
+        auth(authorization);
+        return new Availability(storeId.toString(),"READY".equals(reason),reason);
+    }
     public Capability capability(ClientAuthorization authorization,Long caseId) {
         outside();auth(authorization);positive(caseId);
         var row=cases.findOwned(caseId,authorization.customerId(),false).orElseThrow(AgronomyAssistantCoordinator::unavailable);

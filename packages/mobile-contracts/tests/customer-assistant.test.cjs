@@ -30,3 +30,12 @@ test('服务器latest按本人问题解码，结束原号/原版本必须对应�
  assert.equal((await api.latest('7')).result.requestKey,key);const ended=await api.end('7',command);assert.equal(ended.state,'CLOSED');assert.equal(ended.claimKey,undefined);assert.equal(calls[1].url,'/api/client/agronomy/cases/7/assistant/end');
  assert.throws(()=>decodeAssistantEnd({...ended,expectedVersion:'2'},'7',command));assert.throws(()=>decodeAssistantEnd({...ended,state:['CLOSED']},'7',command));
 });
+
+test('首次服务状态固定本门店和真实会话，仅白名单响应，不承诺派出或收费',async()=>{
+ const {createCustomerAssistant,decodeAssistantAvailability}=await load();let calls=[];
+ const a=createCustomerAssistant({current:()=>({kind:'CUSTOMER',epoch:4,customerId:'101'}),requestCustomer:async r=>{calls.push(r);return{storeId:'7',enabled:true,reason:'READY',privateQuota:100}}});
+ assert.deepEqual(await a.availability('7',4),{storeId:'7',enabled:true,reason:'READY'});
+ assert.equal(calls[0].url,'/api/client/agronomy/assistant/availability?storeId=7');assert.equal(calls[0].method,'GET');
+ await assert.rejects(a.availability('7',3),/STALE_SESSION/);await assert.rejects(a.availability('7.0',4));assert.equal(calls.length,1);
+ for(const v of [{storeId:'8',enabled:true,reason:'READY'},{storeId:'7',enabled:false,reason:'READY'},{storeId:'7',enabled:false,reason:['DISABLED']},{storeId:'7',enabled:false,reason:'QUOTA_EXHAUSTED'}])assert.throws(()=>decodeAssistantAvailability(v,'7'));
+});

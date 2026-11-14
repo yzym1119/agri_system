@@ -59,6 +59,30 @@ class AgronomyAssistantCoordinatorTest {
         return new AgronomyAssistantCoordinator(cases,requests,stores,customers,clientAuth,manager,new ObjectMapper(),clock,policy,work);
     }
     AgronomyAssistantCoordinator.Command command(String key) {return new AgronomyAssistantCoordinator.Command(key,"1","1",true);}
+    @Test void initialAvailabilityIsReadOnlyAndRequiresActualCustomerAndPublicActiveStore() {
+        var c=coordinator((snapshot,usage)->{throw new AssertionError("只读不派出");});
+        assertEquals("READY",c.availability(authorization(101L,1L),1L).reason());
+        assertTrue(c.availability(authorization(101L,1L),1L).enabled());
+        for(String column:java.util.List.of("client_visible","status")) {
+            jdbc.update("UPDATE store SET "+column+"=0 WHERE id=1");
+            assertEquals("STORE_UNAVAILABLE",c.availability(authorization(101L,1L),1L).reason());
+            jdbc.update("UPDATE store SET "+column+"=1 WHERE id=1");
+        }
+        jdbc.update("UPDATE store SET deleted=1 WHERE id=1");
+        assertFalse(c.availability(authorization(101L,1L),1L).enabled());
+        assertEquals("STORE_UNAVAILABLE",c.availability(authorization(101L,1L),99L).reason());
+        when(clientAuth.isCurrentClientAuthorization(any())).thenReturn(false);
+        assertThrows(IllegalArgumentException.class,()->c.availability(authorization(101L,1L),1L));
+        assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM agronomy_case",Integer.class));
+        assertEquals(0,jdbc.queryForObject("SELECT COUNT(*) FROM agronomy_case_entry",Integer.class));
+    }
+    @Test void initialAvailabilityReflectsDisabledConfigurationWithoutCreatingAQuestion() {
+        policy=policy(false,2,2,100000);
+        var c=coordinator((snapshot,usage)->{throw new AssertionError("不得执行");});
+        var v=c.availability(authorization(101L,1L),1L);
+        assertEquals("1",v.storeId());assertFalse(v.enabled());assertEquals("DISABLED",v.reason());
+        assertThrows(IllegalArgumentException.class,()->c.availability(authorization(101L,1L),0L));
+    }
     @Test void originalRequestCommitsReservationBeforeOneOutsideTransactionWorkflowAndKeepsSnapshot() {
         long id=create(101);var calls=new AtomicInteger();var c=coordinator((snapshot,usage)->{
             assertFalse(org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive());

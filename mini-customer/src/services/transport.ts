@@ -6,6 +6,7 @@ type Options = CustomerRequest & { timeout: number; success(response: HttpRespon
 
 function caseRequest(url: string, method: string): boolean {
   const parts = url.split('?'); if (parts.length > 2) return false;
+  if(parts[0]==='/api/client/agronomy/assistant/availability')return method==='GET'&&parts.length===2&&/^storeId=[1-9][0-9]{0,18}$/.test(parts[1]!)&&isPositiveLongId(parts[1]!.slice(8));
   const path = parts[0]!, list = path === '/api/client/agronomy/cases';
   const assistant = /^\/api\/client\/agronomy\/cases\/([^/]+)\/assistant\/(capability|latest|end|requests|requests\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.exec(path);
   if(assistant)return parts.length===1&&isPositiveLongId(assistant[1])&&(method==='POST'?['requests','end'].includes(assistant[2]!):method==='GET'&&assistant[2]!=='requests'&&assistant[2]!=='end');

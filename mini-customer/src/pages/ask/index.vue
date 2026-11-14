@@ -3,12 +3,15 @@ import { computed, ref } from 'vue';
 import { onShow, onHide, onUnload } from '@dcloudio/uni-app';
 import type { PendingCase } from '@agri/mobile-contracts/customer-case-submission';
 import type { CaseReceipt } from '@agri/mobile-contracts/customer-cases';
+import type { AssistantAvailability } from '@agri/mobile-contracts/customer-assistant';
 import type { PublicStore } from '@agri/mobile-contracts/customer-catalog';
-import { customerAuth, caseSubmissions, publicCatalog, serviceConfigured, caseErrorText } from '../../services/runtime';
+import { customerAuth, caseSubmissions, publicCatalog, customerAssistant, serviceConfigured, caseErrorText } from '../../services/runtime';
 import { largeText } from '../../services/preferences';
 const snapshot = ref(customerAuth.current()), pending = ref<PendingCase | null>(null), blocked = ref(false);
 const busy = ref(false), error = ref(''), stores = ref<PublicStore[]>([]), storeLoading = ref(false), storeError = ref(''), nextAfter = ref<string | null>(null);
 const storesLoaded = ref(false);
+const availability = ref<AssistantAvailability | null>(null), availabilityLoading = ref(false), availabilityError = ref('');
+let availabilityRun = 0;
 const question = ref(''), region = ref(''), crop = ref(''), growthStage = ref(''), selectedStoreId = ref(''), moreFacts = ref(false), completed = ref<CaseReceipt | null>(null);
 const locked = computed(() => busy.value || blocked.value || pending.value !== null);
 const storeName = computed(() => stores.value.find(s => s.storeId === selectedStoreId.value)?.name || (pending.value?.operation === 'CREATE' ? '原提交门店' : '请选择门店'));
@@ -17,7 +20,7 @@ let rejectedOriginal = false;
 let attempt: { epoch: number; result?: CaseReceipt; rejected?: boolean } | null = null;
 function live(t: number) { return visible && generation === t; }
 function active(t: number, epoch: number) { return live(t) && customerAuth.current().epoch === epoch; }
-function clearForm() { question.value = ''; region.value = ''; crop.value = ''; growthStage.value = ''; selectedStoreId.value = ''; }
+function clearForm() { ++availabilityRun; availability.value = null; availabilityLoading.value = false; availabilityError.value = ''; question.value = ''; region.value = ''; crop.value = ''; growthStage.value = ''; selectedStoreId.value = ''; }
 function restore() {
   rejectedOriginal = false;
   try {
@@ -46,16 +49,36 @@ function restore() {
 async function loadStores(more = false) {
   if (!visible || !serviceConfigured || storeLoading.value && more) return;
   const t = generation, epoch = snapshot.value.epoch;
+  ++availabilityRun; availability.value = null; availabilityLoading.value = false; availabilityError.value = '';
   storeLoading.value = true; storeError.value = '';
   if (!more) { stores.value = []; nextAfter.value = null; storesLoaded.value = false; }
   try {
     const page = await publicCatalog.stores(more ? nextAfter.value ?? undefined : undefined);
     if (active(t, epoch)) {
       stores.value = more ? [...stores.value, ...page.rows] : page.rows; nextAfter.value = page.nextAfter; storesLoaded.value = true;
-      if (!pending.value && !stores.value.some(s => s.storeId === selectedStoreId.value)) selectedStoreId.value = '';
+      if (!pending.value) {
+        if (!stores.value.some(s => s.storeId === selectedStoreId.value)) selectedStoreId.value = '';
+        if (!selectedStoreId.value && stores.value.length === 1 && page.nextAfter === null) selectedStoreId.value = stores.value[0]!.storeId;
+        await loadAvailability();
+      }
     }
   } catch { if (active(t, epoch)) storeError.value = '没有读到门店，请稍后再试。'; }
   finally { if (active(t, epoch)) storeLoading.value = false; }
+}
+async function loadAvailability() {
+  const id = selectedStoreId.value, t = generation, epoch = snapshot.value.epoch, run = ++availabilityRun;
+  availability.value = null; availabilityError.value = ''; availabilityLoading.value = false;
+  if (!visible || pending.value || snapshot.value.kind !== 'CUSTOMER' || !id || !serviceConfigured) return;
+  availabilityLoading.value = true;
+  try {
+    const value = await customerAssistant.availability(id, epoch);
+    if (active(t, epoch) && run === availabilityRun && selectedStoreId.value === id) availability.value = value;
+  } catch {
+    if (live(t) && run === availabilityRun && customerAuth.current().kind === 'GUEST') {
+      snapshot.value = customerAuth.current(); pending.value = null; clearForm(); storeLoading.value = false; error.value = '请重新登录本人账号，原问题记录会保留。';
+    }
+    if (active(t, epoch) && run === availabilityRun && selectedStoreId.value === id) availabilityError.value = '未能读取AI服务状态，可以重试，或直接请门店帮忙。';
+  } finally { if (active(t, epoch) && run === availabilityRun && selectedStoreId.value === id) availabilityLoading.value = false; }
 }
 onShow(async () => {
   visible = true; ++generation; snapshot.value = customerAuth.current(); busy.value = false; error.value = '';
@@ -63,7 +86,7 @@ onShow(async () => {
   if (owner !== lastOwner) { clearForm(); pending.value = null; blocked.value = false; completed.value = null; lastOwner = owner; }
   if (snapshot.value.kind === 'CUSTOMER') { restore(); await loadStores(); }
 });
-function hide() { visible = false; ++generation; storeLoading.value = false; }
+function hide() { visible = false; ++generation; ++availabilityRun; availability.value = null; availabilityLoading.value = false; storeLoading.value = false; }
 onHide(hide); onUnload(hide);
 function openLogin() { uni.navigateTo({ url: snapshot.value.kind === 'ONBOARDING' && snapshot.value.state === 'PHONE_VERIFIED' ? '/pages/identity/claim/index' : '/pages/login/index' }); }
 function openList() { uni.navigateTo({ url: '/pages/cases/list/index' }); }
@@ -73,7 +96,7 @@ function openOriginal() {
 }
 function chooseStore(event: { detail: { value: string | number } }) {
   if (locked.value) return;
-  const n = Number(event.detail.value); if (Number.isInteger(n) && stores.value[n]) selectedStoreId.value = stores.value[n]!.storeId;
+  const n = Number(event.detail.value); if (Number.isInteger(n) && stores.value[n]) { selectedStoreId.value = stores.value[n]!.storeId; void loadAvailability(); }
 }
 function failure(e: unknown, t: number, epoch: number) {
   if (!live(t)) return;
@@ -83,15 +106,21 @@ function failure(e: unknown, t: number, epoch: number) {
   }
   error.value = caseErrorText(e); restore();
 }
-async function submit() {
-  if (locked.value || snapshot.value.kind !== 'CUSTOMER' || !visible) return;
+function submit() { return sendQuestion(false); }
+function submitHuman() { return sendQuestion(true); }
+async function sendQuestion(directHuman: boolean) {
+  if (locked.value || storeLoading.value || snapshot.value.kind !== 'CUSTOMER' || !visible || !serviceConfigured) return;
   if (!question.value.trim()) { error.value = '先说说遇到了什么问题。'; return; }
   if (!stores.value.some(s => s.storeId === selectedStoreId.value)) { error.value = '请选择接收问题的门店。'; return; }
+  const state = availability.value?.storeId === selectedStoreId.value ? availability.value : null;
+  if (state?.reason === 'STORE_UNAVAILABLE') { error.value = '这家门店暂不能接收新问题，请重新读取门店。'; return; }
+  if (!directHuman && (!state || availabilityLoading.value)) { error.value = '请先核对服务状态，也可以直接请门店帮忙。'; return; }
+  const requestHuman = directHuman || !state?.enabled;
   const t = generation, epoch = snapshot.value.epoch; busy.value = true; error.value = ''; completed.value = null;
   const original: { epoch: number; result?: CaseReceipt } = { epoch }; attempt = original;
   try {
     const result = await caseSubmissions.submit({ operation: 'CREATE', storeId: selectedStoreId.value, question: question.value,
-      facts: { region: region.value, crop: crop.value, growthStage: growthStage.value }, requestHuman: true });
+      facts: { region: region.value, crop: crop.value, growthStage: growthStage.value }, requestHuman });
     if (customerAuth.current().epoch === epoch) original.result = result;
     if (active(t, epoch)) { pending.value = null; clearForm(); uni.navigateTo({ url: '/pages/cases/detail/index?id=' + result.caseId }); }
   } catch (e) { failure(e, t, epoch); }
@@ -101,7 +130,8 @@ async function recover(retry: boolean) {
   if (busy.value || snapshot.value.kind !== 'CUSTOMER' || !visible) return;
   const t = generation, epoch = snapshot.value.epoch; busy.value = true; error.value = '';
   try {
-    const settled = restore(); if (blocked.value || rejectedOriginal) return;
+    const settled = restore(); if (blocked.value) return;
+    if (rejectedOriginal) { await loadAvailability(); return; }
     const result = settled ?? await (retry ? caseSubmissions.retry() : caseSubmissions.query());
     if (active(t, epoch)) {
       if (result) { pending.value = null; clearForm(); completed.value = result; uni.navigateTo({ url: '/pages/cases/detail/index?id=' + result.caseId }); }
@@ -117,7 +147,7 @@ function retryOriginal() { return recover(true); }
   <view class="customer-page with-navigation" :class="{ 'large-text': largeText }">
     <CustomerNavigation active="ask" /><ReadingHeader title="问农技" />
     <text class="title">遇到问题，<text class="title-line">先说说情况。</text></text>
-    <text class="paragraph secondary">当前由门店回复。说不清楚的地方可以稍后补充，也可以到首页联系门店。</text>
+    <text class="paragraph secondary">说不清楚的地方可以稍后补充。AI可用时先看资料参考，也可以直接请门店帮忙。</text>
     <text v-if="!serviceConfigured" class="notice case-block">门店服务暂未连接，请先到首页联系门店。</text>
     <button class="button button-secondary" hover-class="button-pressed" @tap="openList">我问过的问题 · 查看回复</button>
     <view v-if="snapshot.kind !== 'CUSTOMER'" class="section">
@@ -125,12 +155,12 @@ function retryOriginal() { return recover(true); }
       <button class="button" hover-class="button-pressed" @tap="openLogin">登录并核对本人档案</button>
     </view>
     <template v-else>
-      <view v-if="completed" class="panel"><text class="status">上次问题已发送</text><button class="button" hover-class="button-pressed" @tap="openOriginal">查看问题与回复</button></view>
+      <view v-if="completed" class="panel"><text class="status">{{ completed.status === 'COLLECTING' ? '上次情况已保存' : '上次问题已发给门店' }}</text><button class="button" hover-class="button-pressed" @tap="openOriginal">查看问题与回复</button></view>
       <CasePending v-if="pending || blocked" :pending="pending" :blocked="blocked" :busy="busy" :can-open="!!pending?.caseId" @check="checkOriginal" @retry="retryOriginal" @open="openOriginal" />
       <text v-if="error" class="notice case-block" role="alert">{{ error }}</text>
       <text class="field-label">遇到了什么问题？</text>
       <textarea v-model="question" class="case-textarea" :disabled="locked" :maxlength="2000" placeholder="例如：哪种作物、哪里不对劲、什么时候开始的。" aria-label="问题描述" />
-      <text class="field-label">发给哪家门店？</text>
+      <text class="field-label">在哪家门店咨询？</text>
       <text v-if="storeLoading" class="loading">正在读取门店…</text>
       <view v-if="storeError" class="notice">{{ storeError }}<button class="button button-secondary" hover-class="button-pressed" :disabled="busy" @tap="loadStores(false)">重新读取门店</button></view>
       <picker v-if="stores.length" :range="stores" range-key="name" :disabled="locked" @change="chooseStore"><view class="selection-input">{{ storeName }} <text aria-hidden="true">⌄</text></view></picker>
@@ -142,8 +172,14 @@ function retryOriginal() { return recover(true); }
         <text class="field-label">种的是什么？</text><input v-model="crop" class="search-input" :maxlength="50" :disabled="locked" placeholder="作物名称，不清楚可不填" />
         <text class="field-label">长到什么阶段了？</text><input v-model="growthStage" class="search-input" :maxlength="100" :disabled="locked" placeholder="例如苗期，不清楚可不填" />
       </view>
-      <button class="button" hover-class="button-pressed" :disabled="locked || storeLoading || !serviceConfigured" @tap="submit">{{ busy ? '正在发送…' : '发给门店' }}</button>
-      <text class="help">系统保存问题后，可在“我问过的问题”查看回复和继续补充。</text>
+      <text v-if="availabilityLoading" class="loading">正在核对这家门店的服务…</text>
+      <view v-if="availabilityError" class="notice" role="alert">{{ availabilityError }}<button class="button button-secondary" :disabled="locked || availabilityLoading" @tap="loadAvailability">重试服务状态</button></view>
+      <text v-if="availability?.reason === 'STORE_UNAVAILABLE'" class="notice case-block">这家门店暂不能接收新问题，请重新读取门店。</text>
+      <text v-else-if="availability?.enabled" class="help">这一步只保存情况。下一页再由你决定是否查询AI，或请门店帮忙。</text>
+      <text v-else-if="availability?.reason === 'DISABLED'" class="help">AI暂未开启，这次问题由门店回复。</text>
+      <button class="button" hover-class="button-pressed" :disabled="locked || storeLoading || availabilityLoading || !serviceConfigured || !availability || availability.storeId !== selectedStoreId || availability.reason === 'STORE_UNAVAILABLE'" @tap="submit">{{ busy ? '正在保存…' : availability?.enabled ? '保存问题，查看AI参考' : availability ? '发给门店' : '请先选择门店并核对服务' }}</button>
+      <button v-if="selectedStoreId && availability?.reason !== 'DISABLED' && availability?.reason !== 'STORE_UNAVAILABLE'" class="button button-secondary" hover-class="button-pressed" :disabled="locked || storeLoading || !serviceConfigured" @tap="submitHuman">直接请门店帮忙</button>
+      <text class="help">保存后，可在“我问过的问题”继续查看参考、门店回复或补充情况。</text>
     </template>
   </view>
 </template>

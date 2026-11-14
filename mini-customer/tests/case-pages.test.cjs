@@ -9,7 +9,7 @@ const deferred=()=>{let resolve,reject;const promise=new Promise((r,j)=>{resolve
 async function authFor(id='7'){let current=id;const auth=createCustomerAuth(async r=>({statusCode:200,data:r.url.endsWith('/wechat')?{state:'LINKED',login:{tokenName:'Authorization',tokenValue:'fictional-'+current,userInfo:{id:current,name:'虚构客户',role:'NORMAL',extra:{bindingState:'LINKED'}}}}:{}}),async()=> 'code');await auth.beginWechatLogin().result;return{auth,login:async id=>{await auth.logout();current=id;await auth.beginWechatLogin().result}}}
 function mount(name,auth,api={},submissions={},catalog={stores:async()=>({rows:[{storeId:'1',name:'虚构门店',phone:'19900000000',address:'虚构地址'}],nextAfter:null})},configured=true){
  const file=path.join(__dirname,'../src/pages',name,'index.vue'),{descriptor}=parse(fs.readFileSync(file,'utf8')),script=compileScript(descriptor,{id:name}),module={exports:{}},hooks={},routes=[];
- const runtime={customerAuth:auth,customerCases:api,caseSubmissions:{settled:()=>null,...submissions},publicCatalog:catalog,serviceConfigured:configured,caseErrorText:()=> '原结果尚未核实'};
+ const runtime={customerAuth:auth,customerCases:api,caseSubmissions:{settled:()=>null,...submissions},publicCatalog:catalog,customerAssistant:{availability:catalog.availability??(async storeId=>({storeId,enabled:false,reason:'DISABLED'}))},serviceConfigured:configured,caseErrorText:()=> '原结果尚未核实'};
  const imports={vue,'@dcloudio/uni-app':{onShow:fn=>hooks.show=fn,onHide:fn=>hooks.hide=fn,onUnload:fn=>hooks.unload=fn,onLoad:fn=>hooks.load=fn},'@agri/mobile-contracts/ids':require('../../packages/mobile-contracts/dist/ids.js'),'@agri/mobile-contracts/customer-cases':require('../../packages/mobile-contracts/dist/customer-cases.js')};
  const config=JSON.parse(fs.readFileSync(path.join(__dirname,'../src/pages.json'),'utf8'));
  const route=o=>{assert.ok(config.pages.some(p=>'/'+p.path===o.url.split('?')[0]),'unregistered route '+o.url);routes.push(o.url)};
@@ -66,5 +66,34 @@ test('最新门店答复独立于20条历史分页，农情改变后明确标出
  const view=mount('cases/detail',f.auth,{detail:async()=>data},{current:()=>null});view.hooks.load({id:'7'});await view.hooks.show();const html=await view.render();assert.ok(html.includes('虚构上次答复'));assert.ok(html.includes('此前情况'));assert.equal(view.state.showHistory.value,false);
 });
 test('跨实例首次发送已明确拒绝时保留原文供修改，不误称还在等待确认',async()=>{
- const f=await authFor(),h=await realSubmissionHarness(f.auth),a=mount('ask',f.auth,{},h.run);await a.hooks.show();a.state.question.value='待修改原稿';a.state.selectedStoreId.value='1';const sending=a.state.submit();await new Promise(r=>setImmediate(r));a.hooks.hide();const b=mount('ask',f.auth,{},h.run);await b.hooks.show();h.wait.reject(Error('BUSINESS_REJECTED'));await sending;await b.state.checkOriginal();assert.equal(b.state.question.value,'待修改原稿');assert.equal(b.state.pending.value,null);assert.ok(b.state.error.value.includes('没有发送成功'));assert.equal(h.commands.length,1);
+ const f=await authFor(),h=await realSubmissionHarness(f.auth),a=mount('ask',f.auth,{},h.run);await a.hooks.show();a.state.question.value='待修改原稿';a.state.selectedStoreId.value='1';const sending=a.state.submit();await new Promise(r=>setImmediate(r));a.hooks.hide();const b=mount('ask',f.auth,{},h.run);await b.hooks.show();h.wait.reject(Error('BUSINESS_REJECTED'));await sending;await b.state.checkOriginal();assert.equal(b.state.question.value,'待修改原稿');assert.equal(b.state.pending.value,null);assert.ok(b.state.error.value.includes('没有发送成功'));assert.equal(h.commands.length,1);assert.equal(b.state.availability.value?.reason,'DISABLED');
+});
+
+test('AI可用先保存COLLECTING不排人工也不自动查模型；仍可明确直接找门店',async()=>{
+ const f=await authFor(),calls=[],catalog={stores:async()=>({rows:[{storeId:'1',name:'虚构门店'}],nextAfter:null}),availability:async storeId=>({storeId,enabled:true,reason:'READY'})};
+ const v=mount('ask',f.auth,{}, {current:()=>null,submit:async input=>{calls.push(input);return{...receipt(),status:input.requestHuman?'WAITING_REVIEW':'COLLECTING'}}},catalog);
+ await v.hooks.show();v.state.question.value='原问题';v.state.selectedStoreId.value='1';await v.state.loadAvailability();await v.state.submit();
+ assert.equal(calls[0].requestHuman,false);assert.deepEqual(v.routes,['/pages/cases/detail/index?id=7']);
+ const h=mount('ask',f.auth,{}, {current:()=>null,submit:async input=>{calls.push(input);return receipt()}},catalog);await h.hooks.show();h.state.question.value='直接门店';h.state.selectedStoreId.value='1';await h.state.submitHuman();assert.equal(calls[1].requestHuman,true);
+});
+test('服务状态读取失败不冒称关闭，主动作禁止；人工是明确独立选择',async()=>{
+ const f=await authFor(),calls=[],v=mount('ask',f.auth,{}, {current:()=>null,submit:async input=>{calls.push(input);return receipt()}},{stores:async()=>({rows:[{storeId:'1',name:'虚构门店'}],nextAfter:null}),availability:async()=>{throw Error('NETWORK_FAILED')}});
+ await v.hooks.show();v.state.question.value='原问题';v.state.selectedStoreId.value='1';await v.state.loadAvailability();await v.state.submit();assert.equal(calls.length,0);const html=await v.render();assert.match(html,/未能读取AI服务状态/);assert.doesNotMatch(html,/AI暂未开启/);await v.state.submitHuman();assert.equal(calls[0].requestHuman,true);
+});
+test('换店后旧AI状态不得使新门店按旧路径创建，隐藏和换客户同样失效',async()=>{
+ const f=await authFor(),wait=deferred(),calls=[],catalog={stores:async()=>({rows:[{storeId:'1',name:'店一'},{storeId:'2',name:'店二'}],nextAfter:null}),availability:async storeId=>storeId==='1'?wait.promise:{storeId,enabled:false,reason:'DISABLED'}};
+ const v=mount('ask',f.auth,{}, {current:()=>null,submit:async input=>{calls.push(input);return receipt()}},catalog);await v.hooks.show();v.state.question.value='原问题';v.state.selectedStoreId.value='1';const first=v.state.loadAvailability();v.state.selectedStoreId.value='2';await v.state.loadAvailability();wait.resolve({storeId:'1',enabled:true,reason:'READY'});await first;await v.state.submit();assert.equal(calls[0].storeId,'2');assert.equal(calls[0].requestHuman,true);
+ const old=deferred();catalog.availability=async()=>old.promise;const b=mount('ask',f.auth,{}, {current:()=>null},catalog);await b.hooks.show();b.state.selectedStoreId.value='1';const run=b.state.loadAvailability();b.hooks.hide();await f.login('8');old.resolve({storeId:'1',enabled:true,reason:'READY'});await run;assert.equal(b.state.availability.value,null);
+});
+test('AI保存丢响应后恢复原false创建，不因服务关闭改成求人工或另建问题',async()=>{
+ const f=await authFor(),{createCaseSubmissions}=require('../../packages/mobile-contracts/dist/customer-case-submission.js');let saved=null,calls=[],recovering=false;
+ const api={create:async c=>{calls.push(c);if(!recovering)throw Error('RESULT_UNKNOWN');return{...receipt(),status:'COLLECTING'}},submission:async()=>({requestKey:receipt().requestKey,status:'UNKNOWN',receipt:null})};
+ const journal=createCaseSubmissions({auth:f.auth,api,storage:{read:()=>saved,write:(id,v)=>saved=v,remove:()=>saved=null},createKey:async()=>receipt().requestKey});
+ const catalog={stores:async()=>({rows:[{storeId:'1',name:'虚构门店'}],nextAfter:null}),availability:async storeId=>({storeId,enabled:true,reason:'READY'})};
+ const a=mount('ask',f.auth,{},journal,catalog);await a.hooks.show();a.state.question.value='AI原问题';a.state.selectedStoreId.value='1';await a.state.loadAvailability();await a.state.submit();assert.equal(calls[0].requestHuman,false);a.hooks.hide();
+ recovering=true;catalog.availability=async storeId=>({storeId,enabled:false,reason:'DISABLED'});const b=mount('ask',f.auth,{},journal,catalog);await b.hooks.show();await b.state.retryOriginal();assert.equal(calls.length,2);assert.deepEqual(calls[0],calls[1]);assert.equal(calls[1].requestHuman,false);assert.deepEqual(b.routes,['/pages/cases/detail/index?id=7']);
+});
+test('服务状态读取遇到真实退出须清页面并显示登录，不能卡住旧客户加载态',async()=>{
+ const f=await authFor(),v=mount('ask',f.auth,{}, {current:()=>null},{stores:async()=>({rows:[{storeId:'1',name:'虚构门店'}],nextAfter:null}),availability:async()=>{await f.auth.logout();throw Error('UNAUTHORIZED')}});
+ await v.hooks.show();assert.equal(v.state.snapshot.value.kind,'GUEST');assert.equal(v.state.availability.value,null);assert.equal(v.state.availabilityLoading.value,false);assert.equal(v.state.storeLoading.value,false);
 });
